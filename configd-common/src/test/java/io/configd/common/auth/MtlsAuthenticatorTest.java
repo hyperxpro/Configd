@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * {@link MtlsAuthenticator}: it derives a {@link Principal} from an already-verified client certificate,
  * and produces the SAME identity the edge fan-out plane extracts today ({@code getPeerPrincipal().getName()}),
- * so both planes agree on who a certificate is (RFC AU6-1). The certificate is a real keytool-minted cert.
+ * so both planes agree on who a certificate is. The certificate is a real keytool-minted cert.
  */
 class MtlsAuthenticatorTest {
 

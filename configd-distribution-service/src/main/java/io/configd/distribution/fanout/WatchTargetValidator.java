@@ -5,7 +5,7 @@ import io.configd.distribution.wire.EdgeFrame;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Validates a {@code WATCH_CREATE} target against the path grammar and range rules (W2-4),
+ * Validates a {@code WATCH_CREATE} target against the path grammar and range rules,
  * producing the {@code BAD_SUBSCRIBE} (400-class) diagnostic the veneer emits on a malformed
  * target. Structural framing (CRC, frame size, the FULL=>empty-path invariant) is the codec's
  * job; this is the <b>semantic</b> target validation the codec deliberately leaves to the
@@ -29,9 +29,9 @@ final class WatchTargetValidator {
     static final int MAX_SCOPE = 2;
 
     /**
-     * The recognized {@code WATCH_CREATE} flag bits (W5-4a): {@code full_chain_verify} (bit0),
+     * The recognized {@code WATCH_CREATE} flag bits: {@code full_chain_verify} (bit0),
      * {@code prev_value} (bit1), {@code with_initial_snapshot} (bit2). A driver MUST NOT set a flag
-     * it has not negotiated, and the server fails closed on an unrecognized bit (W1-3) - so a flags
+     * it has not negotiated, and the server fails closed on an unrecognized bit - so a flags
      * byte with any bit outside this mask is rejected {@code BAD_SUBSCRIBE}.
      */
     static final int KNOWN_FLAGS_MASK = EdgeFrame.WATCH_FLAG_FULL_CHAIN_VERIFY
@@ -46,7 +46,7 @@ final class WatchTargetValidator {
      *         the caller surfaces as {@code WATCH_CANCELED(BAD_SUBSCRIBE)}.
      */
     static String validate(int scope, int targetKind, byte[] pathBytes, int flags) {
-        // Fail closed on an unrecognized flag bit (W5-4a / W1-3): a driver must not set a flag it
+        // Fail closed on an unrecognized flag bit: a driver must not set a flag it
         // has not negotiated, so a bit outside the known mask is a malformed subscription.
         if ((flags & ~KNOWN_FLAGS_MASK) != 0) {
             return "unknown WATCH_CREATE flag bit(s) set (fail-closed on unrecognized, W5-4a): 0x"

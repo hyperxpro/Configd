@@ -31,7 +31,7 @@ final class EdgeActivity {
     static final int MAX_RECORDED_VIOLATIONS = 256;
 
     /**
-     * A recorded eventual-delivery-bound miss (contract section 2 propagation budget):
+     * A recorded eventual-delivery-bound miss (the propagation budget):
      * notification {@code seq} published at sim time {@code publishedAtMs} on the
      * edge's subscribed CP node was not observed by live edge {@code edgeId} within
      * {@code BOUND_MS}; {@code latenessMs} is the overshoot at the moment it was
@@ -48,7 +48,7 @@ final class EdgeActivity {
     private int snapshotsApplied;
 
     /**
-     * NOTE-1 (design review section C): publications excused EXACTLY at their deadline tick - a
+     * NOTE-1: publications excused EXACTLY at their deadline tick - a
      * still-owing edge that was ineligible (crashed / lagging / partitioned) on the precise
      * tick the deadline was evaluated, so it was excused rather than recorded as a
      * violation. Exposed so excused-vs-delivered is observable: a reviewer can see whether

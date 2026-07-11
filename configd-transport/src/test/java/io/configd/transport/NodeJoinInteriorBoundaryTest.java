@@ -5,12 +5,12 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 /**
- * Gate-4 interior boundary: the Raft interior wire admits <b>no credential-bearing frame</b>, so a client
+ * Interior boundary: the Raft interior wire admits <b>no credential-bearing frame</b>, so a client
  * bearer / HTTP-Basic / OIDC token has NO path to consensus. The interior transport is binary mTLS with
  * {@code setNeedClientAuth(true)}; the AUTH / REFRESH_AUTH frames of the auth arc live on the EDGE
  * ({@code EdgeFrameCodec}) plane, a different wire on a different transport.
  *
- * <p>This is why the OIDC node-claim (finding R5) and HTTP-Basic node-principal (R6) markers are
+ * <p>This is why the OIDC node-claim and HTTP-Basic node-principal markers are
  * <b>dormant, fail-closed</b> today rather than deferred: they are unreachable-by-construction - there is
  * no interior frame that could carry the token to check the marker against. They activate only if/when a
  * token-bearing interior auth frame is added (a named RFC forward extension); this test guards that a new

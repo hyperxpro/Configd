@@ -59,12 +59,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Gate 3 token-authentication contract for the edge fan-out endpoint - proven on BOTH transports (the
+ * The token-authentication contract for the edge fan-out endpoint - proven on both transports (the
  * JDK {@link FanOutServer} inline reader gate and the Netty {@link NettyFanOutServer}
  * {@link EdgeAuthGateHandler}) by varying only which server {@link #startTokenServer} constructs. Over
  * a plaintext token endpoint (a certificate-less connection must present an {@code AUTH} frame), it
  * exercises the admission table, the authenticate {@code ->} authorize {@code ->} subscribe
- * {@code ->} receive path against the SAME in-core {@link AclService} the admin plane uses, and the
+ * {@code ->} receive path against the same in-core {@link AclService} the admin plane uses, and the
  * token-TTL expiry. The mTLS-on-a-token-edge byte-identity (a cert client authenticates at the
  * handshake with no {@code AUTH} frame) is the sibling {@code EdgeTokenAuthMtlsTest}.
  */
@@ -90,10 +90,6 @@ class EdgeTokenAuthTest {
             server.close();
         }
     }
-
-    // -----------------------------------------------------------------------
-    // authenticate -> authorize -> subscribe -> receive (the full e2e)
-    // -----------------------------------------------------------------------
 
     private void bearerAuthThenSubscribeReceives(boolean netty) throws Exception {
         AclService acl = new AclService();
@@ -121,10 +117,6 @@ class EdgeTokenAuthTest {
     void nettyBearerAuthThenSubscribeReceives() throws Exception {
         bearerAuthThenSubscribeReceives(true);
     }
-
-    // -----------------------------------------------------------------------
-    // admission table
-    // -----------------------------------------------------------------------
 
     private void subscribeBeforeAuthIsRejected(boolean netty) throws Exception {
         int port = startTokenServer(netty, null, LONG_TTL_MS); // authorizer irrelevant: the gate closes first
@@ -237,10 +229,6 @@ class EdgeTokenAuthTest {
         preAuthOversizeFrameIsRejected(true);
     }
 
-    // -----------------------------------------------------------------------
-    // token-TTL expiry
-    // -----------------------------------------------------------------------
-
     private void expiryClosesWithCredentialExpired(boolean netty) throws Exception {
         // A short TTL, and NO subscribe (an unsubscribed session emits no frames), so the expiry's
         // terminal ERROR_CLOSE cannot race a heartbeat write - the CREDENTIAL_EXPIRED is clean.
@@ -264,14 +252,10 @@ class EdgeTokenAuthTest {
         expiryClosesWithCredentialExpired(true);
     }
 
-    // -----------------------------------------------------------------------
-    // role-based edge authorization (the token's ROLE, not its id, grants access)
-    // -----------------------------------------------------------------------
-
     private void roleBasedGrantAuthorizesEdge(boolean netty) throws Exception {
-        // The token's SUBJECT id has NO direct grant; a whole-store READ grant exists only on the ROLE
-        // the token asserts. If the edge honored only the id (the pre-fix behavior) this would be
-        // NOT_AUTHORIZED; honoring the authenticator-asserted roles (as the HTTP plane does) authorizes it.
+        // The token's subject id has NO direct grant; a whole-store READ grant exists only on the role
+        // the token asserts. If the edge honored only the id, this would be NOT_AUTHORIZED; honoring
+        // the authenticator-asserted roles (as the HTTP plane does) authorizes it.
         AclService acl = new AclService();
         acl.defineRole(new Role("edge-reader", List.of(new Policy("p",
                 List.of(new PolicyRule("", Set.of(AclService.Permission.READ), Set.of()))))));
@@ -296,10 +280,6 @@ class EdgeTokenAuthTest {
     void nettyRoleBasedGrantAuthorizesEdge() throws Exception {
         roleBasedGrantAuthorizesEdge(true);
     }
-
-    // -----------------------------------------------------------------------
-    // REFRESH_AUTH identity binding (renews the SAME identity; a different one fails closed)
-    // -----------------------------------------------------------------------
 
     private void refreshSamePrincipalExtends(boolean netty) throws Exception {
         int port = startTokenServer(netty, twoPrincipalChain(), null, LONG_TTL_MS);
@@ -343,10 +323,6 @@ class EdgeTokenAuthTest {
     void nettyRefreshDifferentPrincipalIsClosed() throws Exception {
         refreshDifferentPrincipalIsClosed(true);
     }
-
-    // -----------------------------------------------------------------------
-    // fixtures
-    // -----------------------------------------------------------------------
 
     /** A single-bearer chain: the valid {@link #TOKEN} authenticates as {@code principal} with {@code roles}. */
     private static AuthenticatorChain bearerChain(String principal, String rolesCsv) {
@@ -428,10 +404,6 @@ class EdgeTokenAuthTest {
         replayState.set(new ConfigSnapshot(data, s, 0L));
         buffer.publish(new CommitNotification(s, 0L, delta));
     }
-
-    // -----------------------------------------------------------------------
-    // wire helpers (deadline-polling)
-    // -----------------------------------------------------------------------
 
     private static EdgeFrame readUntil(EdgeProtocolClient edge, Class<? extends EdgeFrame> type)
             throws IOException {

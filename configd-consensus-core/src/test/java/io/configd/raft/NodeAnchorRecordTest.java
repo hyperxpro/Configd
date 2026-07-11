@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Unit tests for the {@link NodeAnchorRecord} 92-byte payload codec and the {@code shardAnchorDigest}
- * helper (the R-f shard-liveness fingerprint). The dual-slot file mechanics are in
+ * helper (the shard-liveness fingerprint). The dual-slot file mechanics are in
  * {@link NodeAnchorFileTest}; the boot cross-check is in the server module's {@code NodeAnchorBootTest}.
  */
 class NodeAnchorRecordTest {
@@ -132,7 +132,7 @@ class NodeAnchorRecordTest {
         live.put(1, 200L);
         byte[] before = NodeAnchorRecord.computeShardAnchorDigest(live);
 
-        // Shard 1 wiped to FRESH => lastDurableIndex resets to 0 (the R-f signature).
+        // Shard 1 wiped to FRESH => lastDurableIndex resets to 0 (a wipe signature the digest must detect).
         Map<Integer, Long> wiped = new TreeMap<>();
         wiped.put(0, 100L);
         wiped.put(1, 0L);

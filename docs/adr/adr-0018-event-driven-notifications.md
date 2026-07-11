@@ -1,10 +1,19 @@
 # ADR-0018: Event-Driven Notification System (Server-Side Push Streams)
 
 ## Status
-Accepted
+Superseded - partially. The event-driven server-push design stands; the gRPC transport does not.
+
+> **Note (2026-07-11):** Config-change notifications are served over a custom binary
+> SUBSCRIBE protocol on the Netty transport (see `docs/rfc/driver-protocol/02-watches.md`
+> and ADR-0043), not persistent gRPC bidirectional streams as specified below (see also the
+> ADR-0010 Superseded note). The subscription model itself carries over largely intact: the
+> shipped fan-out (`FanOutSessionCore` on the server; `EdgeSession` / `WatchSession` on the
+> edge client) is prefix-subscription-based, delivers events in strict per-shard sequence
+> order with gap detection and sequence-based resumption, and requires no re-registration -
+> only the wire protocol and framing differ from the gRPC design below.
 
 ## Context
-Edge nodes and application clients need to be notified of config changes with < 500ms p99 edge staleness. Three existing models have documented failure modes at scale: ZooKeeper's one-shot watches create a thundering herd during reconnection (200M watches = 20 GB RAM per ZOOKEEPER-1177; 10K notifications processed synchronously on leader thread block writes - the gap analysis), etcd's streaming watches consume ~1,960 MB at 100K streams with per-subscriber serialization cost (the gap analysis), and Consul's blocking queries require one HTTP connection per watched key with no multiplexing. The system must support 1M edge subscriptions with O(1) per-event fan-out cost and no re-registration requirement.
+Edge nodes and application clients need to be notified of config changes with < 500ms p99 edge staleness. Three existing models have documented failure modes at scale: ZooKeeper's one-shot watches create a thundering herd during reconnection (200M watches = 20 GB RAM per ZOOKEEPER-1177; 10K notifications processed synchronously on leader thread block writes), etcd's streaming watches consume ~1,960 MB at 100K streams with per-subscriber serialization cost, and Consul's blocking queries require one HTTP connection per watched key with no multiplexing. The system must support 1M edge subscriptions with O(1) per-event fan-out cost and no re-registration requirement.
 
 ## Decision
 We adopt **event-driven server-push via persistent gRPC bidirectional streams**, replacing watches entirely:
@@ -51,7 +60,7 @@ message SubscribeResponse {
 - Buffer retained until all subscribers have consumed it (reference-counted, released when last subscriber advances past it).
 
 ### Fan-Out Architecture
-- Control plane Raft leaders do NOT directly fan out to clients.
+- Control plane Raft leaders do not directly fan out to clients.
 - **Distribution service nodes** (non-voting Raft followers or dedicated relay nodes) subscribe to the Raft log and fan out to edge nodes.
 - Each distribution node handles up to 10K edge connections (gRPC streams).
 - For 1M edge nodes: ~100 distribution nodes.

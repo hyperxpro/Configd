@@ -25,8 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * RED-TEAM suite for {@link AclService} union-of-ancestors + absolute deny-precedence + default-deny
- * ({@code access-control.md} section 4.1).
+ * RED-TEAM suite for {@link AclService} union-of-ancestors + absolute deny-precedence + default-deny.
  * <p>
  * Each test <b>constructs an attack</b> against the authorization point and asserts the <b>correct,
  * secure decision</b>. If an assertion fails, the attack succeeded and the test names the defect. The
@@ -47,14 +46,12 @@ class AclServiceRedTeamTest {
         acl = new AclService();
     }
 
-    // =====================================================================================
     // ATTACK 4 - WALK-STOP EVASION (the subtle one).
     // The ancestor walk starts at floorKey(key) and walks back via lowerKey, filtering with
     // key.startsWith(candidate). A "decoy" non-ancestor that sorts BETWEEN real ancestors - or that
     // becomes floorKey(key) itself - must NOT (a) be applied to the key, nor (b) halt the walk before
     // a real, shorter ancestor. These are the strongest tests; a poisoned decoy carries a DENY that
     // would visibly corrupt the decision if the startsWith filter or the full-walk were broken.
-    // =====================================================================================
     @Nested
     @DisplayName("Attack 4: poisoned-decoy walk-stop evasion")
     class WalkStopEvasion {
@@ -135,10 +132,8 @@ class AclServiceRedTeamTest {
         }
     }
 
-    // =====================================================================================
     // ATTACK 2 - DENY BYPASS BY INSERTION ORDER. The decision must be identical regardless of whether
     // deny() or grant() was called first, at the same prefix and at different prefixes.
-    // =====================================================================================
     @Nested
     @DisplayName("Attack 2: deny is order-independent")
     class DenyOrderIndependence {
@@ -189,11 +184,9 @@ class AclServiceRedTeamTest {
         }
     }
 
-    // =====================================================================================
     // ATTACK 3 - DENY OUT-ORDERED BY SPECIFICITY. Deny must win whether it sits at a less-specific
     // ancestor (allow more specific) or a more-specific descendant (allow less specific) - including
     // for ADMIN ("deny beats sudo" in both directions).
-    // =====================================================================================
     @Nested
     @DisplayName("Attack 3: deny beats sudo regardless of specificity")
     class DenyBeatsSudoBothDirections {
@@ -231,10 +224,8 @@ class AclServiceRedTeamTest {
         }
     }
 
-    // =====================================================================================
     // ATTACK 1 - UNINTENDED ALLOW VIA UNION. The union must never manufacture a capability that no
     // matching ancestor granted. In particular, stacking READ/WRITE grants must NEVER yield ADMIN.
-    // =====================================================================================
     @Nested
     @DisplayName("Attack 1: union never manufactures an ungranted capability")
     class UnionNeverManufacturesCapability {
@@ -276,10 +267,8 @@ class AclServiceRedTeamTest {
         }
     }
 
-    // =====================================================================================
     // ATTACK 5 - PREFIX-BOUNDARY CONFUSION. Matching is exactly key.startsWith(prefix). A dot-terminated
     // deny must apply inside its subtree and NOT bleed to a lexical sibling outside the subtree.
-    // =====================================================================================
     @Nested
     @DisplayName("Attack 5: deny scoping is exactly startsWith (no sibling bleed)")
     class PrefixBoundaryScoping {
@@ -340,10 +329,8 @@ class AclServiceRedTeamTest {
         }
     }
 
-    // =====================================================================================
     // ATTACK 6 - GLOBAL DENY at the empty prefix "" overriding a root allow (also exercised in
     // WalkStopEvasion). "" is an ancestor of every key.
-    // =====================================================================================
     @Nested
     @DisplayName("Attack 6: empty-prefix global deny overrides everything")
     class GlobalEmptyPrefixDeny {
@@ -369,9 +356,7 @@ class AclServiceRedTeamTest {
         }
     }
 
-    // =====================================================================================
     // ATTACK 7 - REVOKE RESIDUE & OVERWRITE EDGES.
-    // =====================================================================================
     @Nested
     @DisplayName("Attack 7: revoke / overwrite leave no exploitable residue")
     class RevokeAndOverwrite {
@@ -433,9 +418,7 @@ class AclServiceRedTeamTest {
         }
     }
 
-    // =====================================================================================
     // ATTACK 8 - CROSS-PRINCIPAL LEAKAGE. One principal's grants/denies must never affect another.
-    // =====================================================================================
     @Nested
     @DisplayName("Attack 8: no cross-principal leakage")
     class CrossPrincipalIsolation {
@@ -469,10 +452,8 @@ class AclServiceRedTeamTest {
         }
     }
 
-    // =====================================================================================
     // PRODUCTION BYTE-IDENTITY - the only deployed grant is grant("", "root", all). With a single rule
-    // the union model must decide identically to the historical longest-match-only model.
-    // =====================================================================================
+    // the union model must decide identically to a longest-match-only model.
     @Nested
     @DisplayName("Deployed config: single global root grant is byte-identical")
     class ProductionShape {
@@ -494,11 +475,9 @@ class AclServiceRedTeamTest {
         }
     }
 
-    // =====================================================================================
     // ATTACK 9 - CONCURRENCY. A standing, never-removed DENY must hold as a SAFETY invariant while a
     // concurrent writer churns grant/revoke of the same capability. The denied cap must NEVER leak,
     // and isAllowed must never throw on a torn read (GrantEntry is immutable + swapped wholesale).
-    // =====================================================================================
     @Nested
     @DisplayName("Attack 9: concurrent grant-churn never leaks past a standing deny")
     class ConcurrencySafety {
@@ -578,12 +557,10 @@ class AclServiceRedTeamTest {
         }
     }
 
-    // =====================================================================================
-    // ATTACK 10 - WATCH CAN NEVER OUT-READ A READ (INV-WATCH-READ). The effective-WATCH floor
+    // ATTACK 10 - WATCH CAN NEVER OUT-READ A READ. The effective-WATCH floor
     // (WATCH AND READ) must hold under every adversarial shape: WATCH held while READ is absent or denied,
     // deny ordering, deep decoy walks, global READ deny. A single authorized WATCH without effective READ
-    // is a watch-bypass - exactly the class of defect INV-WATCH-READ exists to prevent.
-    // =====================================================================================
+    // is a watch-bypass - exactly the class of defect this floor exists to prevent.
     @Nested
     @DisplayName("Attack 10: WATCH is never authorized without effective READ")
     class WatchNeverOutreadsRead {
@@ -648,10 +625,8 @@ class AclServiceRedTeamTest {
         }
     }
 
-    // =====================================================================================
     // ATTACK 11 - LIST AND READ NEVER CROSS. Neither implies the other under any union/deny
     // shape; a stack of one must never manufacture the other.
-    // =====================================================================================
     @Nested
     @DisplayName("Attack 11: LIST and READ are non-crossing under union")
     class ListReadNonCrossing {
@@ -680,11 +655,9 @@ class AclServiceRedTeamTest {
         }
     }
 
-    // =====================================================================================
     // ATTACK 12 - PER-CAPABILITY DENY OF THE NEW CAPS IS NOT EVADABLE. A deny of LIST or WATCH cannot be
     // out-ordered, out-specified, or unioned around; deny(READ) is the second, equivalent way to kill
     // effective WATCH. Mirrors the proven DenyBeatsSudo / DenyOrderIndependence properties for LIST/WATCH.
-    // =====================================================================================
     @Nested
     @DisplayName("Attack 12: per-capability DENY of LIST/WATCH is absolute and inevadable")
     class NewCapabilityDenyNotEvadable {
@@ -738,14 +711,12 @@ class AclServiceRedTeamTest {
         }
     }
 
-    // =====================================================================================
-    // ATTACK 13 - isAllowed IS SINGLE-KEY, NOT WHOLE-TARGET. The INV-WATCH-READ floor is correct for a
+    // ATTACK 13 - isAllowed IS SINGLE-KEY, NOT WHOLE-TARGET. The WATCH-requires-READ floor is correct for a
     // single KEY, but `isAllowed(p, prefix, ...)` only unions a key's ANCESTOR grants (floorKey -> lowerKey);
     // it can NEVER see a deny on a DESCENDANT of `prefix`. So a single isAllowed-at-the-subtree-root does
     // NOT prove READ over the whole subtree. These tests pin that contract boundary so that the
     // watch/list subscribe path enforces the floor PER DELIVERED KEY (or with a whole-target cover-check
     // via coversTarget) - NOT with one isAllowed call at the subtree root, which would over-expose.
-    // =====================================================================================
     @Nested
     @DisplayName("Attack 13: isAllowed is a single-key floor — a subtree watch/list must re-check per delivered key")
     class SingleKeyFloorIsNotWholeTargetCover {

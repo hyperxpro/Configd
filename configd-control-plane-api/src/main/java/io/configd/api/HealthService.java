@@ -17,22 +17,11 @@ import java.util.Objects;
  */
 public final class HealthService {
 
-    /**
-     * Individual health check component.
-     */
     @FunctionalInterface
     public interface HealthCheck {
-        /**
-         * Runs the health check.
-         *
-         * @return the check result
-         */
         CheckResult check();
     }
 
-    /**
-     * Result of a single health check.
-     */
     public record CheckResult(String name, boolean healthy, String detail) {
         public CheckResult {
             Objects.requireNonNull(name, "name must not be null");
@@ -47,9 +36,6 @@ public final class HealthService {
         }
     }
 
-    /**
-     * Aggregate health status.
-     */
     public record HealthStatus(boolean healthy, List<CheckResult> checks) {
         public HealthStatus {
             Objects.requireNonNull(checks, "checks must not be null");
@@ -63,27 +49,15 @@ public final class HealthService {
         this.readinessChecks = new ArrayList<>();
     }
 
-    /**
-     * Registers a readiness health check.
-     *
-     * @param check the health check to register
-     */
     public void registerReadinessCheck(HealthCheck check) {
         Objects.requireNonNull(check, "check must not be null");
         readinessChecks.add(check);
     }
 
-    /**
-     * Liveness check. Always returns healthy if the service is reachable.
-     */
     public HealthStatus liveness() {
         return new HealthStatus(true, List.of(CheckResult.healthy("liveness")));
     }
 
-    /**
-     * Readiness check. Runs all registered health checks and returns
-     * unhealthy if any check fails.
-     */
     public HealthStatus readiness() {
         List<CheckResult> results = new ArrayList<>(readinessChecks.size());
         boolean allHealthy = true;
@@ -103,9 +77,7 @@ public final class HealthService {
         return new HealthStatus(allHealthy, results);
     }
 
-    /**
-     * Detailed health report including all checks.
-     */
+    /** Currently identical to {@link #readiness()}; no additional diagnostics are collected yet. */
     public HealthStatus detailed() {
         return readiness();
     }

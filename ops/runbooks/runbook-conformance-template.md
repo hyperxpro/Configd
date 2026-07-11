@@ -5,7 +5,7 @@ cluster recover. This template defines what "recovered" means, so
 those claims can be tested.
 
 A drill is a periodic, scheduled exercise of a runbook against a real
-or simulated cluster. The expected cadence per gap-closure §4 is:
+or simulated cluster. The expected cadence is:
 
 | Drill | Cadence | Owner |
 |-------|---------|-------|
@@ -77,8 +77,7 @@ follow-ups in `notes`.
 
 ## What "GREEN" requires
 
-Per gap-closure §4, the GA review can record a runbook as GREEN only
-when:
+The readiness review can record a runbook as GREEN only when:
 
 - A real (non-tabletop) drill has been executed against the runbook.
 - The drill result file shows `within_sla=true`,
@@ -86,11 +85,10 @@ when:
   `data_conformance=pass`.
 - The drill cadence above is being met.
 
-GA review records anything less as YELLOW with the actual measured
+The review records anything less as YELLOW with the actual measured
 state, never rounded up.
 
 ## Related
 
 - All runbooks under `ops/runbooks/`
-- `docs/decisions/adr-0025-on-call-rotation-required.md`
-- `docs/progress.md` — Phase 10 records what has actually been drilled
+- `docs/adr/adr-0025-on-call-rotation-required.md`

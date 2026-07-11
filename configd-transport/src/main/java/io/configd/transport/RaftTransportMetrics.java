@@ -14,7 +14,7 @@ package io.configd.transport;
 public interface RaftTransportMetrics {
 
     /**
-     * Records a rejected peer-identity binding (WH-08/WH-09): a TLS handshake whose certificate
+     * Records a rejected peer-identity binding: a TLS handshake whose certificate
      * identity is not an authorized node, or a frame whose {@code senderId} prefix / in-body
      * {@code leaderId}/{@code candidateId} does not match the connection's verified {@link
      * io.configd.common.NodeId}. Backs the {@code configd_raft_peer_identity_mismatch} alert series.
@@ -24,7 +24,7 @@ public interface RaftTransportMetrics {
     default void onPeerIdentityRejected() {}
 
     /**
-     * Records an inbound frame dropped at the Raft message-decode boundary (WH-10): a frame that
+     * Records an inbound frame dropped at the Raft message-decode boundary: a frame that
      * framed and CRC-verified cleanly but could not be turned into an actionable {@code RaftMessage} -
      * a dormant/undecodable {@link MessageType} (e.g. the reserved {@code PLUMTREE_*}/{@code HYPARVIEW_*}
      * /{@code HEARTBEAT} codes) that has no consensus codec, or a structurally-malformed payload

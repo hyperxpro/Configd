@@ -7,7 +7,7 @@ package io.configd.common.auth;
  *
  * <ul>
  *   <li>{@link #OFF} (default) - no online revocation check at all; a certificate is trusted on chain +
- *       {@code notAfter} alone, exactly as before Gate 5 (byte-identical).</li>
+ *       {@code notAfter} alone.</li>
  *   <li>{@link #LAX} - honour a definite revoked / not-revoked answer, but <b>fail-OPEN</b> (admit) when
  *       the responder is unreachable, raising a loud responder-down warning. Recommended once a responder
  *       is configured.</li>

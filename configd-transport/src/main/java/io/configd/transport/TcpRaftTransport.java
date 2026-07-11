@@ -111,7 +111,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
     private final Consumer<InboundMessage> inboundHandler;
     private final ConnectionManager connectionManager;
 
-    /** Cert-identity &harr; NodeId binding policy (WH-08/09). Default {@link PeerIdentityPolicy#unenforced()}. */
+    /** Cert-identity &harr; NodeId binding policy. Default {@link PeerIdentityPolicy#unenforced()}. */
     private final PeerIdentityPolicy peerIdentityPolicy;
     /** Security-event sink (peer-identity rejections). Default {@link RaftTransportMetrics#NOOP}. */
     private final RaftTransportMetrics transportMetrics;
@@ -121,8 +121,8 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
     /**
      * Min interval between throttled inbound decode/handler failure log lines (ns). A decode failure
      * drops the connection (one line per connection), but a handler throw keeps the read loop running
-     * (one line per frame), so an authenticated-but-hostile peer could otherwise flood the log - the
-     * WH-10 anti-pattern. The connection is dropped or the frame skipped regardless; only the log line
+     * (one line per frame), so an authenticated-but-hostile peer could otherwise flood the log. The
+     * connection is dropped or the frame skipped regardless; only the log line
      * is rate-limited. Mirrors {@code RaftTransportAdapter.LOG_THROTTLE_INTERVAL_NANOS}.
      */
     private static final long LOG_THROTTLE_INTERVAL_NANOS = 1_000_000_000L; // 1/sec
@@ -188,16 +188,15 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
             TlsManager tlsManager,
             Consumer<InboundMessage> inboundHandler
     ) {
-        // Legacy 5-arg constructor: peer-identity binding unenforced, no metrics sink. Byte- and
-        // behaviour-identical to the pre-WH-08/09 transport (the enforcement path is dormant until an
-        // allow-list policy is supplied via the fuller constructor).
+        // Peer-identity binding unenforced, no metrics sink: the enforcement path stays dormant
+        // until an allow-list policy is supplied via the fuller constructor.
         this(self, bindAddress, peerAddresses, tlsManager, inboundHandler,
                 PeerIdentityPolicy.unenforced(), RaftTransportMetrics.NOOP);
     }
 
     /**
-     * Creates a TCP Raft transport with an explicit peer-identity binding policy and metrics sink
-     * (WH-08/09). When {@code peerIdentityPolicy} is {@linkplain PeerIdentityPolicy#enforced()
+     * Creates a TCP Raft transport with an explicit peer-identity binding policy and metrics sink.
+     * When {@code peerIdentityPolicy} is {@linkplain PeerIdentityPolicy#enforced()
      * enforced}, an accepted peer's TLS cert identity is verified against the allow-list and each
      * frame's {@code senderId} must match the connection's resolved {@link NodeId}; otherwise the
      * transport keeps its CA-chain-only behavior (with a one-time warning when TLS is on).
@@ -274,7 +273,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
 
     /**
      * Emits a loud one-time warning when the transport runs mTLS but no peer-identity allow-list is
-     * configured (WH-08/09 enforce-when-configured, warn-when-not). In this posture a cert-valid peer
+     * configured (enforce-when-configured, warn-when-not). In this posture a cert-valid peer
      * can still forge another node's {@code senderId}; only the CA-chain is checked. No warning for
      * plaintext (test/single-node) or when a policy is enforced.
      */
@@ -291,9 +290,8 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
      * Emits an inbound decode/handler failure as a WARN at most once per
      * {@link #LOG_THROTTLE_INTERVAL_NANOS}, counting suppressed lines and reporting (and resetting)
      * the tally on the line that DOES emit. Shared by the decode-failure and handler-error paths - a
-     * hostile-but-authenticated peer could otherwise flood the log one line per frame (WH-10). Replaces
-     * the prior raw {@code System.err.println}/{@code printStackTrace} so every drop-path uses the same
-     * rate-limited {@link Logger}, uniform with the adapter's in-body/decode-drop throttling.
+     * hostile-but-authenticated peer could otherwise flood the log one line per frame. Every drop-path
+     * uses the same rate-limited {@link Logger}, uniform with the adapter's in-body/decode-drop throttling.
      */
     private void logInboundFailureThrottled(java.util.function.LongFunction<String> message) {
         long now = System.nanoTime();
@@ -482,7 +480,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
     }
 
     /**
-     * Reads inbound frames on a connection. WH-08/09 identity binding pins the connection's authorized
+     * Reads inbound frames on a connection. Identity binding pins the connection's authorized
      * {@link NodeId} (when an allow-list is enforced) and drops any frame whose {@code senderId} differs:
      * <ul>
      *   <li><b>server-accepted</b> ({@code dialTarget == null}): resolve + authorize the peer's TLS cert
@@ -501,7 +499,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                 if (serverAccepted && socket instanceof SSLSocket ssl) {
                     // Layer 1: resolve + authorize the accepted peer's cert identity BEFORE any frame.
                     try {
-                        // Bound the forced handshake (RR-002): a peer that completes the TCP accept but
+                        // Bound the forced handshake: a peer that completes the TCP accept but
                         // stalls mid-TLS-handshake must not park this accept thread. setSoTimeout right
                         // before startHandshake reaps a stalled handshake in HANDSHAKE_TIMEOUT_MS; the
                         // read-idle deadline (inboundReadTimeoutMs, already set on the socket in acceptLoop)
@@ -539,7 +537,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                 int senderId = in.readInt();
                 NodeId from = NodeId.of(senderId);
 
-                // Layer 2 (WH-08/09): the self-declared senderId prefix must equal the connection's
+                // Layer 2: the self-declared senderId prefix must equal the connection's
                 // authenticated identity (cert-resolved on accept, or the dialed target on the reverse
                 // path). A cert-valid peer forging another node's id is dropped (desync-equivalent) and
                 // counted. When enforced, a MISSING pin is also a DENY (fail closed, mirroring the Netty
@@ -618,7 +616,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                         NodeId peer = from;
                         MessageType type = frame.messageType();
                         String detail = e.getClass().getName() + ": " + e.getMessage();
-                        // Throttled (WH-10): the loop keeps reading, so a handler that throws on every
+                        // Throttled: the loop keeps reading, so a handler that throws on every
                         // frame would otherwise emit one WARN + stack trace per frame. Log class+message
                         // (the stack trace is dropped to keep the line bounded, as the adapter does).
                         logInboundFailureThrottled(suppressed -> "Inbound handler error from peer " + peer
@@ -921,7 +919,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                     try {
                         // Outbound-reverse reader: a peer may reply on this connection WE dialed. Bind its
                         // frames to the KNOWN target (hostname-verified on connect) so a Byzantine peer
-                        // cannot write forged-senderId frames back on it (WH-08/09 reverse-path binding).
+                        // cannot write forged-senderId frames back on it (reverse-path binding).
                         handleInboundConnection(s, false, target);
                     } finally {
                         teardown(s);

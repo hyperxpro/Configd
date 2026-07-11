@@ -44,8 +44,6 @@ public final class FaultInjectingStorage implements Storage {
         this.delegate = delegate;
     }
 
-    // ---- Arming (fluent) ----
-
     /** The next {@code n} {@code put}/{@code appendToLog} calls throw (transient IO error). */
     public FaultInjectingStorage failNextWrites(int n) {
         this.failNextWrites = n;
@@ -73,8 +71,6 @@ public final class FaultInjectingStorage implements Storage {
     public long writeFaultsFired() { return writeFaultsFired.get(); }
     public long syncFaultsFired() { return syncFaultsFired.get(); }
     public long bytesAppended() { return bytesAppended.get(); }
-
-    // ---- Storage ----
 
     @Override
     public void put(String key, byte[] value) {

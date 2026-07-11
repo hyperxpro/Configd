@@ -20,10 +20,10 @@ import java.util.concurrent.TimeUnit;
 /**
  * JDK-vs-Netty head-to-head - <b>surface 3: edge fan-out NOTIFY wire</b> (the highest per-op
  * allocation in the system, on the hottest push path: every committed delta -> every
- * subscriber). The baseline measurement measured the status-quo codec at up to 71 KB/op (signed, batch 64) and
- * claimed the dominant term is <em>codec-internal churn upstream of the transport</em>. This
- * benchmark tests that claim directly by decomposing the allocation and racing best-JDK vs
- * best-Netty. Run with {@code -prof gc} (B/op, CPU-count-independent).
+ * subscriber). An earlier benchmark measured the status-quo codec at up to 71 KB/op (signed,
+ * batch 64) and attributed the dominant term to <em>codec-internal churn upstream of the
+ * transport</em>. This benchmark tests that claim directly by decomposing the allocation and
+ * racing best-JDK vs best-Netty. Run with {@code -prof gc} (B/op, CPU-count-independent).
  *
  * <h2>The decomposition (the heart of the verdict)</h2>
  * <ul>
@@ -37,13 +37,12 @@ import java.util.concurrent.TimeUnit;
  *       buffer NOR a pooled Netty {@code ByteBuf} can remove: per notification, the
  *       {@link CommandCodec#encodeBatch} blob + the {@link ConfigDelta#signature()} /
  *       {@link ConfigDelta#nonce()} defensive clones. This is the allocation "upstream of the
- *       wire" - the term the baseline analysis said the transport layer cannot touch. Measuring it isolates
- *       exactly how much of the 71 KB is, and is not, a transport concern.</li>
+ *       wire" that the transport layer cannot touch. Measuring it isolates exactly how much of
+ *       the 71 KB is, and is not, a transport concern.</li>
  *   <li>{@code jdkDecodeNotify} - receive side, for completeness.</li>
  * </ul>
- * The Netty leg ({@code nettyBestEncodePooled}, single pass into a pooled {@code ByteBuf})
- * lives in {@code FanOutWireNettyH2HBenchmark}, added once the Netty dependency is wired. The
- * race: if {@code jdkBestEncodeInto} ~ {@code nettyBestEncodePooled} ~ {@code
+ * The Netty leg ({@code nettyBestEncodePooled}, single pass into a pooled {@code ByteBuf}) is
+ * below. The race: if {@code jdkBestEncodeInto} ~ {@code nettyBestEncodePooled} ~ {@code
  * messageBuildingFloor}, the win over status quo is the single-pass rewrite (shared, no Netty),
  * and the residual floor is codec-internal - Netty addresses neither.
  */
@@ -77,8 +76,8 @@ public class FanOutWireH2HBenchmark {
         for (int i = 0; i < VALUE_BYTES; i++) {
             value[i] = (byte) i;
         }
-        // Identical signed steady-state shape as the EdgeWireAllocBenchmark (apples-to-
-        // apples with the prior baseline): Ed25519 sig + non-zero epoch + 8-byte nonce.
+        // Matches EdgeWireAllocBenchmark's signed steady-state shape (apples-to-apples):
+        // Ed25519 sig + non-zero epoch + 8-byte nonce.
         List<CommitNotification> notifications = new ArrayList<>(notifyCount);
         for (int i = 0; i < notifyCount; i++) {
             List<ConfigMutation> mutations =

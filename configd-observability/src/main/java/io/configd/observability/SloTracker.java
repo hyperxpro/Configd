@@ -144,10 +144,6 @@ public final class SloTracker {
                         this::statusFor));
     }
 
-    // -----------------------------------------------------------------------
-    // SloStatus record
-    // -----------------------------------------------------------------------
-
     /**
      * Point-in-time status of a single SLO.
      *
@@ -170,10 +166,6 @@ public final class SloTracker {
             Objects.requireNonNull(name, "name must not be null");
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Internal
-    // -----------------------------------------------------------------------
 
     private void recordEvent(String sloName, boolean success) {
         requireDefined(sloName);

@@ -78,10 +78,6 @@ class EdgeConfigClientTest {
         return new ConfigSnapshot(data, version, ts);
     }
 
-    // -----------------------------------------------------------------------
-    // Initial state
-    // -----------------------------------------------------------------------
-
     @Nested
     class InitialState {
 
@@ -106,10 +102,6 @@ class EdgeConfigClientTest {
             assertTrue(client.subscriptions().isEmpty());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Reads - delegation to LocalConfigStore
-    // -----------------------------------------------------------------------
 
     @Nested
     class ReadOperations {
@@ -157,10 +149,6 @@ class EdgeConfigClientTest {
             assertTrue(result.found());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Delta application
-    // -----------------------------------------------------------------------
 
     @Nested
     class DeltaApplication {
@@ -222,10 +210,6 @@ class EdgeConfigClientTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Snapshot loading
-    // -----------------------------------------------------------------------
-
     @Nested
     class SnapshotLoading {
 
@@ -246,10 +230,6 @@ class EdgeConfigClientTest {
             assertEquals(StalenessTracker.State.CURRENT, client.staleness());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Staleness tracking
-    // -----------------------------------------------------------------------
 
     @Nested
     class StalenessTracking {
@@ -276,10 +256,6 @@ class EdgeConfigClientTest {
             assertEquals(250, client.stalenessMs());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Subscriptions
-    // -----------------------------------------------------------------------
 
     @Nested
     class Subscriptions {
@@ -311,10 +287,6 @@ class EdgeConfigClientTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Metrics
-    // -----------------------------------------------------------------------
-
     @Nested
     class MetricsSnapshot {
 
@@ -340,10 +312,6 @@ class EdgeConfigClientTest {
             assertEquals(0, m.snapshotSize());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Null safety
-    // -----------------------------------------------------------------------
 
     @Nested
     class NullSafety {

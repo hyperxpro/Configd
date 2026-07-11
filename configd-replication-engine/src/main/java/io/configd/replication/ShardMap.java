@@ -28,22 +28,23 @@ import java.util.stream.IntStream;
  *       always ask the map.</li>
  *   <li><b>An {@link #epoch()} on the routing envelope.</b> Carry it so a stale router that
  *       targets a shard that has since split is told "wrong epoch, re-resolve" rather than
- *       mis-committing (the TiKV RegionEpoch pattern). The v1 {@link StaticShardMap} never bumps
- *       it (it returns the deploy-time topology epoch {@code 1} for the life of the deployment); a
- *       future dynamic map bumps it on every split/merge. The value is the authenticated
+ *       mis-committing (the TiKV RegionEpoch pattern). {@link StaticShardMap} never bumps it (it
+ *       returns the deploy-time topology epoch {@code 1} for the life of the deployment); a future
+ *       dynamic map would bump it on every split/merge. The value is the authenticated
  *       {@code topology-descriptor.dat} epoch, and the edge watch/SUBSCRIBE resume tokens bind it
- *       (A4) so a cursor from a superseded topology is rejected {@code STALE_TOPOLOGY} rather than
+ *       so a cursor from a superseded topology is rejected {@code STALE_TOPOLOGY} rather than
  *       mis-routed.</li>
  * </ol>
  *
- * <h2>v1 / v2</h2>
+ * <h2>Static vs. dynamic routing</h2>
  * <ul>
- *   <li><b>v1</b> - {@link StaticShardMap}: {@code shardFor = hash(scope, key) mod N};
+ *   <li>{@link StaticShardMap} today: {@code shardFor = hash(scope, key) mod N};
  *       {@code shardIds = [0..N)}; {@code epoch = 1} (the deploy-time constant) for the life of the
  *       deployment. N is a deploy-time constant, identical on all nodes; online resharding is out.</li>
- *   <li><b>v2 (future)</b> - the same interface but {@code shardFor} consults a versioned table
- *       that a placement driver mutates on split/merge, and {@code epoch} bumps on every change.
- *       Swapping the implementation is the entire v2 routing delta - no caller changes.</li>
+ *   <li>A future dynamic map would keep this same interface but have {@code shardFor} consult a
+ *       versioned table that a placement driver mutates on split/merge, with {@code epoch} bumping
+ *       on every change. Swapping the implementation would be the entire routing delta - no caller
+ *       changes.</li>
  * </ul>
  *
  * <p>Implementations must be safe to call from any thread (routing happens on request threads,
@@ -76,7 +77,7 @@ public interface ShardMap {
     IntStream shardIds();
 
     /**
-     * The membership version. Monotonically non-decreasing; bumps on any split/merge/rebalance. The v1
+     * The membership version. Monotonically non-decreasing; bumps on any split/merge/rebalance.
      * {@link StaticShardMap} returns the deploy-time topology epoch ({@code 1}) for its whole life
      * (membership never changes).
      *

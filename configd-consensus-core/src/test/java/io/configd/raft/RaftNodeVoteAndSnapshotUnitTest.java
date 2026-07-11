@@ -12,17 +12,14 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Discriminating tests for {@link RaftNode}'s vote-decision logic
- * ({@code handleRequestVote}), the local snapshot trigger
- * ({@code triggerSnapshot}), and the joint-side voter-count bound of
+ * Tests for {@link RaftNode}'s vote-decision logic ({@code handleRequestVote}), the local
+ * snapshot trigger ({@code triggerSnapshot}), and the joint-side voter-count bound of
  * {@code deserializeConfigChange}.
  * <p>
- * {@code handleRequestVote} had untested removed-conditional
- * gaps on the non-voter/stale-term/higher-term/can-vote branches;
- * {@code triggerSnapshot} had untested boundary gaps on its "nothing new to
- * snapshot" and term-unknown guards. Each test pins one branch's observable
- * outcome (a vote granted or denied, a snapshot taken or skipped). Driven through
- * the public {@code handleMessage}/{@code triggerSnapshot} seams; deterministic.
+ * Each test pins one branch's observable outcome (a vote granted or denied, a snapshot taken
+ * or skipped), covering the non-voter/stale-term/higher-term/can-vote branches of vote decisions
+ * and the boundary guards of snapshot triggering. Driven through the public
+ * {@code handleMessage}/{@code triggerSnapshot} seams; deterministic.
  */
 class RaftNodeVoteAndSnapshotUnitTest {
 
@@ -69,9 +66,8 @@ class RaftNodeVoteAndSnapshotUnitTest {
         void grantsVoteToUpToDateCandidateInNewTerm() {
             RecordingTransport t = new RecordingTransport();
             RaftNode node = follower(t);
-            // Fresh follower (term 0, empty log) gets a vote request at term 1 from an
-            // up-to-date candidate -> grant + persist. Kills the canVote/logOk grant
-            // path (L1326/1329) and the vote response success field.
+            // A fresh follower (term 0, empty log) receiving a vote request at term 1 from an
+            // up-to-date candidate must grant the vote and persist it.
             node.handleMessage(vote(1, N2, 0, 0));
             List<RequestVoteResponse> resps = t.voteResponses();
             assertEquals(1, resps.size());
@@ -85,8 +81,7 @@ class RaftNodeVoteAndSnapshotUnitTest {
             RaftNode node = follower(t);
             node.handleMessage(new RequestVoteResponse(5, false, N2, false)); // term -> 5
             t.clear();
-            // Kills handleRequestVote L1313 ORDER_ELSE/Boundary (req.term() <
-            // currentTerm): a stale-term (3) request must be rejected.
+            // A stale-term (3) request (req.term() < currentTerm) must be rejected.
             node.handleMessage(vote(3, N2, 0, 0));
             List<RequestVoteResponse> resps = t.voteResponses();
             assertEquals(1, resps.size());
@@ -101,8 +96,8 @@ class RaftNodeVoteAndSnapshotUnitTest {
             node.handleMessage(vote(1, N2, 0, 0)); // grant N2
             assertEquals(N2, node.votedFor());
             t.clear();
-            // A DIFFERENT candidate in the SAME term must be rejected (already voted).
-            // Kills the canVote `votedFor == null || votedFor.equals(candidate)` guard.
+            // A different candidate in the same term must be rejected: canVote requires
+            // votedFor == null || votedFor.equals(candidate).
             node.handleMessage(vote(1, N3, 0, 0));
             List<RequestVoteResponse> resps = t.voteResponses();
             assertEquals(1, resps.size());
@@ -117,8 +112,8 @@ class RaftNodeVoteAndSnapshotUnitTest {
             node.handleMessage(new AppendEntriesRequest(2, N2, 0, 0,
                     List.of(new LogEntry(1, 2, new byte[]{1}), new LogEntry(2, 2, new byte[]{2})), 0));
             t.clear();
-            // A candidate at a higher term but with a SHORTER/older log must be denied
-            // on the up-to-date check (section 5.4.1). Kills the logOk branch wiring.
+            // A candidate at a higher term but with a shorter/older log must be denied by the
+            // up-to-date check (Raft section 5.4.1).
             node.handleMessage(vote(3, N3, 1, 1)); // lastLogTerm 1 < our 2
             List<RequestVoteResponse> resps = t.voteResponses();
             assertEquals(1, resps.size());
@@ -127,8 +122,8 @@ class RaftNodeVoteAndSnapshotUnitTest {
 
         @Test
         void higherTermVoteRequestStepsDownLeader() {
-            // A leader receiving a RequestVote at a higher term steps down before
-            // deciding. Kills handleRequestVote L1320 (req.term() > currentTerm).
+            // A leader receiving a RequestVote at a higher term (req.term() > currentTerm)
+            // steps down before deciding.
             RaftConfig config = RaftConfig.of(N1, Set.of());
             RecordingTransport t = new RecordingTransport();
             RaftNode leader = new RaftNode(config, new RaftLog(), t, new CountingStateMachine(),
@@ -136,9 +131,8 @@ class RaftNodeVoteAndSnapshotUnitTest {
             for (int i = 0; i < 301; i++) leader.tick();
             assertEquals(RaftRole.LEADER, leader.role());
             long term = leader.currentTerm();
-            // Reconfigure to include N2 so the leader is a voter that can consider the
-            // request; simplest: a single-node leader is still a voter of {N1}. Send a
-            // higher-term vote from a node - the leader adopts the term and steps down.
+            // A single-node leader is still a voter of {N1}; a higher-term vote request
+            // makes it adopt the new term and step down.
             leader.handleMessage(vote(term + 5, N1, 99, 99));
             assertEquals(term + 5, leader.currentTerm());
             assertEquals(RaftRole.FOLLOWER, leader.role());
@@ -164,9 +158,8 @@ class RaftNodeVoteAndSnapshotUnitTest {
         void noSnapshotWhenNothingNewBeyondSnapshotPoint() {
             Storage storage = Storage.inMemory();
             RaftNode node = durableSingleNodeLeader(storage);
-            // Take a snapshot up to lastApplied, then immediately try again with no
-            // new applies -> false. Kills triggerSnapshot L427 boundary
-            // (appliedIndex <= snapshotIndex).
+            // Taking a snapshot up to lastApplied, then immediately trying again with no new
+            // applies, must return false (appliedIndex <= snapshotIndex).
             assertTrue(node.triggerSnapshot(), "first snapshot with applied entries must succeed");
             long snapIdx = node.log().snapshotIndex();
             assertTrue(snapIdx > 0);
@@ -183,7 +176,7 @@ class RaftNodeVoteAndSnapshotUnitTest {
             long applied = node.log().lastApplied();
             assertTrue(applied >= 3, "no-op + 2 commands applied on single-node path");
             assertTrue(node.triggerSnapshot());
-            // Kills the snapshot effect: snapshotIndex must move up to lastApplied.
+            // snapshotIndex must move up to lastApplied.
             assertEquals(applied, node.log().snapshotIndex());
         }
     }
@@ -195,8 +188,8 @@ class RaftNodeVoteAndSnapshotUnitTest {
 
         @Test
         void rejectsAbsurdNewVoterCountInJointConfig() {
-            // magic + isJoint(1) + oldCount(1) + oldId + newCount(1000 > 255) -> throw.
-            // Kills deserializeConfigChange L1034 ConditionalsBoundary (newCount > 255).
+            // magic + isJoint(1) + oldCount(1) + oldId + newCount(1000 > 255) must throw:
+            // an absurd newCount (> 255) is rejected.
             java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocate(4 + 1 + 4 + 4 + 4);
             buf.put(new byte[]{0x52, 0x43, 0x46, 0x47}); // RCFG
             buf.put((byte) 1); // joint

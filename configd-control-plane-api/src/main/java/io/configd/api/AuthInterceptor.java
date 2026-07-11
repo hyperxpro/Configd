@@ -12,9 +12,6 @@ import java.util.Set;
  */
 public final class AuthInterceptor {
 
-    /**
-     * Result of an authentication attempt.
-     */
     public sealed interface AuthResult {
         /**
          * The token was valid and the caller is authenticated. {@code roles} is defensively copied to a
@@ -29,13 +26,9 @@ public final class AuthInterceptor {
                 roles = Set.copyOf(roles); // non-null + immutable snapshot; rejects null elements; fixes aliasing/CME
             }
         }
-        /** Authentication was denied. */
         record Denied(String reason) implements AuthResult {}
     }
 
-    /**
-     * Validates an authentication token and returns the result.
-     */
     @FunctionalInterface
     public interface TokenValidator {
         AuthResult validate(String token);
@@ -43,18 +36,11 @@ public final class AuthInterceptor {
 
     private final TokenValidator validator;
 
-    /**
-     * Creates an auth interceptor with the given token validator.
-     *
-     * @param validator the token validation strategy (non-null)
-     */
     public AuthInterceptor(TokenValidator validator) {
         this.validator = Objects.requireNonNull(validator, "validator must not be null");
     }
 
     /**
-     * Authenticates a request using the provided token.
-     *
      * @param token the bearer token (may be null or blank)
      * @return the authentication result
      */

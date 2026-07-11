@@ -31,7 +31,7 @@ public interface RaftTransportEndpoint extends RaftTransport, AutoCloseable {
     /**
      * The {@link TlsManager} this transport enforces mTLS with, or {@code null} for plaintext
      * (test/single-node). Exposed so the wiring can fail-closed when {@code --tls-*} flags are set
-     * but the transport received no manager (F-0050).
+     * but the transport received no manager.
      *
      * @return the TlsManager, or null if plaintext
      */
@@ -54,7 +54,7 @@ public interface RaftTransportEndpoint extends RaftTransport, AutoCloseable {
     long inboundConnectionsRefused();
 
     /**
-     * Whether this transport enforces peer-identity binding (WH-08/09) - i.e. a
+     * Whether this transport enforces peer-identity binding - i.e. a
      * {@linkplain PeerIdentityPolicy#enforced() non-empty allow-list} is configured. The server wires
      * the in-body {@code leaderId}/{@code candidateId} check ({@code RaftTransportAdapter}) to the SAME
      * policy so both layers agree. Default {@code false} (unenforced / no-op transports).

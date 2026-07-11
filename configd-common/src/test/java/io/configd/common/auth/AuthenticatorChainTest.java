@@ -70,8 +70,6 @@ class AuthenticatorChainTest {
         return new AuthResult.Denied(reason, reason.name());
     }
 
-    // ---- resolution semantics --------------------------------------------------------------------
-
     @Test
     void firstAcceptanceWins() {
         AuthenticatorChain chain = new AuthenticatorChain(List.of(
@@ -146,8 +144,6 @@ class AuthenticatorChainTest {
         AuthenticatorChain chain = new AuthenticatorChain(List.of(TestAuthenticator.returning("a", auth("x"))));
         assertThrows(NullPointerException.class, () -> chain.resolve(null));
     }
-
-    // ---- construction from config (fail-loud) ----------------------------------------------------
 
     private static ConfigSource cfg(Map<String, String> m) {
         return new ConfigSource() {

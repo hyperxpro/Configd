@@ -141,23 +141,18 @@ public final class PlumtreeNode {
         Objects.requireNonNull(id, "id must not be null");
 
         if (receivedMessages.contains(id)) {
-            // Duplicate - PRUNE the sender to move them to lazy set
             outbox.add(new OutboundMessage.Prune(from));
             return false;
         }
 
         receivedMessages.add(id);
-
-        // Cancel any pending lazy notification for this message
         lazyNotifications.remove(id);
 
-        // Forward to all eager peers except the sender
         for (NodeId peer : eagerPeers) {
             if (!peer.equals(from)) {
                 outbox.add(new OutboundMessage.EagerPush(peer, id, payload));
             }
         }
-        // Send IHAVE to lazy peers
         for (NodeId peer : lazyPeers) {
             if (!peer.equals(from)) {
                 outbox.add(new OutboundMessage.IHave(peer, id));
@@ -177,9 +172,8 @@ public final class PlumtreeNode {
      */
     public void receiveIHave(NodeId from, MessageId id) {
         if (receivedMessages.contains(id)) {
-            return; // Already have it
+            return;
         }
-        // Record the notification with a timeout
         lazyNotifications.putIfAbsent(id, new LazyNotification(from, graftTimeoutTicks));
     }
 
@@ -217,7 +211,6 @@ public final class PlumtreeNode {
         for (MessageId id : expired) {
             LazyNotification notification = lazyNotifications.remove(id);
             if (notification != null && !receivedMessages.contains(id)) {
-                // GRAFT: move the peer from lazy to eager and request the message
                 NodeId peer = notification.from;
                 lazyPeers.remove(peer);
                 eagerPeers.add(peer);

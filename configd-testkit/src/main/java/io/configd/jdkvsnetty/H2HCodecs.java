@@ -23,7 +23,7 @@ import java.util.zip.CRC32C;
  *
  * <p><b>Byte-identity is the contract.</b> {@code WireH2HCorrectnessTest} proves every method
  * here reproduces the exact bytes of the production {@code FrameCodec}/{@code EdgeFrameCodec}.
- * A faster encoder that changes the wire is disqualified (charter hard-rule 5).
+ * A faster encoder that changes the wire is disqualified.
  *
  * <p><b>What these encoders deliberately do NOT remove</b> (the codec-internal /
  * message-building term, central to the verdict): they still call
@@ -83,11 +83,11 @@ final class H2HCodecs {
         out.putInt(ns.size());
         for (CommitNotification n : ns) {
             ConfigDelta d = n.delta();
-            // ---- message-building term (codec-internal; not removed by buffer reuse) ----
+            // message-building term (codec-internal; not removed by buffer reuse):
             byte[] batch = CommandCodec.encodeBatch(d.mutations());
             byte[] sig = d.signature(); // defensive clone (null if unsigned)
             byte[] nonce = d.nonce();   // defensive clone (never null)
-            // ---- framing written straight into the reused buffer (no intermediates) ----
+            // framing written straight into the reused buffer, no intermediates:
             out.putLong(n.seq());
             out.putLong(n.commitTimestampMillis());
             out.putLong(d.fromVersion());

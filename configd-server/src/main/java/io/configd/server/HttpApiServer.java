@@ -132,8 +132,8 @@ public final class HttpApiServer {
     /**
      * As the leadership-seam constructor, plus the SPI {@link AuthenticatorChain}. Mirrors
      * {@code NettyHttpApiServer}'s chain constructor so the two adapters enforce the chain identically:
-     * when the chain is non-null it supersedes {@code authInterceptor}; when null this is byte-identical to
-     * the legacy bearer wiring.
+     * when the chain is non-null it supersedes {@code authInterceptor}; when null this falls back to
+     * the legacy bearer wiring unchanged.
      */
     public HttpApiServer(int port,
                          SSLContext sslContext,
@@ -150,7 +150,7 @@ public final class HttpApiServer {
                          ReplayGuard replayGuard,
                          AdminApiHandler.LeadershipAdmin leadershipAdmin,
                          AuthenticatorChain chain) throws IOException {
-        // Historical signature, preserved byte-identically: a null bindAddress binds the wildcard.
+        // This signature binds the wildcard address (null bindAddress) for callers that don't specify one.
         this(null, port, sslContext, healthService, prometheusExporter, configStore, writeService,
                 readService, authInterceptor, aclService, strongReadPolicy, leaderHintSupplier,
                 auditLog, replayGuard, leadershipAdmin, chain);
@@ -159,9 +159,8 @@ public final class HttpApiServer {
     /**
      * As the chain constructor, plus an explicit {@code bindAddress} for the listener so the admin
      * read/write API honours the SAME interface as the Raft + edge planes. {@code null} binds the wildcard,
-     * byte-identical to the historical {@code new InetSocketAddress(port)}. Mirrors
-     * {@code NettyHttpApiServer}'s bindAddress constructor so the drop-in adapter swap keeps an identical
-     * arg list.
+     * matching the default of {@code new InetSocketAddress(port)}. Mirrors {@code NettyHttpApiServer}'s
+     * bindAddress constructor so the drop-in adapter swap keeps an identical arg list.
      */
     public HttpApiServer(String bindAddress,
                          int port,
@@ -180,7 +179,7 @@ public final class HttpApiServer {
                          AdminApiHandler.LeadershipAdmin leadershipAdmin,
                          AuthenticatorChain chain) throws IOException {
         InetSocketAddress bindAddr = bindAddress == null
-                ? new InetSocketAddress(port)                 // wildcard, byte-identical to before
+                ? new InetSocketAddress(port)                 // wildcard (all interfaces)
                 : new InetSocketAddress(bindAddress, port);
         if (sslContext != null) {
             HttpsServer httpsServer = HttpsServer.create(bindAddr, 0);
@@ -240,10 +239,6 @@ public final class HttpApiServer {
         server.stop(delaySeconds);
     }
 
-    // -----------------------------------------------------------------------
-    // Transport shell: HttpExchange <-> AdminApiHandler
-    // -----------------------------------------------------------------------
-
     private static final class RootHandler implements HttpHandler {
         private final AdminApiHandler handler;
 
@@ -268,7 +263,7 @@ public final class HttpApiServer {
     /**
      * {@link AdminApiHandler.AdminRequest} backed by a JDK {@link HttpExchange}. {@link #uri()}
      * returns the exchange's already-parsed {@code java.net.URI}; the Netty adapter builds the same
-     * type from the raw request target, so path decoding (C6) is identical on both transports.
+     * type from the raw request target, so path decoding is identical on both transports.
      */
     private record ExchangeRequest(HttpExchange exchange) implements AdminApiHandler.AdminRequest {
         @Override

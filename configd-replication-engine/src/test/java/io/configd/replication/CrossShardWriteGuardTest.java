@@ -99,7 +99,7 @@ class CrossShardWriteGuardTest {
                 () -> CrossShardWriteGuard.requireSingleShard(map, SCOPE, null));
     }
 
-    // --- deterministic helpers over the real StaticShardMap -------------------------------------
+    // Deterministic helpers over the real StaticShardMap.
 
     private static List<String> keysOnSameShard(StaticShardMap map, int count) {
         // Bucket generated keys by shard, return the first bucket that reaches `count`.

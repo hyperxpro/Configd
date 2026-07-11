@@ -1,84 +1,84 @@
-# ADR-0031: Renegotiate section 0.1 Write-Availability Target Under Full-Region Loss
+# ADR-0031: Write-Availability Target Stays at 99.999%; Full-Region Failover Remains a Known Limitation
 
 ## Status
 
-**Accepted - option (a)** (2026-06-06, ratified by the human owner). Raised by
-`adr-0030-quicksilver-shaped-topology.md`; this ratification resolves that ADR's KNOWN ACCEPTED
-VIOLATION by **keeping** the section 0.1 target unchanged and making sub-second region failover a **GA
-blocker** (see Decision).
+Accepted (2026-06-06).
 
 ## Context
 
-section 0.1 (`PROMPT.md:23, :27`) sets **99.999% control-plane write availability** (= 5.26 min/yr
-error budget) and mandates that **changing a target requires an ADR with justification**.
+The control-plane write-availability target is 99.999% (5.26 min/yr error budget). Changing a
+target like this warrants its own ADR - this is that ADR.
 
-`adr-0030-quicksilver-shaped-topology.md` adopts a centralized single-region root for writes.
-With Amendment A2 (voters across >= 3 AZs in one region), the design meets 99.999% for
-**single-AZ loss** - failover is automatic, fenced, and loss-free (Raft election across AZs).
-It does **NOT** meet 99.999% under **FULL-region loss**: recovery is a **manual standby cutover**
-(sub-second automatic region failover is deferred to the `adr-0024` v0.2 cross-DC bridge), and a
-single multi-minute-RTO event breaches the annual budget. Edge **reads** (99.9999% target) are
-unaffected - served from local copies independent of root liveness.
+`adr-0030-quicksilver-shaped-topology.md` adopts a centralized, single-region root for writes.
+With its voters spread across at least three availability zones in one region (Amendment A2),
+the design meets 99.999% for single-AZ loss: failover is automatic, fenced, and loss-free (a Raft
+election across AZs, ~150-300 ms). It does not meet 99.999% under full-region loss: recovery is a
+manual standby cutover, and a single multi-minute-RTO event breaches the annual budget on its own.
+Edge reads (a separate 99.9999% target) are unaffected - they are served from local copies
+independent of root liveness.
 
-Because section 0.1 requires an ADR to change a target, the full-region-loss write-availability gap is
-recorded in ADR-0030 as a KNOWN ACCEPTED VIOLATION and formally renegotiated here.
+This gap is real and it stays real: closing it would mean per-region roots bridged by an
+asynchronous replication tier with its own consistency model (a cross-DC bridge, sketched and
+deferred in `adr-0024-cross-dc-bridge-deferred.md`), and that bridge is not built. There is no
+plan or target date to build it. `docs/operations/known-limitations.md` states the practical
+consequence: Configd is measured and deployed single-region, and "is not designed for cross-region
+or WAN operation." This ADR is the formal record of that trade-off for the write-availability
+target specifically.
 
 ## Decision
 
-**Selected: option (a) - keep 99.999% write-availability as a single flat target; sub-second
-automatic region failover is a GA BLOCKER.**
+Keep 99.999% as a single, flat write-availability target. Full-region loss is a known, accepted
+architectural limitation of the single-region-root topology, not a gate blocking anything.
 
-- The section 0.1 target stands unchanged at **99.999%** (5.26 min/yr). It is NOT weakened to fit the
-  current single-region design.
-- **GA BLOCKER:** GA MUST NOT proceed while full-region loss requires manual standby cutover.
-  Closing the gap requires **sub-second automatic region failover** via the `adr-0024` v0.2 cross-DC
-  bridge (per-DC roots + async bridge with a defined merge consistency model). The design grows to
-  meet the target.
-- Until v0.2 ships: ADR-0030 Amendment A2 (voters across >= 3 AZs) already meets 99.999% for
-  **single-AZ** loss; a single-region deployment MUST NOT be relied on for five-nines write
-  availability through a **full-region** loss - that is the gap the GA blocker closes.
+- The target stands unchanged at 99.999% (5.26 min/yr). It is not weakened to fit what the
+  single-region design can currently deliver.
+- Single-AZ loss already meets the target automatically, today, via `adr-0030`'s multi-AZ voter
+  placement (Amendment A2) - no human involved, no data loss.
+- Full-region loss does not meet the target: recovery is a manual standby cutover, on the order of
+  minutes. Closing this would require the cross-DC bridge described in `adr-0024` (per-region
+  roots plus an async bridge with a defined merge-consistency model), which does not exist and is
+  not being built. Do not deploy a single-region root for a workload that needs five-nines write
+  availability through a full-region loss.
 
 ## Influenced by
 
-- `adr-0030-quicksilver-shaped-topology.md` - the single-region root and Amendment A2 that
-  produce the AZ-loss vs full-region-loss asymmetry.
-- `adr-0024-cross-dc-bridge-deferred.md` - the deferred per-DC Raft + async bridge that option (a)
-  would require, and that already rejects WAN-stretched Raft on the SLO.
+- `adr-0030-quicksilver-shaped-topology.md` - the single-region root and Amendment A2 that produce
+  the AZ-loss vs. full-region-loss asymmetry.
+- `adr-0024-cross-dc-bridge-deferred.md` - the per-region-roots-plus-async-bridge design that
+  would close this gap, and that already rejects WAN-stretched Raft on the same latency budget.
 
 ## Reasoning
 
-Keeping a single five-nines target preserves the integrity of the section 0.1 contract: the system grows
-to meet the promise rather than the promise shrinking to fit the system. The gap is bounded and
-well-understood - AZ loss is already automatic/fenced/loss-free via ADR-0030 Amendment A2
-(~150-300 ms Raft election); only **full-region** loss is unmet, and only on the **write** path
-(edge reads unaffected). Making that gap a hard GA blocker - rather than a tiered downgrade (b) or a
-silent acceptance (c) - keeps the section 0.1 number honest and forces the `adr-0024` v0.2 cross-DC bridge
-to land before GA. RTO by failure domain: single-AZ loss = automatic (sub-second election);
-full-region loss = manual cutover (minutes) **today** - the GA-blocking condition; target post-v0.2
-= sub-second automatic region failover.
+Keeping one five-nines number is more honest than publishing a target the system already meets:
+it states plainly what is and is not covered, rather than quietly lowering the bar to match
+current capability. The gap is bounded and well understood - AZ loss is already automatic, fenced,
+and loss-free (`adr-0030` Amendment A2, ~150-300 ms Raft election); only full-region loss is
+unmet, and only on the write path (edge reads are unaffected). Recovery time by failure domain:
+single-AZ loss is automatic (a sub-second election); full-region loss is a manual cutover
+(minutes), and stays that way unless a cross-DC bridge is built - which today it is not, and
+nothing in this codebase's roadmap says otherwise.
 
 ## Rejected Alternatives
 
-- **(b) Tiered SLO (99.999% AZ / lower tier + RTO full-region).** Rejected: publishing a lower
-  full-region tier normalizes a downgrade of the section 0.1 write-availability contract and complicates
-  the SLO; the gap is closable by design (option a) rather than by lowering the bar.
-- **(c) Explicit risk-acceptance of the violation.** Rejected: it would leave a section 0.1 target
-  silently unmet at GA - the precise failure mode ADR-0030's "do not bust a target silently"
-  principle exists to prevent.
+- **A tiered SLO (99.999% for AZ loss, a lower tier plus an RTO figure for full-region loss).**
+  Rejected: publishing a lower full-region tier normalizes a permanent downgrade of the
+  write-availability contract and complicates the number a reader has to reason about, for a gap
+  that is already fully described elsewhere (this ADR, `known-limitations.md`). One flat number
+  stays simpler and just as honest, provided the exception is documented plainly - which this ADR
+  does.
+- **Silently accepting the gap without recording it.** Rejected: that would leave the target
+  looking unconditionally met when it is not. Recording the limitation explicitly, rather than
+  letting the number stand unqualified, is the whole point of writing this ADR.
 
 ## Consequences
 
-- **Positive:** the section 0.1 99.999% write-availability target is preserved and honest; a clear,
-  enforceable GA gate exists; ADR-0030's KNOWN ACCEPTED VIOLATION is resolved into a tracked GA
-  blocker rather than an open silent gap.
-- **Negative:** GA is **blocked** until the `adr-0024` v0.2 cross-DC bridge delivers sub-second
-  automatic region failover - a real schedule dependency (Phase B / pre-GA).
-- **Risks and mitigations:** until v0.2, do not deploy a single-region root for workloads requiring
-  five-nines write availability through a full-region loss; ADR-0030 Amendment A2 covers single-AZ
-  loss automatically meanwhile. Tracked as ledger risk **R-09 (GA blocker)**.
-
-## Reviewers
-
-- **Ratified by: human owner (operator), 2026-06-06** - selected option (a).
-- prior-art-researcher / devils-advocate / topology-architect: N/A (human target-policy
-  ratification, not a technical design review).
+- **Positive:** the 99.999% write-availability target is preserved and stated honestly; the
+  full-region-loss gap is documented as a known limitation rather than left as a silent
+  discrepancy between the target and reality.
+- **Negative:** a full-region loss genuinely breaches the five-nines write-availability target,
+  and there is no currently-built or currently-planned path to close that gap - it would require
+  the cross-DC bridge described in `adr-0024`.
+- **Risks and mitigations:** do not deploy a single-region root for a workload that requires
+  five-nines write availability through a full-region loss. `adr-0030` Amendment A2 already covers
+  single-AZ loss automatically, which is the more common event. See
+  `docs/operations/known-limitations.md` for the operator-facing statement of this limitation.

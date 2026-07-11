@@ -8,9 +8,9 @@ import java.util.Map;
  * Keyed by "{type_name}.bin", values are the exact encoded frame bytes.
  * Maintained instead of binary files so diffs are human-readable.
  *
- * <p>v2 (Multi-Raft Phase 1, Seam F): the {@code WIRE_VERSION 0x01→0x02} bump — version byte
- * {@code 01→02}, an 8-byte reserved epoch field (all zero) after the term (D1), and the new
- * {@code raft_coalesced_heartbeat.bin} fixture (D2). v1 is a clean cutover (no external deployments;
+ * <p>v2: the {@code WIRE_VERSION 0x01→0x02} bump — version byte
+ * {@code 01→02}, an 8-byte reserved epoch field (all zero) after the term, and the new
+ * {@code raft_coalesced_heartbeat.bin} fixture. v1 is a clean cutover (no external deployments;
  * the decoder rejects v1), so its golden bytes are superseded rather than retained.
  */
 final class GoldenFixtures {
@@ -40,7 +40,7 @@ final class GoldenFixtures {
         m.put("install_snapshot_response.bin",hex("00000022020f010203040a0b0c0d0e0f10110000000000000000deadbeeff20d2ff8"));
         m.put("timeout_now.bin",              hex("000000220210010203040a0b0c0d0e0f10110000000000000000deadbeefa45d2300"));
         m.put("raft_coalesced_heartbeat.bin", hex("000000220211010203040a0b0c0d0e0f10110000000000000000deadbeef8a69e89d"));
-        // Gate 3c anchor-witness frame types (additive, same wire version 0x02 - the frame envelope for
+        // Anchor-witness frame types (additive, same wire version 0x02 - the frame envelope for
         // the new type codes 0x12/0x13; the 29-byte witness body is exercised by RaftWitnessCodecTest).
         m.put("raft_witness.bin",             hex("000000220212010203040a0b0c0d0e0f10110000000000000000deadbeeff834b43a"));
         m.put("raft_witness_reply.bin",       hex("000000220213010203040a0b0c0d0e0f10110000000000000000deadbeefd6007fa7"));

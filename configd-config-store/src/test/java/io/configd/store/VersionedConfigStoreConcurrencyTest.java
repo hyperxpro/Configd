@@ -26,10 +26,6 @@ class VersionedConfigStoreConcurrencyTest {
         return new String(b, StandardCharsets.UTF_8);
     }
 
-    // -----------------------------------------------------------------------
-    // RCU concurrent readers + single writer
-    // -----------------------------------------------------------------------
-
     @Test
     void concurrentReadersObserveConsistentSnapshotsWhileWriterMutates() throws InterruptedException {
         VersionedConfigStore store = new VersionedConfigStore();
@@ -40,7 +36,6 @@ class VersionedConfigStoreConcurrencyTest {
         ConcurrentHashMap<String, Throwable> errors = new ConcurrentHashMap<>();
         CountDownLatch startLatch = new CountDownLatch(1 + readerCount);
 
-        // Writer thread: puts key "k" with value "v-{version}" for versions 1..10000
         Thread writer = Thread.ofPlatform().name("writer").start(() -> {
             try {
                 startLatch.countDown();
@@ -55,7 +50,6 @@ class VersionedConfigStoreConcurrencyTest {
             }
         });
 
-        // Reader threads: continuously read "k" and verify consistency
         Thread[] readers = new Thread[readerCount];
         for (int r = 0; r < readerCount; r++) {
             final int readerId = r;
@@ -79,7 +73,6 @@ class VersionedConfigStoreConcurrencyTest {
                             continue;
                         }
 
-                        // Validate the value matches the expected pattern
                         long version = result.version();
                         if (version < 1 || version > writerIterations) {
                             errors.put("reader-" + readerId,
@@ -109,7 +102,6 @@ class VersionedConfigStoreConcurrencyTest {
                         lastSeenVersion = version;
                     }
 
-                    // After writer finishes, do one final read to confirm final state
                     ReadResult finalResult = store.get("k");
                     if (!finalResult.found()) {
                         errors.put("reader-" + readerId,
@@ -140,27 +132,19 @@ class VersionedConfigStoreConcurrencyTest {
         assertEquals(writerIterations, finalResult.version());
     }
 
-    // -----------------------------------------------------------------------
-    // Snapshot isolation: snapshots are frozen in time
-    // -----------------------------------------------------------------------
-
     @Test
     void snapshotIsolationAcrossBulkWrites() {
         VersionedConfigStore store = new VersionedConfigStore();
 
-        // Take snapshot A before any writes
         ConfigSnapshot snapshotA = store.snapshot();
 
-        // Write 1000 keys
         int keyCount = 1000;
         for (int i = 1; i <= keyCount; i++) {
             store.put("key-" + i, bytes("value-" + i), i);
         }
 
-        // Take snapshot B after all writes
         ConfigSnapshot snapshotB = store.snapshot();
 
-        // Snapshot A must not contain any of the new keys
         assertEquals(0, snapshotA.size(), "Snapshot A should be empty");
         assertEquals(0, snapshotA.version(), "Snapshot A version should be 0");
         for (int i = 1; i <= keyCount; i++) {
@@ -170,7 +154,6 @@ class VersionedConfigStoreConcurrencyTest {
                     "Snapshot A get(key-" + i + ") should return null");
         }
 
-        // Snapshot B must contain all 1000 keys with correct values
         assertEquals(keyCount, snapshotB.size(),
                 "Snapshot B should contain all " + keyCount + " keys");
         assertEquals(keyCount, snapshotB.version(),
@@ -184,7 +167,6 @@ class VersionedConfigStoreConcurrencyTest {
                     "Snapshot B value mismatch for key-" + i);
         }
 
-        // Further writes after snapshot B should not affect either snapshot
         store.put("late-key", bytes("late-value"), keyCount + 1);
 
         assertFalse(snapshotA.containsKey("late-key"),

@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Gate 2a recovery-integrity tests for {@link RaftLog}: the {@code scopeId} cross-shard-splice
+ * Recovery-integrity tests for {@link RaftLog}: the {@code scopeId} cross-shard-splice
  * assert at each at-rest read call-site, the whole-log recovery checks (contiguity / term
  * monotonicity / snapshot-join) that catch a physically reordered or spliced WAL even when every
  * record still authenticates, and the fail-closed refusal of a non-enveloped WAL record (the
@@ -38,9 +38,7 @@ class RaftLogRecoveryChecksTest {
     };
     private static final RaftTransport NO_PEERS = (target, message) -> { };
 
-    // --------------------------------------------------------------------------------------------
-    // scopeId assert - one negative test per at-rest read call-site (design §9.1).
-    // --------------------------------------------------------------------------------------------
+    // scopeId assert: one negative test per at-rest read call-site.
 
     /** WAL replay site: a record authored under gid=1, replayed by a gid=0 reader, is refused. */
     @Test
@@ -115,9 +113,7 @@ class RaftLogRecoveryChecksTest {
                         + ex.getMessage());
     }
 
-    // --------------------------------------------------------------------------------------------
-    // Piece 5: every WAL record must be enveloped (the legacy raw-record fallback is deleted).
-    // --------------------------------------------------------------------------------------------
+    // Every WAL record must be enveloped; the legacy raw-record fallback is deleted.
 
     @Test
     void nonEnvelopedWalRecordRejectedUnderKey(@TempDir Path tempDir) {
@@ -144,11 +140,9 @@ class RaftLogRecoveryChecksTest {
                         + ex.getMessage());
     }
 
-    // --------------------------------------------------------------------------------------------
-    // Piece 4: recovery-time structural checks (contiguity / term monotonicity / snapshot-join).
-    // Each record below is individually well-formed and authentic; only the WHOLE-LOG check catches
+    // Recovery-time structural checks (contiguity / term monotonicity / snapshot-join). Each
+    // record below is individually well-formed and authentic; only the whole-log check catches
     // the tampering - which is exactly what makes reorder/splice detection real.
-    // --------------------------------------------------------------------------------------------
 
     @Test
     void contiguityGapRefused(@TempDir Path tempDir) {

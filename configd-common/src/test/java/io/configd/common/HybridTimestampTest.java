@@ -7,8 +7,6 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class HybridTimestampTest {
 
-    // compareTo
-
     @Nested
     class CompareTo {
 
@@ -52,8 +50,6 @@ class HybridTimestampTest {
         }
     }
 
-    // packed / fromPacked round-trip
-
     @Nested
     class PackedRoundTrip {
 
@@ -74,7 +70,6 @@ class HybridTimestampTest {
 
         @Test
         void roundTripLargeWallTime() {
-            // Typical epoch-millis value
             var ts = new HybridTimestamp(1_700_000_000_000L, 0);
             var restored = HybridTimestamp.fromPacked(ts.packed());
             assertEquals(ts.wallTime(), restored.wallTime());
@@ -83,7 +78,7 @@ class HybridTimestampTest {
 
         @Test
         void roundTripMaxLogical() {
-            // Logical uses bottom 16 bits, max is 0xFFFF = 65535
+            // The logical field is packed into the bottom 16 bits, so its max value is 0xFFFF (65535).
             var ts = new HybridTimestamp(42, 0xFFFF);
             var restored = HybridTimestamp.fromPacked(ts.packed());
             assertEquals(42, restored.wallTime());
@@ -107,8 +102,6 @@ class HybridTimestampTest {
             assertTrue(b.packed() < c.packed());
         }
     }
-
-    // equals and hashCode
 
     @Nested
     class EqualsAndHashCode {
@@ -161,8 +154,6 @@ class HybridTimestampTest {
         }
     }
 
-    // ZERO constant
-
     @Nested
     class ZeroConstant {
 
@@ -181,8 +172,6 @@ class HybridTimestampTest {
             assertEquals(HybridTimestamp.ZERO, new HybridTimestamp(0, 0));
         }
     }
-
-    // toString
 
     @Nested
     class ToStringFormat {

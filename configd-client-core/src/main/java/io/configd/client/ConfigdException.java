@@ -6,15 +6,15 @@ import java.util.Optional;
 
 /**
  * The root of the reference client's exception hierarchy. Each concrete subtype <b>is</b> the normative
- * §07 reaction to a class of outcomes: a caller branches on the exception <b>type</b>, never on a parsed
- * message ({@code 07-errors.md} E6). The base is unchecked because a driver-protocol failure is rarely
+ * reaction to a class of outcomes (see {@code 07-errors.md}): a caller branches on the exception
+ * <b>type</b>, never on a parsed message. The base is unchecked because a driver-protocol failure is rarely
  * something a caller can handle inline at the call site — it is handled by a policy (retry / re-auth /
  * reconnect) keyed on the type.
  *
  * <p>When an exception originates from a binary edge {@link ErrorCode}, that numeric code is carried on
  * {@link #edgeCode()} for observability, and the server's diagnostic — which is untrusted, may carry
- * control/ANSI bytes, and MUST NOT be machine-parsed (§06 F6-9 / §07 E6) — is carried, <b>already
- * sanitized</b>, on {@link #serverMessage()}. Neither is a control signal; the type is.
+ * control/ANSI bytes, and MUST NOT be machine-parsed — is carried, <b>already sanitized</b>, on
+ * {@link #serverMessage()}. Neither is a control signal; the type is.
  */
 public abstract class ConfigdException extends RuntimeException {
 
@@ -52,7 +52,7 @@ public abstract class ConfigdException extends RuntimeException {
 
     /**
      * The server's diagnostic string, <b>already sanitized</b> for safe logging (control/ANSI/NUL bytes
-     * escaped or stripped; §06 F6-9). Diagnostic only — a caller MUST NOT branch on it.
+     * escaped or stripped). Diagnostic only — a caller MUST NOT branch on it.
      */
     public final Optional<String> serverMessage() {
         return Optional.ofNullable(serverMessage);

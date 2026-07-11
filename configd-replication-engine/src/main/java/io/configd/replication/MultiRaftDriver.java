@@ -104,10 +104,6 @@ public final class MultiRaftDriver {
         this.groups = new ConcurrentHashMap<>();
     }
 
-    // ========================================================================
-    // Group management
-    // ========================================================================
-
     /**
      * Registers a Raft group with this driver.
      *
@@ -141,10 +137,6 @@ public final class MultiRaftDriver {
         groupOwner.remove(groupId);
         migrating.remove(groupId);
     }
-
-    // ========================================================================
-    // Tick and message routing
-    // ========================================================================
 
     /**
      * Advances all registered Raft groups by one tick.

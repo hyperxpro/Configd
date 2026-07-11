@@ -14,8 +14,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Unit tests for {@link TopologyDescriptor} - the authenticated, versioned deploy-time topology
- * descriptor (Gate 2b, §2.7). Covers the round-trip in both postures, the reserved-illegal epoch,
- * the MBZ reserved field, formatVersion rolling, and tamper detection under a key.
+ * descriptor. Covers the round-trip in both postures, the reserved-illegal epoch, the MBZ reserved
+ * field, formatVersion rolling, and tamper detection under a key.
  */
 class TopologyDescriptorTest {
 

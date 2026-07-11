@@ -22,11 +22,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Runner II — CLIENT-CONFORMS, HTTP control plane: drives the reference {@link ConfigdHttpClient} against the
- * scriptable {@link MockControlPlane} (reused via the configd-client-http test-jar) and asserts the client obeys
- * each normative §04/§05/§07 MUST — the cursor placement (seq-in-body vs version-in-header), the status→reaction
- * taxonomy, the 503 sub-cause disambiguation, the indeterminate-write contract, and branch-on-code-not-body.
- * Each test is {@code @Tag}-ed with the clause-ids it genuinely asserts (the coverage audit maps them).
+ * Client-conforms tests for the HTTP control plane: drives the reference {@link ConfigdHttpClient} against
+ * the scriptable {@link MockControlPlane} (reused via the configd-client-http test-jar) and asserts the
+ * client obeys each normative MUST -- the cursor placement (seq-in-body vs version-in-header), the
+ * status-to-reaction taxonomy, the 503 sub-cause disambiguation, the indeterminate-write contract, and
+ * branch-on-code-not-body.
  */
 @Timeout(30)
 class ClientConformsHttpTest {
@@ -105,7 +105,7 @@ class ClientConformsHttpTest {
     @Tag("clause:R6-1")
     void hintless503BacksOffAndRetriesTheSameEndpoint() throws Exception {
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
-            s.enqueue(Response.text(503, "Not Leader")); // no X-Leader-Hint (election window — the normal N=1 case)
+            s.enqueue(Response.text(503, "Not Leader")); // no X-Leader-Hint (election window -- the normal N=1 case)
             s.enqueue(Response.committed(9));
             WriteOutcome w = c.blocking().put("k", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults());
             assertEquals(9L, w.seq());
@@ -176,7 +176,7 @@ class ClientConformsHttpTest {
     @Tag("clause:E6-1")
     void branchesOnTheStatusCodeNotABodyThatLooksLikeJson() throws Exception {
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
-            // A 403 whose plaintext body looks like a success JSON under application/json — still a Forbidden.
+            // A 403 whose plaintext body looks like a success JSON under application/json -- still a Forbidden.
             s.enqueue(Response.of(403, Map.of("Content-Type", "application/json"), "{\"granted\":true}"));
             assertThrows(ForbiddenException.class, () -> c.blocking().get("k", GetOptions.defaults()));
         }

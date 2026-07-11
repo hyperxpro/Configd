@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * The Gate-3 watch plane (§02) over the plaintext loopback mock: WATCH_CREATE→CREATED→EVENT, the multi-shard
+ * The watch plane over the plaintext loopback mock: WATCH_CREATE→CREATED→EVENT, the multi-shard
  * UNION merge + (gid,S) dedup, WATCH_PROGRESS idle-advance, resume-from-vector, per-(watch,gid) catch-up, the
  * NOT_AUTHORIZED per-watch terminal, and full_chain_verify (NOTIFY verify + local filter).
  */
@@ -185,7 +185,7 @@ class EdgeWatchTest {
                     EdgeFrame.WatchCreate second = secondWatchCreate(server);
                     return second != null && second.cursor().isFromNow() && second.withInitialSnapshot();
                 });
-                // A fresh watch_id is minted per (re)create — never reused across the reconnect (W2-8 / F10-1a).
+                // A fresh watch_id is minted per (re)create — never reused across the reconnect.
                 assertTrue(firstWatchCreate(server).watchId() != secondWatchCreate(server).watchId());
             }
         }
@@ -252,7 +252,7 @@ class EdgeWatchTest {
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
             long wid = ((EdgeFrame.WatchCreate) conn.readFrame()).watchId();
             w(conn, new EdgeFrame.WatchCreated(wid, List.of(new EdgeFrame.ShardMode(0, 0, EdgeFrame.Mode.TAIL))));
-            w(conn, StreamFixtures.notify(1, 100, matching)); // verbatim signed chain (W8-4)
+            w(conn, StreamFixtures.notify(1, 100, matching)); // verbatim signed chain
             w(conn, StreamFixtures.notify(2, 100, other));    // filtered out locally (not under /watched)
             conn.parkUntilClosed();
         })) {
@@ -273,8 +273,6 @@ class EdgeWatchTest {
             }
         }
     }
-
-    // -----------------------------------------------------------------------
 
     private static EdgeFrame event(long watchId, int gid, long s, String key, String value) {
         return new EdgeFrame.WatchEvent(watchId, gid, s, 100L,

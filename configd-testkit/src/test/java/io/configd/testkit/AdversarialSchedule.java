@@ -7,10 +7,9 @@ import java.util.random.RandomGeneratorFactory;
 
 /**
  * Seed-derived, fully replayable fault + workload schedule for the adversarial
- * simulation (adversarial-sim-design section 2). Every fault and client op is a pure
- * function of the master seed via the deterministic {@code mixSeed} pattern, so a run is
- * reproducible by seed alone and a failing seed can be expanded into a concrete,
- * minimizable schedule (section 5 ddmin).
+ * simulation. Every fault and client op is a pure function of the master seed via the
+ * deterministic {@code mixSeed} pattern, so a run is reproducible by seed alone and a
+ * failing seed can be expanded into a concrete, minimizable schedule (ddmin).
  * <p>
  * The schedule is <em>expanded eagerly</em> at construction into an ordered list of
  * {@link Event}s keyed by logical tick. Eager expansion is what makes the schedule

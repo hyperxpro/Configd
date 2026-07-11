@@ -13,10 +13,10 @@ import java.util.Objects;
  * <b>deliberately not</b> the production wire protocol - defining the real frames
  * (length-prefix, codec, flow-control) is the stream driver's job, on top of the
  * transport-agnostic {@link io.configd.distribution.CommitNotificationSource}
- * boundary (commit-notification handoff spec). Keeping this sealed and tiny prevents the sim from
+ * boundary. Keeping this sealed and tiny prevents the sim from
  * accidentally fixing wire decisions that belong to the stream driver.
  *
- * <p>Two variants mirror the two things the commit-notification handoff consumer loop can receive:
+ * <p>Two variants mirror the two things a commit-notification consumer loop can receive:
  * <ul>
  *   <li>{@link Notify} - a single committed-mutation {@link CommitNotification}
  *       (the {@code Ok} tail path: {@code seq}, {@code commitTimestampMillis},
@@ -30,7 +30,7 @@ sealed interface EdgeStream permits EdgeStream.Notify, EdgeStream.NotifyBatch,
 
     /**
      * A single committed-mutation notification pushed over the edge channel
-     * (handoff spec step 1, the {@code Ok} tail path). Retained for the
+     * (the {@code Ok} tail path). Retained for the
      * {@link DirectInjectionDriver} (test-the-tester) which injects individual
      * notifications; the stream driver uses {@link NotifyBatch}.
      *
@@ -63,7 +63,7 @@ sealed interface EdgeStream permits EdgeStream.Notify, EdgeStream.NotifyBatch,
 
     /**
      * A snapshot-equivalent recovery payload pushed over the edge channel after a
-     * demotion/GAP (handoff spec step 2). The stream driver-side sink reassembles the
+     * demotion/GAP. The stream driver-side sink reassembles the
      * {@code SNAPSHOT_BEGIN / SNAPSHOT_CHUNK* / SNAPSHOT_END} frame flow into this single
      * message <b>on the server side</b> (chosen over per-chunk edge messages so the
      * {@link EdgeActor} stays simple - it applies one wholesale snapshot via its existing
@@ -82,8 +82,8 @@ sealed interface EdgeStream permits EdgeStream.Notify, EdgeStream.NotifyBatch,
     }
 
     /**
-     * A server-to-edge heartbeat (stream driver design section 3; protocol carrier only - the idle-staleness
-     * frontier measure is the edge client behind the staleness-measure spec). The edge records {@code serverNowMillis}
+     * A server-to-edge heartbeat: protocol carrier only - the idle-staleness frontier measure
+     * is the edge client's job. The edge records {@code serverNowMillis}
      * as {@code lastHeartbeat} and counts it; staleness wiring is deliberately NOT done
      * here (done by the edge client).
      *

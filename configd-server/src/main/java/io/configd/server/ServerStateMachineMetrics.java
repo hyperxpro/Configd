@@ -7,9 +7,9 @@ import java.util.Objects;
 
 /**
  * Bridges the {@link StateMachineMetrics} sink ({@code configd-config-store}) into the
- * server's {@link ConfigdMetrics} registry (before this, {@code ConfigStateMachine} was constructed with
- * {@link StateMachineMetrics#NOOP} so {@code configd_apply_seconds} /
- * {@code configd_snapshot_install_failed_total} were registered but never recorded).
+ * server's {@link ConfigdMetrics} registry, so {@code configd_apply_seconds} and
+ * {@code configd_snapshot_install_failed_total} are actually recorded rather than merely
+ * registered as an empty series.
  *
  * <p>The apply <em>duration</em> feeds {@code configd_apply_seconds} - NOT
  * {@code configd_write_commit_seconds}, which is the end-to-end commit latency recorded at the

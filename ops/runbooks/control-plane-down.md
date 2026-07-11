@@ -10,7 +10,7 @@ loss, and failover. Write availability has dropped below five-nines — this
 is active-outage territory. Edge reads continue (bounded-stale from local
 HAMT) but config writes are failing.
 
-> Reconciled for S6: the only operator-visible surfaces on `HttpApiServer`
+> The only operator-visible surfaces on `HttpApiServer`
 > are `/health/live`, `/health/ready`, `/metrics`, and `/v1/config/<key>`.
 > There is **no** `/admin/*` or `/raft/status` endpoint. Leader identity is
 > read from the `X-Leader-Hint` response header (a non-leader write returns
@@ -61,7 +61,7 @@ HAMT) but config writes are failing.
    - Climbing → election storm (a voter with a stale log keeps forcing
      elections). Identify it from per-pod logs (leader-id / term transitions).
    - Flat with a leader present but no commits → the leader is wedged (apply
-     stalled or RR-103-family inflight starvation) → cross to
+     stalled or inflight-replication starvation) → cross to
      [raft-saturation.md](raft-saturation.md).
 
 ## Resolution steps
@@ -136,7 +136,7 @@ and `configd_write_commit_total` resumes.
 
 ## Related
 
-- `docs/decisions/adr-0025-on-call-rotation-required.md` — escalation contract.
-- `docs/decisions/adr-0027-sign-or-fail-close.md` — the fail-close path.
+- `docs/adr/adr-0025-on-call-rotation-required.md` — escalation contract.
+- `docs/adr/adr-0027-sign-or-fail-close.md` — the fail-close path.
 - [raft-saturation.md](raft-saturation.md), [disaster-recovery.md](disaster-recovery.md),
   [disk-full-fsync.md](disk-full-fsync.md)

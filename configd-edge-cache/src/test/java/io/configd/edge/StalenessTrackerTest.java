@@ -27,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.*;
  *   <li>the implausibility tripwire (future-frontier / regression) counts + clamps
  *       (see {@link StalenessSkewTripwireTest}).</li>
  * </ul>
- * Threshold table (500ms / 5s / 30s) and the state machine are unchanged.
+ * Threshold table (500ms / 5s / 30s) drives the state transitions exercised below.
  */
 class StalenessTrackerTest {
 
@@ -49,10 +49,6 @@ class StalenessTrackerTest {
         tracker = new StalenessTracker(clock);
     }
 
-    // -----------------------------------------------------------------------
-    // Initial state
-    // -----------------------------------------------------------------------
-
     @Nested
     class InitialState {
 
@@ -67,10 +63,6 @@ class StalenessTrackerTest {
             assertEquals(0, tracker.lastVersion());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // recordUpdate: the commit timestamp is the frontier (data-age term)
-    // -----------------------------------------------------------------------
 
     @Nested
     class AfterRecordUpdate {
@@ -120,10 +112,6 @@ class StalenessTrackerTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Reset from any state
-    // -----------------------------------------------------------------------
-
     @Nested
     class ResetFromAnyState {
 
@@ -154,10 +142,6 @@ class StalenessTrackerTest {
             assertEquals(StalenessTracker.State.CURRENT, tracker.currentState());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Covered-frontier via HEARTBEAT - regression tests
-    // -----------------------------------------------------------------------
 
     @Nested
     class HeartbeatFrontier {
@@ -213,10 +197,6 @@ class StalenessTrackerTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Staleness measurement (frontier-based)
-    // -----------------------------------------------------------------------
-
     @Nested
     class StalenessMeasurement {
 
@@ -253,10 +233,6 @@ class StalenessTrackerTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Version tracking
-    // -----------------------------------------------------------------------
-
     @Nested
     class VersionTracking {
 
@@ -276,10 +252,6 @@ class StalenessTrackerTest {
             assertEquals(10, tracker.lastVersion());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Boundary values
-    // -----------------------------------------------------------------------
 
     @Nested
     class BoundaryValues {
@@ -305,10 +277,6 @@ class StalenessTrackerTest {
             assertEquals(StalenessTracker.State.DEGRADED, tracker.currentState());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // InvariantMonitor wiring for INV-S1 staleness_bound
-    // -----------------------------------------------------------------------
 
     @Nested
     class InvariantMonitorWiring {

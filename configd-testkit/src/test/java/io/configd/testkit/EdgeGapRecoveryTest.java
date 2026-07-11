@@ -13,8 +13,8 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Gap recovery in the SIM, through the REAL {@code EdgeClientCore} directive path and
- * a REAL {@link C1StreamDriver} resubscribe (GAP->replay orchestration;
- * charter section 4 recovery "both paths tested under concurrent writes" at sim level):
+ * a REAL {@link C1StreamDriver} resubscribe (GAP->replay orchestration, both paths
+ * tested under concurrent writes, at sim level):
  * <ul>
  *   <li><b>within the replay horizon</b> - a partitioned edge misses deltas; on heal the
  *       next NOTIFY gaps, the core queues {@code RECONNECT_RESUBSCRIBE(cursor)}, the
@@ -119,9 +119,9 @@ class EdgeGapRecoveryTest {
     }
 
     /**
-     * The draft's automatic-coverage claim, made executable: under full adversarial
-     * schedules (edge crashes/partitions/lag + CP workload) with the recovery loop LIVE on
-     * every edge, no safety invariant (version monotonicity, no stale overwrite,
+     * Makes the automatic-coverage claim executable: under full adversarial schedules
+     * (edge crashes/partitions/lag + CP workload) with the recovery loop LIVE on every
+     * edge, no safety invariant (version monotonicity, no stale overwrite,
      * convergence-effect equality) may break, and the recovery must actually fire across
      * the seed set (a recovery feature that never runs proves nothing).
      */
@@ -131,7 +131,7 @@ class EdgeGapRecoveryTest {
         int converged = 0;
         final int seeds = 20;
         for (long seed = 9_000; seed < 9_000 + seeds; seed++) {
-            C1StreamDriver driver = new C1StreamDriver(); // sim-scaled config (gate shape)
+            C1StreamDriver driver = new C1StreamDriver(); // sim-scaled config
             EdgeFanOutSim sim = new EdgeFanOutSim(seed, CP_NODES, 3, WORKLOAD_TICKS,
                     true, driver, AdversarialSchedule.defaultIntensity(),
                     EdgeInvariants.BOUND_MS);
@@ -144,9 +144,9 @@ class EdgeGapRecoveryTest {
                 sim.finalCheckHealingCp();
                 converged++;
             } catch (SimInvariants.SafetyViolation notConverged) {
-                // Convergence-given-heal is liveness at sweep level (the gate's bucketing);
-                // recorded, not asserted per-seed. Safety violations DURING the run threw
-                // out of run() above and fail the test.
+                // Convergence-given-heal is liveness at sweep level; recorded, not
+                // asserted per-seed. Safety violations DURING the run threw out of
+                // run() above and fail the test.
             }
             totalResubscribes += driver.resubscribes();
         }
@@ -156,10 +156,6 @@ class EdgeGapRecoveryTest {
                 "with recovery live, at least half the healed seeds must converge "
                         + "(deterministic; observed " + converged + "/" + seeds + ")");
     }
-
-    // -----------------------------------------------------------------------
-    // helpers
-    // -----------------------------------------------------------------------
 
     /**
      * Commits one write through the REAL CP (leader propose) and ticks until the observed

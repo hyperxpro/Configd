@@ -65,7 +65,7 @@ public interface CommitNotificationSource {
     /**
      * Total notifications dropped (evicted by overflow) over the lifetime of this
      * source. Mirrors the {@code fanout_buffer_dropped_total} metric; exposed here
-     * so tests and S3 can observe eviction without a metrics registry.
+     * so tests can observe eviction without a metrics registry.
      */
     long droppedTotal();
 

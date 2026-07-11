@@ -20,11 +20,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * A second, adversarial pass over {@link NodeKeyring} that goes beyond {@link NodeKeyringTest}: it
- * attacks the paths the builder's tests only exercise once - a MULTI-term signing-key rewrap
- * (rewrapUnderNewKek's whole loop), a whole-file KEYRING ROLLBACK (the documented R-a residual, here
- * proven to be honestly bounded - it can lose the new term but can NEVER silently accept new-term
- * data under an old root), and a CROSS-NODE root replay at the facade (the per-entry node-AAD binding
- * as a defense-in-depth layer BENEATH the outer K_keyringMac, which does not depend on the node id).
+ * attacks the paths the builder's tests only exercise once - a multi-term signing-key rewrap
+ * (rewrapUnderNewKek's whole loop), a whole-file keyring rollback (proven to be honestly bounded - it
+ * can lose the new term but can never silently accept new-term data under an old root), and a
+ * cross-node root replay at the facade (the per-entry node-AAD binding as a defense-in-depth layer
+ * beneath the outer K_keyringMac, which does not depend on the node id).
  */
 class NodeKeyringRedteamTest {
 
@@ -68,10 +68,8 @@ class NodeKeyringRedteamTest {
                 | ((enveloped[14] & 0xFF) << 8) | (enveloped[15] & 0xFF);
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // MULTI-TERM signing-key rewrap: three independent random roots, then a signing-key rotation.
-    // rewrapUnderNewKek must rewrap EVERY entry; all three terms must still decrypt under the new key.
-    // ---------------------------------------------------------------------------------------------
+    // Multi-term signing-key rewrap: three independent random roots, then a signing-key rotation.
+    // rewrapUnderNewKek must rewrap every entry; all three terms must still decrypt under the new key.
 
     @Test
     void multiTermRewrap_everyTermStillDecryptsUnderNewSigningKey() {
@@ -114,13 +112,11 @@ class NodeKeyringRedteamTest {
         }
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // WHOLE-FILE KEYRING ROLLBACK (the R-a residual, honestly bounded). Roll the keyring back to a
-    // prior VALID image that predates a term rotation. The keyring layer accepts the older image (it
-    // is genuinely valid - the documented residual an external witness/node-anchor closes) BUT the
-    // data written under the newer, now-absent term FAILS CLOSED: a rollback can never make new-term
-    // ciphertext decrypt under an old root.
-    // ---------------------------------------------------------------------------------------------
+    // Whole-file keyring rollback, honestly bounded. Roll the keyring back to a prior valid image
+    // that predates a term rotation. The keyring layer accepts the older image (it is genuinely valid
+    // - an external witness/node-anchor is needed to close that gap), but data written under the
+    // newer, now-absent term fails closed: a rollback can never make new-term ciphertext decrypt
+    // under an old root.
 
     @Test
     void keyringRollback_losesNewTerm_butNewTermDataFailsClosed_neverForged() {
@@ -147,9 +143,9 @@ class NodeKeyringRedteamTest {
 
         try (NodeKeyring k2 = NodeKeyring.loadOrCreateOverIO(
                 new CrashModelAnchorIO(disk), mac(sk), kek(sk), nodeId("nodeA"), new SecureRandom())) {
-            // The keyring layer accepts the older valid image - this IS the documented R-a residual
-            // (a rollback to a prior valid keyring), bounded: it loses term 2, detectable only by the
-            // external node-anchor/witness, not by the keyring alone.
+            // The keyring layer accepts the older valid image (a rollback to a prior valid keyring),
+            // bounded: it loses term 2, detectable only by the external node-anchor/witness, not by
+            // the keyring alone.
             assertEquals(1, k2.activeTerm(), "rollback reverts to the older valid keyring (R-a residual)");
             assertEquals(1, k2.termCount(), "the term-2 entry is gone after the rollback");
             IntegrityEnvelope env = encOver(k2);
@@ -163,12 +159,10 @@ class NodeKeyringRedteamTest {
         }
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // CROSS-NODE root replay at the facade. The outer K_keyringMac is derived from the signing key
-    // ONLY (not the node id), so the SAME signing key opens the file under a different node id - the
-    // outer MAC does NOT stop this. The per-entry wrap AAD (which binds nodeKeyId) does: unsealing
-    // under nodeB REFUSES. Defense in depth beneath the outer MAC.
-    // ---------------------------------------------------------------------------------------------
+    // Cross-node root replay at the facade. The outer K_keyringMac is derived from the signing key
+    // only (not the node id), so the same signing key opens the file under a different node id - the
+    // outer MAC does not stop this. The per-entry wrap AAD (which binds nodeKeyId) does: unsealing
+    // under nodeB refuses. Defense in depth beneath the outer MAC.
 
     @Test
     void sameSigningKey_differentNode_outerMacPassesButRootUnsealRefuses() {

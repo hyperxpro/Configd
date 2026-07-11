@@ -10,10 +10,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * Codec-level tests for the A4 topology-epoch binding on the watch cursor and the SUBSCRIBE resume
- * token (Gate 2b, §2.11). The server-side STALE_TOPOLOGY policy (epoch != current) is exercised by the
+ * Codec-level tests for the topology-epoch binding on the watch cursor and the SUBSCRIBE resume
+ * token. The server-side STALE_TOPOLOGY policy (epoch != current) is exercised by the
  * fan-out coordinator tests; here we pin the wire-format facts: the epoch round-trips, the
- * reserved-illegal epoch {@code 0} decodes as FRAME_CORRUPT, and a cursor payload below the RT-5
+ * reserved-illegal epoch {@code 0} decodes as FRAME_CORRUPT, and a cursor payload below the
  * 12-byte floor decodes as FRAME_CORRUPT (never an uncaught underflow).
  */
 class EdgeCursorEpochWireTest {
@@ -65,7 +65,7 @@ class EdgeCursorEpochWireTest {
 
     @Test
     void cursorUnderflowIsFrameCorrupt() {
-        // RT-5: a WATCH_PROGRESS whose cursor region is below the 12-byte [epoch:8][count:4] floor.
+        // A WATCH_PROGRESS whose cursor region is below the 12-byte [epoch:8][count:4] floor.
         // Payload = [watchId:8][only 4 bytes], so decodeCursor sees remaining < 12 -> FRAME_CORRUPT,
         // never an uncaught BufferUnderflowException.
         byte[] payload = new byte[8 + 4];

@@ -47,7 +47,7 @@ import java.util.concurrent.Executors;
  * </ul>
  *
  * <p>This JDK HTTP shell allocates per request (exchange, headers, streams) - the very cost
- * the Netty adapter removes (8.7x less server-side allocation).
+ * the Netty adapter removes, at much less server-side allocation.
  */
 public final class EdgeHttpServer {
 
@@ -91,7 +91,7 @@ public final class EdgeHttpServer {
                 metricsScrapeToken);
         this.server = HttpServer.create(new InetSocketAddress(port), 0);
         // Single root context: the shared handler routes by path (and 404s unmatched paths, exactly
-        // as the JDK HttpServer's unregistered-context default did).
+        // as the JDK HttpServer's unregistered-context default does).
         server.createContext("/", this::dispatch);
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
     }

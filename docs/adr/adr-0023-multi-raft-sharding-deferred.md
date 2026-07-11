@@ -1,61 +1,70 @@
-# ADR-0023: Multi-Raft Sharding Deferred to v0.2
+# ADR-0023: Multi-Raft Sharding
 
 ## Status
-Accepted (2026-04-17). Defers R-06; tracked under PA-3001.
+Accepted (2026-04-17)
 
 ## Context
 
-The v0.1 cluster runs a single Raft group across all key-space. The
-write-throughput ceiling for a single Raft is bounded by the leader's
-append-and-fsync pipeline; measured on the perf baseline (Phase 6) the
-sustainable write rate is ~10 k commits/s on the reference hardware.
-
-Multi-tenant deployments at scale need ~100 k+ commits/s (audit log
-ingest, ML feature flags, A/B-test parameters). At that load a single
-Raft becomes the bottleneck and head-of-line blocking across tenants
-becomes a real reliability risk: a slow tenant can stall the cluster.
+A single Raft group's write-throughput ceiling is bounded by the leader's
+append-and-fsync pipeline. Multi-tenant deployments at scale (audit log
+ingest, ML feature flags, A/B-test parameters) can need throughput well
+above what one group sustains, and at that load a single Raft group
+becomes the bottleneck: head-of-line blocking means a slow tenant can
+stall the whole cluster.
 
 ## Decision
 
-Defer multi-Raft sharding to v0.2. v0.1 ships single-Raft only.
+Multi-Raft sharding is built and available now. The default topology is
+still a single Raft group across all key-space (`shardId = 0`), which is
+the simplest deployment and enough for most workloads. An operator turns
+on multiple shards to scale horizontally: each shard runs its own Raft
+group, and a decentralized balancer keeps roughly one leader per box
+across the shards.
 
 ## Rationale
 
-1. **Single Raft scales to the GA target.** Quicksilver's commit budget
-   is `< 150 ms p99` at 1 k commits/s; the perf baseline shows headroom
-   to ~10 k. v0.1 is sized for that ceiling.
-2. **Multi-Raft is a substantial design change.** It re-shapes routing,
-   joint consensus across shards, cross-shard transactions, and the
-   topology of the gossip overlay. Doing it cleanly takes a separate
-   ADR cycle and a fresh round of TLA+ modelling.
-3. **No production customer in the v0.1 cohort exceeds the single-Raft
-   ceiling.** The deferral is risk-driven, not capability-driven.
+1. **A single Raft group stays the default.** It is the simplest thing
+   to reason about and to operate, and it is enough for deployments that
+   never approach the single-group ceiling.
+2. **Multi-Raft was a substantial design change.** It reshapes routing,
+   per-shard Raft groups, cross-shard coordination for keys that move,
+   and the topology of the fan-out overlay. That design work is recorded
+   separately in [`adr-multiraft-topology.md`](adr-multiraft-topology.md),
+   [`adr-multiraft-partitioning.md`](adr-multiraft-partitioning.md), and
+   [`adr-multiraft-cross-shard.md`](adr-multiraft-cross-shard.md).
+3. **Shard count is a deploy-time choice, not a runtime one.** Sharding
+   solves the throughput ceiling; it does not (yet) solve elastic,
+   online rebalancing - see Consequences below.
 
 ## Consequences
 
-- v0.1 deployment tooling assumes a single Raft group per cluster.
-- The `ClusterConfig` schema reserves the `shardId` field but always
-  sets it to 0; v0.2 will populate it.
-- The recommended cluster-size cap is <= 5 k subscribed prefixes, <= 10 k
-  commits/s above which v0.2 with sharding is required.
-
-## Migration Plan
-
-- v0.2 (target Q3 2026): introduce shard-routing in the API gateway,
-  per-shard Raft groups, cross-shard transaction coordinator (2PC over
-  Raft).
-- Until then, customers above the single-Raft ceiling deploy multiple
-  independent Configd clusters with shard-key partitioning at the
-  application layer.
+- The default deployment remains a single Raft group
+  (`ClusterConfig.shardId = 0`). Sharding is an operator-enabled mode for
+  horizontal scale, not a requirement.
+- Shard count is static, fixed at deploy time via a static shard map.
+  There is no online dynamic resharding: no runtime split, merge, or
+  rebalance of shard boundaries. Growing the shard count is a new
+  deployment, not a live operation.
+- Leadership across shards is auto-balanced by a decentralized balancer
+  that keeps roughly one leader per box; an ADMIN-gated route can also
+  move a group's leadership by hand.
+- See [`adr-multiraft-topology.md`](adr-multiraft-topology.md),
+  [`adr-multiraft-partitioning.md`](adr-multiraft-partitioning.md), and
+  [`adr-multiraft-cross-shard.md`](adr-multiraft-cross-shard.md) for the
+  fuller shipped design, and
+  [`adr-throughput-target.md`](adr-throughput-target.md) for the measured
+  throughput numbers, including the horizontal-scaling results.
 
 ## Related
 
-- PA-3001 (R-06 root cause)
 - ADR-0001 (embedded Raft consensus)
-- the single-Raft ceiling (see measurement results)
+- [`adr-multiraft-topology.md`](adr-multiraft-topology.md)
+- [`adr-multiraft-partitioning.md`](adr-multiraft-partitioning.md)
+- [`adr-multiraft-cross-shard.md`](adr-multiraft-cross-shard.md)
+- [`adr-throughput-target.md`](adr-throughput-target.md)
 
 ## Verification
 
-- **Testable via:** the single-shard invariant is asserted by `configd-consensus-core/src/test/java/io/configd/raft/ClusterConfigTest.java` (the `shardId` field is reserved in `ClusterConfig` but always 0 in v0.1). Multi-Raft driver wiring is exercised by `configd-replication-engine/src/test/java/io/configd/replication/MultiRaftDriverTest.java` even though only one driver is provisioned in v0.1.
-- **Invalidated by:** any v0.1 deployment that provisions more than one Raft group per cluster, or a `ClusterConfig` produced with `shardId != 0`.
-- **Operator check:** `configd_raft_groups_total` gauge equals 1 in production v0.1 clusters; the measured ceiling is <= 10 k commits/s above which v0.2 sharding is required.
+- **Testable via:** `configd-consensus-core/src/test/java/io/configd/raft/ClusterConfigTest.java` covers the `ClusterConfig` schema, including the default single-group case (`shardId = 0`). `configd-replication-engine/src/test/java/io/configd/replication/MultiRaftDriverTest.java` (its `GroupManagement` tests) exercises multiple Raft groups under one driver, which is what a sharded deployment runs in production.
+- **Invalidated by:** a `ClusterConfig` that cannot express `shardId != 0`, or a shard count that changes at runtime without a redeploy (online resharding).
+- **Operator check:** `configd_raft_groups_total` reports 1 for a single-group deployment and N for an N-shard deployment.

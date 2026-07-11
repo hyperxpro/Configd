@@ -29,11 +29,11 @@ This directory holds runbooks for the alerts in
 ## Audience
 
 These runbooks assume the responder is on the operator's on-call rotation
-(see `docs/decisions/adr-0025-on-call-rotation-required.md`) and has
+(see `docs/adr/adr-0025-on-call-rotation-required.md`) and has
 shell access to the cluster, the Grafana dashboards in `ops/dashboards/`,
 and `kubectl` + `curl` against the configd HTTP surface (`HttpApiServer`).
 
-**HTTP surface (S6-verified).** `HttpApiServer` exposes ONLY `/health/live`,
+**HTTP surface.** `HttpApiServer` exposes ONLY `/health/live`,
 `/health/ready`, `/metrics`, and `/v1/config/<key>` (GET/PUT/DELETE). There
 is **no** `/admin/*`, `/raft/status`, or `raftctl` CLI — earlier drafts that
 referenced them have been reconciled. Operator signals are: the
@@ -45,7 +45,7 @@ unwired): a node reset keeps its StatefulSet ordinal (= node-id), so membership
 is unchanged; a permanent topology change rebuilds via restore-from-snapshot /
 disaster-recovery.
 
-## Convention (S6 strict format)
+## Convention
 
 Every alert-driven runbook follows: **# Title → ## Symptom (which alert
 fires, what the operator sees) → ## Diagnosis (which dashboard panel + which

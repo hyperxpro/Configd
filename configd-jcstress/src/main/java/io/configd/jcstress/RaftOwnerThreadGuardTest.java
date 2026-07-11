@@ -127,7 +127,7 @@ public final class RaftOwnerThreadGuardTest {
     public static class UnboundGuardIsInertAndRaces {
 
         // Verbatim field; DELIBERATELY never bound. `consensusState` mirrors a
-        // RaftNode non-volatile O-class field (e.g. currentTerm) whose safety rests on single-owner
+        // RaftNode non-volatile field (e.g. currentTerm) whose safety rests on single-owner
         // access, not on atomics.
         volatile Thread ownerThread;
         int consensusState;

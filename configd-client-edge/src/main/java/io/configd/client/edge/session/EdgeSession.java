@@ -27,17 +27,17 @@ import java.util.function.Consumer;
 /**
  * One edge connection's lifecycle — connect + authenticate + bounded reconnect — driving one active
  * {@link InboundFrameHandler}. Extracted from {@code ConfigdEdgeClient} so that each independently-resumed
- * watch can own its <b>own</b> session (its own connection), which is what the single-shared-drain rule
- * (§06 F10-1b) requires: a driver that needs independent per-watch resume MUST use one connection per such
- * watch. A {@code ConfigdEdgeClient} owns a primary session (the Gate-1/2 single-connection surface) and one
- * additional session per independently-resumed watch (Gate 3).
+ * watch can own its <b>own</b> session (its own connection), which the single-shared-drain rule requires: a
+ * driver that needs independent per-watch resume MUST use one connection per such watch. A
+ * {@code ConfigdEdgeClient} owns a primary session (the single-connection surface) and one additional session
+ * per independently-resumed watch.
  *
- * <p><b>Reconnect vs. hot-loop (§03 AU4-4 / §07 E4-2 / E7) — behavior preserved verbatim.</b> A recoverable
- * terminal reconnects under the {@link ConfigdClientConfig#retryPolicy()} backoff, capped by
- * {@code maxAttempts}; a terminal one fails closed on {@link #terminalFuture()}. <b>The reconnect budget
- * resets only on a CONFIRMED-healthy positive server frame</b> ({@code HEARTBEAT} or a business frame, via
- * {@link #markHealthy()}) — never on optimistic connect+auth success — so an always-rejecting server accrues
- * to {@code maxAttempts} and gives up rather than reconnecting forever.
+ * <p><b>Reconnect vs. hot-loop.</b> A recoverable terminal reconnects under the
+ * {@link ConfigdClientConfig#retryPolicy()} backoff, capped by {@code maxAttempts}; a terminal one fails
+ * closed on {@link #terminalFuture()}. <b>The reconnect budget resets only on a CONFIRMED-healthy positive
+ * server frame</b> ({@code HEARTBEAT} or a business frame, via {@link #markHealthy()}) — never on optimistic
+ * connect+auth success — so an always-rejecting server accrues to {@code maxAttempts} and gives up rather
+ * than reconnecting forever.
  */
 public final class EdgeSession implements AutoCloseable {
 
@@ -54,8 +54,8 @@ public final class EdgeSession implements AutoCloseable {
     // Second, markHealthy-independent reconnect bound. The ordinary attempt budget (reconnectAttempt) is reset
     // by any positive frame (markHealthy), which a healthy-but-flapping server legitimately triggers — but that
     // same reset lets a HOSTILE server emit one cheap frame (a HEARTBEAT, or the SUBSCRIBE_OK itself) per
-    // connection then drop, pinning the budget at zero and looping the client forever (a self-inflicted DoS;
-    // §07 E4-2 / E7 defeated). The discriminator is stability: a genuinely healthy connection stays up a while;
+    // connection then drop, pinning the budget at zero and looping the client forever (a self-inflicted DoS).
+    // The discriminator is stability: a genuinely healthy connection stays up a while;
     // the hostile pattern drops almost immediately. So a connection torn down before it has been up
     // MIN_STABLE_MILLIS counts toward rapidFailures, which markHealthy CANNOT reset (only a stable connection
     // does) — after maxAttempts such rapid failures the client gives up. Genuine flapping (each connection up
@@ -169,8 +169,6 @@ public final class EdgeSession implements AutoCloseable {
         terminal.complete(null); // no-op if a terminal already completed it exceptionally
     }
 
-    // -----------------------------------------------------------------------
-
     private void doConnect() {
         if (closed.get()) {
             throw new IllegalStateException("session is closed");
@@ -238,8 +236,8 @@ public final class EdgeSession implements AutoCloseable {
 
     /** A recoverable terminal reconnects (bounded backoff); a terminal one fails closed (never hot-loop). */
     private static boolean shouldReconnect(ConfigdException error) {
-        // AUTH_FAIL is recovered via bounded reconnect-with-backoff: on the edge it is not provably permanent
-        // (§07 E4-2). GapUnrecoverable / StaleTopology re-bootstrap (the driver re-creates from scratch). A
+        // AUTH_FAIL is recovered via bounded reconnect-with-backoff: on the edge it is not provably permanent.
+        // GapUnrecoverable / StaleTopology re-bootstrap (the driver re-creates from scratch). A
         // bare ProtocolViolation without FRAME_CORRUPT, ForbiddenException, and ChainVerificationException are
         // terminal (fail-closed).
         if (error instanceof AuthFailedException
@@ -336,7 +334,7 @@ public final class EdgeSession implements AutoCloseable {
 
         @Override
         public void onPerWatch(long watchId, ConfigdException watchError) {
-            activeHandler.onPerWatch(watchId, watchError); // forward the watch_id so a multiplex can demux (W6-4)
+            activeHandler.onPerWatch(watchId, watchError); // forward the watch_id so a multiplex can demux
         }
 
         @Override

@@ -21,14 +21,10 @@ class WatchServiceTest {
     @BeforeEach
     void setUp() {
         clock = new TestClock();
-        // Use short window (5ms) for testing
+        // 5ms coalescing window
         WatchCoalescer coalescer = new WatchCoalescer(clock, 5_000_000L, 64);
         service = new WatchService(coalescer);
     }
-
-    // -----------------------------------------------------------------------
-    // Registration
-    // -----------------------------------------------------------------------
 
     @Nested
     class Registration {
@@ -104,10 +100,6 @@ class WatchServiceTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Event dispatch - basic
-    // -----------------------------------------------------------------------
-
     @Nested
     class BasicDispatch {
 
@@ -134,7 +126,7 @@ class WatchServiceTest {
             service.onConfigChange(
                     List.of(new ConfigMutation.Put("key", VALUE)), 1);
 
-            // Don't advance clock - window hasn't expired
+            // Deliberately not advancing the clock: the coalescing window hasn't expired.
             int dispatched = service.tick();
             assertEquals(0, dispatched);
             assertTrue(received.isEmpty());
@@ -168,10 +160,6 @@ class WatchServiceTest {
             assertEquals(0, service.tick());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Prefix filtering
-    // -----------------------------------------------------------------------
 
     @Nested
     class PrefixFiltering {
@@ -226,7 +214,7 @@ class WatchServiceTest {
             assertEquals(1, received.size());
 
             WatchEvent event = received.getFirst();
-            assertEquals(2, event.size()); // Only db.host and db.port
+            assertEquals(2, event.size()); // db.host and db.port match; cache.ttl does not
             assertEquals(1, event.version());
         }
 
@@ -247,16 +235,10 @@ class WatchServiceTest {
             assertEquals(1, dbEvents.size());
             assertEquals(1, cacheEvents.size());
 
-            // db watcher gets only db.host
             assertEquals(1, dbEvents.getFirst().size());
-            // cache watcher gets only cache.ttl
             assertEquals(1, cacheEvents.getFirst().size());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Version cursor tracking
-    // -----------------------------------------------------------------------
 
     @Nested
     class VersionCursorTracking {
@@ -293,7 +275,7 @@ class WatchServiceTest {
         @Test
         void watcherWithHighStartVersionSkipsOldEvents() {
             List<WatchEvent> received = new CopyOnWriteArrayList<>();
-            // Watcher starts at version 10 - won't get events <= 10
+            // A start version of 10 excludes events at or below version 10.
             service.register("", 10, received::add);
 
             service.onConfigChange(
@@ -314,10 +296,6 @@ class WatchServiceTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Coalescing behavior
-    // -----------------------------------------------------------------------
-
     @Nested
     class Coalescing {
 
@@ -326,7 +304,6 @@ class WatchServiceTest {
             List<WatchEvent> received = new CopyOnWriteArrayList<>();
             service.register("", received::add);
 
-            // Multiple rapid changes within the coalescing window
             service.onConfigChange(
                     List.of(new ConfigMutation.Put("a", VALUE)), 1);
             service.onConfigChange(
@@ -334,14 +311,13 @@ class WatchServiceTest {
             service.onConfigChange(
                     List.of(new ConfigMutation.Put("c", VALUE)), 3);
 
-            // Flush after window expires
             clock.advanceNanos(5_000_000L);
             service.tick();
 
-            assertEquals(1, received.size()); // Single coalesced event
+            assertEquals(1, received.size());
             WatchEvent event = received.getFirst();
-            assertEquals(3, event.size()); // Contains all 3 mutations
-            assertEquals(3, event.version()); // Latest version
+            assertEquals(3, event.size());
+            assertEquals(3, event.version()); // coalesced version is the latest, not a count
         }
 
         @Test
@@ -349,13 +325,11 @@ class WatchServiceTest {
             List<WatchEvent> received = new CopyOnWriteArrayList<>();
             service.register("", received::add);
 
-            // First batch
             service.onConfigChange(
                     List.of(new ConfigMutation.Put("a", VALUE)), 1);
             clock.advanceNanos(5_000_000L);
             service.tick();
 
-            // Second batch
             service.onConfigChange(
                     List.of(new ConfigMutation.Put("b", VALUE)), 2);
             clock.advanceNanos(5_000_000L);
@@ -366,10 +340,6 @@ class WatchServiceTest {
             assertEquals(2, received.get(1).version());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Fan-out to multiple watchers
-    // -----------------------------------------------------------------------
 
     @Nested
     class FanOut {
@@ -408,16 +378,12 @@ class WatchServiceTest {
                     List.of(new ConfigMutation.Put("db.host", VALUE)), 1);
             int dispatched = service.flushAndDispatch();
 
-            assertEquals(2, dispatched); // db and all
+            assertEquals(2, dispatched); // db and all match; cache does not
             assertEquals(1, dbWatcher.size());
             assertTrue(cacheWatcher.isEmpty());
             assertEquals(1, allWatcher.size());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Cancel during dispatch
-    // -----------------------------------------------------------------------
 
     @Nested
     class CancelBehavior {
@@ -452,10 +418,6 @@ class WatchServiceTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Pending count
-    // -----------------------------------------------------------------------
-
     @Nested
     class PendingState {
 
@@ -476,10 +438,6 @@ class WatchServiceTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Delete mutations through watch
-    // -----------------------------------------------------------------------
-
     @Nested
     class DeleteMutations {
 
@@ -497,10 +455,6 @@ class WatchServiceTest {
             assertInstanceOf(ConfigMutation.Delete.class, event.mutations().getFirst());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Watch record
-    // -----------------------------------------------------------------------
 
     @Nested
     class WatchClass {
@@ -539,10 +493,6 @@ class WatchServiceTest {
             assertEquals("prefix.", watch.prefix());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Test clock
-    // -----------------------------------------------------------------------
 
     private static final class TestClock implements Clock {
         private long nanos = 1_000_000_000L;

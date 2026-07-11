@@ -38,8 +38,6 @@ class ConfigSourceTest {
         }
     }
 
-    // ---- SystemPropertyConfigSource --------------------------------------------------------------
-
     @Nested
     class SystemProperties {
         @Test
@@ -69,8 +67,6 @@ class ConfigSourceTest {
             }
         }
     }
-
-    // ---- EnvConfigSource: systematic mapping + legacy aliases ------------------------------------
 
     @Nested
     class Environment {
@@ -110,8 +106,6 @@ class ConfigSourceTest {
             assertEquals(Optional.of("true"), env.getString("configd.raft.encryption.enabled"));
         }
     }
-
-    // ---- LayeredConfigSource precedence ----------------------------------------------------------
 
     @Nested
     class Precedence {
@@ -154,8 +148,6 @@ class ConfigSourceTest {
             assertEquals(Set.of("configd.a.one", "configd.a.two"), layered.keysWithPrefix("configd.a."));
         }
     }
-
-    // ---- Typed accessors: fail-closed ------------------------------------------------------------
 
     @Nested
     class TypedAccessors {
@@ -203,8 +195,6 @@ class ConfigSourceTest {
             assertEquals(java.util.List.of("only"), of(Map.of("k", "only")).getList("k"));
         }
     }
-
-    // ---- anyLayerTrue: the legacy "sysprop OR env-alias" flags -----------------------------------
 
     @Nested
     class AnyLayerTrue {
@@ -257,8 +247,6 @@ class ConfigSourceTest {
             }
         }
     }
-
-    // ---- ambient system() source -----------------------------------------------------------------
 
     @Test
     void systemAmbientReadsPropertiesLive() {

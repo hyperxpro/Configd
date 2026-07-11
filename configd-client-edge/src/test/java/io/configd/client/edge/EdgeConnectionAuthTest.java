@@ -29,8 +29,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * The auth-mode and connection-lifecycle contract (§03) over a plaintext loopback mock — the transport is
- * incidental to auth/framing logic, so these run fast without TLS; the §06 F9 TLS cases live in
+ * The auth-mode and connection-lifecycle contract over a plaintext loopback mock — the transport is
+ * incidental to auth/framing logic, so these run fast without TLS; the TLS cases live in
  * {@link EdgeTlsTest}. Each test asserts the wire-visible behavior the RFC pins: exactly one pre-auth
  * {@code AUTH}, no hot-loop on rejection, {@code REFRESH_AUTH} renewal, and the {@code CREDENTIAL_EXPIRED}
  * reconnect.
@@ -81,7 +81,7 @@ class EdgeConnectionAuthTest {
 
     @Test
     void authRejectRecoversViaBoundedReconnectNeverHotLoop() throws Exception {
-        // §07 E4-2: an edge AUTH_FAIL is not provably permanent (it may be a transient authenticator outage
+        // An edge AUTH_FAIL is not provably permanent (it may be a transient authenticator outage
         // indistinguishable on the wire from a bad credential), so the client recovers via BOUNDED
         // reconnect-with-backoff — a fresh connection per attempt, never a hot-loop of AUTH on one socket. A
         // server that rejects every attempt exhausts the budget and the client gives up terminally.
@@ -272,10 +272,6 @@ class EdgeConnectionAuthTest {
             }
         }
     }
-
-    // -----------------------------------------------------------------------
-    // helpers
-    // -----------------------------------------------------------------------
 
     private static ConfigdClientConfig tokenConfig(int port, CredentialSource source) {
         return ConfigdClientConfig.builder()

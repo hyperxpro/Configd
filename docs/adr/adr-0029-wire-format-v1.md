@@ -1,31 +1,31 @@
 # ADR-0029: Wire Format v1 - Version Byte + CRC32C Trailer
 
-**Status:** Accepted (iter-3, 2026-04-25)
+**Status:** Accepted (2026-04-25)
 **Supersedes:** ADR-0010 (v0 wire format - header-only, no version, no checksum)
 **Related:** ADR-0028 (snapshot on-disk format - same TLV-style forward-compat philosophy applied to a different boundary)
 
-> **Where the current bytes live.** This ADR is the canonical origin of the framing *discipline* —
-> a version byte, a CRC32C-Castagnoli trailer, CRC-before-type validation, and fail-closed
-> forward-compat — and the wire-compat CI gate still cites its §8.10. The *concrete* diagram below
-> predates the wire-hardening Gate-2 additions (the Raft frame is now `HEADER_SIZE = 26` with an
+> **Where the current bytes live.** This ADR is the canonical origin of the framing *discipline*
+> - a version byte, a CRC32C-Castagnoli trailer, CRC-before-type validation, and fail-closed
+> forward-compat - and the wire-compat CI gate still cites its section 8.10. The *concrete* diagram
+> below predates later wire-hardening additions (the Raft frame is now `HEADER_SIZE = 26` with an
 > 8-byte reserved `epoch` slot). For the byte-authoritative wire layout, read
-> [`rfc/driver-protocol/06-wire-framing.md`](../rfc/driver-protocol/06-wire-framing.md) — the edge
-> plane in §1–§12 and the Raft plane in §13 — which is validated against the codecs and the golden
-> fixtures. Where this ADR's diagram and that section disagree, **the code (and the RFC) win**.
+> [`rfc/driver-protocol/06-wire-framing.md`](../rfc/driver-protocol/06-wire-framing.md) - the edge
+> plane in section 1-12 and the Raft plane in section 13 - which is validated against the codecs and
+> the golden fixtures. Where this ADR's diagram and that section disagree, **the code (and the RFC)
+> win**.
 
 ## Context
 
 The v0 wire format (`[length(4)][type(1)][groupId(4)][term(8)][payload]`) shipped in
-internal builds but never to a customer. iter-1 finding **R-001** flagged the absence
-of a version byte: any future change to the wire format becomes a hard
-break with no possibility of a rolling upgrade. iter-2 lacked the
-implementation depth to address it; the deferred test suite
+internal builds but never to a customer. It had no version byte: any future
+change to the wire format would be a hard break with no possibility of a
+rolling upgrade. The test suite that pins the v1 format
 (`FrameCodecPropertyTest`, `WireCompatGoldenBytesTest`,
-`RaftMessageCodecPropertyTest`) pre-pinned the v1 format and was held in
-`.iter3-deferred-tests/` pending implementation.
+`RaftMessageCodecPropertyTest`) was written ahead of the implementation
+that satisfies it.
 
-This ADR records the v1 format adopted in iter-3 and the
-forward-compatibility contract for v2.
+This ADR records the v1 format and the forward-compatibility contract
+for v2.
 
 ## Decision
 
@@ -82,8 +82,8 @@ trustworthy.
 
 `MessageType` enum codes are dense (0x01..0x10) today. Adding a new
 type in v1 is allowed *as long as the code is unique*; v0 readers are
-non-existent (this is the first GA), so the question is purely
-v1<->v2. v2 readers MUST treat unknown type codes as "drop frame and
+non-existent (v0 never shipped to a customer), so the question is
+purely v1<->v2. v2 readers MUST treat unknown type codes as "drop frame and
 log unknown_message_type" - never as a hard reject - to preserve the
 N-1 / N coexistence invariant.
 
@@ -194,51 +194,50 @@ This guardrail covers **only the `FrameCodec` layer**. Specifically:
   `FrameCodec.encode(...)` with a fixed 4-byte payload
   (`{0xDE, 0xAD, 0xBE, 0xEF}`) for every non-heartbeat
   `MessageType`. They pin the FrameCodec wire shape (length, version,
-  type, groupId, term, payload, CRC32C) but **NOT** the application-
-  layer payload encoded by `RaftMessageCodec`.
+  type, groupId, term, payload, CRC32C) but not the application-layer
+  payload encoded by `RaftMessageCodec`.
 - A change to `RaftMessageCodec.encodeAppendEntries` (or any other
   per-`MessageType` encoder) that reorders/adds/removes payload
-  fields will NOT trip the section 8.10 fixture comparison. The defence at
+  fields will not trip the section 8.10 fixture comparison. The defence at
   the application-layer is `RaftMessageCodecTest` round-trip plus
   `RaftMessageCodecPropertyTest` (jqwik). Round-trip passes do not
   catch wire-shape drift between v1 and v2 the way golden bytes do.
 
-**Known gap.** A future iter should add a separate
-`RaftMessageCodecGoldenBytesTest` with per-`MessageType` payload
-fixtures that pin the application-layer byte layout. Until then,
-RaftMessageCodec wire changes are governed by code-review discipline,
-not CI. This is documented honestly here rather than oversold.
+**Known gap.** A separate `RaftMessageCodecGoldenBytesTest` with
+per-`MessageType` payload fixtures that pin the application-layer byte
+layout would close this gap. Until it exists, RaftMessageCodec wire
+changes are governed by code-review discipline, not CI. This is
+documented honestly here rather than oversold.
 
-### Known limitation: snapshot size cap and the chunking gap
+### Snapshot size: a per-chunk cap, not a total-state ceiling
 
-`MAX_SNAPSHOT_BLOB_LEN = 4 MiB` is a hard ceiling for a single
-`InstallSnapshot` RPC. The wire format reserves `offset` and `done`
-fields for chunked snapshot install (Raft section 7), but the v0.1 leader
-does **not** drive chunking - it sends one frame with `offset=0,
-done=true`.
+`MAX_SNAPSHOT_BLOB_LEN = 4 MiB` is the ceiling for a single
+`InstallSnapshot` chunk, not for total snapshot size. Chunked snapshot
+install is implemented: a snapshot larger than one chunk streams to a
+lagging follower as ordered chunks using the wire format's `offset` and
+`done` fields (Raft section 7). The leader sizes chunks at
+`RaftNode.snapshotChunkBytes` (default 1 MiB), hard-capped at
+`RaftNode.MAX_SNAPSHOT_CHUNK_BYTES` (4 MiB, mirroring
+`RaftMessageCodec.MAX_SNAPSHOT_BLOB_LEN`) so a chunk can never be born
+unencodable. The leader drives the transfer and resumes from the
+follower's echoed offset (`InstallSnapshotResponse.nextExpectedOffset`)
+after a drop, reorder, or restart; it only restarts from offset 0 after
+several heartbeat intervals of total silence from that follower.
 
-Operational consequence: if `ConfigStateMachine.snapshot()` produces
-> 4 MiB of bytes, `RaftMessageCodec.encodeInstallSnapshot` throws
-`IllegalArgumentException`. The defensive catch in
-`RaftTransportAdapter.send` keeps the broadcast loop alive (no
-election storm), but the affected follower cannot bootstrap from the
-snapshot and must catch up via `AppendEntries` from the leader's
-oldest retained entry. If the leader has compacted past entries the
-follower needs, that follower is permanently behind until v0.2 lands
-chunked snapshot install.
+The follower reassembles chunks into a single in-memory buffer, bounded
+by `configd.raft.maxReassembledSnapshotBytes` (default 512 MiB, operator
+tunable). A snapshot that would exceed that bound, or a transfer that
+never reaches its final chunk, is refused and the partial buffer is
+dropped before it can exhaust the follower's heap - it is not bounded by
+disk, only by that cap.
 
-Mitigation in v0.1:
+Related bounds:
 
 - `RaftNode.propose` rejects client commands > 1 MiB so the **log**
   cannot grow per-entry past the codec cap.
-- The cluster's snapshot frequency policy should be tuned so
-  state-machine size at snapshot time stays well under 4 MiB.
-- Operators should monitor a future `configd_snapshot_size_bytes`
-  gauge (TODO: wire in the next observability pass) and alert when
-  approaching the cap.
-
-Not a v0.1 GA blocker (acceptable residual with documented constraint),
-but called out here so the next iteration sees it.
+- Operators can watch the `configd_snapshot_bytes` gauge, which reports
+  the size of the last snapshot the state machine produced, and alert
+  when it approaches the reassembly cap.
 
 ### Bounds - encoder is symmetric with decoder
 
@@ -256,18 +255,19 @@ payload before allocating:
 - `MAX_ENTRIES_PER_APPEND = 10_000` - caps the entry-count field
   that the decoder uses to size an `ArrayList`.
 - `MAX_COMMAND_LEN = 1 MiB` - caps any single LogEntry command.
-- `MAX_SNAPSHOT_BLOB_LEN = 4 MiB` - **now a per-CHUNK cap** under chunked InstallSnapshot
-  (`RaftNode.MAX_SNAPSHOT_CHUNK_BYTES`; a large snapshot streams as ordered chunks and the follower
-  reassembles under `configd.raft.maxReassembledSnapshotBytes`), no longer a total-state ceiling. Per-blob;
-  data and clusterConfigData. Sized so that two blobs at the cap
-  plus the InstallSnapshot fixed header (33 B) plus the FrameCodec
-  header+trailer (22 B) totals ~8 MiB, comfortably under
-  `MAX_FRAME_SIZE`. Larger snapshots must be chunked via the
-  `offset`/`done` fields (currently passed through but not driven
-  by the leader; chunking is v0.2 work).
+- `MAX_SNAPSHOT_BLOB_LEN = 4 MiB` - a per-chunk cap under chunked
+  InstallSnapshot (`RaftNode.MAX_SNAPSHOT_CHUNK_BYTES`; a large snapshot
+  streams as ordered chunks and the follower reassembles them under
+  `configd.raft.maxReassembledSnapshotBytes`), not a total-state
+  ceiling. Applies per-blob, to both `data` and `clusterConfigData`;
+  sized so that two blobs at the cap plus the InstallSnapshot fixed
+  header (33 B) plus the FrameCodec header+trailer (22 B) totals
+  ~8 MiB, comfortably under `MAX_FRAME_SIZE`. A snapshot larger than one
+  chunk is split across chunks via the `offset`/`done` fields, driven by
+  the leader (see "Snapshot size" above).
 - `RaftMessageCodec.checkInstallSnapshotFitsFrame(...)` further
   enforces the combined-fits-in-frame constraint at encode time so
-  that a maximally-sized request is provably encodable AND
+  that a maximally-sized request is provably encodable and
   decodable.
 
 ## Verification

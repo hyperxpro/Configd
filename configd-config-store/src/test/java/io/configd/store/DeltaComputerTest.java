@@ -40,10 +40,6 @@ class DeltaComputerTest {
         return map;
     }
 
-    // -----------------------------------------------------------------------
-    // Null / empty source
-    // -----------------------------------------------------------------------
-
     @Nested
     class NullOrEmptySource {
 
@@ -82,10 +78,6 @@ class DeltaComputerTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Identical snapshots
-    // -----------------------------------------------------------------------
-
     @Nested
     class IdenticalSnapshots {
 
@@ -106,10 +98,6 @@ class DeltaComputerTest {
             assertTrue(delta.isEmpty());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Single-mutation scenarios
-    // -----------------------------------------------------------------------
 
     @Nested
     class SingleMutation {
@@ -163,14 +151,9 @@ class DeltaComputerTest {
             ConfigDelta delta = DeltaComputer.compute(from, to);
 
             assertEquals(1, delta.size());
-            // Only "b" should be present; "a" is unchanged
             assertEquals("b", delta.mutations().getFirst().key());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Multiple changes at once
-    // -----------------------------------------------------------------------
 
     @Nested
     class MultipleChanges {
@@ -193,20 +176,16 @@ class DeltaComputerTest {
 
             Map<String, ConfigMutation> indexed = indexByKey(delta);
 
-            // "keep" should NOT be in mutations
             assertNull(indexed.get("keep"));
 
-            // "update" should be a Put with new value
             ConfigMutation.Put putUpdate = assertInstanceOf(ConfigMutation.Put.class,
                     indexed.get("update"));
             assertArrayEquals(bytes("new"), putUpdate.value());
 
-            // "add" should be a Put
             ConfigMutation.Put putAdd = assertInstanceOf(ConfigMutation.Put.class,
                     indexed.get("add"));
             assertArrayEquals(bytes("fresh"), putAdd.value());
 
-            // "remove" should be a Delete
             assertInstanceOf(ConfigMutation.Delete.class, indexed.get("remove"));
         }
 
@@ -228,10 +207,6 @@ class DeltaComputerTest {
             }
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Version numbers in delta
-    // -----------------------------------------------------------------------
 
     @Nested
     class VersionNumbers {
@@ -267,10 +242,6 @@ class DeltaComputerTest {
             assertEquals(4, delta.toVersion());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Target null check
-    // -----------------------------------------------------------------------
 
     @Nested
     class Validation {

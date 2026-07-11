@@ -1,32 +1,33 @@
 # Configd SLO / failure alert rules — Prometheus / Alertmanager.
 #
-# S6 reconciliation (operability): EVERY rule below queries a series that is now
-# PROVEN EMITTED by a contract test (MetricsWiringContractTest /
-# EdgeMetricsContractTest / DashboardSeriesContractTest) and RECORDED with real
-# data on its real path — closing the S1 "6/9 alerts query never-emitted series"
-# defect. The S5 ghost `configd_propagation_delay_seconds` alert is removed and
-# replaced by the real, served `edge_staleness_ms` gauge (Decision Log D-2).
+# Every rule below queries a series that is proven emitted by a contract test
+# (MetricsWiringContractTest / EdgeMetricsContractTest /
+# DashboardSeriesContractTest) and recorded with real data on its real path.
+# The old `configd_propagation_delay_seconds` alert queried a series the app
+# never emitted, so it could never fire; it has been removed and replaced by
+# the real, served `edge_staleness_ms` gauge.
 #
-# THRESHOLDS ARE PROPOSED — derived from the S5 reference-hardware baselines (in the
-# `# PROPOSED:` comment on each rule), to be CONFIRMED under real production load in
-# the Session 7.5 infrastructure campaign (M-1…M-10). They are NOT load-validated.
+# Thresholds are proposed — derived from reference-hardware baselines (see the
+# `# PROPOSED:` comment on each rule) — and are not yet confirmed under real
+# production load.
 #
 # Labels: `cluster`/`instance` are added by the Prometheus scrape config (external
-# labels / relabel), NOT emitted by the app (the registry has no label support) —
+# labels / relabel), not emitted by the app (the registry has no label support) —
 # the series names below are the bare app names. Each rule carries a runbook_url
-# annotation routing the page to the runbook that was execution-validated in S6/WS-B.
+# annotation routing the page to the matching runbook.
 #
 # Test harness: ops/alerts/configd-slo-alerts.test.yaml (promtool test rules) proves
-# each rule FIRES on its injected condition and STAYS QUIET on normal operation.
+# each rule fires on its injected condition and stays quiet on normal operation.
 
 groups:
   # ----------------------------------------------------------------------------
   - name: configd-slo-write-commit
     interval: 30s
     rules:
-      # PROPOSED: SLO 99% of write commits < 150 ms. S5 measured local commit p99 =
-      # 16 ms (~9x headroom); burn-rate guards error-budget exhaustion. Cross-region
-      # budget (<150 ms, 5-voter modeled ~84 ms) is M-1, confirm in S7.5.
+      # PROPOSED: SLO 99% of write commits < 150 ms. Measured local commit p99 =
+      # 16 ms (~9x headroom); burn-rate guards error-budget exhaustion. The
+      # cross-region budget (<150 ms, 5-voter modeled ~84 ms) is not yet
+      # confirmed under real load.
       - alert: ConfigdWriteCommitFastBurn
         expr: |
           (
@@ -57,7 +58,7 @@ groups:
   - name: configd-slo-edge-read
     interval: 30s
     rules:
-      # PROPOSED: SLO 99% of edge reads < 1 ms. S5 measured p99 = 1.60 us (~600x
+      # PROPOSED: SLO 99% of edge reads < 1 ms. Measured p99 = 1.60 us (~600x
       # headroom); this should essentially never fire — if it does, the edge read
       # path has regressed badly. Series is served by the EDGE process /metrics.
       - alert: ConfigdEdgeReadFastBurn
@@ -72,8 +73,8 @@ groups:
         annotations:
           summary: "Edge read p99 burning fast (14.4x rate, 5m window)"
           runbook_url: ops/runbooks/edge-read-latency.md
-      # PROPOSED: p999 symptom view, warn-only. S5 p999 = 32 us; 5 ms is a generous
-      # ceiling (~150x). Not a paging burn-rate gate.
+      # PROPOSED: p999 symptom view, warn-only. Measured p999 = 32 us; 5 ms is a
+      # generous ceiling (~150x). Not a paging burn-rate gate.
       - alert: ConfigdEdgeReadP999Breach
         expr: |
           histogram_quantile(0.999, sum by (le) (rate(configd_edge_read_seconds_bucket[5m]))) > 0.005
@@ -87,12 +88,14 @@ groups:
   - name: configd-slo-edge-staleness
     interval: 30s
     rules:
-      # PROPOSED: replaces the S5 GHOST configd_propagation_delay_seconds alert with
-      # the REAL served edge_staleness_ms gauge (ADR-0039 frontier). S5 staleness p99
-      # = 255 ms local; thresholds are the consistency-contract state boundaries
-      # (CURRENT->STALE = 500 ms warn, STALE->DEGRADED = 2 s page). Global propagation
-      # (<500 ms) is M-2, confirm in S7.5. RR-099: do NOT page on the monotonic-read
-      # invariant counter alone — staleness here is the operator signal.
+      # PROPOSED: replaces the old configd_propagation_delay_seconds alert, which
+      # queried a series the app never emitted and so could never fire, with the
+      # real served edge_staleness_ms gauge (ADR-0039 frontier). Measured staleness
+      # p99 = 255 ms local; thresholds are the consistency-contract state boundaries
+      # (CURRENT->STALE = 500 ms warn, STALE->DEGRADED = 2 s page). The global
+      # propagation budget (<500 ms) is not yet confirmed under real cross-region
+      # load. Do not page on the monotonic-read invariant counter alone — staleness
+      # here is the operator signal.
       - alert: ConfigdEdgeStalenessWarn
         expr: max(edge_staleness_ms) > 500
         for: 2m
@@ -114,7 +117,7 @@ groups:
     rules:
       # PROPOSED: control-plane write availability SLO 99.999% over 30m. Denominator
       # is failed+total (= attempts) so a full outage still pages (no NaN). Both
-      # series are now RECORDED at the raftProposer site (D-2).
+      # series are recorded at the raftProposer call site.
       - alert: ConfigdControlPlaneAvailability
         expr: |
           (
@@ -137,11 +140,12 @@ groups:
   - name: configd-overload
     interval: 30s
     rules:
-      # PROPOSED (RR-110 / D-1): sustained write-overload shedding. The bounded
-      # proposal queue sheds at maxPendingProposals=1024 -> 429 + Retry-After. Any
-      # sustained shedding (> 1 reject/s for 5m) means write pressure exceeds commit
-      # throughput — scale writers/cores. Box ceiling is ~125-172 commits/s (M-9);
-      # confirm the real shed threshold under load in S7.5 (M-10).
+      # PROPOSED: sustained write-overload shedding. The bounded proposal queue
+      # sheds at maxPendingProposals=1024 -> 429 + Retry-After. Any sustained
+      # shedding (> 1 reject/s for 5m) means write pressure exceeds commit
+      # throughput — scale writers/cores. Measured box ceiling is ~125-172
+      # commits/s; the shed threshold itself is not yet confirmed under real
+      # production load.
       - alert: ConfigdWriteOverloadShedding
         expr: rate(configd_write_rejected_overloaded_total[5m]) > 1
         for: 5m
@@ -149,9 +153,10 @@ groups:
         annotations:
           summary: "Sustained write 429s (bounded proposal queue shedding)"
           runbook_url: ops/runbooks/overload-shedding.md
-      # PROPOSED: apply-backlog OBSERVABILITY alert (RR-110: no 503 shed). A leader
-      # that commits but cannot apply (slow disk) accrues commitIndex-lastApplied.
-      # 5000 is a heuristic ceiling (apply backlog is ~0 in steady state); confirm S7.5.
+      # PROPOSED: apply-backlog observability alert (this observes only — there is
+      # no 429/503 shed on this path). A leader that commits but cannot apply (slow
+      # disk) accrues commitIndex-lastApplied. 5000 is a heuristic ceiling (apply
+      # backlog is ~0 in steady state); not yet confirmed under real load.
       - alert: ConfigdRaftApplyBacklog
         expr: max(configd_raft_pending_apply_entries) > 5000
         for: 5m
@@ -183,13 +188,13 @@ groups:
         annotations:
           summary: "Implausible (future-dated) edge frontier — clock skew suspected"
           runbook_url: ops/runbooks/edge-catchup-storm.md
-      # PROPOSED (O-6 Seam 2b): any ACL config-policy load rejection. The loader keeps last-good
-      # (fail-closed — never deny-all / allow-all), so a rejected reload is SILENT to clients yet means an
-      # `_acl/` write did NOT take effect, and one persisted poison key FREEZES every subsequent policy
-      # update until it is removed (AclConfigPolicyLoaderTest#poisonKeyFreezesSubsequentUpdates). 2b's
-      # write-time validation rejects most malformed `_acl/` writes pre-commit, but a key delivered via
-      # snapshot/replay can still trip this. Series RECORDED via AclConfigPolicyLoader (eager-created ⇒
-      # emits `_total 0`, no blind-dashboard series).
+      # PROPOSED: any ACL config-policy load rejection. The loader keeps last-good
+      # (fail-closed — never deny-all / allow-all), so a rejected reload is silent to clients yet means an
+      # `_acl/` write did NOT take effect, and one persisted poison key freezes every subsequent policy
+      # update until it is removed (AclConfigPolicyLoaderTest#poisonKeyFreezesSubsequentUpdates).
+      # Write-time validation rejects most malformed `_acl/` writes pre-commit, but a key delivered via
+      # snapshot/replay can still trip this. Series recorded via AclConfigPolicyLoader (eager-created, so
+      # it emits `_total 0` rather than going unregistered).
       - alert: ConfigdAclPolicyLoadFailed
         expr: increase(configd_acl_policy_load_failed_total[15m]) >= 1
         for: 5m
@@ -202,10 +207,11 @@ groups:
   - name: configd-runtime-leaks
     interval: 1m
     rules:
-      # PROPOSED leak ceilings from the S5 soak flats (3.45 h clean: FD 69, threads
-      # 93, heap ~220-290 MB). A monotonic leak eventually crosses these generous
-      # margins without the GC-sawtooth false positives a deriv() alert would suffer.
-      # Confirm/tighten on real hardware in S7.5 (and the M-4 representative soak).
+      # PROPOSED leak ceilings from a measured soak's flat baselines (3.45 h clean
+      # run: FD 69, threads 93, heap ~220-290 MB). A monotonic leak eventually
+      # crosses these generous margins without the GC-sawtooth false positives a
+      # deriv() alert would suffer. Confirm and tighten these against a longer
+      # representative soak on real hardware.
       - alert: ConfigdFileDescriptorLeak
         expr: max(process_open_fds) > 500
         for: 15m

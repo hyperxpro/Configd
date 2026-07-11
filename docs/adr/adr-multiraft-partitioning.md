@@ -1,19 +1,27 @@
-# ADR (multi-Raft, D-A): Partition the Control Plane by HASH-within-Scope, Not Range
+# ADR: Partition the Control Plane by Hash-within-Scope, Not Range
 
 ## Status
 
-Proposed. The hash-within-scope scheme described here is what shipped: it is wired into the server and exercised in simulation and on real hardware. A single group (N=1) is the v1 default; running multiple shards in production is a v2 operating mode, since horizontal scale is operator-managed in v1. Pairs with [adr-multiraft-topology](adr-multiraft-topology.md), [adr-multiraft-cross-shard](adr-multiraft-cross-shard.md), and [adr-throughput-target](adr-throughput-target.md).
+Accepted. The hash-within-scope scheme described here is what shipped: it is wired into the server and
+exercised in simulation and on real hardware. The default is a single Raft group (N=1); an operator turns
+on multiple shards for horizontal scale by setting `configd.raft.shardCount` above 1 - that is an
+operating mode available today, not a future version. Pairs with
+[adr-multiraft-topology](adr-multiraft-topology.md), [adr-multiraft-cross-shard](adr-multiraft-cross-shard.md),
+and [adr-throughput-target](adr-throughput-target.md).
 
-This decision supersedes the "Raft group affinity" idea in [ADR-0017](adr-0017-namespace-multi-tenancy.md): keys are routed by hashing the full path within a scope, not by pinning a namespace to a shard group. Pinning a whole namespace would collapse that tenant onto a single owner thread and defeat even distribution.
+This decision supersedes the "Raft group affinity" idea in
+[ADR-0017](adr-0017-namespace-multi-tenancy.md): keys are routed by hashing the full path within a scope,
+not by pinning a namespace to a shard group. Pinning a whole namespace would collapse that tenant onto a
+single owner thread and defeat even distribution.
 
 ## Context
 
 Moving the write path to multiple Raft groups (shards) requires a partitioning scheme: a deterministic
-function from a key to the shard (Raft group) that owns it. The classic choice is **HASH** (keys
-hashed into shards - even spread, hot-shard-resistant, but no ordered/prefix range scans) vs **RANGE**
-(ordered key-ranges - supports prefix/range scans, but prone to hot-shard skew and needs split/merge).
+function from a key to the shard (Raft group) that owns it. The classic choice is hash (keys hashed into
+shards - even spread, hot-shard-resistant, but no ordered/prefix range scans) vs range (ordered
+key-ranges - supports prefix/range scans, but prone to hot-shard skew and needs split/merge).
 
-The decision is driven by **Configd's read pattern**, which is verified, not assumed:
+The decision is driven by Configd's read pattern, which is verified, not assumed:
 
 - **Edge reads are point lookups by key** against an in-process lock-free HAMT (getHit ~483 ns,
   getMiss ~12 ns at 100M keys; measured on hardware). There are **no range/scan reads**
@@ -37,10 +45,10 @@ tiers (ADR-0030); namespaces already pin to groups for tenant isolation (ADR-001
 - **A write routes** as: `propose(scope, cmd)` -> scope selects the pool -> `hash(namespace, key) mod N`
   selects the group within the pool -> propose to that `RaftNode` via `MultiRaftDriver`. This replaces
   the constant `0` at the existing seam. **No edge-plane or wire change.**
-- **Fan-out is unchanged**: the distribution node already ingests every shard's committed delta stream
-  and localizes each per-key delta to subscribed edges via its radix trie. Under hash, the trie's
-  *input* is N committed streams instead of 1; the trie logic and per-edge output are byte-for-byte
-  identical, because the prefix->edge mapping lives in the trie, never in the shard layout.
+- **Fan-out is per shard.** Each shard gets its own `FanOutBuffer` and compactor (built as
+  `ConfigdServer.ShardedFanOut`), so a shard's committed stream feeds its own buffer on its own owner
+  thread; there is no merged, cross-shard stream. A watch subscription tracks a per-shard cursor vector,
+  and the prefix -> edge mapping lives entirely in the radix trie, which is source-shard-agnostic.
 
 ## Rationale
 
@@ -53,24 +61,24 @@ tiers (ADR-0030); namespaces already pin to groups for tenant isolation (ADR-001
    deployment-correlated: a rollout writes `/team-x/regional/feature.*` in a burst; popular namespaces
    cluster. RANGE places that burst on **one contiguous shard** - the exact single-range hotspot
    CockroachDB documents (load-based splitting "making things worse" on write-heavy sequential load;
-   it cannot split a hot boundary point). That is the heartbeat-starvation collapse Configd already
-   measured at ~1000/s - RANGE would reintroduce single-group saturation *even with N groups
+   it cannot split a hot boundary point). That is the heartbeat-starvation collapse Configd measured at
+   ~1000/s single-group - RANGE would reintroduce single-group saturation *even with N groups
    configured*. Hash disperses the burst across all N by construction. For a write-throughput fix,
    dispersing the write hotspot **is the entire point**.
-3. **The prefix-subscription "crux" dissolves.** The worry - hash scatters a prefix across all N
-   shards, so fan-out must merge N streams - is answered by the actual data flow: the distribution
-   node is a single union fan-out tier that **already** ingests every shard's stream and **already**
-   merges per-key deltas through the radix trie (O(key_length) per event, source-shard-agnostic). Hash
-   adds no new component; it changes only the number of inbound stream connections on an internal,
-   non-consensus tier already sized for "the full event stream." RANGE's contiguity buys nothing,
-   because the trie - not shard adjacency - localizes a prefix to its edges.
+3. **The prefix-subscription concern dissolves.** The worry - hash scatters a prefix across all N
+   shards, so fan-out must merge N streams - is answered by keeping fan-out per shard rather than
+   merged: the distribution node localizes each shard's stream through the radix trie
+   (O(key_length) per event, source-shard-agnostic) without ever combining shards into one stream. Hash
+   adds cursor-tracking cost (a subscriber now tracks N per-shard cursors instead of one), but no new
+   fan-out component; RANGE's contiguity buys nothing here either, because the trie - not shard
+   adjacency - localizes a prefix to its edges.
 4. **Hash breaks nothing the contract promises.** A given key always hashes to the same group, so all
    writes to that key are totally ordered by that group's sequence (single-key linearizability
    preserved). Per-group monotonic sequence + gap detection (ADR-0004) are *already* per-group and
    designed for a prefix's events to arrive interleaved from multiple groups. Cross-group order is
-   already N/A in the contract; hash only forfeits a cross-prefix global order the contract never
-   offered (and RANGE wouldn't deliver either - still N groups, N sequences).
-5. **Self-balances at the 10^9-key ceiling with zero operator babysitting** (the generic-OSS bias).
+   already not offered by the contract; hash only forfeits a cross-prefix global order the contract
+   never offered (and RANGE wouldn't deliver either - still N groups, N sequences).
+5. **Self-balances at the 10^9-key ceiling with zero operator babysitting.**
    A good hash over `(namespace, key)` keeps expected keys/shard = 10^9/N with shrinking relative skew,
    with **zero data movement on key creation** (Slicer: "create new keys without Slicer on the critical
    path"). RANGE at 10^9 keys needs continuous split-merge to chase the moving hotspot and still cannot
@@ -82,19 +90,20 @@ tiers (ADR-0030); namespaces already pin to groups for tenant isolation (ADR-001
 *hashed* space: "clusters of hot keys in the application's keyspace are uniformly distributed in the
 hashed keyspace," and "an application can create new keys without Slicer on the critical path." This
 gives hot-key dispersion *and* zero-coordination key creation, and - critically - preserves cheap
-split/merge on the **hashed** axis (an axis that cannot hotspot) as a future D-B hook. Secondary:
-**Amazon Dynamo / Cassandra** consistent hashing (bounded 1/N rebalancing on N change); **CockroachDB
-hash-sharded indexes** as the cautionary inverse (they retrofit hashing precisely to kill sequential
-hotspots). Configd is in the **etcd / Dynamo / Slicer** world (point access, no scans), not the
-TiKV / Cockroach / Spanner world (ordered SQL/KV scans).
+split/merge on the **hashed** axis (an axis that cannot hotspot) as a future hook if dynamic resharding
+is ever built. Secondary: **Amazon Dynamo / Cassandra** consistent hashing (bounded 1/N rebalancing on N
+change); **CockroachDB hash-sharded indexes** as the cautionary inverse (they retrofit hashing precisely
+to kill sequential hotspots). Configd is in the **etcd / Dynamo / Slicer** world (point access, no
+scans), not the TiKV / Cockroach / Spanner world (ordered SQL/KV scans).
 
 ## Rejected Alternatives
 
 - **RANGE / key-prefix-range.** Reintroduces single-shard hotspots on sequential/bursty prefixes (the
-  measured ~1000/s collapse mode), buys zero read benefit absent range scans, and *forces* early
-  dynamic resharding (coupling D-A->D-B toward complexity). Rejected.
+  measured ~1000/s collapse mode), buys zero read benefit absent range scans, and *forces* dynamic
+  resharding to be built early to chase the moving hotspot. Rejected.
 - **`ConfigScope` as the shard key.** Only 3 buckets; GLOBAL/REGIONAL each collapse to one group and
-  re-hit the ~1000/s wall - this is *today's broken state*. Scope is a tier, not a shard key. Rejected.
+  re-hit the ~1000/s wall - that was the pre-sharding broken state. Scope is a tier, not a shard key.
+  Rejected.
 - **Plain `hash(key)`** (no scope). Discards scope-tiered latency routing (ADR-0030) and namespace
   affinity (ADR-0017). Acceptable only as a fallback if scope-tiering is descoped. Rejected as default.
 
@@ -103,47 +112,42 @@ TiKV / Cockroach / Spanner world (ordered SQL/KV scans).
 - **Positive:** throughput scales ~linearly with N; no hotspot babysitting; tenant isolation
   (ADR-0017) and scope routing (ADR-0030) preserved by composition; key creation needs no coordination
   at the 10^9 ceiling.
-- **Negative / accepted:** a prefix's keys scatter across all N shards -> fan-out ingests N committed
-  streams (**not "no new component"** - the live fan-out is single-source today, `ConfigdServer.java:492`,
-  so N shards need an **N-way merge/sequencer in front of the bounded `FanOutBuffer`** and add a
-  cross-shard drop-amplification mode; Red-Team) and
-  WAL-replay catch-up uses N cursors; there is no cross-prefix global order (the contract already
-  disclaims it - ADR-0004); **cheap meta-only split/merge is forfeited** unless the Slicer
-  hash-space-range / consistent-hashing mechanism is adopted (deferred to D-B).
-- **Single hot *key*** (one key = one group, unsplittable by hashing) is rare for config, is equally
+- **Negative / accepted:** a prefix's keys scatter across all N shards, so a subscriber tracks N
+  per-shard cursors instead of one, and WAL-replay catch-up uses N cursors; there is no cross-prefix
+  global order (the contract already disclaims this - ADR-0004). Cheap meta-only split/merge is
+  forfeited unless a Slicer-style hash-space-range or consistent-hashing mechanism is adopted - that is
+  not built; see [adr-multiraft-topology](adr-multiraft-topology.md) for the static-shard-count decision
+  and its seam for a future dynamic implementation.
+- **A single hot *key*** (one key = one group, unsplittable by hashing) is rare for config, is equally
   unsplittable under RANGE, and is a per-key remediation (read replica/cache), not a partitioning
   defect.
 
-## Red-Team Critique (surviving)
+## Known limitations
 
-- **"Hash forecloses cheap elastic split/merge - TiKV's headline RANGE advantage (meta-only split,
-  no data move)."** *Surviving and acknowledged.* Rebuttal that bounds it, not erases it: (1) borrow
-  Slicer's hash-space-ranges so split/merge operates on the *hashed* axis and stays cheap *without*
-  reintroducing key-locality hotspots; (2) hash prevents the *dominant* resharding trigger
-  (write-throughput skew), so Configd reshards far less than a range system chasing hotspots; (3)
-  fixed-N hash + consistent-hashing/vnodes bounds rebalancing to ~1/N keys on N change. Net: this
-  narrows the D-A<->D-B boundary (how elastic must topology be - Open Q1) but does not overturn hash.
-- **"Prefix-filtered *snapshots* (ADR-0020 bootstrap) must now read all N shards."** *Minor.* A
+- **"Hash forecloses cheap elastic split/merge - TiKV's headline RANGE advantage (meta-only split, no
+  data move)."** Acknowledged, bounded rather than erased: (1) a Slicer-style hash-space-range scheme
+  would let split/merge operate on the *hashed* axis and stay cheap without reintroducing key-locality
+  hotspots, if built; (2) hash prevents the *dominant* resharding trigger (write-throughput skew), so
+  Configd reshards far less than a range system chasing hotspots; (3) fixed-N hash plus
+  consistent-hashing/vnodes would bound rebalancing to ~1/N keys on N change, if built. Net: this narrows
+  how elastic the topology needs to be, but does not overturn hash.
+- **"Prefix-filtered *snapshots* (ADR-0020 bootstrap) must now read all N shards."** Minor: a
   prefix-filtered bootstrap snapshot is served from the regional replica's full HAMT (ADR-0020 tier
   table), already shard-agnostic; only WAL-replay catch-up touches multiple shards, bounded by N
   cursors.
-- **"Hash adds no new component" is false for the live fan-out tier.** *Surviving (verified).* Fan-out is
-  single-source today (one apply thread -> `fanOutBuffer.publish`, `ConfigdServer.java:492`). N shards = N
-  owner threads writing one bounded, drop-oldest buffer -> an **N-way merge/sequencer in front of fan-out**
-  is required, plus a new cross-shard drop-amplification mode (a hot shard evicts another shard's deltas).
-  Costed, not free.
-- **Cross-shard READ composition is a real per-subscriber regression.** *Surviving.* A prefix subscription
-  under hash needs **O(N) per-shard cursors per subscriber** (each shard's slice gap-tracked
-  independently; one shard's gap stalls its slice), vs O(1) under RANGE. "Byte-for-byte identical
-  per-edge output" hides that the *cursor bookkeeping* is Nx.
-- **Namespace-in-hash breaks ADR-0017 tenant locality; the rebalance story is unbuilt.** *Surviving.*
-  `hash(namespace,key)` scatters a tenant across all N shards, so tenant isolation needs a *dedicated
-  pool*, not pinning - making Open Q2 (spread vs pin) **load-bearing, not confirm-later**. And
-  `StaticShardMap` has `epoch=0`/no vnodes, so "bounded 1/N movement on N change" is **aspirational** - an
-  N change today is a full keyspace rehash (Slicer hash-space-ranges / consistent-hashing is deferred to
-  D-B Open Q1). None overturns hash; each must be costed.
+- **Cross-shard READ composition is a real per-subscriber cost.** A prefix subscription under hash needs
+  O(N) per-shard cursors per subscriber (each shard's slice gap-tracked independently; one shard's gap
+  stalls only its own slice). This is how the shipped watch protocol works: per-key and per-shard order,
+  never global, with a per-shard cursor vector - the cost is real and documented, not hidden behind
+  "byte-for-byte identical per-edge output."
+- **Namespace-in-hash and ADR-0017 tenant locality.** `hash(namespace,key)` scatters a tenant across all
+  N shards, so tenant isolation needs a dedicated pool, not pinning - this makes the spread-vs-pin
+  question (below) load-bearing, not something to confirm later. `StaticShardMap` reads its epoch from
+  the deploy-time `TopologyDescriptor` rather than hardcoding it, but an N change is still a full
+  keyspace rehash today - a Slicer hash-space-range or consistent-hashing scheme for bounded
+  rebalancing on N change is not built.
 
-## Verification Extension (extend, do not replace)
+## Verification Extension
 
 1. **Sim** (`RaftSimulation`/`SimulatedNetwork`): parameterize over `N  in  {1,4,8,16}` with a **hash
    router**; replay a bursty single-prefix deployment workload (e.g. 100k/s into one prefix); assert
@@ -161,9 +165,10 @@ TiKV / Cockroach / Spanner world (ordered SQL/KV scans).
 
 ## Open Questions for the Operator
 
-1. **Fixed-N or elastic?** If fixed-N hash is acceptable for the horizon, D-B simplifies dramatically.
-   If elasticity is required, do you accept Slicer hash-space-ranges / consistent-hashing-with-vnodes
-   as the rebalancing mechanism? (The single knob that moves the D-A<->D-B boundary.)
+1. **Fixed-N or elastic?** If fixed-N hash is acceptable for the horizon, the topology model stays
+   simple. If elasticity is required, is a Slicer-style hash-space-range or consistent-hashing-with-vnodes
+   scheme worth building as the rebalancing mechanism? (The single knob that decides how much topology
+   work is left to do.)
 2. **Namespace pinning vs spread:** default to spreading all namespaces across the shared pool (max
    balance) with opt-in dedicated pools (ADR-0017) for high-value/noisy tenants - confirm.
 3. **Hash input = `(namespace, full_key)`** (disperses per-tenant bursts), vs bare key - confirm.
@@ -173,4 +178,4 @@ TiKV / Cockroach / Spanner world (ordered SQL/KV scans).
 ## Related
 
 ADR-0020 (prefix subscription), ADR-0017 (namespace multi-tenancy), ADR-0004 (per-group sequence),
-ADR-0030 (scope-tiered topology), ADR-0023 (multi-raft deferred).
+ADR-0030 (scope-tiered topology), ADR-0023 (multi-raft, superseded by this arc).

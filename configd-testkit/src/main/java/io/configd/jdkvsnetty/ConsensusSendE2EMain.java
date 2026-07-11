@@ -48,9 +48,8 @@ import java.util.concurrent.locks.LockSupport;
  *
  * <p><b>Each variant builds its connection ONCE and runs warmup AND measurement on that same
  * connection</b> - so the measured window runs on a <em>warm</em> event loop / socket (populated
- * allocator-arena caches, Recycler stacks, JIT), exactly as a long-lived transport would. (An
- * earlier version rebuilt the event loop for the measured call, starting it cold - that inflated
- * Netty's numbers and was corrected.)
+ * allocator-arena caches, Recycler stacks, JIT), exactly as a long-lived transport would; a cold
+ * event loop would inflate Netty's numbers.
  *
  * <p><b>Plaintext on purpose</b> - the best case for the off-heap-{@code ByteBuf} argument; TLS
  * forces an {@code SSLEngine} copy on both stacks and shrinks any Netty edge. Allocation isolation:
@@ -190,7 +189,6 @@ public final class ConsensusSendE2EMain {
         }
     }
 
-    // ---- JDK: one socket, warmup then measure on it ----
     private static void jdkSend(String host, int port, MessageType type, byte[] payload, int cap,
                                 long warmupN, long measureN, boolean batched) throws Exception {
         try (Socket s = new Socket(host, port)) {
@@ -226,7 +224,6 @@ public final class ConsensusSendE2EMain {
         }
     }
 
-    // ---- Netty MANUAL: one group+channel, warmup then measure on it ----
     private static void nettySend(String host, int port, MessageType type, byte[] payload, int cap,
                                   long warmupN, long measureN) throws Exception {
         boolean epoll = Epoll.isAvailable();
@@ -268,7 +265,6 @@ public final class ConsensusSendE2EMain {
         }
     }
 
-    // ---- Netty IDIOMATIC: one group+channel+encoder, warmup then measure on it ----
     private static void nettyIdiomaticSend(String host, int port, FrameMsg msg,
                                            long warmupN, long measureN) throws Exception {
         boolean epoll = Epoll.isAvailable();

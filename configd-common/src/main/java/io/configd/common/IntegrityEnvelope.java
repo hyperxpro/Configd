@@ -25,16 +25,16 @@ import java.util.zip.CRC32C;
  *   algId=2 GCM:    header [ scopeId: 4 ][ keyTerm: 4 ][ segmentId: 16 ][ nonce: 12 ][ ct+tag ][ CRC32C: 4 ]
  * </pre>
  *
- * <p><b>The {@code keyTerm} (term-versioned integrity, frozen-format §2.2/§A2.3).</b> Both keyed
+ * <p><b>The {@code keyTerm} (term-versioned integrity).</b> Both keyed
  * postures carry a 4-byte {@code keyTerm} right after the {@code scopeId}, authenticated by the MAC
  * (HMAC input) / GCM AAD. It selects the keyring root that derives this record's key, so an old-term
  * record still verifies after a rotation (non-destructive), and a forged/rolled {@code keyTerm}
  * changes the key and/or the MAC input and FAILS verification. The {@code keyTerm} domain:
  * <ul>
- *   <li>{@code keyTerm >= 1} — a real keyring term; every at-rest artifact except the keyring itself.
+ *   <li>{@code keyTerm >= 1} - a real keyring term; every at-rest artifact except the keyring itself.
  *       The key is {@code K_integrity[keyTerm]} (HMAC) / {@code DEK[keyTerm,segmentId]} (GCM),
  *       supplied by the term-versioned {@link AtRestKeys} the envelope was built with.</li>
- *   <li>{@code keyTerm == 0} — the signing-key domain, legal ONLY for {@code KEYRING_MAGIC} (the
+ *   <li>{@code keyTerm == 0} - the signing-key domain, legal ONLY for {@code KEYRING_MAGIC} (the
  *       keyring's own outer envelope, which cannot reference a term it defines). It is MAC'd under a
  *       single signing-key-derived {@code K_keyringMac} ({@link #keyringMac}); {@code keyTerm == 0}
  *       under any OTHER magic FAILS CLOSED.</li>
@@ -172,7 +172,7 @@ public final class IntegrityEnvelope {
 
     /**
      * The keyring's own outer envelope: single-key HMAC under {@code K_keyringMac} with
-     * {@code keyTerm=0}, legal only for {@code KEYRING_MAGIC} (§2.2). Distinct from a term-versioned
+     * {@code keyTerm=0}, legal only for {@code KEYRING_MAGIC}. Distinct from a term-versioned
      * at-rest envelope so the keyring can authenticate itself before any keyring term exists.
      */
     public static IntegrityEnvelope keyringMac(SecretKey keyringMacKey) {
@@ -217,10 +217,6 @@ public final class IntegrityEnvelope {
     private boolean isAuthenticated() {
         return mode != Mode.KEYLESS;
     }
-
-    // ---------------------------------------------------------------------------------------------
-    // WRITE
-    // ---------------------------------------------------------------------------------------------
 
     /**
      * Wraps {@code payload} in an integrity envelope for {@code (magic, scopeId)} in this envelope's
@@ -325,10 +321,6 @@ public final class IntegrityEnvelope {
         ByteBuffer.wrap(out, out.length - CRC_SIZE, CRC_SIZE).putInt((int) crc.getValue());
         return out;
     }
-
-    // ---------------------------------------------------------------------------------------------
-    // READ
-    // ---------------------------------------------------------------------------------------------
 
     /**
      * Unwraps a structurally-present envelope, returning the payload, or throws
@@ -450,9 +442,9 @@ public final class IntegrityEnvelope {
     }
 
     /**
-     * Selects the HMAC key for a record's {@code (magic, keyTerm)}, enforcing the keyTerm domain
-     * (frozen-format §2.2): {@code KEYRING_MAGIC} MUST be keyTerm 0 under the keyring reader; every
-     * other magic MUST be keyTerm >= 1; a keyTerm with no retained root FAILS CLOSED.
+     * Selects the HMAC key for a record's {@code (magic, keyTerm)}, enforcing the keyTerm domain:
+     * {@code KEYRING_MAGIC} MUST be keyTerm 0 under the keyring reader; every other magic MUST be
+     * keyTerm >= 1; a keyTerm with no retained root FAILS CLOSED.
      */
     private SecretKey macKeyForRead(int magic, int keyTerm) {
         if (magic == KEYRING_MAGIC) {

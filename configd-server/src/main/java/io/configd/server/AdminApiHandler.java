@@ -47,8 +47,8 @@ import java.util.function.BiFunction;
  * each evasion vector (percent-encoded prefix, encoded slash, dot-dot, double-slash, query string).
  *
  * <p><b>Routing is exact-match for the fixed endpoints</b> ({@code /health/live}, {@code /health/ready},
- * {@code /metrics}) and prefix-match for {@code /v1/config/} - tightening applied to the admin
- * surface, so a suffix variant (e.g. {@code /metricsZ}) cannot reach the Prometheus exposition. Unknown
+ * {@code /metrics}) and prefix-match for {@code /v1/config/}; the admin surface is deliberately
+ * tightened so a suffix variant (e.g. {@code /metricsZ}) cannot reach the Prometheus exposition. Unknown
  * paths return 404 {@code "Not Found"}.
  */
 public final class AdminApiHandler {
@@ -59,9 +59,9 @@ public final class AdminApiHandler {
     private final ConfigWriteService writeService;     // nullable: read-only deployments
     private final ConfigReadService readService;       // nullable: stale-only deployments
     private final AuthInterceptor authInterceptor;     // nullable: auth disabled (legacy bearer path)
-    // nullable: the SPI authenticator chain (none/basic/mtls or a mixed chain). When present it SUPERSEDES
-    // authInterceptor for credential resolution and adds the Unavailable -> 503 outcome; when null the
-    // handler is byte-identical to before the SPI (the legacy authInterceptor path).
+    // nullable: the SPI authenticator chain (none/basic/mtls, or a mixed chain). When present it
+    // supersedes authInterceptor for credential resolution and adds the Unavailable -> 503 outcome;
+    // when null, credential resolution falls back to the legacy authInterceptor path unchanged.
     private final AuthenticatorChain chain;
     private final AclService aclService;               // nullable: ACLs disabled
     private final StrongReadPolicy strongReadPolicy;   // non-null
@@ -72,8 +72,7 @@ public final class AdminApiHandler {
     private final BiFunction<ConfigScope, String, NodeId> leaderHintSupplier;
     private final AuditLog auditLog;                   // nullable: auditing disabled
     private final ReplayGuard replayGuard;             // nullable: replay protection off
-    // nullable: when null the leadership-transfer route falls through to 404, so a handler wired without
-    // it is byte-identical to one built before the endpoint existed (every existing caller passes null).
+    // nullable: when null the leadership-transfer route falls through to 404 (unrouted).
     private final LeadershipAdmin leadershipAdmin;
 
     public AdminApiHandler(HealthService healthService,
@@ -135,15 +134,11 @@ public final class AdminApiHandler {
         this.leadershipAdmin = leadershipAdmin;
     }
 
-    // -----------------------------------------------------------------------
-    // Transport-agnostic request / response descriptors
-    // -----------------------------------------------------------------------
-
     /**
      * A transport's view of one request, reduced to what the decision logic needs. Both adapters
-     * MUST build {@link #uri()} via {@code java.net.URI} (see the C6 note on the class) so path
-     * decoding is identical. {@link #body()} is read lazily - the decision logic only invokes it for
-     * a PUT, and only after auth + replay have passed, so an unauthenticated caller's body is never
+     * MUST build {@link #uri()} via {@code java.net.URI} (see the path-handling note on the class) so
+     * path decoding is identical. {@link #body()} is read lazily - the decision logic only invokes it
+     * for a PUT, and only after auth + replay have passed, so an unauthenticated caller's body is never
      * drained.
      */
     public interface AdminRequest {
@@ -206,10 +201,6 @@ public final class AdminApiHandler {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Routing
-    // -----------------------------------------------------------------------
-
     /** Routes a request to the owning endpoint and returns the decided response. */
     public AdminResponse handle(AdminRequest req) throws IOException {
         String path = req.uri().getPath();
@@ -225,17 +216,13 @@ public final class AdminApiHandler {
         if (path != null && path.startsWith("/v1/config/")) {
             return config(req, path);
         }
-        // The leadership-transfer control endpoint, present only when the seam is wired. A null seam leaves
-        // the admin-groups namespace unrouted, so the handler is byte-identical to before the endpoint existed.
+        // The leadership-transfer control endpoint is only routed when the seam is wired; a null seam
+        // leaves the admin-groups namespace unrouted (falls through to 404 below).
         if (leadershipAdmin != null && path != null && path.startsWith(ADMIN_GROUPS_PREFIX)) {
             return transferLeadership(req, path);
         }
         return json(404, "Not Found");
     }
-
-    // -----------------------------------------------------------------------
-    // Health + metrics
-    // -----------------------------------------------------------------------
 
     private AdminResponse health(AdminRequest req, HealthService.HealthStatus status) {
         if (!"GET".equals(req.method())) {
@@ -249,8 +236,8 @@ public final class AdminApiHandler {
         if (!"GET".equals(req.method())) {
             return json(405, "Method Not Allowed");
         }
-        // F-0055: enforce auth on /metrics when auth is configured. 401 (not 403): this is authentication,
-        // not authorization (no ACL for metrics scraping). Never echo the credential.
+        // Enforce auth on /metrics when auth is configured. 401 (not 403): this is authentication, not
+        // authorization (there is no ACL for metrics scraping). Never echo the credential.
         if (chain != null) {
             Credential cred = credentialFrom(req);
             io.configd.common.auth.AuthResult r = resolveAndWipe(cred);
@@ -275,10 +262,6 @@ public final class AdminApiHandler {
         h.put("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
         return new AdminResponse(200, h, bytes(prometheusExporter.export()));
     }
-
-    // -----------------------------------------------------------------------
-    // /v1/config/{key}
-    // -----------------------------------------------------------------------
 
     private AdminResponse config(AdminRequest req, String path) throws IOException {
         String prefix = "/v1/config/";
@@ -500,19 +483,15 @@ public final class AdminApiHandler {
                     "Commit unconfirmed within deadline; outcome unknown; safe to retry or re-read");
             case ConfigWriteService.WriteResult.ValidationFailed vf -> json(400, "Validation failed: " + vf.reason());
             case ConfigWriteService.WriteResult.Overloaded ignored -> {
-                // The write-overload contract - a bounded-queue 429 with a
-                // Retry-After backoff signal. The reject is counted by write_rejected_overloaded at
-                // the raftProposer site (the tested series behind the "sustained 429 rate" alert).
+                // The write-overload contract: a bounded-queue 429 with a Retry-After backoff signal.
+                // The reject is counted by the write_rejected_overloaded metric at the raftProposer
+                // site, which an operational alert watches - don't rename it without updating that alert.
                 Map<String, String> h = jsonHeaders();
                 h.put("Retry-After", "1");
                 yield new AdminResponse(429, h, bytes("Overloaded"));
             }
         };
     }
-
-    // -----------------------------------------------------------------------
-    // Leadership transfer (ADMIN-gated control operation)
-    // -----------------------------------------------------------------------
 
     private static final String ADMIN_GROUPS_PREFIX = "/v1/admin/groups/";
     private static final String TRANSFER_LEADERSHIP_SUFFIX = "/transfer-leadership";
@@ -681,10 +660,6 @@ public final class AdminApiHandler {
         return AuthCheck.forbidden("-", "Access denied: leadership transfer requires ADMIN");
     }
 
-    // -----------------------------------------------------------------------
-    // Auth gate (RFC 7235)
-    // -----------------------------------------------------------------------
-
     private enum AuthDecision { OK, UNAUTHENTICATED, FORBIDDEN, UNAVAILABLE }
 
     private record AuthCheck(AuthDecision decision, String principal, String reason) {
@@ -735,7 +710,7 @@ public final class AdminApiHandler {
      * byte-identical in production: only {@code root} touches {@code _acl/}, and {@code root} holds
      * {@code ADMIN} via its {@code allOf} grant, so no production decision changes.
      *
-     * <p><b>Predicate-alignment invariant (section 2.2):</b> the gate keys off
+     * <p><b>Predicate-alignment invariant.</b> The gate keys off
      * {@code key.startsWith(PolicySerializer.ACL_PREFIX)} on the SAME post-strip key that the loader
      * ({@code AclConfigPolicyLoader}) and the store ({@code VersionedConfigStore}) use verbatim - so a key
      * that slips the gate is also invisible to the loader and is a distinct store key. "Evades the gate"
@@ -785,7 +760,7 @@ public final class AdminApiHandler {
             }
             // No ACL service: an ordinary key is authn-only (unchanged). A reserved key REQUIRES ADMIN,
             // which cannot be evaluated without an ACL - FAIL CLOSED rather than fall through to ok
-            // (acl/auth are independently nullable, so the deny must be explicit). (section 2.1)
+            // (acl/auth are independently nullable, so the deny must be explicit).
             if (reserved) {
                 return AuthCheck.forbidden(authed.principal(),
                         "Access denied: reserved key '" + key + "' requires ADMIN but no ACL is configured");
@@ -824,13 +799,6 @@ public final class AdminApiHandler {
     }
 
     /**
-     * Builds a {@link Credential} from the request for the SPI chain. An {@code Authorization} header takes
-     * precedence: a Bearer token or HTTP Basic (RFC 7617) user+password. When there is NO usable
-     * Authorization header, a verified client certificate ({@link AdminRequest#peerCertificates()}, mTLS
-     * mode) is used instead. Returns {@code null} when nothing usable is presented (the chain path then
-     * treats it as "no credential" -&gt; 401).
-     */
-    /**
      * Resolves a credential through the authenticator chain and WIPES its secret material afterward (the
      * Basic password {@code char[]}), so a verified password does not linger on the heap. A null credential
      * (no / malformed / unrecognized-scheme Authorization header) maps to the same {@code NO_CREDENTIAL}
@@ -849,6 +817,13 @@ public final class AdminApiHandler {
         }
     }
 
+    /**
+     * Builds a {@link Credential} from the request for the SPI chain. An {@code Authorization} header takes
+     * precedence: a Bearer token or HTTP Basic (RFC 7617) user+password. When there is NO usable
+     * Authorization header, a verified client certificate ({@link AdminRequest#peerCertificates()}, mTLS
+     * mode) is used instead. Returns {@code null} when nothing usable is presented (the chain path then
+     * treats it as "no credential" -&gt; 401).
+     */
     private static Credential credentialFrom(AdminRequest req) {
         String authHeader = req.header("Authorization");
         if (authHeader != null) {
@@ -936,10 +911,6 @@ public final class AdminApiHandler {
         return AuthCheck.ok(p.id());
     }
 
-    // -----------------------------------------------------------------------
-    // Audit + replay (security controls)
-    // -----------------------------------------------------------------------
-
     /**
      * Records a mutating attempt (or its denial) if an audit log is configured. The actor is the
      * resolved principal, or {@code "-"} when unauthenticated. NEVER receives a credential. A
@@ -990,10 +961,6 @@ public final class AdminApiHandler {
         };
     }
 
-    // -----------------------------------------------------------------------
-    // Scope parsing and key validation
-    // -----------------------------------------------------------------------
-
     /**
      * The parsed {@code ?scope=} result: a valid {@link ConfigScope}, or a
      * {@code null} scope carrying an {@code error} reason for an unrecognized value (mapped to 400).
@@ -1002,15 +969,14 @@ public final class AdminApiHandler {
 
     /**
      * Parses the optional {@code ?scope=} query parameter case-insensitively into a
-     * {@link ConfigScope}. Absent/blank -> {@link ConfigScope#GLOBAL} (byte-identical to the prior
-     * GLOBAL-pinned surface). An unrecognized value yields an error (mapped to 400 by the caller) -
-     * fail-closed, never a silent coercion that could mis-route (closes the scope-confusion red-team
-     * angle). Scope is a typed field, NEVER a path segment.
+     * {@link ConfigScope}. Absent/blank defaults to {@link ConfigScope#GLOBAL}. An unrecognized value
+     * yields an error (mapped to 400 by the caller) - fail-closed, never a silent coercion that could
+     * mis-route the request to the wrong scope. Scope is a typed field, never a path segment.
      */
     private static ScopeResult parseScope(AdminRequest req) {
         String raw = queryParam(req.uri().getQuery(), "scope");
         if (raw == null || raw.isBlank()) {
-            return new ScopeResult(ConfigScope.GLOBAL, null); // A2-3 default
+            return new ScopeResult(ConfigScope.GLOBAL, null);
         }
         try {
             return new ScopeResult(ConfigScope.valueOf(raw.trim().toUpperCase(Locale.ROOT)), null);
@@ -1055,10 +1021,6 @@ public final class AdminApiHandler {
         }
         return null;
     }
-
-    // -----------------------------------------------------------------------
-    // Response + formatting helpers
-    // -----------------------------------------------------------------------
 
     private static Map<String, String> jsonHeaders() {
         Map<String, String> h = new LinkedHashMap<>();

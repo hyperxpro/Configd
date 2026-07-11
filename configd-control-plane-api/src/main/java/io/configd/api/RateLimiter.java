@@ -33,8 +33,6 @@ public final class RateLimiter {
     private static final long SCALE = 1000L;
 
     /**
-     * Creates a rate limiter.
-     *
      * @param clock            time source
      * @param permitsPerSecond sustained rate (e.g., 10000 for 10k writes/s)
      * @param burstPermits     maximum burst capacity (permits that can accumulate)
@@ -63,19 +61,12 @@ public final class RateLimiter {
         this(Clock.system(), permitsPerSecond, burstPermits);
     }
 
-    /**
-     * Attempts to acquire a single permit.
-     *
-     * @return true if the permit was granted, false if rate limited
-     */
+    /** @return true if the permit was granted, false if rate limited */
     public boolean tryAcquire() {
         return tryAcquire(1);
     }
 
     /**
-     * Attempts to acquire the specified number of permits.
-     * Lock-free via CAS loop.
-     *
      * @param permits number of permits to acquire
      * @return true if all permits were granted
      */
@@ -140,9 +131,6 @@ public final class RateLimiter {
         return Math.min(maxPermits, current + newPermits);
     }
 
-    /**
-     * Returns the configured rate in permits per second.
-     */
     public double permitsPerSecond() {
         return permitsPerSecond;
     }

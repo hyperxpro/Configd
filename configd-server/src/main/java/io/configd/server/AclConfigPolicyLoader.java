@@ -65,7 +65,7 @@ import java.util.logging.Logger;
  * advance {@link AclService#configPolicyVersion()} (so bounded watch revocation would never fire for it).
  * This loader therefore runs in one of two modes, selected by construction:
  * <ul>
- *   <li><b>Single-store (N=1)</b> - the historical path, byte-identical: one store, listeners on the primary
+ *   <li><b>Single-store (N=1)</b> - byte-identical to the single-shard implementation: one store, listeners on the primary
  *       state machine, {@link #rebuild} inline on the owner/restore/boot thread, publish ordered by the
  *       scanned {@code store.getPrefixVersioned(...)} version.</li>
  *   <li><b>Multi-shard (N&gt;1)</b> - the loader is constructed with every group's store and its listeners
@@ -77,7 +77,7 @@ import java.util.logging.Logger;
  *       state and converges to the union, with no cross-shard version vector and no lost update. Because the
  *       per-shard store versions are incomparable, the publish order is a <b>node-local monotonic counter</b>
  *       instead of a store version; that counter is exactly the {@link AclService#configPolicyVersion()} the
- *       per-connection W7-7 re-authorization consumes on the same node (nothing compares it across nodes).
+ *       per-connection re-authorization consumes on the same node (nothing compares it across nodes).
  *       The apply-thread listener does only the cheap O(delta) gate then hands the scan to the worker, so it
  *       is strictly lighter than the N=1 inline rebuild - fully aligned with the non-blocking listener
  *       contract.</li>
@@ -85,7 +85,7 @@ import java.util.logging.Logger;
  *
  * <h2>"admin" footgun neutralization (reserved names)</h2>
  * The break-glass root principal's authority is its static {@code acls} grant; a config role could only
- * carve it if root were a SUBJECT of that role. {@code ConfigdServer} now asserts {@code Set.of()} roles
+ * carve it if root were a SUBJECT of that role. {@code ConfigdServer} asserts {@code Set.of()} roles
  * for root (so no config role attaches via assertion), and this loader REJECTS a load that binds any role
  * to a reserved principal ({@code root}) or defines a reserved role name ({@code admin}). So no
  * config-loaded role can carve root.
@@ -134,8 +134,8 @@ final class AclConfigPolicyLoader implements AutoCloseable {
     private final MetricsRegistry.Counter reloaded;
 
     /**
-     * Single-store loader (N=1) - the historical, byte-identical path: one store, inline rebuild, publish
-     * ordered by the scanned store version.
+     * Single-store loader (N=1) - byte-identical to the single-shard implementation: one store, inline
+     * rebuild, publish ordered by the scanned store version.
      *
      * @param aclService         the ACL service to publish the config-policy snapshot into (non-null)
      * @param store              the primary config store to read the {@code _acl/} subtree from (non-null)
@@ -257,7 +257,7 @@ final class AclConfigPolicyLoader implements AutoCloseable {
     }
 
     /**
-     * Requests a rebuild: inline at N=1 (byte-identical to the historical path); enqueued onto the
+     * Requests a rebuild: inline at N=1 (byte-identical to the single-store path); enqueued onto the
      * serialization worker at N&gt;1 so the expensive scatter-gather runs off the apply/restore thread.
      */
     private void requestRebuild() {
@@ -288,7 +288,7 @@ final class AclConfigPolicyLoader implements AutoCloseable {
 
     /**
      * Seeds the initial policy before the node serves. At N=1 this is an inline {@link #rebuild} (identical
-     * to the historical boot call); at N&gt;1 it is submitted through the worker and awaited, so the policy
+     * to a single-shard boot's call to {@link #rebuild}); at N&gt;1 it is submitted through the worker and awaited, so the policy
      * is seeded before serving AND is serialized with any apply-triggered rebuilds that fired between
      * listener registration and this call (whichever runs last reads the freshest state - convergence). The
      * wait is uninterruptible: a boot must complete its seed regardless of an interrupt.

@@ -67,14 +67,14 @@ import static org.junit.jupiter.api.Assertions.fail;
 /**
  * Server-obeys conformance for the §01 paths / access-control SERVER halves: the live {@link FanOutServer} watch
  * surface enforcing the path grammar (A3-1..A3-3 seg-char, A3-4 canonicalization), the ordering contract
- * (A4-2 per-shard-only), the capability-relationship + watch-authorization contract (A5-2 WATCH⇒READ, A6-1..A6-5,
- * A9-3), and the fail-closed reject of an unrecognized scope ordinal (A9-4).
+ * (A4-2 per-shard-only), the capability-relationship + watch-authorization contract (A5-2 WATCH implies READ,
+ * A6-1..A6-5, A9-3), and the fail-closed reject of an unrecognized scope ordinal (A9-4).
  *
  * <p>The grammar / ordering / scope cases drive a live server with a permissive authorizer (so the path/scope
- * check is the gate under test). The authorization cases wire the <b>production</b>
- * {@link AclServiceWatchAuthorizer} over a real {@link AclService} with scenario-specific grants — so the watch
- * gate decides byte-identically to the HTTP admin plane — and each denial asserts the RFC's <b>hard</b>
- * requirement: a terminal reject with the correct {@link ErrorCode} and <b>zero</b> data frames emitted first.
+ * check is the gate under test). The authorization cases wire the production
+ * {@link AclServiceWatchAuthorizer} over a real {@link AclService} with scenario-specific grants -- so the watch
+ * gate decides byte-identically to the HTTP admin plane -- and each denial asserts the RFC's hard
+ * requirement: a terminal reject with the correct {@link ErrorCode} and zero data frames emitted first.
  * A6-5's two mandatory negatives (over-broad target; non-root {@code full_chain_verify}) are proven explicitly.
  */
 @Timeout(180)
@@ -99,20 +99,18 @@ class ServerObeysPathAuthzTest {
         }
     }
 
-    // ---------------------------------------------------------------- path grammar (server-obeys)
-
     @Test
     @Tag("clause:A3-4")
     void serverIndependentlyEnforcesKeyCanonicalityDefenseInDepth() throws Exception {
-        // A3-4 server-side (defense-in-depth). The shared client grammar (PathGrammar) now rejects seg-char /
-        // `//` / `.`/`..` spellings at WatchTarget CONSTRUCTION, so a CONFORMING client can no longer put them on
-        // the wire (those are proven client-side in ClausePathGrammarTest). PathGrammar tolerates ONE trailing
-        // slash generically (the `/a/` subtree form), so `WatchTarget.key("/a/b/")` still CONSTRUCTS and reaches
-        // the wire — but a concrete KEY MUST be canonical (no trailing slash), and the live server enforces that
-        // INDEPENDENTLY, rejecting it BAD_SUBSCRIBE with zero data frames. This proves the server does not rely on
-        // client validation for KEY canonicality — the one non-canonical spelling that still traverses the
-        // conforming client. (Full seg-char / `//` / `.`/`..` server-side enforcement would need a hostile
-        // raw-frame client to bypass PathGrammar — see the report; the WatchTargetValidator control still exists.)
+        // A3-4, server side (defense in depth). The shared client grammar (PathGrammar) rejects seg-char, `//`,
+        // and `.`/`..` spellings at WatchTarget construction, so a conforming client cannot put them on the wire
+        // (proven client-side in ClausePathGrammarTest). PathGrammar tolerates one trailing slash generically
+        // (the `/a/` subtree form), so `WatchTarget.key("/a/b/")` still constructs and reaches the wire -- but a
+        // concrete key must be canonical (no trailing slash), and the live server enforces that independently,
+        // rejecting it BAD_SUBSCRIBE with zero data frames. This proves the server does not rely on client
+        // validation for key canonicality -- the one non-canonical spelling that still traverses a conforming
+        // client. (Full seg-char / `//` / `.`/`..` server-side enforcement would need a hostile raw-frame client
+        // to bypass PathGrammar; the WatchTargetValidator control still exists for that case.)
         FanOutServer srv = newServer(PERMISSIVE);
         try {
             assertRejectedOn(srv, WatchTarget.key("/a/b/"), ErrorCode.BAD_SUBSCRIBE, BadSubscribeException.class);
@@ -123,15 +121,13 @@ class ServerObeysPathAuthzTest {
         }
     }
 
-    // ---------------------------------------------------------------- ordering (server-obeys)
-
     @Test
     @Tag("clause:A4-2")
     void watchOrderingIsPerShardOnlyNeverAssumedCrossShard() throws Exception {
-        // A4-2: the ONLY ordering a driver may rely on is per-key + per-shard (a shard's results ordered by its
-        // applied-mutation sequence S). At v1 static-N there is exactly one shard (gid 0), so cross-shard order
-        // is dormant and MUST NOT be assumed. We prove the live server delivers two commits per-shard-ordered
-        // (ascending S) and advances the per-shard cursor VECTOR — the client's only ordering handle.
+        // A4-2: the only ordering a driver may rely on is per-key and per-shard (a shard's results ordered by
+        // its applied-mutation sequence S). With a single static shard (gid 0), cross-shard order is dormant
+        // and must not be assumed. This proves the live server delivers two commits per-shard-ordered (ascending
+        // S) and advances the per-shard cursor vector -- the client's only ordering handle.
         FanOutServer srv = newServer(PERMISSIVE);
         try (ConfigdEdgeClient client = ConfigdEdgeClient.open(clientConfig(srv.localPort()))) {
             Watch w = client.watch(WatchTarget.full(), WatchOptions.defaults());
@@ -150,34 +146,33 @@ class ServerObeysPathAuthzTest {
         }
     }
 
-    // ---------------------------------------------------------------- capability relationships (A5-2)
-
     @Test
     @Tag("clause:A5-2")
     @Tag("clause:A6-1")
     void watchRequiresBothReadAndWatchNotEitherAlone() throws Exception {
-        // A5-2: WATCH requires READ (effective WATCH = WATCH ∧ READ) — a watch is a streaming read and MUST NEVER
-        // expose what a read could not. We drive the PRODUCTION AclServiceWatchAuthorizer over a real AclService.
+        // A5-2: WATCH requires READ (effective WATCH = WATCH and READ) -- a watch is a streaming read and must
+        // never expose what a read could not. We drive the production AclServiceWatchAuthorizer over a real AclService.
 
-        // WATCH granted but READ withheld ⇒ the floor removes effective WATCH ⇒ deny.
+        // WATCH granted but READ withheld: the floor removes effective WATCH, so the result is deny.
         AclService watchOnly = new AclService();
         watchOnly.grant("/app/", PRINCIPAL, Set.of(Permission.WATCH));
         assertRejected(new AclServiceWatchAuthorizer(watchOnly), WatchTarget.key("/app/x"),
                 ErrorCode.NOT_AUTHORIZED, ForbiddenException.class);
 
-        // READ granted but WATCH withheld ⇒ WATCH is not in the effective set ⇒ deny (WATCH is its own grant).
+        // READ granted but WATCH withheld: WATCH is not in the effective set, so the result is deny (WATCH is
+        // its own grant).
         AclService readOnly = new AclService();
         readOnly.grant("/app/", PRINCIPAL, Set.of(Permission.READ));
         assertRejected(new AclServiceWatchAuthorizer(readOnly), WatchTarget.key("/app/x"),
                 ErrorCode.NOT_AUTHORIZED, ForbiddenException.class);
 
-        // BOTH READ ∧ WATCH ⇒ authorized (positive control — the floor is satisfied).
+        // Both READ and WATCH granted: authorized (positive control -- the floor is satisfied).
         AclService both = new AclService();
         both.grant("/app/", PRINCIPAL, Set.of(Permission.READ, Permission.WATCH));
         assertCreated(new AclServiceWatchAuthorizer(both), WatchTarget.key("/app/x"));
     }
 
-    // ---------------------------------------------------------------- watch-authz contract (A6-2/A6-3/A6-4)
+    // Watch-authorization contract (A6-2, A6-3, A6-4).
 
     @Test
     @Tag("clause:A6-2")
@@ -185,13 +180,13 @@ class ServerObeysPathAuthzTest {
     void overBroadTargetIsRejectedNotSilentlyNarrowed() throws Exception {
         // A6-2: a target extending beyond the principal's authorized region MUST be rejected, never narrowed to
         // the authorized subset (silent narrowing would give a false-completeness view). Grant covers only the
-        // /app/public/ subtree; a watch on the broader /app/ has no ancestor-or-equal ALLOW covering it ⇒ deny,
-        // with zero data frames (NOT a narrowed stream of /app/public/).
+        // /app/public/ subtree; a watch on the broader /app/ has no ancestor-or-equal ALLOW covering it, so the
+        // result is deny, with zero data frames (not a narrowed stream of /app/public/).
         AclService acl = new AclService();
         acl.grant("/app/public/", PRINCIPAL, Set.of(Permission.READ, Permission.WATCH));
         AclServiceWatchAuthorizer authorizer = new AclServiceWatchAuthorizer(acl);
         assertRejected(authorizer, WatchTarget.prefix("/app/"), ErrorCode.NOT_AUTHORIZED, ForbiddenException.class);
-        // The exactly-covered subtree is authorized (positive control — proves the deny above is about breadth,
+        // The exactly-covered subtree is authorized (positive control -- proves the deny above is about breadth,
         // not a blanket refusal).
         assertCreated(authorizer, WatchTarget.prefix("/app/public/"));
     }
@@ -201,8 +196,8 @@ class ServerObeysPathAuthzTest {
     @Tag("clause:A6-1")
     void fullChainVerifyAndFullTargetsRequireRootScope() throws Exception {
         // A6-3: a full_chain_verify watch, or a FULL (whole-store) target, streams the entire signed chain with
-        // no edge filtering, so it requires READ ∧ WATCH over the ROOT. A principal holding only a /app/ subtree
-        // grant is rejected for BOTH a FULL target AND a full_chain_verify PREFIX — the latter is the sharp case:
+        // no edge filtering, so it requires READ and WATCH over the root. A principal holding only a /app/ subtree
+        // grant is rejected for both a FULL target and a full_chain_verify prefix -- the latter is the sharp case:
         // the /app/ grant DOES cover the plain /app/ prefix, yet full_chain_verify escalates the requirement to
         // root, so it is still denied (it must not receive other subtrees' data under local-verification cover).
         AclService subtreeOnly = new AclService();
@@ -225,7 +220,7 @@ class ServerObeysPathAuthzTest {
     void interiorReadDenySinksTheWholeSubtreeWatch() throws Exception {
         // A6-4 (INV-WATCH-READ): for EVERY key a subtree watch could deliver, if READ would be denied the watch
         // MUST be denied. A READ DENY on an interior descendant (/app/secret/) carves a hole inside the /app/
-        // subtree, so a PREFIX watch on /app/ — which could deliver /app/secret/* — MUST be rejected as a whole
+        // subtree, so a PREFIX watch on /app/ -- which could deliver /app/secret/* -- must be rejected as a whole
         // (the whole-target cover-check's interior-DENY term), never partially streamed.
         AclService acl = new AclService();
         acl.grant("/app/", PRINCIPAL, Set.of(Permission.READ, Permission.WATCH));
@@ -237,17 +232,15 @@ class ServerObeysPathAuthzTest {
         assertCreated(authorizer, WatchTarget.key("/app/public/x"));
     }
 
-    // ---------------------------------------------------------------- A6-5 MANDATORY negative
-
     @Test
     @Tag("clause:A6-5")
     @Tag("clause:A6-1")
     void unauthorizedSubscriptionIsTerminal403ClassWithZeroDataFrames() throws Exception {
         // A6-5 (REQUIRED regression): an unauthorized subscription MUST be terminated with a 403-class ErrorCode
-        // (authorization), DISTINCT from 401-class (authentication), with NO data frame emitted first — and the
+        // (authorization), distinct from 401-class (authentication), with no data frame emitted first -- and the
         // spec names two cases a conforming implementation MUST prove: (a) an over-broad target, and (b) a
         // non-root full_chain_verify/FULL watch. Both are asserted here to end in a terminal NOT_AUTHORIZED (11,
-        // a ForbiddenException — 403-class, not AUTH_FAIL/401) with zero SNAPSHOT_*/WATCH_EVENT/WATCH_PROGRESS
+        // a ForbiddenException -- 403-class, not AUTH_FAIL/401) with zero SNAPSHOT_*/WATCH_EVENT/WATCH_PROGRESS
         // frames preceding the reject.
 
         // (a) over-broad target: grant covers only /app/public/, watch requests the broader /app/.
@@ -262,24 +255,21 @@ class ServerObeysPathAuthzTest {
                 WatchTarget.prefix("/app/").with(WatchTarget.Flag.FULL_CHAIN_VERIFY));
     }
 
-    // ---------------------------------------------------------------- A9-4 fail-closed on the unrecognized
-
     @Test
     @Tag("clause:A9-4")
     void serverFailsClosedOnAnUnrecognizedScopeOrdinal() throws Exception {
         // A9-4 / A1.3 (fail closed on the unrecognized), SERVER half: an out-of-range scope ordinal is the one
         // unrecognized identifier a conforming client can still put on the wire (the WatchTarget u8 field admits
-        // 0..255; the server recognizes only GLOBAL/REGIONAL/LOCAL = 0..2). The server MUST fail closed —
-        // BAD_SUBSCRIBE, zero data frames — rather than route it to an assumed default. (The closed-enum CLIENT
-        // half — a driver cannot even express an unknown capability/flag/kind — is asserted in
+        // 0..255; the server recognizes only GLOBAL/REGIONAL/LOCAL = 0..2). The server must fail closed --
+        // BAD_SUBSCRIBE, zero data frames -- rather than route it to an assumed default. (The closed-enum client
+        // half -- a driver cannot even express an unknown capability/flag/kind -- is asserted in
         // ClausePathGrammarTest under the same tag; the unknown-WATCH-flag-bit fail-closed is W5-4a/W1-3.)
         WatchTarget unknownScope = new WatchTarget(9 /* not GLOBAL/REGIONAL/LOCAL */, WatchTarget.Kind.KEY,
                 "/app/x", EnumSet.noneOf(WatchTarget.Flag.class));
         assertRejected(PERMISSIVE, unknownScope, ErrorCode.BAD_SUBSCRIBE, BadSubscribeException.class);
     }
 
-    // -----------------------------------------------------------------------
-    // harness
+    // Harness.
 
     /** Starts a fresh live server (plaintext transport + bearer AUTH) with the given watch authorizer. */
     private FanOutServer newServer(WatchAuthorizer authorizer) throws Exception {
@@ -364,7 +354,7 @@ class ServerObeysPathAuthzTest {
         try (ConfigdEdgeClient client = ConfigdEdgeClient.open(clientConfig(srv.localPort()))) {
             Watch w = client.watch(target, WatchOptions.defaults());
             subscribe(w);
-            w.awaitCreated(Duration.ofSeconds(20)); // authorized + well-formed ⇒ created, no terminal reject
+            w.awaitCreated(Duration.ofSeconds(20)); // authorized and well-formed means created, no terminal reject
         }
     }
 

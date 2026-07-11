@@ -57,7 +57,7 @@ public final class ConfigStateMachine implements StateMachine {
     private final List<Runnable> snapshotListeners = new CopyOnWriteArrayList<>();
 
     /**
-     * Optional invariant monitor for runtime assertion checking (Rule 13).
+     * Optional invariant monitor for runtime assertion checking.
      * When non-null, every apply checks sequence monotonicity and gap-freedom.
      * In test mode, violations throw immediately; in production, they increment
      * a metric counter.
@@ -242,7 +242,7 @@ public final class ConfigStateMachine implements StateMachine {
         try {
             decoded = CommandCodec.decode(command);
         } catch (CommandCodec.MalformedCommandException e) {
-            // WH-01 poison-pill defense. A committed command that framed cleanly (passed the outer
+            // Poison-pill defense. A committed command that framed cleanly (passed the outer
             // AppendEntries cmdLen bound) but is grammatically malformed would, if we let this throw,
             // propagate out of apply -> RaftNode.applyCommitted throws BEFORE advancing lastApplied ->
             // the entry re-applies every tick AND on WAL replay -> durable, cluster-wide crash-loop.
@@ -315,10 +315,9 @@ public final class ConfigStateMachine implements StateMachine {
                 // payload is computed from the input command and seq - no post-mutation state is
                 // needed - so this ordering is byte-equivalent on the happy path.
                 signCommand(decoded, command, seq);
-                // sequence_monotonic / sequence_gap_free checks were removed here: with
-                // seq := prevSeq + 1 they are locally vacuous (tautologies that can never fire).
+                // sequence_monotonic and sequence_gap_free are not checked here: with
+                // seq := prevSeq + 1 they are tautologies that can never fire.
                 // Global apply-order is enforced by RaftNode; per-key order is the real check below.
-                // per_key_order: new version for key must exceed existing
                 ReadResult existing = store.get(put.key());
                 if (existing.found()) {
                     invariantChecker.check("per_key_order", seq > existing.version(),
@@ -333,7 +332,7 @@ public final class ConfigStateMachine implements StateMachine {
                 long prevSeq = sequenceCounter;
                 long seq = prevSeq + 1;
                 signCommand(decoded, command, seq);
-                // sequence_monotonic/sequence_gap_free removed here - locally vacuous (see Put case).
+                // sequence_monotonic/sequence_gap_free are not checked here - vacuous (see Put case).
                 sequenceCounter = seq;
                 store.delete(del.key(), seq);
                 notifyListeners(List.of(new ConfigMutation.Delete(del.key())), seq);
@@ -342,7 +341,7 @@ public final class ConfigStateMachine implements StateMachine {
                 long prevSeq = sequenceCounter;
                 long seq = prevSeq + 1;
                 signCommand(decoded, command, seq);
-                // sequence_monotonic/sequence_gap_free removed here - locally vacuous (see Put case).
+                // sequence_monotonic/sequence_gap_free are not checked here - vacuous (see Put case).
                 sequenceCounter = seq;
                 store.applyBatch(batch.mutations(), seq);
                 notifyListeners(batch.mutations(), seq);
@@ -380,7 +379,7 @@ public final class ConfigStateMachine implements StateMachine {
         // Write a TLV trailer carrying signingEpoch so the monotonic-epoch carry-forward
         // survives snapshot install, and so future fields can be appended without breaking
         // older readers.
-        int trailerPayloadLen = 8; // signingEpoch (long) only, today
+        int trailerPayloadLen = 8; // signingEpoch (long) only
         int size = 8 + 4 + 4 + 4 + trailerPayloadLen;
         for (int i = 0; i < keys.size(); i++) {
             size += 4 + keys.get(i).length + 4 + values.get(i).length;
@@ -487,7 +486,6 @@ public final class ConfigStateMachine implements StateMachine {
             data = data.put(key, vv);
         }
 
-        // Atomically replace the store's state with the rebuilt snapshot.
         ConfigSnapshot newSnapshot = new ConfigSnapshot(data, restoredSequence, timestamp);
         store.restoreSnapshot(newSnapshot);
         this.sequenceCounter = restoredSequence;
@@ -496,14 +494,12 @@ public final class ConfigStateMachine implements StateMachine {
     }
 
     /**
-     * Reads the snapshot trailer. The frozen format accepts ONLY the canonical magic-TLV
-     * trailer that {@link #snapshot()} always writes:
-     * {@code [SNAPSHOT_TRAILER_MAGIC][trailerLen][signingEpoch][unknown tail]}. The two legacy
-     * forms - a trailer-less snapshot and a bare 8-byte epoch - are pre-freeze artifacts that
-     * no current writer produces, and are refused (clean break): a snapshot must self-identify
-     * its trailer, never be parsed by structural guesswork. Unknown fields beyond the known
-     * 8-byte epoch inside the TLV payload are still tolerated (forward-compat: an older reader
-     * loads a newer snapshot that appended a field).
+     * Reads the snapshot trailer. Only the canonical magic-TLV trailer that {@link #snapshot()}
+     * always writes is accepted: {@code [SNAPSHOT_TRAILER_MAGIC][trailerLen][signingEpoch][unknown
+     * tail]}. A trailer-less snapshot or a bare 8-byte epoch is refused: a snapshot must
+     * self-identify its trailer, never be parsed by structural guesswork. Unknown fields beyond
+     * the known 8-byte epoch inside the TLV payload are still tolerated, so an older reader can
+     * load a newer snapshot that appended a field.
      */
     private void decodeTrailer(ByteBuffer buf) {
         int remaining = buf.remaining();
@@ -564,12 +560,11 @@ public final class ConfigStateMachine implements StateMachine {
 
     /**
      * Magic value identifying the canonical TLV snapshot trailer
-     * {@code [4B magic][4B length][payload bytes]} - the ONLY trailer form the frozen format
-     * accepts (the legacy trailer-less and bare-8-byte-epoch forms are refused; see
-     * {@link #decodeTrailer}). Chosen to be statistically distinct from any plausible
-     * {@code signingEpoch} upper int (HLC physical-millis epochs stay <= 0x000001FF for the
-     * next 70 years), which is why the bare-epoch form could once be disambiguated by value -
-     * a fragility the clean break removes.
+     * {@code [4B magic][4B length][payload bytes]} - the only trailer form accepted (a
+     * trailer-less or bare-8-byte-epoch snapshot is refused; see {@link #decodeTrailer}).
+     * Chosen to be statistically distinct from any plausible {@code signingEpoch} upper int
+     * (HLC physical-millis epochs stay <= 0x000001FF for the next 70 years), so the magic can
+     * never collide with a legitimate epoch value.
      */
     private static final int SNAPSHOT_TRAILER_MAGIC = 0xC0FD7A11;
 
@@ -628,13 +623,12 @@ public final class ConfigStateMachine implements StateMachine {
      * would be signed differently from a standalone PUT ({@code 0x01})
      * even though they carry the same logical mutation.
      *
-     * @param decoded the already-decoded command (decoded once at the {@link #apply} boundary and
-     *                threaded through so signing never re-decodes the raw bytes - that former
-     *                second decode site was strictly downstream of the guarded apply-site decode)
+     * @param decoded the command decoded once at the {@link #apply} boundary and threaded through
+     *                so signing never re-decodes the raw bytes
      * @param command the raw command bytes (used only for the no-op canonical passthrough)
      * @param seq     the applied-mutation sequence this command commits at (== the delta's
      *                {@code toVersion}; {@code seq - 1} is the {@code fromVersion}). Bound into
-     *                the signed payload so the version position is authenticated (ADR-0045).
+     *                the signed payload so the version position is authenticated.
      */
     private void signCommand(CommandCodec.DecodedCommand decoded, byte[] command, long seq) {
         if (signer == null) {

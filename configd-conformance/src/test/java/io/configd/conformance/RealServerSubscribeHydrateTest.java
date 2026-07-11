@@ -41,9 +41,8 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Real-server conformance: drives the thin reference client against a live {@link FanOutServer} (the edge data
- * plane), proving the Gate-1 connect path and the Gate-2 subscribe / hydrate / signed-chain-verify / apply /
- * {@code CURSOR_ACK} interoperate with the actual server wire — not just a mock. This is the seed of the
- * Gate-5 conformance suite; the mTLS / token auth-mode interop grows here next.
+ * plane), proving the connect and subscribe / hydrate / signed-chain-verify / apply / {@code CURSOR_ACK} paths
+ * interoperate with the actual server wire, not just a mock.
  */
 @Timeout(60)
 class RealServerSubscribeHydrateTest {
@@ -92,8 +91,6 @@ class RealServerSubscribeHydrateTest {
             assertEquals(3, sub.view().size());
         }
     }
-
-    // -----------------------------------------------------------------------
 
     private int startServer(FanOutBuffer buffer) throws Exception {
         MetricsRegistry registry = new MetricsRegistry();

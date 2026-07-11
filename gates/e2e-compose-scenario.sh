@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# =============================================================================
-# e2e-compose-scenario.sh — C6 end-to-end Docker-Compose scenario (charter §4 C6;
-# a gate-3 step). 3 control-plane nodes + 3 edge nodes, full mTLS + signed chain,
+# e2e-compose-scenario.sh — end-to-end Docker-Compose scenario (a gate-3 step).
+# 3 control-plane nodes + 3 edge nodes, full mTLS + signed chain,
 # then four scripted fault phases with EXPLICIT exit-code assertions:
 #
 #   Phase 1  PROPAGATION   sustained writes; every edge serves the written value
@@ -16,14 +15,14 @@
 #                          re-bootstrap trigger fires); after heal it catches up
 #                          and converges; staleness returns to CURRENT.
 #   Phase 4  BOOTSTRAP     a FRESH edge container joins mid-load (cursor 0 =>
-#                          C3 SNAPSHOT_FIRST), converges, then the topology
+#                          SNAPSHOT_FIRST), converges, then the topology
 #                          quiesces and every edge is BYTE-EQUAL to a
 #                          linearizable read of every written key.
 #
-# Discipline (Session 2's retry-across-churn patterns, smoke-multinode.sh):
+# Discipline (the retry-across-churn patterns from smoke-multinode.sh):
 #   - NO sleeps as synchronization — every wait is a deadline-bounded poll
 #     (sleep appears only as a poll interval);
-#   - throttle-robust budgets (the 2-vCPU box CPU-credit reality, RR-094);
+#   - throttle-robust budgets (the 2-vCPU box CPU-credit reality);
 #   - kill by container name via docker (never pkill by jar path);
 #   - cleanup trap: compose down -v, helper PIDs killed by tracked PID.
 #
@@ -32,7 +31,6 @@
 #   2. this script (it stages jars, verifies classes-in-jar, builds images,
 #      generates secrets, then runs the scenario).
 # Env knobs: E2E_KEEP_UP=1 leaves the topology running on success (debugging).
-# =============================================================================
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -45,7 +43,7 @@ EDGE_PORTS=(18181 18182 18183)      # edge1..edge3 HTTP on host loopback
 EDGE4_PORT=18184
 EDGE_SVCS=(edge1 edge2 edge3)
 
-# Budgets (seconds) — generous on purpose: CPU-credit throttling is real (RR-094).
+# Budgets (seconds) — generous on purpose: CPU-credit throttling is real.
 READY_BUDGET=180
 LEADER_BUDGET=120
 PROPAGATION_BUDGET=120
@@ -105,7 +103,7 @@ edge_metric() { # <service> <metric-name> -> prints last value field
 edge_state_is()  { [ "$(edge_metric "$1" edge_staleness_state)" = "$2" ]; }
 edge_state_gte() { local v; v=$(edge_metric "$1" edge_staleness_state) && [ -n "$v" ] && [ "${v%.*}" -ge "$2" ]; }
 
-# Leader = the node that COMMIT-CONFIRMS a probe PUT (RR-004/ADR-0033: 200 == quorum
+# Leader = the node that COMMIT-CONFIRMS a probe PUT (ADR-0033: 200 == quorum
 # commit). The probe is a real write; --max-time must exceed the 5s write deadline.
 find_leader() {
     local k
@@ -157,7 +155,7 @@ edge_serves_at() { # <edge-host:port> <key> <value> <seq>
     [ "$out" = "$3" ]
 }
 
-# --- sustained writer (background): cycles e2e/k<i>, retries across churn -----
+# sustained writer (background): cycles e2e/k<i>, retries across churn
 writer_loop() {
     local i=0
     while :; do
@@ -176,7 +174,7 @@ writer_loop() {
     done
 }
 
-# --- per-edge monotonic version watcher (background) --------------------------
+# per-edge monotonic version watcher (background)
 # Samples X-Configd-Cursor from every response (hits, misses and refusals all
 # carry it). The kill-leader assertion replays the log: NEVER decreasing.
 watcher_loop() { # <edge-port> <outfile>
@@ -198,9 +196,7 @@ assert_monotonic() { # <file> <min-samples> <desc>
         || fail "$3: X-Configd-Cursor DECREASED (monotonic-read violation)"
 }
 
-# =============================================================================
 # Phase 0 — build images, secrets, bring the steady-state topology up
-# =============================================================================
 log "phase 0: stage jars, verify shaded-jar contents, build images, secrets, up"
 
 command -v docker >/dev/null || fail "docker not available"
@@ -214,7 +210,7 @@ EDGE_JAR=$(ls "$REPO_ROOT"/configd-edge-node/target/configd-edge-node-*.jar 2>/d
 [ -n "$SERVER_JAR" ] && [ -f "$SERVER_JAR" ] || fail "server shaded jar missing — ./mvnw -pl configd-server -am clean package -DskipTests"
 [ -n "$EDGE_JAR" ] && [ -f "$EDGE_JAR" ] || fail "edge-node shaded jar missing — ./mvnw -pl configd-edge-node -am clean package -DskipTests"
 
-# Shaded-jar trap (Session 2): prove the classes this scenario depends on are IN the
+# Shaded-jar trap: prove the classes this scenario depends on are IN the
 # jars we are about to containerize (a stale jar fails loudly here, not 4 phases in).
 unzip -p "$SERVER_JAR" io/configd/distribution/fanout/FanOutSessionCore.class > /dev/null 2>&1 \
     || fail "FanOutSessionCore not inside $SERVER_JAR (stale/unshaded jar?)"
@@ -222,7 +218,7 @@ unzip -p "$SERVER_JAR" io/configd/server/fanout/FanOutServer.class > /dev/null 2
     || fail "FanOutServer not inside $SERVER_JAR"
 unzip -p "$EDGE_JAR" io/configd/edge/EdgeClientCore.class > /dev/null 2>&1 \
     || fail "EdgeClientCore not inside $EDGE_JAR (stale/unshaded jar?)"
-# RR-104 freshness probe: the fix's field must be present in the shipped class
+# Freshness probe: the fix's field must be present in the shipped class
 # (javap needs a real file — extract into the scratch dir).
 unzip -p "$SERVER_JAR" io/configd/distribution/fanout/FanOutSessionCore.class \
     > "$SCRATCH/FanOutSessionCore.class" 2>/dev/null
@@ -268,9 +264,7 @@ poll_until $READY_BUDGET 1 "all 3 edges ready (first sync)" edges_ready \
     || fail "edges never reached ready (first verified apply)"
 pass "3 edge nodes subscribed over mTLS, verified-applied, ready"
 
-# =============================================================================
 # Phase 1 — sustained writes -> propagation to every edge
-# =============================================================================
 log "phase 1: sustained writes -> bounded-read propagation on every edge"
 
 writer_loop & WRITER_PID=$!
@@ -290,7 +284,7 @@ done
 pass "propagation: every edge serves the committed value at >= seq=$MARKER1_SEQ (bounded read)"
 
 # secure/ strong-read class: stored at edges but NEVER served (CT-37 fail-closed) —
-# checked at EVERY edge (c6-signoff F1/C6-A: the note claims every edge; the check must too).
+# checked at EVERY edge (the note claims every edge; the check must too).
 put_committed "secure/e2e-secret" "must-never-leave" >/dev/null || fail "secure/ write failed"
 for i in "${!EDGE_PORTS[@]}"; do
     SC=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://$(edge_api "${EDGE_PORTS[$i]}")/v1/config/secure/e2e-secret")
@@ -298,9 +292,7 @@ for i in "${!EDGE_PORTS[@]}"; do
 done
 pass "secure/ key fail-closed at EVERY edge (503, never served from edge state)"
 
-# =============================================================================
 # Phase 2 — kill the leader mid-stream
-# =============================================================================
 log "phase 2: kill leader cp$LEADER mid-stream (SIGKILL), watch every edge for monotonicity"
 
 for i in 0 1 2; do
@@ -352,11 +344,11 @@ WATCHER_PIDS=()
 # samples across kill->re-elect->converge is live evidence without punishing
 # either the loaded box or a quick election. The real correctness check is the
 # monotonicity awk in assert_monotonic, which is independent of this floor.
-# RR-111 (S5): the floor was 10 and FLAKED on a loaded GitHub runner (edge2
-# captured 9, CI run 27488810136) — no runtime src changed, so it was the
-# threshold, not a regression. Lowered to 5 (provably safe: loosening a
-# non-vacuity floor can only make the gate more tolerant, never hide a
-# monotonic-read violation). 5 samples is still unambiguous live evidence.
+# The floor was 10 and FLAKED on a loaded GitHub runner (edge2 captured 9, CI run
+# 27488810136) — no runtime src changed, so it was the threshold, not a
+# regression. Lowered to 5 (provably safe: loosening a non-vacuity floor can
+# only make the gate more tolerant, never hide a monotonic-read violation).
+# 5 samples is still unambiguous live evidence.
 for i in 1 2 3; do
     assert_monotonic "$SCRATCH/watch-edge$i.log" 5 "edge$i failover window"
 done
@@ -370,9 +362,7 @@ poll_until $READY_BUDGET 1 "cp$DEAD_CP rejoined" \
 DEAD_CP=""
 pass "killed node restarted and rejoined the cluster"
 
-# =============================================================================
 # Phase 3 — partition one edge: ladder, demotion, catch-up, convergence
-# =============================================================================
 VICTIM=edge1
 VICTIM_PORT=${EDGE_PORTS[0]}
 VICTIM_IP=172.28.0.21   # the compose static IP — reconnect MUST reuse it or the
@@ -414,9 +404,7 @@ RC=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://$(edge_api "$VI
 [ "$RC" = "200" ] || fail "healed $VICTIM /health/ready returned $RC"
 pass "victim caught up (serves marker-p3@>=$MARKER3_SEQ), staleness CURRENT, ready 200"
 
-# =============================================================================
 # Phase 4 — bootstrap a FRESH edge mid-load, then quiesce + byte-equal audit
-# =============================================================================
 log "phase 4: bootstrap edge4 mid-load (zero state => C3 SNAPSHOT_FIRST)"
 
 "${COMPOSE[@]}" --profile bootstrap up -d edge4 || fail "edge4 start failed"
@@ -434,7 +422,7 @@ poll_until $CONVERGE_BUDGET 1 "edge4 serves marker-p4@>=$MARKER4_SEQ" \
     || fail "edge4 never converged to the live stream after bootstrap"
 pass "edge4 cut over to the live stream (serves marker-p4@>=$MARKER4_SEQ)"
 
-# ---- quiesce + byte-equal audit ----------------------------------------------
+# quiesce + byte-equal audit
 log "quiesce: stop the writer, fence-write, then byte-compare every key on every edge"
 kill "$WRITER_PID" 2>/dev/null; wait "$WRITER_PID" 2>/dev/null; WRITER_PID=""
 
@@ -452,8 +440,8 @@ for i in $(seq 0 $((KEYSPACE - 1))); do AUDIT_KEYS+=("e2e/k$i"); done
 MISMATCH=0
 AUDITED=0
 for key in "${AUDIT_KEYS[@]}"; do
-    # ONE request for body + code (c6-signoff F2: two separate curls could silently
-    # key-skip on a transient non-200 between them; combined fetch closes the race).
+    # ONE request for body + code: two separate curls could silently
+    # key-skip on a transient non-200 between them; combined fetch closes the race.
     resp=$(curl -s --max-time 5 --cacert "$CACERT" -w $'\n%{http_code}' \
         "$(api "$L")/v1/config/$key?consistency=linearizable") || continue
     code=${resp##*$'\n'}
@@ -470,7 +458,7 @@ for key in "${AUDIT_KEYS[@]}"; do
     done
 done
 [ "$MISMATCH" -eq 0 ] || fail "$MISMATCH byte mismatches between edges and the linearizable leader state"
-# Non-vacuity floor (c6-signoff F2): the markers + fence alone are 5 keys; an audit
+# Non-vacuity floor: the markers + fence alone are 5 keys; an audit
 # that compared fewer keys than that silently audited nothing.
 [ "$AUDITED" -ge 5 ] || fail "byte-equal audit compared only $AUDITED keys (>= 5 required — vacuous audit)"
 pass "byte-equal audit: $AUDITED keys identical on all 4 edges vs the leader (linearizable)"

@@ -63,14 +63,13 @@ import java.util.logging.Logger;
  * {@code ReconnectNextEndpoint} directive, or the shell's own transport-silence guard — the
  * client advances to the NEXT configured endpoint (round-robin) and re-SUBSCRIBEs carrying
  * the resume cursor ({@code resumeCursor = core.cursor()}; {@code failoverResumeCursor} set
- * once a previous endpoint had been reached, per the section 3 reserved-field contract). Reads
- * keep refusing cursor-behind during catch-up — consistent refusal, enforced by
- * {@link EdgeHttpServer}, never by blocking here. Backoff between attempts is bounded and
- * jittered ({@code edge.reconnect.backoffMs} base, doubling to {@value #MAX_BACKOFF_MS} ms
- * cap, +/-50% jitter).
+ * once a previous endpoint had been reached). Reads keep refusing cursor-behind during
+ * catch-up — consistent refusal, enforced by {@link EdgeHttpServer}, never by blocking here.
+ * Backoff between attempts is bounded and jittered ({@code edge.reconnect.backoffMs} base,
+ * doubling to {@value #MAX_BACKOFF_MS} ms cap, +/-50% jitter).
  *
  * <h2>Poison pill</h2>
- * Apply/snapshot failures no longer escape {@code core.onFrame}: the core's
+ * Apply/snapshot failures never escape {@code core.onFrame}: the core's
  * {@link io.configd.edge.PoisonPillPolicy} converts them into directives — bounded retries
  * (resubscribe-at-cursor), then a forced snapshot re-bootstrap (resubscribe at cursor 0), then
  * {@link EdgeClientCore.ConnectionDirective.TerminalFailure}: this shell logs the structured
@@ -118,25 +117,25 @@ public final class EdgeStreamClient implements AutoCloseable {
     private final List<String> prefixes;
     /**
      * The outbound edge wire version for this client: {@code 0x03} when the operator opted this
-     * prefix-scoped edge into server-side filtering (ADR-0045), else {@code 0x01} (byte-identical
-     * legacy). EVERY outbound frame - SUBSCRIBE and CURSOR_ACK - is stamped with it, because the
-     * server pins the inbound version from the connection's first frame and fails a later frame
-     * stamped otherwise closed.
+     * prefix-scoped edge into server-side filtering, else {@code 0x01} (byte-identical legacy).
+     * EVERY outbound frame - SUBSCRIBE and CURSOR_ACK - is stamped with it, because the server
+     * pins the inbound version from the connection's first frame and fails a later frame stamped
+     * otherwise closed.
      */
     private final byte wireVersion;
     private final boolean acceptFiltered;
     /**
      * The credential presented in an {@code AUTH} frame at connect (bearer / basic token auth), or
-     * {@code null} for an mTLS-only / plaintext edge - which sends no AUTH frame and is byte-identical
-     * to before. Additive: a certificate-only edge configures none.
+     * {@code null} for an mTLS-only / plaintext edge, which sends no AUTH frame and stays
+     * byte-identical. Additive: a certificate-only edge configures none.
      */
     private final Credential authCredential;
     /**
-     * Optional proactive token refresh (Gate 5): renew a re-presentable credential AHEAD of its expiry so
-     * a long-lived edge stream is never cut off at the server's hard-expiry close. Dormant unless supplied
-     * - a static token (no {@code exp}) or an mTLS-only edge sets {@code null}, which is byte-identical (no
-     * proactive {@code REFRESH_AUTH} on the wire). A cert cannot refresh in-band, so this is token-only.
-     * Gate 6 wires it once a token carries an OIDC {@code exp}.
+     * Optional proactive token refresh: renew a re-presentable credential AHEAD of its expiry so a
+     * long-lived edge stream is never cut off at the server's hard-expiry close. Dormant unless
+     * supplied - a static token (no {@code exp}) or an mTLS-only edge sets {@code null}, which is
+     * byte-identical (no proactive {@code REFRESH_AUTH} on the wire). A cert cannot refresh
+     * in-band, so this is token-only, and only wired once a token carries an OIDC {@code exp}.
      */
     private final ProactiveRefresh proactiveRefresh;
     /** The current credential's absolute expiry (ms), advanced on each proactive refresh. Session-thread-only. */
@@ -154,7 +153,7 @@ public final class EdgeStreamClient implements AutoCloseable {
     private volatile boolean rebootstrapRequested;
     private volatile Connection current;
     private volatile Thread sessionThread;
-    private EdgeClientCore core; // set in start(); touched only by the session thread after
+    private EdgeClientCore core; // set in start(); touched only by the session thread after that
 
     /**
      * @param endpoints       ordered fan-out endpoints (non-empty)
@@ -184,7 +183,7 @@ public final class EdgeStreamClient implements AutoCloseable {
     }
 
     /**
-     * @param acceptFiltered opt this edge into server-side prefix filtering (ADR-0045). When true
+     * @param acceptFiltered opt this edge into server-side prefix filtering. When true
      *                       AND the subscription is prefix-scoped (non-empty prefixes), the client
      *                       negotiates the {@code 0x03} wire and advertises {@code acceptsFiltered}
      *                       on SUBSCRIBE; a full-store edge always negotiates {@code 0x01}. The
@@ -217,7 +216,7 @@ public final class EdgeStreamClient implements AutoCloseable {
     }
 
     /**
-     * @param proactiveRefresh optional lead-time token refresh (Gate 5): renew a re-presentable credential
+     * @param proactiveRefresh optional lead-time token refresh: renew a re-presentable credential
      *                         ahead of its expiry via {@code REFRESH_AUTH}, so a long-lived stream is not
      *                         cut off at the server's hard-expiry close. {@code null} (a static token /
      *                         cert / no-auth edge) sends no proactive {@code REFRESH_AUTH} - byte-identical.
@@ -343,7 +342,7 @@ public final class EdgeStreamClient implements AutoCloseable {
     private void sessionLoop() {
         int endpointIdx = 0;
         int consecutiveFailures = 0;
-        boolean reachedAnEndpoint = false; // gates failoverResumeCursor (section 3 reserved field)
+        boolean reachedAnEndpoint = false; // gates whether failoverResumeCursor is set
 
         while (running.get()) {
             InetSocketAddress endpoint = endpoints.get(endpointIdx % endpoints.size());
@@ -541,7 +540,7 @@ public final class EdgeStreamClient implements AutoCloseable {
     /**
      * The lead-time token-refresh bundle: how to renew a re-presentable credential ahead of its expiry, and
      * the window model that sizes "how far ahead". Supplied only for a refreshable token that carries an
-     * absolute expiry (Gate 6); otherwise the edge sends no proactive {@code REFRESH_AUTH}.
+     * absolute expiry; otherwise the edge sends no proactive {@code REFRESH_AUTH}.
      *
      * @param refresher            produces a fresh credential + its new expiry, ahead of the current expiry
      * @param initialExpiresAtMillis the connect-time credential's absolute expiry (ms since epoch)
@@ -579,14 +578,15 @@ public final class EdgeStreamClient implements AutoCloseable {
             // SUBSCRIBE is the first frame on the wire, written synchronously before the
             // writer thread exists, so frame order is deterministic. Resume cursor = the
             // core's applied cursor; the failover-resume reserved field carries the same
-            // cursor once a PREVIOUS endpoint had been reached (section 3 failover clause).
+            // cursor once a PREVIOUS endpoint had been reached.
             // While a poison quarantine is in flight the resume cursor is 0 (the forced
             // snapshot re-bootstrap) — derived from core state, not from a one-shot
             // directive memory, so a failed connect attempt cannot lose it.
             long cursor = core.poisonPolicy().quarantinedSeq() >= 0 ? 0L : core.cursor();
-            // A4: bind the topology epoch to the resume token. This v1 edge is static-N, so it stamps
-            // the single deploy-time epoch (INITIAL_TOPOLOGY_EPOCH); a superseded epoch would be
-            // refused STALE_TOPOLOGY, driving a full re-hydrate. A v2 edge would track the live epoch.
+            // Bind the topology epoch to the resume token. This edge is static-N, so it stamps
+            // the single deploy-time epoch (INITIAL_TOPOLOGY_EPOCH); a superseded epoch is
+            // refused STALE_TOPOLOGY, driving a full re-hydrate. It does not track live topology
+            // changes.
             EdgeFrame.Subscribe subscribe = new EdgeFrame.Subscribe(
                     prefixes.isEmpty(), prefixes, WatchCursor.INITIAL_TOPOLOGY_EPOCH, cursor,
                     failedOver ? cursor : -1L, edgeId, acceptFiltered);

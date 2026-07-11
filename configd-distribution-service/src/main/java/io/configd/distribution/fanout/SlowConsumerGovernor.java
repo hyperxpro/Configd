@@ -124,7 +124,7 @@ public final class SlowConsumerGovernor {
 
     /**
      * Per-identity records, access-ordered so the least-recently-touched HEALTHY identity
-     * is evicted first when {@code maxTrackedIdentities} is exceeded (hard rule 4). A
+     * is evicted first when {@code maxTrackedIdentities} is exceeded. A
      * non-HEALTHY record is never evicted - forgetting a quarantine would be a policy
      * escape - so the map may exceed the bound by the (real-world-bounded) number of
      * simultaneously distressed identities; the eviction walk skips past them to the
@@ -157,9 +157,7 @@ public final class SlowConsumerGovernor {
         return config;
     }
 
-    // -----------------------------------------------------------------------
-    // Signals (fed by the server / sim driver)
-    // -----------------------------------------------------------------------
+    // Signals (fed by the server / sim driver).
 
     /**
      * Queue-pressure <b>edge</b>: the session's unacked-frame depth crossed the
@@ -262,9 +260,7 @@ public final class SlowConsumerGovernor {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Admission (consulted by the server at SUBSCRIBE)
-    // -----------------------------------------------------------------------
+    // Admission (consulted by the server at SUBSCRIBE).
 
     /**
      * The SUBSCRIBE-time admission ruling for {@code identity}:
@@ -323,9 +319,7 @@ public final class SlowConsumerGovernor {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Read-only accessors
-    // -----------------------------------------------------------------------
+    // Read-only accessors.
 
     /** The identity's current state (HEALTHY if untracked). */
     public synchronized ConsumerState state(String identity) {
@@ -338,9 +332,7 @@ public final class SlowConsumerGovernor {
         return consumers.size();
     }
 
-    // -----------------------------------------------------------------------
-    // Internals
-    // -----------------------------------------------------------------------
+    // Internals.
 
     private ConsumerRecord record(String identity) {
         Objects.requireNonNull(identity, "identity must not be null");
@@ -356,7 +348,7 @@ public final class SlowConsumerGovernor {
     }
 
     /**
-     * Enforces {@code maxTrackedIdentities} (hard rule 4): before a new identity is
+     * Enforces {@code maxTrackedIdentities}: before a new identity is
      * inserted at the bound, evicts the least-recently-touched HEALTHY record, skipping
      * (never evicting) distressed records. The walk cost is bounded by the number of
      * consecutive distressed records at the access-order head - itself bounded by the
@@ -488,7 +480,7 @@ public final class SlowConsumerGovernor {
         long queueWarnSinceMillis = -1;
         /** Distress (ack_lag / queue_overflow / transport_block) demotion timestamps. */
         final Deque<Long> distressDemotions = new ArrayDeque<>(4);
-        /** GAP demotion timestamps (weighted separately - screen C4-2). */
+        /** GAP demotion timestamps (weighted separately from distress demotions). */
         final Deque<Long> gapDemotions = new ArrayDeque<>(4);
         /** Quarantine timestamps inside the unhealthy window. */
         final Deque<Long> quarantines = new ArrayDeque<>(4);

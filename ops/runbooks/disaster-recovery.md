@@ -54,7 +54,7 @@ Per ADR-0025 the operator must, before this runbook applies:
 ### Incident commander first 5 minutes
 
 1. **Declare the incident.** Page the on-call rotation procured by the
-   operator (see `docs/decisions/adr-0025-on-call-rotation-required.md`).
+   operator (see `docs/adr/adr-0025-on-call-rotation-required.md`).
 2. **Freeze writes.** At the API gateway, set the read-only flag.
    Confirm via `configd_write_commit_total` rate going to 0.
 3. **Snapshot current state.** Even if state is corrupt, capture for
@@ -90,9 +90,10 @@ in-flight (uncommitted) writes; obtain incident-commander sign-off.
 1. **Do not** restore yet. Restoring overwrites forensic evidence.
 2. Take filesystem-level backups of all voter data dirs (step 3 above
    if you haven't already).
-3. Compare the missing commit's signed envelope against
-   `audit_log` (when AuditLogger lands per S8 — until then this step
-   is best-effort with whatever logs exist).
+3. Compare the missing commit's signed envelope against the audit log
+   (`AuditLog` — a tamper-evident, keyed-HMAC chain of every mutating
+   attempt and auth failure; see
+   `configd-control-plane-api/src/main/java/io/configd/api/AuditLog.java`).
 4. Engage the incident commander; data-loss recovery is an
    organisational decision, not a runbook one.
 
@@ -131,12 +132,8 @@ The incident is **resolved** when:
 - A test write commits successfully end-to-end (round-trip from API
   gateway → leader → quorum → state machine).
 - The write freeze at the API gateway has been lifted.
-- Edge propagation p99 (`configd_propagation_delay_seconds`) returns to
-  its normal baseline.
-  <!-- TODO PA-XXXX: metric configd_edge_staleness_seconds not yet
-  emitted by ConfigdMetrics; the propagation-delay histogram is the
-  closest registered signal until a dedicated edge-staleness gauge
-  ships. -->
+- Edge propagation has returned to baseline: `max(edge_staleness_ms)` is
+  back under the 500 ms `ConfigdEdgeStalenessWarn` boundary.
 
 - For the signing-key-compromise branch: every edge has the new public
   key and the old key has been revoked from the edge bundle (after the
@@ -189,7 +186,7 @@ kubectl apply -f deploy/kubernetes/configd-bootstrap.yaml
 # ... wait for leader election ...
 # Add voter 1 via the Raft admin HTTP API. The control-plane REST
 # surface lives on the API port (default 8080) of any current voter.
-# <!-- TODO PA-XXXX: admin endpoint missing — HttpApiServer does not
+# <!-- TODO: admin endpoint missing — HttpApiServer does not
 # yet expose POST /admin/raft/add-server. Until it lands, the operator
 # must restart the StatefulSet replica with the new --peers list and
 # rely on Raft joint-consensus to pick up the change at boot. -->
@@ -252,7 +249,7 @@ regardless of recovery time. Required fields:
 - [restore-from-snapshot.md](restore-from-snapshot.md)
 - [control-plane-down.md](control-plane-down.md)
 - [snapshot-install.md](snapshot-install.md)
-- `docs/decisions/adr-0025-on-call-rotation-required.md`
-- `docs/decisions/adr-0027-sign-or-fail-close.md` — sign-or-fail-close
+- `docs/adr/adr-0025-on-call-rotation-required.md`
+- `docs/adr/adr-0027-sign-or-fail-close.md` — sign-or-fail-close
   decision invoked in the "Signing key compromise" branch.
 - `spec/SnapshotInstallSpec.tla`

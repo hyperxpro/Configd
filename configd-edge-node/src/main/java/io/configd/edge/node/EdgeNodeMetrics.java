@@ -33,7 +33,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *       constructor);</li>
  *   <li>{@code edge_cursor_lag} (gauge), {@code edge_applied_total},
  *       {@code edge_gaps_total}, {@code edge_snapshots_applied_total},
- *       {@code edge_snapshot_chunks_rejected_total} (the WH-13 anti-exhaustion accumulation-cap
+ *       {@code edge_snapshot_chunks_rejected_total} (anti-exhaustion accumulation-cap
  *       rejections) — pumped from the core's single-writer diagnostics by {@link #syncFromCore};</li>
  *   <li>{@code edge_reads_total}, {@code edge_read_refusals_total{reason}} — the HTTP
  *       serving surface. {@link MetricsRegistry} has no label support, so the

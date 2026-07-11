@@ -2,10 +2,10 @@ package io.configd.client;
 
 /**
  * Sanitizes untrusted, server-controlled diagnostic text before it is logged or attached to an exception.
- * The {@code ERROR_CLOSE} / {@code WATCH_CANCELED} {@code message} (§06 F6-9) and HTTP error bodies (§04
- * D2-5a) are arbitrary bytes under a possibly-malicious server: control characters, newlines, ANSI/CSI
- * escapes, or NULs that would forge log lines or inject terminal sequences. A driver <b>MUST NOT</b>
- * machine-parse them and <b>MUST</b> sanitize them before display (§07 E6).
+ * The {@code ERROR_CLOSE} / {@code WATCH_CANCELED} {@code message} and HTTP error bodies are arbitrary
+ * bytes under a possibly-malicious server: control characters, newlines, ANSI/CSI escapes, or NULs that
+ * would forge log lines or inject terminal sequences. A driver <b>MUST NOT</b> machine-parse them and
+ * <b>MUST</b> sanitize them before display.
  *
  * <p>The transform is deliberately conservative and lossless-to-print: C0/C1 control characters (including
  * {@code \n}, {@code \r}, {@code \t}, ESC, NUL) and the DEL character are replaced with a visible

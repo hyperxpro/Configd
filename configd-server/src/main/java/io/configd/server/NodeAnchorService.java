@@ -20,41 +20,42 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * The node-anchor boot cross-check and its off-ack-path periodic refresh (frozen-format §2.5 / §A1.6,
- * ratification item 12). The node-anchor binds three node-wide facts under {@code K_integrity}:
+ * The node-anchor boot cross-check and its off-ack-path periodic refresh. The node-anchor binds
+ * three node-wide facts under {@code K_integrity}:
  *
  * <ol>
  *   <li><b>Topology.</b> {@code (topologyEpoch, shardCount)} == the {@code TopologyDescriptor}; a
  *       mismatch is a topology-descriptor rollback ⇒ REFUSE.</li>
  *   <li><b>Audit head.</b> {@code (auditRecordCount, auditHeadHash)} anchored on a periodic cadence;
- *       an on-disk audit chain truncated BELOW the anchored head ⇒ REFUSE. The un-anchored tail (the
- *       last ≤K records / ≤T ms) is the documented residual R-e.</li>
- *   <li><b>Shard liveness (R-f closer).</b> {@code shardAnchorDigest} = SHA-256 over the sorted
+ *       an on-disk audit chain truncated BELOW the anchored head ⇒ REFUSE. The tail written since the
+ *       last anchor (at most K records / T ms old) is not covered by this check - a known, bounded
+ *       gap.</li>
+ *   <li><b>Shard liveness.</b> {@code shardAnchorDigest} = SHA-256 over the sorted
  *       {@code (gid, lastDurableIndex)} pairs. A shard wiped to FRESH (its {@code raft-anchor}
  *       deleted, WAL truncated to 0, snapshot deleted) resets its head to index 0 and boots FRESH;
  *       the node-anchor detects it.</li>
  * </ol>
  *
- * <p><b>Digest boot semantics (the sound reading of ratification item 12).</b> A strict "any digest
- * change ⇒ REFUSE" would brick the node on every legal crash, because a shard's {@code lastDurableIndex}
- * legitimately advances between the periodic node-anchor ticks (a FORWARD move in the un-anchored
- * window) - which the design's §1 threat model forbids ("a design that bricks a node on a legal crash
- * ... fails just as surely as one that misses an attack"). The ratified trigger is narrower: "a shard
- * RESET TO INDEX 0 changes the digest ⇒ REFUSE." So the check is the node-level parallel of the
- * per-shard {@code W<A}/{@code W>A} recovery asymmetry:
+ * <p><b>Digest boot semantics.</b> A strict "any digest change ⇒ REFUSE" would brick the node on
+ * every legal crash, because a shard's {@code lastDurableIndex} legitimately advances between the
+ * periodic node-anchor ticks - a forward move in the un-anchored window, and a design that bricks a
+ * node on every legal crash fails just as surely as one that misses a real attack. The rule actually
+ * enforced is narrower: a shard RESET TO INDEX 0 changes the digest ⇒ REFUSE. So the check is the
+ * node-level parallel of the per-shard {@code W<A}/{@code W>A} recovery asymmetry:
  *
  * <ul>
  *   <li>digest matches ⇒ PROCEED;</li>
- *   <li>digest differs AND some shard booted FRESH (its {@code raft-anchor} was absent - the R-f wipe
- *       signature, since a legal node never deletes a per-shard anchor) ⇒ REFUSE;</li>
+ *   <li>digest differs AND some shard booted FRESH (its {@code raft-anchor} was absent - the
+ *       signature of a wipe, since a legal node never deletes a per-shard anchor) ⇒ REFUSE;</li>
  *   <li>digest differs AND no shard is FRESH ⇒ a legitimate forward advance (per-shard recovery already
  *       refused any {@code W<A} on a present anchor) ⇒ accept-forward: re-anchor + PROCEED.</li>
  * </ul>
  *
- * This closes R-f exactly as scoped (the delete→FRESH variant); the anchor-rolled-to-an-older-valid-slot
- * variant stays matrix-14 residual-a (the external {@code AnchorWitness}, out of this gate). It also
- * keeps "R-f = R-a": to hide a wipe an attacker must roll the node-anchor back to a matching-digest
- * version that never existed, i.e. forge/roll the node-anchor (needs the key or the witness).
+ * This detects a shard that was wiped and reset to FRESH; a shard rolled back to an older-but-still-
+ * valid anchor slot is a harder attack that only the external {@code AnchorWitness} peer-quorum check
+ * can catch, and is out of scope here. To hide a wipe this way an attacker would also have to roll the
+ * node-anchor itself back to a digest that never existed - i.e. forge or replay the node-anchor, which
+ * needs the signing key or defeats the witness.
  *
  * <p>Off the ack path: neither the boot cross-check nor the refresh touches consensus commit/ack. A
  * failed node-anchor refresh is logged and retried - it is NOT the fail-closed halt the per-shard
@@ -68,7 +69,6 @@ final class NodeAnchorService {
     private static final long OWNER_READ_TIMEOUT_MS = 500L;
 
     private NodeAnchorService() {
-        // static orchestration + a refresher factory
     }
 
     /**
@@ -119,8 +119,9 @@ final class NodeAnchorService {
         NodeAnchorRecord na = nodeAnchor.current();
 
         // 1. Topology cross-check (rollback guard). A mismatch means the standalone TopologyDescriptor
-        //    was swapped for an older legitimately-MAC'd one (or N was tampered) - REFUSE. v1 static-N
-        //    has exactly one legitimate topology; a legitimate v2 reshard advances BOTH files.
+        //    was swapped for an older legitimately-signed one (or the shard count was tampered with) -
+        //    REFUSE. There is exactly one legitimate topology per deployment today; a legitimate reshard
+        //    would need to advance this file and the topology descriptor together.
         if (na.topologyEpoch() != topologyEpoch || na.shardCount() != shardCount) {
             nodeAnchor.close();
             throw new IllegalStateException("node-anchor topology cross-check FAILED: node-anchor binds"
@@ -132,7 +133,7 @@ final class NodeAnchorService {
         // 2. Audit-head cross-check. The replayed on-disk chain must still REACH the anchored head; a
         //    chain truncated below it dropped anchored records - REFUSE. Only enforced when auth is on
         //    (auditLog != null); a node-anchor that binds an audit head but boots with auth OFF cannot
-        //    verify it, so the check is skipped with a loud warning (documented residual).
+        //    verify it, so the check is skipped with a loud warning (a known, logged gap).
         if (!isGenesis(na.auditHeadHash())) {
             if (auditLog == null) {
                 System.err.println("WARNING: node-anchor binds an audit head but auth is disabled -"
@@ -146,7 +147,7 @@ final class NodeAnchorService {
             }
         }
 
-        // 3. Shard-liveness digest (R-f closer). See the class javadoc for the sound reading.
+        // 3. Shard-liveness digest. See the class javadoc for the reasoning.
         if (MessageDigest.isEqual(digestNow, na.shardAnchorDigest())) {
             // Clean: the per-shard liveness fingerprint is unchanged - no shard lost its durable head.
             return nodeAnchor;
@@ -184,7 +185,7 @@ final class NodeAnchorService {
      * @param durableIndexSource  supplies gid → {@code lastDurableIndex} for every shard, or
      *                            {@code null} when a shard could not be read this poll (retry next tick);
      *                            in production {@link #readDurableIndexOnOwners} (owner-thread dispatch)
-     * @param intervalMs          T: refresh at least this often (bounds the R-e window)
+     * @param intervalMs          T: refresh at least this often (bounds the un-anchored tail window)
      * @param kRecords            K: also refresh once this many audit records accrue since the last write
      * @return the {@link Runnable} to schedule at a sub-T poll period
      */
@@ -235,7 +236,7 @@ final class NodeAnchorService {
 
     /**
      * Whether the anchored head {@code recordHash} is still present in the persisted chain. Present ⇒
-     * the chain reached at least that far (records after it are the un-anchored tail, R-e); absent ⇒
+     * the chain reached at least that far (records after it are the un-anchored tail); absent ⇒
      * the log was truncated below the anchored head. The anchored head is always a recent record, so a
      * legitimate rotation (which drops only the OLDEST records) never removes it.
      */

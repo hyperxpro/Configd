@@ -6,8 +6,8 @@ import java.util.Optional;
 
 /**
  * Persistence for a resume cursor — the per-shard {@link WatchCursor} vector a driver <b>MUST</b> persist and
- * re-send on reconnect (§06 F10-1a). The cursor is vector-native even at {@code N = 1} (epoch {@code 1}, a
- * one-element {@code (gid=0, S)}); a scalar-cursor assumption is forbidden (§06 F8-2).
+ * re-send on reconnect. The cursor is vector-native even at {@code N = 1} (epoch {@code 1}, a
+ * one-element {@code (gid=0, S)}); a scalar-cursor assumption is forbidden.
  *
  * <p>Ship the in-memory {@link InMemoryCursorStore} for tests and ephemeral clients; a durable deployment
  * supplies its own (a file, a local KV) so a cursor survives a process restart. The store is inert until the

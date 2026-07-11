@@ -20,8 +20,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Proves the JDK consensus transport ({@link TcpRaftTransport}) counts a connection dropped at the
  * frame-envelope decode boundary. A peer that writes a frame whose CRC does not verify desyncs the
- * stream; the transport must drop the connection AND increment {@link RaftTransportMetrics#onInboundConnectionDropped()}
- * (previously a silent, log-only drop). Runs plaintext (no mTLS fixture needed - the decode boundary is
+ * stream; the transport must drop the connection AND increment {@link RaftTransportMetrics#onInboundConnectionDropped()}.
+ * Runs plaintext (no mTLS fixture needed - the decode boundary is
  * below the identity layer). The Netty twin is {@code NettyRaftTransportDecodeDropTest}.
  */
 @Timeout(30)

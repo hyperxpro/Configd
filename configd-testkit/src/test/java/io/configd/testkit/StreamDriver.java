@@ -77,8 +77,7 @@ interface StreamDriver {
      * The honest default: nothing is ever delivered. With {@code NONE} the edge
      * data plane does not exist - every published notification is an eventual-
      * delivery-bound violation (recorded), which is exactly the propagation backlog.
-     * This is the only behavior that truthfully reflects "no fan-out service exists"
-     * 
+     * This is the only behavior that truthfully reflects "no fan-out service exists".
      */
     StreamDriver NONE = ctx -> { /* deliberately empty - see EdgePropagationBacklogTest */ };
 }

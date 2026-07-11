@@ -115,7 +115,6 @@ public final class HyParViewOverlay {
         if (newNode.equals(localId)) return;
 
         addToActiveView(newNode);
-        // Forward to all active peers with TTL
         for (NodeId peer : activeView) {
             if (!peer.equals(newNode)) {
                 outbox.add(new OutboundMessage.ForwardJoin(peer, newNode, shuffleTtl));
@@ -133,12 +132,10 @@ public final class HyParViewOverlay {
         if (ttl == 0 || activeView.size() < maxActiveSize) {
             addToActiveView(newNode);
         } else {
-            // Forward to a random active peer (not the new node)
             NodeId randomPeer = randomActiveExcluding(newNode);
             if (randomPeer != null) {
                 outbox.add(new OutboundMessage.ForwardJoin(randomPeer, newNode, ttl - 1));
             }
-            // Add to passive view regardless
             addToPassiveView(newNode);
         }
     }
@@ -216,13 +213,10 @@ public final class HyParViewOverlay {
         return result;
     }
 
-    // ---- Internal helpers ----
-
     private void addToActiveView(NodeId peer) {
         if (peer.equals(localId) || activeView.contains(peer)) return;
 
         if (activeView.size() >= maxActiveSize) {
-            // Evict a random active peer to make room
             NodeId evicted = randomActive();
             if (evicted != null) {
                 activeView.remove(evicted);
@@ -241,7 +235,6 @@ public final class HyParViewOverlay {
         if (peer.equals(localId) || activeView.contains(peer)) return;
 
         if (passiveView.size() >= maxPassiveSize) {
-            // Evict a random passive peer
             var it = passiveView.iterator();
             if (it.hasNext()) {
                 it.next();

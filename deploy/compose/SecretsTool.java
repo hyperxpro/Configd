@@ -7,7 +7,7 @@ import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
 
 /**
- * E2E-compose secrets helper (C6) — run in java source-file mode at SETUP time only
+ * E2E-compose secrets helper -- runs in java source-file mode at setup time only
  * (never inside a container, never a runtime dependency):
  *
  * <pre>
@@ -16,22 +16,22 @@ import java.security.cert.CertificateFactory;
  *
  * Subcommands:
  * <ul>
- *   <li>{@code repack <in.p12> <out.p12> <password>} — re-writes a keytool-built PKCS12
- *       (keytool refuses store passwords shorter than 6 chars) into an EMPTY-password
+ *   <li>{@code repack <in.p12> <out.p12> <password>} -- re-writes a keytool-built PKCS12
+ *       (keytool refuses store passwords shorter than 6 chars) into an empty-password
  *       PKCS12, which is what the production CLI TLS path expects: {@code TlsConfig.mtls}
- *       hard-codes an empty store password (the documented C2 deviation §7.5). Key
- *       entries are re-protected with the empty password too ({@code TlsManager} uses
- *       one password for store and key).</li>
- *   <li>{@code truststore <out.p12> <alias=cert.pem>...} — builds an empty-password
+ *       hard-codes an empty store password. Key entries are re-protected with the empty
+ *       password too ({@code TlsManager} uses one password for store and key).</li>
+ *   <li>{@code truststore <out.p12> <alias=cert.pem>...} -- builds an empty-password
  *       PKCS12 trust store from PEM certificates (avoids keytool's password minimum
  *       entirely on the trust side).</li>
- *   <li>{@code signing-key <signing-key.bin> <verify-key.der>} — mints (or loads) the
+ *   <li>{@code signing-key <signing-key.bin> <verify-key.der>} -- mints (or loads) the
  *       cluster's shared Ed25519 signing key via the production
  *       {@code SigningKeyStore.loadOrCreate} and exports the verify key via the
  *       production {@code VerifyKeyExporter} (requires the server shaded jar on the
- *       classpath). Generating ONCE at setup and mounting the same file into all three
- *       CP nodes is REQUIRED: each node signs its own fan-out stream at apply time, so
- *       a per-node key would break edge verification at the first leader failover.</li>
+ *       classpath). Generating it once at setup and mounting the same file into all
+ *       three CP nodes is required: each node signs its own fan-out stream at apply
+ *       time, so a per-node key would break edge verification at the first leader
+ *       failover.</li>
  * </ul>
  */
 public class SecretsTool {
@@ -90,7 +90,7 @@ public class SecretsTool {
     }
 
     private static void signingKey(Path keyFile, Path verifyKeyOut) throws Exception {
-        // Production classes from the server shaded jar — reflective so this file also
+        // Production classes from the server shaded jar -- reflective so this file also
         // compiles standalone (source-file mode compiles before the classpath is probed
         // for these optional classes).
         Class<?> store = Class.forName("io.configd.store.SigningKeyStore");

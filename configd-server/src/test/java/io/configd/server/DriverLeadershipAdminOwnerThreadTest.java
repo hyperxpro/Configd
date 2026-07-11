@@ -33,7 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * calling (HTTP) thread. Wiring mirrors {@link OwnerNetCatchesOffOwnerInboundTest}: a real prod-mode
  * {@link InvariantMonitor} is the node's checker, so an off-owner {@code RaftNode} touch increments the
  * {@code invariant.violation.raft_owner_thread} counter (metric, does not throw - exactly the live server
- * behaviour), letting us assert both that the posted transfer stays silent AND that a direct off-owner call
+ * behaviour), letting us assert both that the posted transfer stays silent and that a direct off-owner call
  * would trip the guard.
  */
 class DriverLeadershipAdminOwnerThreadTest {
@@ -91,15 +91,15 @@ class DriverLeadershipAdminOwnerThreadTest {
 
             // The transfer runs on the owner thread (posted through driver.ownerExecutor), so the guard
             // stays silent. isLeader() saw LEADER, so the changer ran; the target is not a voter in a
-            // single-node cluster, so the mechanism returns false -> Failure.
+            // single-node cluster, so the mechanism returns false, which maps to Failure.
             AdminService.AdminResult result = admin.transferLeadership(GROUP, NodeId.of(2));
             assertInstanceOf(AdminService.AdminResult.Failure.class, result,
                     "single-node transfer to a non-voter must be a precondition Failure");
             assertEquals(0L, violations(registry),
                     "the posted transfer must run ON the owner thread (no off-owner guard trip)");
 
-            // The same call made DIRECTLY from the test thread (the missed-hop bug an HTTP-thread call
-            // would be) MUST trip the owner guard - proving the marshalling above is load-bearing.
+            // The same call made directly from the test thread (the missed-hop bug an HTTP-thread call
+            // would be) must trip the owner guard - proving the marshalling above is load-bearing.
             long before = violations(registry);
             node.transferLeadership(NodeId.of(2));
             assertTrue(violations(registry) > before,

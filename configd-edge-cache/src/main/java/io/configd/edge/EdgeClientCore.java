@@ -27,8 +27,8 @@ import java.util.Objects;
  * <ul>
  *   <li><b>transport-free</b> - no socket, TLS, or {@code java.net} type appears here; the
  *       only boundary is the {@link FrameSink} (outbound) and the {@link ConnectionDirective}
- *       queue (the shell/sim obeys both). The simulator drives this REAL code so the gate
- *       seeds exercise production logic.</li>
+ *       queue (the shell/sim obeys both). The simulator drives this real code directly, so
+ *       its runs exercise actual production logic, not a model of it.</li>
  *   <li><b>clock-injected + deterministic</b> - every time read is via the injected
  *       {@link Clock}; no wall clock, no {@code System.nanoTime}.</li>
  *   <li><b>single-threaded</b> - {@link #onFrame} and {@link #tick} must be called by one
@@ -44,10 +44,10 @@ import java.util.Objects;
  *       {@link DeltaApplier.ApplyResult} semantics;</li>
  *   <li>a monitor-wired read {@link LocalConfigStore} kept byte-identical to the client's
  *       internal store by feeding it the SAME (subscription-filtered) delta - so all
- *       cursor-bound reads route through the real INV-M1 ({@code monotonic_read}) seam.
+ *       cursor-bound reads route through the real {@code monotonic_read} seam.
  *       {@link EdgeConfigClient} builds its internal store with no monitor and exposes no
  *       injection seam, so a second instance of the same production class, fed identical
- *       input, is the established way to wire INV-M1
+ *       input, is how that seam gets wired in for reads
  *       (NOT a fork - deterministic lockstep from the same empty start + same clock).</li>
  * </ul>
  *
@@ -139,15 +139,13 @@ public final class EdgeClientCore {
         }
     }
 
-    // --- configuration ---------------------------------------------------------------
-
     /** Default heartbeat cadence assumed by the silence detector ({@code heartbeatMs}). */
     public static final long DEFAULT_HEARTBEAT_MS = 250L;
     /** Default silence factor: reconnect after this many missed heartbeat intervals. */
     public static final int DEFAULT_SILENCE_FACTOR = 8;
 
     /**
-     * Hard absolute ceiling on a snapshot's total accumulated bytes (WH-13, 512 MiB). The
+     * Hard absolute ceiling on a snapshot's total accumulated bytes (512 MiB). The
      * distribution server declares {@code chunkCount}/{@code totalBytes} in SNAPSHOT_BEGIN, but
      * both are attacker-controlled (a malicious/compromised server, or plaintext), so the
      * BEGIN-declared values are themselves capped to this backstop AND the running accumulation
@@ -158,7 +156,7 @@ public final class EdgeClientCore {
     public static final long MAX_SNAPSHOT_TOTAL_BYTES = 512L * 1024 * 1024;
 
     /**
-     * Hard absolute ceiling on a snapshot's declared chunk count (WH-13). Bounds the
+     * Hard absolute ceiling on a snapshot's declared chunk count. Bounds the
      * {@code pendingChunks} list length (and its per-element object overhead) independently of
      * the byte ceiling, so a flood of tiny chunks cannot grow the list unboundedly. At the
      * 1 MiB per-chunk wire cap a {@link #MAX_SNAPSHOT_TOTAL_BYTES} snapshot needs ~512 chunks;
@@ -169,16 +167,12 @@ public final class EdgeClientCore {
     private final long heartbeatMs;
     private final int silenceFactor;
 
-    // --- collaborators ---------------------------------------------------------------
-
     private final Clock clock;
     private final EdgeConfigClient client;
     private final DeltaApplier applier;
     private final LocalConfigStore readStore;
     private final FrameSink sink;
     private final PoisonPillPolicy poisonPolicy;
-
-    // --- session state (single-writer) -----------------------------------------------
 
     /** Applied-mutation seq this edge has reached (cursor; 0 = nothing applied yet). */
     private long cursor;
@@ -199,7 +193,7 @@ public final class EdgeClientCore {
     private EdgeFrame.Mode mode;
 
     /**
-     * Whether the server is filtering this session server-side (ADR-0045), from the SUBSCRIBE_OK
+     * Whether the server is filtering this session server-side, from the SUBSCRIBE_OK
      * {@code filtered} confirm. In filtered mode {@link #cursor} is the dense covered-through
      * seq (advanced by delivered NOTIFYs AND the cursor-advance HEARTBEAT), the applied store
      * version is tracked separately by the {@link DeltaApplier}/{@link EdgeConfigClient}, and the
@@ -211,11 +205,11 @@ public final class EdgeClientCore {
     private final List<EdgeFrame.SnapshotChunk> pendingChunks = new ArrayList<>();
     private long pendingSnapshotSeq = -1L;
     private boolean inSnapshot;
-    /** BEGIN-declared chunk count for the in-flight transfer (WH-13/WH-15 accumulation cap). */
+    /** BEGIN-declared chunk count for the in-flight transfer (accumulation cap). */
     private int pendingChunkCount;
-    /** BEGIN-declared total byte length for the in-flight transfer (WH-13/WH-15 accumulation cap). */
+    /** BEGIN-declared total byte length for the in-flight transfer (accumulation cap). */
     private long pendingTotalBytes;
-    /** Running sum of accumulated chunk payload bytes for the in-flight transfer (WH-13). */
+    /** Running sum of accumulated chunk payload bytes for the in-flight transfer. */
     private long accumulatedSnapshotBytes;
 
     /** Pending connection directives for the shell/sim to drain. */
@@ -271,7 +265,7 @@ public final class EdgeClientCore {
         this.applyFaultInjector = injector;
     }
 
-    // --- diagnostic counters (read by tests / sim digest folding) --------------------
+    // Diagnostic counters, read by tests and by sim digest folding.
 
     private long appliedCount;
     private int gapsDetected;
@@ -288,7 +282,7 @@ public final class EdgeClientCore {
      * are exercised by the integration test with a real key, not this core's sim).
      *
      * @param clock              the injected clock (non-null)
-     * @param invariantMonitor   the INV-M1 ({@code monotonic_read}) + INV-S1 monitor wired
+     * @param invariantMonitor   the monotonic-read and staleness-bound invariant monitor wired
      *                           into the read store and staleness tracker (may be null in
      *                           tests that do not assert the seam)
      * @param implausibleCounter the implausible-frontier counter (may be null)
@@ -310,7 +304,7 @@ public final class EdgeClientCore {
      * into the real {@link DeltaApplier}.
      *
      * @param clock              the injected clock (non-null)
-     * @param invariantMonitor   the INV-M1 ({@code monotonic_read}) + INV-S1 monitor wired
+     * @param invariantMonitor   the monotonic-read and staleness-bound invariant monitor wired
      *                           into the read store and staleness tracker (may be null in
      *                           tests that do not assert the seam)
      * @param implausibleCounter the implausible-frontier counter (may be null)
@@ -383,18 +377,10 @@ public final class EdgeClientCore {
                 DEFAULT_HEARTBEAT_MS, DEFAULT_SILENCE_FACTOR);
     }
 
-    // -----------------------------------------------------------------------
-    // Subscriptions (storage filter)
-    // -----------------------------------------------------------------------
-
     /** Adds a prefix subscription that scopes what this edge stores. Empty set = full store. */
     public void addSubscription(String prefix) {
         client.addSubscription(prefix);
     }
-
-    // -----------------------------------------------------------------------
-    // Inbound frame handling (server to edge)
-    // -----------------------------------------------------------------------
 
     /**
      * Handles one inbound {@link EdgeFrame} (server to edge). The single entry point for all
@@ -438,8 +424,8 @@ public final class EdgeClientCore {
     private void onSubscribeOk(EdgeFrame.SubscribeOk ok) {
         this.mode = ok.mode();
         // Select the filtered-stream apply mode from the server's confirm: forward-only gap
-        // detection + a version-bridged store apply (ADR-0045). A 0x01/0x02 SUBSCRIBE_OK always
-        // decodes filtered=false, so classic edges are unaffected.
+        // detection + a version-bridged store apply. A 0x01/0x02 SUBSCRIBE_OK always decodes
+        // filtered=false, so classic edges are unaffected.
         this.filtered = ok.filtered();
         applier.setFilteredMode(filtered);
         // SNAPSHOT_FIRST: the server owes us a snapshot -- the heal is already in flight,
@@ -494,7 +480,7 @@ public final class EdgeClientCore {
             if (result == DeltaApplier.ApplyResult.APPLIED) {
                 // Mirror the same subscription-filtered delta into the monitor-wired read store
                 // so it stays byte-identical to the client's internal store and reads route
-                // through the real INV-M1 (monotonic-read) seam. (filterForStorage is the
+                // through the real monotonic-read seam. (filterForStorage is the
                 // lockstep contract; a pure function of the current subscription, so both
                 // stores agree.) In filtered mode the read store bridges the same intentional
                 // version jump the client store did, keeping the two in lockstep.
@@ -528,7 +514,7 @@ public final class EdgeClientCore {
             }
             case STALE_DELTA -> {
                 // Re-delivered or older notification: recorded, not applied. Cursor unchanged
-                // -- the monotonic-read invariant (INV-M1) is preserved.
+                // -- the monotonic-read invariant is preserved.
             }
             // A rejected signature/replay is NOT a gap (the chain is contiguous; the content
             // failed verification). Counted on its own series so edge_gaps_total stays an
@@ -560,7 +546,7 @@ public final class EdgeClientCore {
     }
 
     private void onSnapshotBegin(EdgeFrame.SnapshotBegin b) {
-        // WH-13/WH-15 BEGIN sanity cap: chunkCount/totalBytes are attacker-declared (a malicious
+        // BEGIN sanity cap: chunkCount/totalBytes are attacker-declared (a malicious
         // or compromised distribution server, or plaintext), so reject a transfer whose OWN header
         // already declares more than the hard ceilings before a single chunk is accumulated. The
         // record ctor has already enforced non-negativity.
@@ -588,8 +574,8 @@ public final class EdgeClientCore {
             // partial snapshot (silent partial application is the divergence we forbid).
             throw new IllegalStateException("SNAPSHOT_CHUNK received outside a snapshot transfer");
         }
-        // WH-13 accumulation caps: bound the (chunkCount+1)-th chunk and the running byte sum
-        // against the BEGIN-declared values (WH-15 cross-field), and against the hard ceiling as
+        // Accumulation caps: bound the (chunkCount+1)-th chunk and the running byte sum
+        // against the BEGIN-declared values (cross-field), and against the hard ceiling as
         // the real backstop (the declared values were themselves attacker-supplied, though already
         // capped to the ceiling at BEGIN). Any breach is a protocol error routed through the same
         // poison/reconnect path as a chunk-outside-transfer, never a silent unbounded accumulation.
@@ -708,10 +694,6 @@ public final class EdgeClientCore {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Periodic tick (single-writer)
-    // -----------------------------------------------------------------------
-
     /**
      * Periodic maintenance: re-ack the cursor if it advanced since the last ack, and emit a
      * reconnect directive if the server has gone silent (no heartbeat for
@@ -775,10 +757,6 @@ public final class EdgeClientCore {
         reconnectPending = true;
     }
 
-    // -----------------------------------------------------------------------
-    // Connection directives (the shell/sim drains these)
-    // -----------------------------------------------------------------------
-
     /**
      * Removes and returns the next pending {@link ConnectionDirective}, or {@code null} if
      * none. The shell/sim drains this each loop and acts on it (reconnect to next endpoint).
@@ -827,11 +805,7 @@ public final class EdgeClientCore {
         refreshCursorLag();
     }
 
-    // -----------------------------------------------------------------------
-    // Reads - real LocalConfigStore cursor path (INV-M1). Hot path.
-    // -----------------------------------------------------------------------
-
-    /** Cursor-bound read through the real monotonic-read (INV-M1) seam. Hot path. */
+    /** Cursor-bound read through the real monotonic-read seam. Hot path. */
     public ReadResult get(String key, VersionCursor readCursor) {
         return readStore.get(key, readCursor);
     }
@@ -840,10 +814,6 @@ public final class EdgeClientCore {
     public ReadResult get(String key) {
         return readStore.get(key);
     }
-
-    // -----------------------------------------------------------------------
-    // Accessors (diagnostics / sim digest / tests)
-    // -----------------------------------------------------------------------
 
     /** The applied-mutation seq the edge has reached (its cursor). */
     public long cursor() {
@@ -902,7 +872,7 @@ public final class EdgeClientCore {
 
     /**
      * Number of snapshot chunks (or over-declaring SNAPSHOT_BEGIN headers) rejected by the
-     * anti-exhaustion accumulation caps (WH-13): a flood beyond the BEGIN-declared
+     * anti-exhaustion accumulation caps: a flood beyond the BEGIN-declared
      * {@code chunkCount}/{@code totalBytes} or the hard {@link #MAX_SNAPSHOT_TOTAL_BYTES} /
      * {@link #MAX_SNAPSHOT_CHUNKS} ceilings.
      */

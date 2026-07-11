@@ -88,7 +88,6 @@ class ConfigStateMachineMetricsTest {
 
     @Test
     void restoreSnapshotSuccessIncrementsRebuild() {
-        // Round-trip: take a snapshot then restore it.
         stateMachine.apply(1, 1, CommandCodec.encodePut("a", bytes("1")));
         stateMachine.apply(2, 1, CommandCodec.encodePut("b", bytes("2")));
 
@@ -104,10 +103,8 @@ class ConfigStateMachineMetricsTest {
         assertEquals(0, restoreMetrics.snapshotInstallFailedCount.get());
     }
 
-    // -----------------------------------------------------------------------
-    // WH-01: a malformed committed command is skipped deterministically as
-    // NON_MUTATING (never crash-loops the apply loop) and rings the alarm.
-    // -----------------------------------------------------------------------
+    // A malformed committed command is skipped deterministically as NON_MUTATING (never
+    // crash-loops the apply loop) and rings the alarm.
 
     @Test
     void malformedCommittedCommandIsSkippedNotThrown() {
@@ -128,8 +125,8 @@ class ConfigStateMachineMetricsTest {
 
     @Test
     void malformedSkipIsIdempotentAcrossReplay() {
-        // Re-applying the SAME poison entry (as happens on every tick / WAL replay before the fix)
-        // must keep returning NON_MUTATING without throwing - the property that breaks the crash-loop.
+        // Re-applying the SAME poison entry (as happens on every tick / WAL replay) must keep
+        // returning NON_MUTATING without throwing - the property that breaks the crash-loop.
         byte[] poison = new byte[]{CommandCodec.TYPE_PUT, 0x00}; // truncated key length
         for (int i = 1; i <= 3; i++) {
             long r = assertDoesNotThrow(() -> stateMachine.apply(1, 1, poison));
@@ -151,7 +148,6 @@ class ConfigStateMachineMetricsTest {
         assertEquals(2L, s2, "second valid write commits at seq 2 - the skipped entry consumed no seq");
         assertEquals(2, metrics.successCount.get(), "exactly the two valid writes committed");
         assertEquals(1, metrics.malformedCount.get());
-        // And the store reflects both valid writes.
         assertTrue(stateMachine.store().get("a").found());
         assertTrue(stateMachine.store().get("b").found());
     }

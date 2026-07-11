@@ -36,9 +36,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Runner II — SERVER-OBEYS, HTTP data plane (§04 D-clauses that are a SERVER obligation). Drives requests against
+ * Runner II -- SERVER-OBEYS, HTTP data plane (§04 D-clauses that are a SERVER obligation). Drives requests against
  * a live {@link HttpApiServer} + {@code AdminApiHandler} (the actual routes, statuses, headers, auth gate, key
- * validation, ACL policy validation, strong-read fail-close, and the operational endpoints) — no mock — and
+ * validation, ACL policy validation, strong-read fail-close, and the operational endpoints) -- no mock -- and
  * asserts the server obeys. Raw {@link HttpClient} is used where the assertion is on the exact status / header /
  * body the server emits (so nothing is masked by the reference client's exception mapping); the reference
  * {@link ConfigdHttpClient} is used for {@code _acl/} policy validation, where the client's typed
@@ -58,9 +58,7 @@ class ServerObeysDataPlaneTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Routing (D2-2) + empty-key pre-auth (D2-4)
-    // -----------------------------------------------------------------------
+    // Routing (D2-2) and empty-key pre-auth (D2-4).
 
     @Test
     @Tag("clause:D2-2")
@@ -72,7 +70,7 @@ class ServerObeysDataPlaneTest {
         // exact-match: the fixed endpoint routes...
         assertEquals(200, raw("GET", base.resolve("/health/live"), null, null).statusCode(),
                 "/health/live is exact-routed (D2-2)");
-        // ...but a SUFFIX variant of a fixed endpoint does NOT match — it is 404, never the real endpoint.
+        // ...but a suffix variant of a fixed endpoint does not match -- it is 404, never the real endpoint.
         assertEquals(404, raw("GET", base.resolve("/metricsZ"), null, null).statusCode(),
                 "a suffix variant of a fixed endpoint is 404, not the endpoint (D2-2)");
         // any other path is 404.
@@ -90,16 +88,12 @@ class ServerObeysDataPlaneTest {
         assertTrue(bodyText(r).contains("Missing config key"), "the pre-auth routing 400 names the missing key");
     }
 
-    // -----------------------------------------------------------------------
-    // Strong-read fail-close (server half of D3-5)
-    // -----------------------------------------------------------------------
-
     @Test
     @Tag("clause:D3-5_D3-5a")
     void strongReadKeyFailsClosedWithNoLinearizablePathWired() throws Exception {
-        URI base = startAuthOff(); // readService is null ⇒ no linearizable path wired
-        // A strong-read (default secure/) key is force-linearizable; with no linearizable path it FAILS CLOSED
-        // 503 + X-Fail-Closed: strong-read, and serves NO stale value — never a 200 with a local copy (D3-5).
+        URI base = startAuthOff(); // readService is null, so no linearizable path is wired
+        // A strong-read (default secure/) key is force-linearizable; with no linearizable path it fails closed:
+        // 503 + X-Fail-Closed: strong-read, and serves no stale value -- never a 200 with a local copy (D3-5).
         HttpResponse<byte[]> r = raw("GET", base.resolve("/v1/config/secure/kill-switch"), null, null);
         assertEquals(503, r.statusCode(), "a strong-read key with no linearizable path is 503, never stale (D3-5)");
         assertEquals(Optional.of("strong-read"), r.headers().firstValue("X-Fail-Closed"),
@@ -107,38 +101,32 @@ class ServerObeysDataPlaneTest {
         assertTrue(bodyText(r).contains("Fail-closed"), "the body is the fail-closed diagnostic, not a stale value");
     }
 
-    // -----------------------------------------------------------------------
-    // _acl/ policy validation (D4-5)
-    // -----------------------------------------------------------------------
-
     @Test
     @Tag("clause:D4-5")
     void aclPutIsValidatedAsPolicyPreCommitAndIncompleteIsNotAnError() throws Exception {
         URI base = startAuthOn();
         try (ConfigdHttpClient admin = httpClient(base, "admin-tok")) {
-            // A malformed policy SHAPE (an unknown role-line effect) is a 400 "Invalid ACL policy" PRE-commit
-            // (the store is unchanged) — a policy-shape rejection distinct from a key/value-limit 400 (D4-5).
+            // A malformed policy shape (an unknown role-line effect) is a 400 "Invalid ACL policy" pre-commit
+            // (the store is unchanged) -- a policy-shape rejection distinct from a key/value-limit 400 (D4-5).
             assertThrows(BadRequestException.class,
                     () -> admin.blocking().put("_acl/roles/reader",
                             "not-an-effect READ app/".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults()),
                     "a malformed _acl/ policy is rejected 400 pre-commit (D4-5)");
-            // A well-formed-but-INCOMPLETE policy (a binding to a not-yet-defined role) is intentionally NOT an
-            // error — it parses and commits (D4-5).
+            // A well-formed but incomplete policy (a binding to a not-yet-defined role) is intentionally not an
+            // error -- it parses and commits (D4-5).
             WriteOutcome committed = admin.blocking().put("_acl/bindings/alice",
                     "some-undefined-role".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults());
             assertEquals(77L, committed.seq(), "a well-formed (even incomplete) _acl/ policy commits (D4-5)");
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Key / value validation (D8)
-    // -----------------------------------------------------------------------
+    // Key and value validation (D8).
 
     @Test
     @Tag("clause:D8-1")
     void serverEnforcesOnlyNonBlankAnd1024ByteKeyLengthBeforeBlank() throws Exception {
         URI base = startAuthOff();
-        // Over-length key ⇒ 400 with the length reason.
+        // Over-length key: 400 with the length reason.
         String overLong = "a".repeat(1025);
         HttpResponse<byte[]> tooLong = raw("PUT", base.resolve("/v1/config/" + overLong), null, bytes("v"));
         assertEquals(400, tooLong.statusCode(), "a >1024-byte key is rejected (D8-1)");
@@ -147,7 +135,7 @@ class ServerObeysDataPlaneTest {
         HttpResponse<byte[]> longBlank = raw("PUT", base.resolve("/v1/config/" + "%20".repeat(1025)), null, bytes("v"));
         assertEquals(400, longBlank.statusCode());
         assertTrue(bodyText(longBlank).contains("length"), "length is checked before blank (D8-1)");
-        // A blank (but short) key ⇒ the non-blank reason.
+        // A blank (but short) key: the non-blank reason.
         HttpResponse<byte[]> blank = raw("PUT", base.resolve("/v1/config/%20"), null, bytes("v"));
         assertEquals(400, blank.statusCode());
         assertTrue(bodyText(blank).contains("blank"), "a blank key is rejected non-blank (D8-1)");
@@ -181,7 +169,7 @@ class ServerObeysDataPlaneTest {
     @Tag("clause:D8-4")
     void keyValidationIsPostAuthExceptTheEmptyKey() throws Exception {
         URI base = startAuthOn();
-        // A bad (over-length) key WITHOUT a token is 401 — authentication runs BEFORE key validation, so the
+        // A bad (over-length) key without a token is 401 -- authentication runs before key validation, so the
         // caller gets 401, never a 400 that would leak that the key was malformed (D8-4).
         String overLong = "a".repeat(1025);
         HttpResponse<byte[]> unauth = raw("PUT", base.resolve("/v1/config/" + overLong), null, bytes("v"));
@@ -191,9 +179,7 @@ class ServerObeysDataPlaneTest {
         assertEquals(400, empty.statusCode(), "the empty-key 400 is the pre-auth exception (D8-4)");
     }
 
-    // -----------------------------------------------------------------------
-    // Operational endpoints (D10)
-    // -----------------------------------------------------------------------
+    // Operational endpoints (D10).
 
     @Test
     @Tag("clause:D10-1")
@@ -215,13 +201,13 @@ class ServerObeysDataPlaneTest {
     @Tag("clause:D10-2")
     void metricsIsGetOnlyPrometheusBearerGatedAndExactPath() throws Exception {
         URI base = startAuthOn();
-        // Bearer-gated when auth is configured: a missing token ⇒ 401 + WWW-Authenticate: Bearer (authentication,
-        // not authorization — there is no ACL for scraping).
+        // Bearer-gated when auth is configured: a missing token gets 401 + WWW-Authenticate: Bearer (authentication,
+        // not authorization -- there is no ACL for scraping).
         HttpResponse<byte[]> noToken = raw("GET", base.resolve("/metrics"), null, null);
         assertEquals(401, noToken.statusCode(), "/metrics is bearer-gated when auth is on (D10-2)");
         assertEquals(Optional.of("Bearer"), noToken.headers().firstValue("WWW-Authenticate"),
                 "the 401 carries WWW-Authenticate: Bearer (D10-2)");
-        // A valid token ⇒ 200 Prometheus text exposition.
+        // A valid token: 200 Prometheus text exposition.
         HttpResponse<byte[]> ok = raw("GET", base.resolve("/metrics"), "admin-tok", null);
         assertEquals(200, ok.statusCode());
         assertTrue(ok.headers().firstValue("Content-Type").orElse("").startsWith("text/plain; version=0.0.4"),
@@ -234,9 +220,7 @@ class ServerObeysDataPlaneTest {
                 "/metrics is exact-match; /metricsZ is 404 (D10-2)");
     }
 
-    // -----------------------------------------------------------------------
-    // fixtures
-    // -----------------------------------------------------------------------
+    // Fixtures.
 
     /** An auth-OFF server (readService null) for routing / key-validation / strong-read fail-close. */
     private URI startAuthOff() throws IOException {

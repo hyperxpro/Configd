@@ -4,11 +4,8 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * A named role: a bundle of {@link Policy policies} a principal can hold.
- * <p>
- * This is the production realization of the docs-only
- * {@code docs/design/namespace-model/sketch/.../} role concept, deliberately <b>without</b> the sketch's
- * {@code Scope} or glob {@code PathPattern}. Immutable: the policy list is defensively copied to an
+ * A named role: a bundle of {@link Policy policies} a principal can hold, deliberately without a
+ * scope or glob pattern concept. Immutable: the policy list is defensively copied to an
  * unmodifiable snapshot. A role is bound to {@link AclService} via {@link AclService#defineRole} and
  * resolved for a principal via {@link AclService#isAllowed(String, java.util.Set, String, AclService.Permission)}.
  */

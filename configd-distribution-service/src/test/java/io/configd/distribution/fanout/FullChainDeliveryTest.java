@@ -36,7 +36,7 @@ class FullChainDeliveryTest {
     @Test
     void prefixSubscriberReceivesEveryDeltaIncludingNonMatchingKeys() {
         FanOutBuffer buffer = new FanOutBuffer(64);
-        // A mixed chain: some keys under "svc/", some under "db/", some under "other/".
+        // A mixed chain: some keys under svc/, some under db/, some under other/.
         String[] keys = {"svc/a", "db/x", "other/z", "svc/b", "db/y", "other/w"};
         for (int i = 0; i < keys.length; i++) {
             long seq = i + 1;
@@ -47,7 +47,7 @@ class FullChainDeliveryTest {
         FanOutSessionCore s = new FanOutSessionCore(buffer, replay, sink,
                 FanOutConfig.defaults(), FanOutSessionMetrics.NOOP, CLOCK);
 
-        // Subscribe with prefixes ["svc/"] only - but the server must still stream ALL keys.
+        // Subscribe with a prefix of svc/ only, but the server must still stream all keys.
         s.onSubscribe(new EdgeFrame.Subscribe(false, List.of("svc/"), 0L, -1L, "edge-prefix"));
         sink.clear();
         s.tick(0L);
@@ -65,7 +65,7 @@ class FullChainDeliveryTest {
         // Every published seq (the full chain) is delivered, in order.
         assertEquals(List.of(1L, 2L, 3L, 4L, 5L, 6L), delivered,
                 "the full signed chain must reach a prefix subscriber (ADR-0038)");
-        // Non-matching keys ("db/...", "other/...") are present on the wire - NOT filtered.
+        // Non-matching keys under db/ and other/ are present on the wire, not filtered.
         for (String k : keys) {
             assertTrue(deliveredKeys.contains(k),
                     "non-matching key '" + k + "' must still be streamed (no transport filter)");

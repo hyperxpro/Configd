@@ -1,39 +1,38 @@
 #!/usr/bin/env bash
-# =============================================================================
-# gate-phase0.sh — Phase 0 Workstream B cumulative machine-verifiable gate
-# -----------------------------------------------------------------------------
+# gate-phase0.sh — Phase 0 cumulative machine-verifiable gate
+#
 # Cumulative with gates 1..7: a green gate-phase0 REQUIRES a green gate-7 (which
 # chains 6→5→4→3→2→1). In CI gates 1..7 run as their own jobs, so this gate sets
 # GATE_PHASE0_SKIP_GATE7=1 (cumulative coverage via the job dependency, not a
-# redundant re-run) — reported LOUDLY. Exits non-zero on ANY failure; NO silent
+# redundant re-run) — reported LOUDLY. Exits non-zero on ANY failure; no silent
 # placeholders; every test step asserts a REAL result via assert_class_green and
-# FAILS if its summary line is absent (non-vacuity — the RR-012/RR-085 lesson).
+# FAILS if its summary line is absent (non-vacuity).
 #
-# WHAT A GREEN gate-phase0 PROVES — the R-01 re-threading (single tick thread →
-# one owner thread per group) and the H-4 group-rehoming hazard closure:
+# WHAT A GREEN gate-phase0 PROVES — the re-threading (single tick thread →
+# one owner thread per group) and the group-rehoming hazard closure:
 #   (a) owner net non-vacuous at N>1: a CROSS-GROUP access on a real foreign
 #       owner trips the PER-NODE net (OwnerIsolationMultiOwnerTest); off-owner
 #       inbound trips it under the pool (OwnerNetCatchesOffOwnerInboundTest).
-#   (b) H-4 rehoming MECHANISM: quiesce→publish→adopt + check-and-bounce; the net
+#   (b) rehoming MECHANISM: quiesce→publish→adopt + check-and-bounce; the net
 #       catches the rehoming-race (RehomingHandoffTest); the deferred
 #       sub-mechanisms (quiesce / flush-retarget / abortHandoff) hold
 #       (RehomingSubMechanismsTest); the red-team/replay robustness findings stay
 #       fixed (RehomingRobustnessTest).
-#   (c) H-4 no-double-ownership at the JMM level (jcstress
+#   (c) no-double-ownership at the JMM level (jcstress
 #       RehomingDoubleOwnershipTest, run at -m quick where the broken control
 #       reliably fails) + the owner-guard + monitor-view publication proofs.
-#   (c2) M3 COALESCED HEARTBEATS (RR-113 de-regression): heartbeat cost flat in
-#       group count — one coalesced message per peer per tick independent of G,
-#       un-coalesced baseline scales with G, + the demux round-trip
-#       (HeartbeatCoalescingTest); no spurious election under idle/low/sustained
-#       load WITH coalescing, broken-drain test-the-testers all churn
-#       (CoalescedHeartbeatLivenessTest). The sim (step d) runs the 20,001-seed
-#       sweep WITH coalescing wired — that green IS the S2–S4 surface coalesced.
-#   (d) the S2–S4 invariant surface WITH rehoming injected: tens of thousands of
+#   (c2) COALESCED HEARTBEATS: heartbeat cost flat in group count — one
+#       coalesced message per peer per tick independent of G, un-coalesced
+#       baseline scales with G, + the demux round-trip (HeartbeatCoalescingTest);
+#       no spurious election under idle/low/sustained load WITH coalescing,
+#       broken-drain test-the-testers all churn (CoalescedHeartbeatLivenessTest).
+#       The sim (step d) runs the 20,001-seed sweep WITH coalescing wired — that
+#       green IS the invariant surface coalesced.
+#   (d) the invariant surface WITH rehoming injected: tens of thousands of
 #       handoffs under concurrent multi-owner load, zero off-owner fires, groups
 #       keep committing (RehomingInjectedSweepTest); AND the deterministic
 #       20,001-seed sim + adversarial schedules still green (no regression).
-#   (e) the verified baseline is recorded (main pinned at cedc706 — D-010).
+#   (e) the verified baseline is recorded (main pinned at cedc706).
 #
 # Environment knobs (CI must not set the test skips on a full run):
 #   GATE_PHASE0_SKIP_GATE7=1   skip the cumulative gate-7 (CI runs it as its own job) — LOUD.
@@ -41,7 +40,6 @@
 #   GATE_PHASE0_SKIP_JCSTRESS=1 skip the jcstress step (LOUD: the JMM proofs NOT verified this run).
 #   GATE_PHASE0_SKIP_SIM=1     skip the heavy 20,001-seed deterministic sim (LOUD; CI nightly runs it).
 #   JCSTRESS_CPUS=N            CPUs for the jcstress subset (default 2).
-# =============================================================================
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -76,13 +74,13 @@ run_tests() {
   grep -q "BUILD SUCCESS" "$log" || { tail -60 "$log"; fail "$label" "no BUILD SUCCESS"; }
 }
 
-# --- 2-vCPU box discipline: never overlap another Maven workload --------------
+# 2-vCPU box discipline: never overlap another Maven workload.
 if pgrep -f "[s]urefirebooter" >/dev/null 2>&1; then
   echo "gate-phase0: another Maven test workload is running — refusing to start (2-vCPU box)" >&2
   exit 1
 fi
 
-# --- cumulative: gate-7 (chains 6→5→4→3→2→1) ----------------------------------
+# cumulative: gate-7 (chains 6→5→4→3→2→1)
 if [ "${GATE_PHASE0_SKIP_GATE7:-0}" = "1" ]; then
   echo "gate-phase0 gate7: SKIPPED by GATE_PHASE0_SKIP_GATE7=1 (LOUD: gates 1..7 NOT verified this run; CI supplies them via the gate jobs)"
 else
@@ -91,7 +89,7 @@ else
   echo "gate-phase0 gate7: OK (gates 1..7 green)"
 fi
 
-# --- build/install the modules' deps once (so the targeted test runs are offline)
+# build/install the modules' deps once (so the targeted test runs are offline)
 if [ "${GATE_PHASE0_SKIP_BUILD:-0}" = "1" ]; then
   echo "gate-phase0 build: SKIPPED by GATE_PHASE0_SKIP_BUILD=1 (reusing installed jars; CI must not do this)"
 else
@@ -100,47 +98,47 @@ else
     || { tail -30 "$LOGDIR/build.txt"; fail build "module build/install failed"; }
 fi
 
-# --- (a) owner net non-vacuous at N>1 + the re-threading -----------------------
+# (a) owner net non-vacuous at N>1 + the re-threading
 echo "gate-phase0 net: owner-isolation at N>1 (cross-group trips the per-node net) + off-owner inbound..."
 NET="$LOGDIR/net.txt"
 run_tests net "OwnerIsolationMultiOwnerTest,OwnerNetCatchesOffOwnerInboundTest,RaftNodeConcurrencyStressTest" "$NET"
-assert_class_green "$NET" "OwnerIsolationMultiOwnerTest"      # cross-group class trips the per-node net (M1)
-assert_class_green "$NET" "OwnerNetCatchesOffOwnerInboundTest" # off-owner inbound under the pool (Stage 1)
-assert_class_green "$NET" "RaftNodeConcurrencyStressTest"     # off-owner class (Workstream A net)
+assert_class_green "$NET" "OwnerIsolationMultiOwnerTest"      # cross-group class trips the per-node net
+assert_class_green "$NET" "OwnerNetCatchesOffOwnerInboundTest" # off-owner inbound under the pool
+assert_class_green "$NET" "RaftNodeConcurrencyStressTest"     # off-owner class
 echo "gate-phase0 net: OK"
 
-# --- (b) H-4 rehoming mechanism + deferred sub-mechanisms + robustness ---------
+# (b) rehoming mechanism + deferred sub-mechanisms + robustness
 echo "gate-phase0 rehoming: quiesce→publish→adopt + check-and-bounce; rehoming-race net; sub-mechanisms; robustness..."
 REH="$LOGDIR/rehoming.txt"
 run_tests rehoming "RehomingHandoffTest,RehomingSubMechanismsTest,RehomingRobustnessTest,MultiRaftDriverTest" "$REH"
-assert_class_green "$REH" "RehomingHandoffTest"        # rehoming-race class + missed-hop + removeGroup (M2a)
-assert_class_green "$REH" "RehomingSubMechanismsTest"  # quiesce / flush-retarget / abortHandoff (M2b S1)
-assert_class_green "$REH" "RehomingRobustnessTest"     # interrupt-atomicity + no wedged livelock (M2b S1 fixes)
+assert_class_green "$REH" "RehomingHandoffTest"        # rehoming-race class + missed-hop + removeGroup
+assert_class_green "$REH" "RehomingSubMechanismsTest"  # quiesce / flush-retarget / abortHandoff
+assert_class_green "$REH" "RehomingRobustnessTest"     # interrupt-atomicity + no wedged livelock
 echo "gate-phase0 rehoming: OK"
 
-# --- (c) the S2–S4 invariant surface WITH rehoming injected (1 sweep smoke) ----
+# (c) the invariant surface WITH rehoming injected (1 sweep smoke)
 echo "gate-phase0 sweep: rehoming injected under concurrent multi-owner load — owner isolation + liveness..."
 SWEEP="$LOGDIR/sweep.txt"
 run_tests sweep "RehomingInjectedSweepTest" "$SWEEP"
 assert_class_green "$SWEEP" "RehomingInjectedSweepTest"
 echo "gate-phase0 sweep: OK"
 
-# --- (c2) M3 coalesced heartbeats: cost-flat-in-N + demux + no-spurious-election under load -----
-# Wiring the dormant HeartbeatCoalescer (RR-113 de-regression: heartbeat cost flat in group count).
+# (c2) coalesced heartbeats: cost-flat-in-N + demux + no-spurious-election under load
+# Wiring the dormant HeartbeatCoalescer (heartbeat cost flat in group count).
 # HeartbeatCoalescingTest: one coalesced message per peer per tick independent of G (the un-coalesced
 # baseline scales with G — test-the-tester) + the routeCoalescedHeartbeat demux round-trip + neuter.
 # CoalescedHeartbeatLivenessTest: no spurious election under idle/low/sustained load WITH coalescing,
 # and the broken-drain test-the-testers (DROP / DELAY-past-timeout / single-peer) all churn. The
 # deterministic sim (step d) additionally runs the full 20,001-seed sweep WITH coalescing wired into
-# the harness — so SeedSweepTest green there IS the S2–S4 surface with coalescing active.
+# the harness — so SeedSweepTest green there IS the invariant surface with coalescing active.
 echo "gate-phase0 coalesce: M3 cost-flat-in-N + demux + no-spurious-election under load..."
 COAL="$LOGDIR/coalesce.txt"
 run_tests coalesce "HeartbeatCoalescingTest,CoalescedHeartbeatLivenessTest" "$COAL"
-assert_class_green "$COAL" "HeartbeatCoalescingTest"        # cost-flat-in-N + demux (M3 S2)
-assert_class_green "$COAL" "CoalescedHeartbeatLivenessTest" # no-spurious-election under load (M3 S3)
+assert_class_green "$COAL" "HeartbeatCoalescingTest"        # cost-flat-in-N + demux
+assert_class_green "$COAL" "CoalescedHeartbeatLivenessTest" # no-spurious-election under load
 echo "gate-phase0 coalesce: OK"
 
-# --- (d) the deterministic S2–S4 sim (no regression from the re-threading) -----
+# (d) the deterministic sim (no regression from the re-threading)
 if [ "${GATE_PHASE0_SKIP_SIM:-0}" = "1" ]; then
   echo "gate-phase0 sim: SKIPPED by GATE_PHASE0_SKIP_SIM=1 (LOUD: the 20,001-seed sim NOT verified this run; CI nightly runs it)"
 else
@@ -152,7 +150,7 @@ else
   echo "gate-phase0 sim: OK"
 fi
 
-# --- (e) H-4 no-double-ownership (jcstress) + owner-guard + monitor-view -------
+# (e) no-double-ownership (jcstress) + owner-guard + monitor-view
 if [ "${GATE_PHASE0_SKIP_JCSTRESS:-0}" = "1" ]; then
   echo "gate-phase0 jcstress: SKIPPED by GATE_PHASE0_SKIP_JCSTRESS=1 (LOUD: the JMM no-double-ownership proof NOT verified this run)"
 else
@@ -176,7 +174,7 @@ else
   echo "gate-phase0 jcstress: OK ($(grep -E 'curated subset: OK' "$LOGDIR/jcstress.txt" | tail -1))"
 fi
 
-# --- (f) record the verified baseline (D-010: main stays pinned at cedc706) ----
+# (f) record the verified baseline (main stays pinned at cedc706)
 echo "gate-phase0 baseline: main pinned at the verified baseline (D-010)..."
 BASE="$(cd "$ROOT" && git rev-parse main 2>/dev/null | cut -c1-7 || echo unknown)"
 echo "gate-phase0 baseline: main = $BASE (expected cedc706 until the Workstream-B merge gate)"

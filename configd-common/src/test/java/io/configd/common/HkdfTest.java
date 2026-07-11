@@ -38,7 +38,6 @@ class HkdfTest {
         byte[] okm = Hkdf.expand(prk, info, l);
         assertArrayEquals(expectedOkm, okm, "HKDF-Expand OKM must match RFC 5869 TC1");
 
-        // deriveKey (extract-then-expand) must produce the same OKM.
         assertArrayEquals(expectedOkm, Hkdf.deriveKey(ikm, salt, info, l),
                 "deriveKey must equal expand(extract(...))");
     }

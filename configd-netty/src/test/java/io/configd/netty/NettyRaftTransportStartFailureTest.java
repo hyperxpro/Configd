@@ -13,12 +13,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * H-BOOT hardening: a Netty transport whose {@code start()} fails to bind must clean up the NON-DAEMON
- * event-loop threads it just created, so a failed start leaks nothing. Were it not, a component that throws
- * mid-boot would leave live non-daemon event loops behind - the class of leak that made a fail-closed boot
- * hang (the loops keep the JVM alive while nothing serves). This drives many failed starts against an
- * already-occupied port and proves the live non-daemon thread count returns to baseline; a per-start leak of
- * boss + worker threads would accumulate without bound.
+ * A Netty transport whose {@code start()} fails to bind must clean up the NON-DAEMON event-loop
+ * threads it just created, so a failed start leaks nothing. Were it not, a component that throws
+ * mid-boot would leave live non-daemon event loops behind - the class of leak that turns a
+ * fail-closed boot into a hang (the loops keep the JVM alive while nothing serves). This drives
+ * many failed starts against an already-occupied port and proves the live non-daemon thread count
+ * returns to baseline; a per-start leak of boss + worker threads would accumulate without bound.
  */
 class NettyRaftTransportStartFailureTest {
 

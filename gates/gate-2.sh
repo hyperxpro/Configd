@@ -1,25 +1,23 @@
 #!/usr/bin/env bash
-# =============================================================================
-# gate-2.sh — Configd Session-2 cumulative machine-verifiable gate
-# -----------------------------------------------------------------------------
-# Authored by the Session-2 lead. Cumulative with gate-1: a green gate-2
-# REQUIRES a green gate-1 (step a). Exits non-zero on ANY failure, including
-# any step that is declared but not yet wired (NO silent placeholders — the
-# RR-012/RR-085 lesson: a gate that can pass while checking nothing is worse
-# than no gate).
+# gate-2.sh — cumulative machine-verifiable gate
 #
-# WHAT A GREEN GATE-2 PROVES (charter §5):
+# Cumulative with gate-1: a green gate-2 REQUIRES a green gate-1 (step a).
+# Exits non-zero on ANY failure, including any step that is declared but not
+# yet wired (no silent placeholders: a gate that can pass while checking
+# nothing is worse than no gate).
+#
+# WHAT A GREEN GATE-2 PROVES:
 #   (a) gate1       gate-1 green (build+suite, linz self-tests, JMH exec,
-#                   TLC smoke, multinode smoke) — the RR-094 fix holds.
-#   (b) p0tests     the discriminating tests for the Session-2 P0/P1 fixes
-#                   pass, named explicitly (survives suite re-organisation):
-#                   RR-004 AckEqualsCommitTest + CommitOutcomeSeamTest +
+#                   TLC smoke, multinode smoke).
+#   (b) p0tests     the discriminating tests for the P0/P1 fixes pass, named
+#                   explicitly (survives suite re-organisation):
+#                   AckEqualsCommitTest + CommitOutcomeSeamTest +
 #                          RaftProposerCommitConfirmTest
-#                   RR-003 SnapshotCrashRecoveryTest
-#                   RR-002 TcpRaftTransportBlackholeTest +
+#                   SnapshotCrashRecoveryTest
+#                   TcpRaftTransportBlackholeTest +
 #                          NoBlockingConnectOnConsensusPathTest
-#                   RR-006 TimingConversionTests   RR-020 StrongReadFailClosedTest
-#                   RR-018 ReconfigurationTest     RR-010 SimulationDeterminismTest
+#                   TimingConversionTests   StrongReadFailClosedTest
+#                   ReconfigurationTest     SimulationDeterminismTest
 #   (c) seeds       the committed adversarial gate seed set (>= 500 seeds,
 #                   gates/../configd-testkit/src/test/resources/gate/
 #                   adversarial-gate-seeds.txt) with FULL invariant checking,
@@ -28,12 +26,12 @@
 #                   operation histories checked by the Porcupine checker.
 #                   (The live faulted multi-node linz run needs sudo/iptables
 #                   and is the NIGHTLY variant — documented, not gated here.)
-#   (e) mutation    PIT mutation thresholds enforced (charter §4.1). Enforced
-#                   floors (just under verified CLEAN S2/mutation-gap scores):
-#                   consensus-core module-wide >= 70 (verified 73.1%, MEETS the §4.1
-#                   70% target), safety kernel >= 70 (verified 72.8%; 80% aspiration
-#                   residual is provably-equivalent mutants), distribution control-
-#                   plane >= 65. FAILS on regress.
+#   (e) mutation    PIT mutation thresholds enforced. Enforced floors (just
+#                   under the verified CLEAN scores):
+#                   consensus-core module-wide >= 70 (verified 73.1%),
+#                   safety kernel >= 70 (verified 72.8%; the remaining gap to
+#                   80% is provably-equivalent mutants), distribution
+#                   control-plane >= 65. FAILS on regress.
 #   (f) jcstress    the curated jcstress subset: no forbidden outcomes.
 #   (g) assertions  every spec invariant has a runtime-assertion twin that has
 #                   been OBSERVED to fire (AssertionTwinFiringTest).
@@ -48,7 +46,6 @@
 #                          CI must not set it; ~25 min/module on 2 vCPU)
 #   GATE2_SKIP_JCSTRESS=1  skip step (f) — reported LOUDLY
 #   GATE1_LOG_DIR / PORCUPINE_BIN — forwarded to gate-1
-# =============================================================================
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -112,7 +109,7 @@ step_seeds() {
 step_linzgate() {
   cd "$ROOT"
   # (i) checker self-tests (count-agnostic: BUILD SUCCESS + 0 skips; the suite
-  # grew 6->7->8 this session and the gate must not rot on the number).
+  # has grown over time and the gate must not rot on the exact count).
   if [ -z "${PORCUPINE_BIN:-}" ]; then
     local GO=""
     if command -v go >/dev/null 2>&1; then GO=go;
@@ -144,19 +141,19 @@ step_linzgate() {
   # docs/session-2/captures/linz-discrimination.txt and re-runnable manually).
   if [ "${GATE2_FAULTED:-0}" = "1" ]; then
     $MVN -q -pl configd-server -am clean package -DskipTests >/dev/null
-    # Real faulted-linearizability matrix (run-matrix.sh): ADVERSARIAL combination nemeses
+    # Real faulted-linearizability matrix (run-matrix.sh): adversarial combination nemeses
     # (overlapping kill/isolate/SIGSTOP-pause/packet-loss, quorum-breaking bursts) on N=3 AND
-    # N=5, every history checked by Porcupine. This REPLACES the old 15-second sequential-
-    # single-fault smoke. CI runs a bounded seed count/duration; the full adversarial matrix
-    # across encryption/auth/clock-skew postures is the E1 measurement run pinned in
-    # docs/measurement/e1-faulted-linz-*. A single non-linearizable history fails the gate.
+    # N=5, every history checked by Porcupine. CI runs a bounded seed count/duration; the
+    # full adversarial matrix across encryption/auth/clock-skew postures is the measurement
+    # run pinned in docs/measurement/e1-faulted-linz-*. A single non-linearizable history
+    # fails the gate.
     bash "$ROOT/configd-linz/scripts/run-matrix.sh" --out "$LOGDIR/linz-matrix" --profile smoke \
       --nodes "3 5" --postures "base" --adv-seeds 4 --seq-seeds 2 --adv-dur 45000 --keys 12 --shard 1/1 \
       2>&1 | tee "$LOGDIR/linz-faulted.log" | tail -10
     # Fail HARD on any non-linearizable history (a real safety violation). Tolerate an
     # INDETERMINATE cell with a loud warning: on a 2-vCPU CI runner a quorum-breaking burst
     # can starve an election past the retry (a liveness artifact, NOT a linearizability
-    # violation - the safety proof is the full E1 matrix on a non-burstable box).
+    # violation - the safety proof is the full matrix run on a non-burstable box).
     if grep -q "RESULT: FAIL" "$LOGDIR/linz-faulted.log"; then
       echo "GATE-2 linzgate: faulted-linz matrix found a NON-LINEARIZABLE history"; return 1; fi
     if grep -q "RESULT: INDETERMINATE" "$LOGDIR/linz-faulted.log"; then
@@ -175,30 +172,32 @@ step_mutation() {
     return 0
   fi
   cd "$ROOT"
-  # B3 / charter §4.1: PIT mutation thresholds, enforced per module by the
-  # -Pmutation profile. Each module pom sets `mutationThreshold`, so the pitest
-  # goal returns non-zero (BUILD FAILURE) when the module is UNDER target — that
-  # propagates out as the step failing. Three enforced bars, one per-module PIT
-  # run each (~25-40 min/module on 2 vCPU):
+  # PIT mutation thresholds, enforced per module by the -Pmutation profile. Each
+  # module pom sets `mutationThreshold`, so the pitest goal returns non-zero
+  # (BUILD FAILURE) when the module is UNDER target — that propagates out as
+  # the step failing. Three enforced bars, one per-module PIT run each
+  # (~25-40 min/module on 2 vCPU):
   #   (1) consensus-core module-wide        >= 70   (-Pmutation)
   #   (2) consensus-core SAFETY KERNEL       >= 70   (-Pmutation,mutation-kernel:
   #       RaftNode/RaftLog/DurableRaftState/ReadIndexState/ClusterConfig)
-  #   (3) distribution-service control-plane >= 65   (-Pmutation; the RR-001/RR-088
-  #       shelfware fan-out/gossip classes are excluded in that module's pom)
+  #   (3) distribution-service control-plane >= 65   (-Pmutation; the dormant
+  #       fan-out/gossip classes are excluded in that module's pom)
   #
-  # FLOOR HISTORY (NOT a silent change): the S2/mutation-gap round raised the
+  # FLOOR HISTORY (not a silent change): an earlier round raised the
   # consensus-core floors from 60/60. Measured CLEAN scores (2026-06-11,
   # RUN_ERROR=0): module-wide 73.1% (589/806) and kernel 72.8% (532/731). Module-
-  # wide now MEETS the charter §4.1 70% target with margin (eight new test classes,
-  # incl. MessageRecordCodecTest covering the record/DTO equals/hashCode that were
-  # 0% NO_COVERAGE and alone dragged the module under 70). The kernel reaches 72.8%
-  # — short of the 80% aspiration, with the remaining gap dominated by PROVABLY-
-  # EQUIVALENT mutants (earlier-guard-masked boundaries, WAL-cross-validation-masked
-  # recovery, crash-only persist-call removals, commit-outcome NO_COVERAGE machinery),
-  # itemized in docs/session-2/mutation-kill-list.md SCORES — NOT gamed. The floors
-  # sit JUST UNDER each verified score (70 < 73.1, 70 < 72.8) so the build FAILS on
-  # any regression without flaking on PIT run-to-run jitter. (An earlier "80%" module
-  # figure was a CONTAMINATED run — concurrent surefire forks → RUN_ERRORs; discarded.)
+  # wide now MEETS the 70% target with margin (eight new test classes, incl.
+  # MessageRecordCodecTest covering the record/DTO equals/hashCode that were
+  # 0% NO_COVERAGE and alone dragged the module under 70). The kernel reaches
+  # 72.8% — short of the 80% aspiration, with the remaining gap dominated by
+  # PROVABLY-EQUIVALENT mutants (earlier-guard-masked boundaries,
+  # WAL-cross-validation-masked recovery, crash-only persist-call removals,
+  # commit-outcome NO_COVERAGE machinery), itemized in
+  # docs/session-2/mutation-kill-list.md — not gamed. The floors sit JUST UNDER
+  # each verified score (70 < 73.1, 70 < 72.8) so the build FAILS on any
+  # regression without flaking on PIT run-to-run jitter. (An earlier "80%"
+  # module figure was a CONTAMINATED run — concurrent surefire forks ->
+  # RUN_ERRORs; discarded.)
   # The upstream main artifacts must be installed first so PIT's classpath
   # resolves them (sibling test sources are skipped, as in step_jcstress).
   $MVN -q -pl configd-consensus-core,configd-distribution-service -am \
@@ -229,15 +228,16 @@ step_jcstress() {
   fi
   cd "$ROOT"
   # Build the jcstress uber-jar against FRESH upstream sources, then run the
-  # curated subset (run-curated-subset.sh: the 6 RR-002 transport interleavings +
-  # the decisive RR-066 / RR-029 read-path races, sanity mode, deterministic
-  # 2-actor tests only — the intentionally-forbidden harness self-test and the
-  # 3-actor test are excluded). Per docs/session-2/jcstress-results.md the clean
-  # 2-vCPU sanity pass is a SMOKE; the full multi-fork run is the operator's
-  # higher-confidence pass.
+  # curated subset (run-curated-subset.sh: the transport interleavings + the
+  # decisive read-path races, sanity mode, deterministic 2-actor tests only —
+  # the intentionally-forbidden harness self-test and the 3-actor test are
+  # excluded). Per docs/session-2/jcstress-results.md the clean 2-vCPU sanity
+  # pass is a SMOKE; the full multi-fork run is the operator's higher-confidence
+  # pass.
   # maven.test.skip (not just -DskipTests) so a sibling module's in-progress,
   # non-compiling TEST sources never block the harness build — jcstress only
-  # needs the upstream MAIN artifacts. (Sessions run many agents on one branch.)
+  # needs the upstream MAIN artifacts (multiple agents can work on one branch
+  # at once).
   $MVN -q -o -pl configd-config-store,configd-distribution-service,configd-transport -am \
     install -Dmaven.test.skip=true 2>&1 | tee "$LOGDIR/jcstress-install.log" | tail -3
   # The offline uber-jar build below runs `clean`, but the runner's system-Maven
@@ -271,7 +271,6 @@ step_assertions() {
   echo "GATE-2 assertions: OK (every twin observed firing)"
 }
 
-# ---- child-process dispatch -------------------------------------------------
 if [ "${1:-}" = "--step" ]; then
   "step_$2"
   exit $?

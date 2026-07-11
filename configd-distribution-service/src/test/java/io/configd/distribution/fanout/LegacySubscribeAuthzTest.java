@@ -23,13 +23,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The legacy full-store SUBSCRIBE authorization matrix driven through {@link FanOutConnectionDriver}.
- * A full-store SUBSCRIBE is a streaming read of the whole store, so it is gated at admission on a
- * whole-store READ cover via the {@link WatchAuthorizer} SPI. The gate is fail-closed with one
- * asymmetry from the watch path: a {@code null} authorizer admits the feed (an auth-off deployment
- * has no principal model to evaluate). Uses a real {@link FanOutBuffer} + {@link SnapshotReplaySource},
- * a recording {@link RecordingTransportSink}, a {@link FakeClock}, and lambda / small named
- * authorizers - no threads, no I/O.
+ * The legacy full-store SUBSCRIBE authorization matrix driven through {@link
+ * FanOutConnectionDriver}. A full-store SUBSCRIBE is a streaming read of the whole store,
+ * so it is gated at admission on a whole-store READ cover via the {@link WatchAuthorizer}
+ * SPI. The gate is fail-closed with one asymmetry from the watch path: a {@code null}
+ * authorizer admits the feed, since an auth-off deployment has no principal model to
+ * evaluate. Uses a real {@link FanOutBuffer} and {@link SnapshotReplaySource}, a recording
+ * {@link RecordingTransportSink}, a {@link FakeClock}, and lambda and small named
+ * authorizers, no threads, no I/O.
  */
 class LegacySubscribeAuthzTest {
 
@@ -68,8 +69,6 @@ class LegacySubscribeAuthzTest {
     private FanOutBuffer buffer;
     private FanOutConnectionDriver driver;
 
-    // ---- harness ------------------------------------------------------------
-
     private void setup(WatchAuthorizer auth, String identity) {
         this.buffer = new FanOutBuffer(64);
         ReplaySource replay = snapshotAt(0);
@@ -89,11 +88,9 @@ class LegacySubscribeAuthzTest {
         driver.session().tick(clock.now());
     }
 
-    // ---- the gate -----------------------------------------------------------
-
     @Test
     void denyingAuthorizerTearsDownNotAuthorizedWithZeroDataFrames() {
-        setup(subscribeGrant(), "edge-1"); // grants no one => "edge-1" is denied
+        setup(subscribeGrant(), "edge-1"); // grants no one, so edge-1 is denied
         feed(subscribe("edge-1"));
         tick(); // prove no data frame ever materializes, even after a tick
 
@@ -139,13 +136,12 @@ class LegacySubscribeAuthzTest {
         assertTrue(teardowns.isEmpty());
     }
 
-    // ---- the check runs on the bound cert identity, not the wire edgeId -----
-
     @Test
     void wireEdgeIdCannotSelfAuthorizeOverMtls() {
-        // The cert principal is "attacker"; the authorizer grants only "admin". The attacker puts the
-        // authorized id "admin" in the wire frame, but bindIdentity overrides it with the cert
-        // principal, so the gate evaluates "attacker" and denies. The wire-asserted edgeId is ignored.
+        // The cert principal is attacker; the authorizer grants only admin. The attacker
+        // puts the authorized id admin in the wire frame, but bindIdentity overrides it
+        // with the cert principal, so the gate evaluates attacker and denies. The
+        // wire-asserted edgeId is ignored.
         setup(subscribeGrant("admin"), "attacker");
         feed(subscribe("admin"));
         tick();
@@ -157,8 +153,8 @@ class LegacySubscribeAuthzTest {
 
     @Test
     void certPrincipalIsAuthorizedRegardlessOfWireEdgeId() {
-        // The dual of the negative case: the cert principal "admin" is granted, so the feed is admitted
-        // even though the wire frame carries a different, irrelevant edgeId.
+        // The dual of the negative case: the cert principal admin is granted, so the feed
+        // is admitted even though the wire frame carries a different, irrelevant edgeId.
         setup(subscribeGrant("admin"), "admin");
         feed(subscribe("ignored-wire-id"));
 
@@ -166,8 +162,6 @@ class LegacySubscribeAuthzTest {
                 "the granted cert principal is admitted; the wire edgeId is irrelevant over mTLS");
         assertTrue(teardowns.isEmpty());
     }
-
-    // ---- helpers ------------------------------------------------------------
 
     private static EdgeFrame.Subscribe subscribe(String wireEdgeId) {
         return new EdgeFrame.Subscribe(true, List.of(), 0L, -1L, wireEdgeId);

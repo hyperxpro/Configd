@@ -19,8 +19,8 @@ import java.util.zip.CRC32C;
 
 /**
  * A durable, crash-atomic {@link CursorStore}: one file per key under a data directory, holding the resume
- * {@link WatchCursor} so a client can re-{@code SUBSCRIBE} at its last-applied position across a restart
- * (§06 F10-1a). The record is the frozen cursor wire shape plus a CRC:
+ * {@link WatchCursor} so a client can re-{@code SUBSCRIBE} at its last-applied position across a restart.
+ * The record is the frozen cursor wire shape plus a CRC:
  * {@code [8B epoch][4B count]( 4B gid, 8B S )*[4B CRC32C]}. A missing / wrong-size / CRC-mismatched file reads
  * as absent (fail-open — the client re-hydrates from scratch); writes go through a temp file + atomic rename.
  */

@@ -33,21 +33,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Adversarial hardening for {@link NettyHttpApiServer} (ADR-0043 M2, charter section 3) - the controls a
- * control-plane WRITE port must carry, each proven by the negative test that performs the attack:
+ * Adversarial hardening for {@link NettyHttpApiServer}: the controls a control-plane write port must
+ * carry, each proven by the negative test that performs the attack:
  * <ul>
- *   <li>oversize request line/headers -> 400 + closed (bounded {@code HttpServerCodec});</li>
- *   <li>oversize body (over {@code maxRequestBytes}) -> 413 + closed (the {@code HttpObjectAggregator}
- *       ceiling), never buffered;</li>
- *   <li>slowloris - both a never-terminated request and the dribble variant - -> the connection is
- *       closed within a bounded time (the request-arrival deadline);</li>
+ *   <li>oversize request line or headers get a 400 and the connection closed (bounded {@code HttpServerCodec});</li>
+ *   <li>oversize body (over {@code maxRequestBytes}) gets a 413 and the connection closed (the
+ *       {@code HttpObjectAggregator} ceiling), never buffered;</li>
+ *   <li>slowloris, both a never-terminated request and the dribble variant, is closed within a bounded
+ *       time (the request-arrival deadline);</li>
  *   <li>no {@code ByteBuf} leaks at {@code ResourceLeakDetector.Level.PARANOID} under sustained load;</li>
  *   <li>a legitimate keep-alive request is still served (the hardening must not break fast clients).</li>
  * </ul>
- * The timeouts/limits are forced low via the {@code configd.server.netty.*} system properties (read by
+ * The timeouts and limits are forced low via the {@code configd.server.netty.*} system properties (read by
  * the constructor) so the adversarial paths fire deterministically and fast. The server is built with a
- * minimal spec - health + exporter + an empty store + the default strong-read policy + a leader hint,
- * and no auth/acl/write/read/audit/replay - so the legit-traffic probe uses the PUBLIC
+ * minimal spec: health, exporter, an empty store, the default strong-read policy, and a leader hint, with
+ * no auth/acl/write/read/audit/replay, so the legit-traffic probe uses the public
  * {@code GET /health/live} endpoint and needs no auth fixture.
  */
 @Timeout(60)
@@ -134,9 +134,7 @@ class NettyHttpApiServerHardeningTest {
         return server.port();
     }
 
-    // -----------------------------------------------------------------------
-    // Oversize request line / headers -> 400 (bounded HttpServerCodec, never unbounded buffering)
-    // -----------------------------------------------------------------------
+    // Oversize request line or headers get a 400 (bounded HttpServerCodec, never unbounded buffering)
 
     @Test
     void oversizeHeaderBlockIsRejectedWith4xxAndClosed() throws Exception {
@@ -164,9 +162,7 @@ class NettyHttpApiServerHardeningTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Oversize body -> 413 (the request-size ceiling), never accumulated
-    // -----------------------------------------------------------------------
+    // Oversize body gets a 413 (the request-size ceiling), never accumulated
 
     @Test
     void oversizeBodyIsRejectedWith413NotBuffered() throws Exception {
@@ -197,9 +193,7 @@ class NettyHttpApiServerHardeningTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // A9: the currently-silent 400 / 413 ingress rejects must increment their reason counters
-    // -----------------------------------------------------------------------
+    // The 400 and 413 ingress rejects must increment their reason counters
 
     @Test
     void malformedRequestTargetIncrementsBadRequestRejectCounter() throws Exception {
@@ -211,7 +205,8 @@ class NettyHttpApiServerHardeningTest {
             s.setSoTimeout(5000);
             OutputStream os = s.getOutputStream();
             // A request target the codec accepts as a token but that is not a valid URI (a malformed
-            // percent-escape): new URI(...) throws in channelRead0 -> 400 + close (the bad_request path).
+            // percent-escape): new URI(...) throws in channelRead0, resulting in 400 and close (the
+            // bad_request path).
             os.write("GET /bad%zz HTTP/1.1\r\nHost: x\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
             os.flush();
             try {
@@ -249,9 +244,7 @@ class NettyHttpApiServerHardeningTest {
                 "an oversize body must increment the payload_too_large reject counter");
     }
 
-    // -----------------------------------------------------------------------
     // Slowloris: an incomplete request is closed at the request-arrival deadline
-    // -----------------------------------------------------------------------
 
     @Test
     void slowlorisIncompleteRequestIsClosedAtDeadline() throws Exception {
@@ -263,8 +256,8 @@ class NettyHttpApiServerHardeningTest {
             // A partial request: headers begun, never terminated (no final CRLF) - never completes.
             os.write("GET /health/live HTTP/1.1\r\nHost: x\r\n".getBytes(StandardCharsets.US_ASCII));
             os.flush();
-            // The server's request deadline (400 ms) must close the connection -> read sees EOF
-            // well before the 5 s socket timeout. A SocketTimeoutException here = the defence failed.
+            // The server's request deadline (400 ms) must close the connection, so the read sees EOF
+            // well before the 5 s socket timeout. A SocketTimeoutException here means the defence failed.
             int first = s.getInputStream().read();
             assertTrue(first == -1 || first == 'H',
                     "slowloris connection must be closed (EOF) or answered, not held open");
@@ -280,7 +273,7 @@ class NettyHttpApiServerHardeningTest {
         // The dribble variant: send the request one byte at a time, slowly, never completing it
         // within the deadline. The HttpObjectAggregator holds the partial request (it never flips to
         // "processing"), so the arrival deadline must reap the connection. Bytes are dribbled with a
-        // gap << the deadline so several land, but the request is never terminated.
+        // gap well under the deadline so several land, but the request is never terminated.
         startServerWith(400, 60_000, 1 << 20); // 400 ms request-completion deadline
         try (Socket s = new Socket()) {
             s.connect(new InetSocketAddress("127.0.0.1", port()), 2000);
@@ -298,7 +291,7 @@ class NettyHttpApiServerHardeningTest {
                 return;
             }
             // After the dribble, the never-terminated request must be reaped within the deadline:
-            // the read sees EOF well before the 5 s socket timeout (a timeout here = defence failed).
+            // the read sees EOF well before the 5 s socket timeout (a timeout here means defence failed).
             int first = s.getInputStream().read();
             assertTrue(first == -1 || first == 'H',
                     "slowloris dribble connection must be closed (EOF) or answered, not held open");
@@ -308,13 +301,11 @@ class NettyHttpApiServerHardeningTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // The hardening must not break legitimate fast clients
-    // -----------------------------------------------------------------------
 
     @Test
     void completeKeepAliveRequestStillServedUnderHardening() throws Exception {
-        // A normal keep-alive GET of the PUBLIC health endpoint (no auth needed) is served 200.
+        // A normal keep-alive GET of the public health endpoint (no auth needed) is served 200.
         startServerWith(30_000, 60_000, 1 << 20);
         try (HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()) {
             HttpResponse<String> resp = http.send(HttpRequest.newBuilder()
@@ -325,16 +316,14 @@ class NettyHttpApiServerHardeningTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Leak-freedom at PARANOID across all buffer paths (health/miss/404/error)
-    // -----------------------------------------------------------------------
 
     @Test
     void noByteBufLeaksUnderSustainedTraffic() throws Exception {
-        // PARANOID is the logging backstop (prints LEAK: on any GC of an unreleased buffer). The HARD
-        // assertion exploits the leak/cache distinction: a per-request buffer LEAK grows the pooled
+        // PARANOID is the logging backstop (prints LEAK: on any GC of an unreleased buffer). The hard
+        // assertion exploits the leak/cache distinction: a per-request buffer leak grows the pooled
         // allocator's active-allocation count in proportion to load, whereas a warm thread-local pool
-        // CACHE (released-but-retained buffers, which also count as "active") stabilizes. So we run two
+        // cache (released-but-retained buffers, which also count as "active") stabilizes. So we run two
         // equal batches: after batch 1 warms the cache, batch 2 must add ~0 net active allocations -
         // a real leak would add ~one per request. Deterministic, no special JVM args, shared-JVM-safe.
         ResourceLeakDetector.Level savedLevel = ResourceLeakDetector.getLevel();
@@ -366,7 +355,7 @@ class NettyHttpApiServerHardeningTest {
             send(http, base + "/health/live");              // health 200 (text body)
             send(http, base + "/health/ready");             // readiness
             send(http, base + "/v1/config/app/feature");    // 404 miss (no store entry, no auth)
-            send(http, base + "/nope");                      // unmatched -> 404
+            send(http, base + "/nope");                      // unmatched, 404
         }
     }
 

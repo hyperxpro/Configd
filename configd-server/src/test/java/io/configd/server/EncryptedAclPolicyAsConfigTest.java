@@ -42,8 +42,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * The §2.5 cell-7 fold — <b>encryption at rest × ACL policy-as-config</b> — proven at the policy
- * loader / {@link AclService} level, deliberately BELOW the auth wire (no edge SUBSCRIBE plane, no
+ * Encryption at rest composed with ACL policy-as-config, proven at the policy loader /
+ * {@link AclService} level, deliberately BELOW the auth wire (no edge SUBSCRIBE plane, no
  * principal-on-the-wire). An {@code _acl/} policy (an ALLOW plus a carving DENY) is committed through a
  * REAL raft group built with node-local <b>encryption ON</b> (the production {@link ConfigdServer#buildRaftGroup}
  * seam, an encrypting {@link IntegrityEnvelope}); {@link AclConfigPolicyLoader} then rebuilds the policy from
@@ -53,7 +53,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * Against an auth-OFF edge the SUBSCRIBE plane has no principal to bind an {@code _acl/} deny to, so an
  * edge-driven deny is murky. Enforcement is unambiguous one layer down: a non-root principal id is passed
  * straight to {@code isAllowed}, so a ROOT-under-auth-off bypass cannot mask the deny, and the assertion is
- * about the policy machinery itself — exactly what {@code AclConfigPolicyLoaderMultiShardTest} exercises,
+ * about the policy machinery itself, exactly what {@code AclConfigPolicyLoaderMultiShardTest} exercises,
  * here composed with the encrypted state machine that {@code AclConfigPolicyLoaderMultiShardTest} lacks (it
  * drives plain in-memory stores).
  *
@@ -63,10 +63,10 @@ import static org.junit.jupiter.api.Assertions.fail;
  *       {@code _acl/} policy round-trips through the ENCRYPTED group; the loader publishes it and
  *       {@code isAllowed} enforces (the config ALLOW authorizes, the config DENY carves the hole). Then a
  *       walk of the group's data dir proves the distinctive canary embedded in the DENY rule does NOT appear
- *       in cleartext on disk — the policy value is AES-GCM-scrambled at rest yet drove the live decision.</li>
+ *       in cleartext on disk: the policy value is AES-GCM-scrambled at rest yet drove the live decision.</li>
  *   <li><b>Plaintext control</b> ({@link #plaintextControlLeavesTheAclCanaryOnDiskProvingTheWalkIsSensitive}):
  *       the SAME policy through a plain HMAC-integrity envelope enforces IDENTICALLY (encryption is
- *       transparent to the ACL semantics) and the SAME walk FINDS the canary — proving the ON-side absence
+ *       transparent to the ACL semantics) and the SAME walk FINDS the canary, proving the ON-side absence
  *       is caused by encryption, not a blind spot in the walk or a value that never reached durable storage.</li>
  * </ul>
  *
@@ -87,7 +87,7 @@ class EncryptedAclPolicyAsConfigTest {
     private static final String ROLE = "apppolicy";
 
     // The canary lives inside the DENY rule's prefix, so it is part of the _acl/ policy VALUE persisted to
-    // the WAL: absent on disk under encryption (GCM), present under HMAC (integrity-only) — the differential.
+    // the WAL: absent on disk under encryption (GCM), present under HMAC (integrity-only) - the differential.
     private static final String CANARY = "ACL-SECRETCANARY-7c1e9a3f-configd-groupd-DO-NOT-PERSIST";
     private static final String ALLOW_PREFIX = "app.";
     private static final String DENY_PREFIX = "app." + CANARY + ".";
@@ -111,7 +111,7 @@ class EncryptedAclPolicyAsConfigTest {
         loadAclPolicyThroughGroupAndAssertEnforced(encryptingEnvelope(), dataDir);
 
         // AT-REST PROOF: the _acl/ policy value (canary in the DENY rule) drove the live decision above yet
-        // must NOT appear in cleartext on disk — it is AES-GCM-scrambled at rest.
+        // must NOT appear in cleartext on disk: it is AES-GCM-scrambled at rest.
         String hit = firstFileContaining(dataDir, CANARY.getBytes(StandardCharsets.UTF_8));
         assertTrue(hit == null,
                 "encryption ON: the _acl/ policy value must not appear in cleartext on disk, but found it in " + hit);
@@ -124,7 +124,7 @@ class EncryptedAclPolicyAsConfigTest {
         loadAclPolicyThroughGroupAndAssertEnforced(hmacEnvelope(), dataDir);
 
         // CONTROL (HMAC integrity, no encryption): enforcement was IDENTICAL above (encryption is transparent
-        // to the ACL semantics), and the SAME committed policy value MUST be findable on disk in cleartext —
+        // to the ACL semantics), and the SAME committed policy value MUST be findable on disk in cleartext,
         // proving the walk is sensitive, so the ON-side absence is genuinely encryption.
         String hit = firstFileContaining(dataDir, CANARY.getBytes(StandardCharsets.UTF_8));
         assertTrue(hit != null,
@@ -134,9 +134,7 @@ class EncryptedAclPolicyAsConfigTest {
                 + hit + ") — the walk is sensitive, so the ON-side absence is genuinely encryption");
     }
 
-    // =======================================================================
     // the shared body: commit _acl/ through an encrypted (or control) group, load + enforce
-    // =======================================================================
 
     private void loadAclPolicyThroughGroupAndAssertEnforced(IntegrityEnvelope envelope, Path dataDir)
             throws Exception {
@@ -154,7 +152,7 @@ class EncryptedAclPolicyAsConfigTest {
         proposeAndAwaitApply(driver, rt, "_acl/bindings/" + PRINCIPAL, ROLE.getBytes(StandardCharsets.UTF_8));
 
         AclService acl = new AclService();
-        // Precondition: with no policy loaded, the fresh AclService denies by default — so the ALLOW below is
+        // Precondition: with no policy loaded, the fresh AclService denies by default, so the ALLOW below is
         // sourced from the loaded _acl/ config, not a pre-existing grant.
         assertFalse(acl.isAllowed(PRINCIPAL, ALLOWED_KEY, AclService.Permission.READ),
                 "precondition: an empty policy denies by default (the ALLOW must come from the _acl/ config)");
@@ -178,9 +176,7 @@ class EncryptedAclPolicyAsConfigTest {
                 "the config DENY carves WATCH on the hole");
     }
 
-    // =======================================================================
     // group bring-up (mirrors MultiShardIntegratedSweepTest / MultiGroupBringupTest)
-    // =======================================================================
 
     private ConfigdServer.RaftGroupRuntime bringUpLeader(
             MultiRaftDriver driver, IntegrityEnvelope integrity, Path dataDir, Storage nodeStorage)
@@ -223,9 +219,7 @@ class EncryptedAclPolicyAsConfigTest {
         return new ConfigdMetrics(new MetricsRegistry(), () -> 0L);
     }
 
-    // =======================================================================
     // envelopes + on-disk cleartext walk
-    // =======================================================================
 
     /** An AES-256-GCM encrypting envelope over an in-memory term-1 root (the SegmentKeyManager holds it). */
     private static IntegrityEnvelope encryptingEnvelope() {

@@ -121,8 +121,8 @@ ownerExecutor(groupId) = pool[groupId % poolSize]   // static for the life of th
 - The pool size is `configd.raft.ownerPoolSize` (default 1). At N=1 the pool is size 1 and the
   behavior is identical to the earlier single-thread model, with heartbeat coalescing and
   group-commit flush layered on.
-- The mapping is **static in v1**: a group's owner never changes. Dynamic resharding -- which would
-  require re-binding an owner -- is a v2 concern (ADR-multiraft-topology), and its group-rehoming
+- The mapping is **static**: a group's owner never changes. Dynamic resharding -- which would
+  require re-binding an owner -- is out of scope today (ADR-multiraft-topology), and its group-rehoming
   handoff mechanism ships dormant. If a future placement policy ever activates it, that mechanism
   must be re-verified live before use; the dormant-state proofs do not transfer to live rehoming.
 

@@ -33,8 +33,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>{@code _acl/roles/*} and {@code _acl/bindings/*} are ordinary keys routed by {@code shardFor(scope, key)},
  * so at N&gt;1 they hash-scatter across all groups. A loader wired to the primary group's store alone observes
- * only ~1/N of the policy - a role, binding, or DENY on a non-primary shard is silently absent, so a watch an
- * interior DENY should reject is authorized. The centerpiece
+ * only ~1/N of the policy - a role, binding, or DENY on a non-primary shard is silently absent, so a watch
+ * that an interior DENY should reject stays authorized instead. The centerpiece
  * {@link #tB6_multiShard_appliesNonPrimaryShardDeny_watchRejected} proves the fix; its sibling
  * {@link #tB6_redProof_singleStorePrimaryOnly_missesNonPrimaryShardDeny_watchStillAuthorized} pins the live
  * bug the multi-shard path removes (the single-store construction over the primary store misses the DENY).
@@ -49,7 +49,7 @@ class AclConfigPolicyLoaderMultiShardTest {
     private static final Set<String> RESERVED_PRINCIPALS = Set.of("root");
     private static final ConfigScope SCOPE = ConfigScope.GLOBAL;
 
-    // ---------------- helpers ----------------
+    // helpers
 
     private static void put(VersionedConfigStore store, String key, String value) {
         store.put(key, value.getBytes(StandardCharsets.UTF_8), store.currentVersion() + 1);
@@ -108,7 +108,7 @@ class AclConfigPolicyLoaderMultiShardTest {
         return acl.configPolicy().roles().containsKey(roleName);
     }
 
-    // ---------------- T-B6: the RED/GREEN regression (the centerpiece) ----------------
+    // the centerpiece: the RED/GREEN regression proving a non-primary-shard DENY is enforced
 
     @Test
     void tB6_multiShard_appliesNonPrimaryShardDeny_watchRejected() {
@@ -117,7 +117,7 @@ class AclConfigPolicyLoaderMultiShardTest {
         AclService acl = new AclService();
         MetricsRegistry reg = new MetricsRegistry();
 
-        // Principal "watcher" has a STATIC ALLOW covering the PREFIX target "app." (READ ∧ WATCH), so before
+        // Principal "watcher" has a STATIC ALLOW covering the PREFIX target "app." (READ and WATCH), so before
         // any config policy the whole-subtree watch is authorized.
         acl.grant("app.", "watcher", EnumSet.of(AclService.Permission.READ, AclService.Permission.WATCH));
         AclServiceWatchAuthorizer authz = new AclServiceWatchAuthorizer(acl);
@@ -179,7 +179,7 @@ class AclConfigPolicyLoaderMultiShardTest {
                 "BUG: the watch stays authorized because the primary-only loader never saw the DENY (under-deny bypass)");
     }
 
-    // ---------------- scatter-gather union content == the single-store scan ----------------
+    // scatter-gather union content == the single-store scan
 
     /**
      * The scatter-gather union over a set of stores publishes the same {@link ConfigPolicy} the single-store
@@ -225,7 +225,7 @@ class AclConfigPolicyLoaderMultiShardTest {
         }
     }
 
-    // ---------------- T-CONVERGE: no lost update under concurrent apply threads (N=3) ----------------
+    // no lost update under concurrent apply threads (N=3)
 
     @Test
     void tConverge_concurrentAppliesAcrossShards_unionWithNoLostUpdate() throws InterruptedException {
@@ -269,7 +269,7 @@ class AclConfigPolicyLoaderMultiShardTest {
         }
     }
 
-    // ---------------- T-NONATOMIC: partial cross-shard edit is fail-safe, then converges ----------------
+    // a partial cross-shard edit is fail-safe, then converges
 
     @Test
     void tNonAtomic_bindingBeforeRole_isInertThenConverges() {
@@ -303,7 +303,7 @@ class AclConfigPolicyLoaderMultiShardTest {
         }
     }
 
-    // ---------------- T-SNAP: a non-primary snapshot install picks up a DENY ----------------
+    // a non-primary snapshot install picks up a DENY
 
     @Test
     void tSnap_nonPrimarySnapshotInstall_picksUpDeny() {
@@ -335,7 +335,7 @@ class AclConfigPolicyLoaderMultiShardTest {
         }
     }
 
-    // ---------------- T-W7VER: a non-primary DENY apply advances the version ----------------
+    // a non-primary DENY apply advances the version
 
     @Test
     void tW7Ver_nonPrimaryDenyApply_advancesConfigPolicyVersion() {
@@ -359,7 +359,7 @@ class AclConfigPolicyLoaderMultiShardTest {
         }
     }
 
-    // ---------------- T-BOOTRACE: boot-seed vs an enqueued apply; latest wins, version monotone ----------------
+    // boot-seed vs an enqueued apply; latest wins, version monotone
 
     @Test
     void tBootRace_enqueuedApplyThenBootSeed_latestWinsMonotone() {
@@ -387,9 +387,9 @@ class AclConfigPolicyLoaderMultiShardTest {
         }
     }
 
-    // ---------------- constructor guards ----------------
+    // constructor guards
 
-    // ---------------- close() drains the worker (no daemon-thread leak) ----------------
+    // close() drains the worker (no daemon-thread leak)
 
     @Test
     void close_terminatesTheWorkerThread_noLeak() throws InterruptedException {

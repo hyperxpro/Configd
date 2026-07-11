@@ -29,32 +29,29 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Live-mode driver for the {@link PropagationProbe}:
- * a CLI that measures real, wall-clock propagation latency on this box, with honest
- * caveats. It is the live counterpart to the simulator probe for the
- * real p99 &lt; 500 ms target - here it must merely work and produce honest numbers.
+ * Live-mode driver for the {@link PropagationProbe}: a CLI that measures real,
+ * wall-clock propagation latency on this box, with honest caveats. It is the live
+ * counterpart to the simulator probe.
  *
  * <h2>Modes</h2>
  * <ul>
- *   <li><b>{@code --mode boundary}</b> (implemented): starts a single in-process
- *       single-node {@link ConfigdServer}, drives {@code --writes} HTTP PUTs over
- *       loopback (parsing {@code Committed: seq=S}), and tails
- *       {@link ConfigdServer#commitNotificationSource()} with the commit-notification handoff consumer loop
- *       (read since cursor; replay on GAP). It records publish ts =
+ *   <li><b>{@code --mode boundary}</b>: starts a single in-process single-node
+ *       {@link ConfigdServer}, drives {@code --writes} HTTP PUTs over loopback
+ *       (parsing {@code Committed: seq=S}), and tails
+ *       {@link ConfigdServer#commitNotificationSource()} with a consumer loop (read
+ *       since cursor; replay on GAP). It records publish ts =
  *       {@link CommitNotification#commitTimestampMillis()} (the leader-assigned commit
- *       timestamp, contract section 2 / per the commit-timestamp spec section 2) and visible ts =
- *       {@link System#currentTimeMillis()} at consumption. This measures
- *       <b>commit-to-boundary-visibility</b> wall time - the only propagation that exists
- *       today.</li>
- *   <li><b>{@code --mode edge}</b> (the edge data plane now exists):
- *       starts the same in-process single-node {@link ConfigdServer} WITH its fan-out
- *       edge endpoint, plus a real in-process {@link EdgeNodeMain} (plaintext transport,
- *       real Ed25519 verify key via the {@link VerifyKeyExporter} path) subscribed to it.
- *       Drives {@code --writes} HTTP PUTs; one watcher loop tails the commit-notification handoff boundary
- *       (recording publish ts = leader commit timestamp per seq) and samples the edge's
- *       applied cursor, recording visible ts = {@link System#currentTimeMillis()} for
- *       each seq the edge newly covers. This measures <b>commit-to-edge-visibility</b> wall
- *       time through the REAL wire path (server fan-out -> socket -> verify -> apply).
+ *       timestamp) and visible ts = {@link System#currentTimeMillis()} at consumption.
+ *       This measures <b>commit-to-boundary-visibility</b> wall time.</li>
+ *   <li><b>{@code --mode edge}</b>: starts the same in-process single-node
+ *       {@link ConfigdServer} with its fan-out edge endpoint, plus a real in-process
+ *       {@link EdgeNodeMain} (plaintext transport, real Ed25519 verify key via the
+ *       {@link VerifyKeyExporter} path) subscribed to it. Drives {@code --writes} HTTP
+ *       PUTs; one watcher loop tails the commit-notification boundary (recording
+ *       publish ts = leader commit timestamp per seq) and samples the edge's applied
+ *       cursor, recording visible ts = {@link System#currentTimeMillis()} for each seq
+ *       the edge newly covers. This measures <b>commit-to-edge-visibility</b> wall time
+ *       through the real wire path (server fan-out -> socket -> verify -> apply).
  *       Honest caveats in the header: single box, loopback, cursor sampled by polling
  *       (recorded latency >= true latency by up to the poll granularity), throttled
  *       2-vCPU hardware - mechanism check, not a performance target.</li>
@@ -62,7 +59,7 @@ import java.util.regex.Pattern;
  *
  * <h2>How to run</h2>
  * The testkit {@code benchmarks.jar} keeps {@code org.openjdk.jmh.Main} as its manifest
- * main class (unchanged), so this probe is run by naming the class explicitly on a
+ * main class, so this probe is run by naming the class explicitly on a
  * classpath that includes the shaded jar:
  * <pre>{@code
  *   java --enable-preview \
@@ -79,9 +76,8 @@ import java.util.regex.Pattern;
 public final class LivePropagationProbeMain {
 
     /**
-     * Historical exit code for the old {@code --mode edge} stub ("the edge data plane
-     * is not yet built"). The mode is implemented now; the constant remains so older
-     * scripts referencing it keep compiling, but it is no longer returned.
+     * Exit code reserved for compatibility with external scripts that still reference
+     * it; no longer returned by this class.
      */
     public static final int EXIT_EDGE_NOT_BUILT = 2;
 
@@ -116,16 +112,14 @@ public final class LivePropagationProbeMain {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // edge mode: commit -> edge-visibility through the real wire path
-    // -----------------------------------------------------------------------
+    // Edge mode: commit -> edge-visibility through the real wire path.
 
     private static int runEdge(Options opts) throws Exception {
         printEdgeHeader(opts);
 
         Path dataDir = Files.createTempDirectory("configd-probe-edge-");
-        // Real signing/verify key pair via the production path (the EdgeFailoverTest
-        // pattern): the server signs its fan-out stream; the edge verifies.
+        // Real signing/verify key pair via the production path: the server signs its
+        // fan-out stream; the edge verifies.
         Path signingKey = dataDir.resolve("signing-key.bin");
         SigningKeyStore.loadOrCreate(signingKey);
         Path verifyKey = dataDir.resolve("verify-key.der");
@@ -169,14 +163,14 @@ public final class LivePropagationProbeMain {
         try {
             awaitLeader(http, base, opts);
 
-            // METHODOLOGY section 3c: the edge staleness sampler runs on a FIXED wall-clock cadence
-            // at the edge CONCURRENTLY with the open-loop write drive - its clock does NOT
-            // pause when the data plane stalls. Run the watcher on its own daemon thread so
-            // each committed seq's visibility is recorded at the moment the edge's applied
-            // cursor covers it (true commit-to-edge propagation), NOT after all writes finish
-            // driving (which would fold the write-drive duration into every early sample - the
-            // serial-watch artifact that produced a false ~400 ms p50). The probe is
-            // thread-safe (synchronized record/read); a single watcher thread keeps
+            // The edge staleness sampler runs on a fixed wall-clock cadence at the edge,
+            // concurrently with the open-loop write drive - its clock does not pause when
+            // the data plane stalls. Run the watcher on its own daemon thread so each
+            // committed seq's visibility is recorded at the moment the edge's applied
+            // cursor covers it (true commit-to-edge propagation), not after all writes
+            // finish driving, which would fold the write-drive duration into every early
+            // sample and inflate the measured latency. The probe is thread-safe
+            // (synchronized record/read); a single watcher thread keeps the
             // recordPublished-before-recordVisible ordering per seq structural.
             Thread watcherThread = null;
             if (opts.concurrentWatch) {
@@ -322,9 +316,7 @@ public final class LivePropagationProbeMain {
         System.out.println();
     }
 
-    // -----------------------------------------------------------------------
-    // boundary mode
-    // -----------------------------------------------------------------------
+    // Boundary mode.
 
     private static int runBoundary(Options opts) throws Exception {
         printHeader(opts);
@@ -374,7 +366,7 @@ public final class LivePropagationProbeMain {
     /**
      * Drives {@code opts.writes} HTTP PUTs over loopback, each to a distinct key, and
      * returns the highest committed seq observed. Retries an individual write across
-     * transient leader churn (the smoke gate's robustness pattern), polling a deadline.
+     * transient leader churn, polling a deadline.
      */
     private static long driveWrites(HttpClient http, String base, Options opts)
             throws Exception {
@@ -536,8 +528,8 @@ public final class LivePropagationProbeMain {
                     yield !ns.isEmpty();
                 }
                 case CommitNotificationSource.Result.Gap gap -> {
-                    // Recover via the authoritative replay seam (commit-notification handoff step 2):
-                    // apply the snapshot wholesale and resume tailing from its seq floor.
+                    // Recover via the replay seam: apply the snapshot wholesale and resume
+                    // tailing from its seq floor.
                     ReplaySource.Replay replay = replaySource.replayFromSnapshot();
                     cursor = replay.seq();
                     yield true;
@@ -546,9 +538,7 @@ public final class LivePropagationProbeMain {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // config + output helpers
-    // -----------------------------------------------------------------------
+    // Config + output helpers.
 
     /** Single-node config: empty peers (self-elect), no peer addresses (no-op transport), TLS off. */
     private static ServerConfig singleNodeConfig(Options opts, Path dataDir) {
@@ -596,11 +586,9 @@ public final class LivePropagationProbeMain {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // CLI options
-    // -----------------------------------------------------------------------
+    // CLI options.
 
-    /** Parsed CLI options with the charter-specified defaults. */
+    /** Parsed CLI options and their defaults. */
     private static final class Options {
         String mode = "boundary";
         int writes = 200;
@@ -611,10 +599,10 @@ public final class LivePropagationProbeMain {
         Duration writeDeadline = Duration.ofSeconds(10);
         Duration drainDeadline = Duration.ofSeconds(30);
         /**
-         * Edge mode (section 3c): run the edge staleness sampler on a concurrent fixed-cadence
-         * watcher thread (true, default - the honest measurement) vs the serial
-         * drive-then-watch path (false - kept for the before/after, folds write-drive
-         * duration into every sample).
+         * Edge mode: selects the edge staleness sampler's threading. True (default) runs
+         * a concurrent fixed-cadence watcher thread, the honest measurement. False runs a
+         * serial drive-then-watch path that folds the write-drive duration into every
+         * sample, a known bias kept for comparison.
          */
         boolean concurrentWatch = true;
 

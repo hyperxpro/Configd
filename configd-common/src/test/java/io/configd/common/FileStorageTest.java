@@ -109,10 +109,8 @@ final class FileStorageTest {
 
         storage.appendToLog("corrupt-log", "valid data".getBytes());
 
-        // Corrupt the CRC by modifying the last 4 bytes of the WAL file
         Path walFile = storeDir.resolve("corrupt-log.wal");
         byte[] fileBytes = Files.readAllBytes(walFile);
-        // Flip a bit in the CRC (last 4 bytes)
         fileBytes[fileBytes.length - 1] ^= 0xFF;
         Files.write(walFile, fileBytes);
 
@@ -126,8 +124,8 @@ final class FileStorageTest {
 
         storage.appendToLog("corrupt-data", "some data here".getBytes());
 
-        // Corrupt the data portion: byte at offset 12 = the first data byte
-        // (8-byte container header + 4-byte frame length precede it).
+        // Offset 12 is the first data byte: the 8-byte container header and the 4-byte frame
+        // length precede it.
         Path walFile = storeDir.resolve("corrupt-data.wal");
         byte[] fileBytes = Files.readAllBytes(walFile);
         fileBytes[12] ^= 0xFF;
@@ -140,7 +138,7 @@ final class FileStorageTest {
     void appendToLogWithLargeEntry() {
         Storage storage = Storage.file(tempDir.resolve("store"));
 
-        byte[] largeEntry = new byte[64 * 1024]; // 64 KB
+        byte[] largeEntry = new byte[64 * 1024];
         for (int i = 0; i < largeEntry.length; i++) {
             largeEntry[i] = (byte) (i & 0xFF);
         }
@@ -176,17 +174,14 @@ final class FileStorageTest {
 
         storage.put("raft-state", "term=5".getBytes());
 
-        // The final file should exist
         Path datFile = storeDir.resolve("raft-state.dat");
         assertTrue(Files.exists(datFile), "data file must exist after put");
         assertArrayEquals("term=5".getBytes(), Files.readAllBytes(datFile));
 
-        // The temp file should NOT exist (cleaned up by atomic rename)
         Path tmpFile = storeDir.resolve("raft-state.dat.tmp");
         assertFalse(Files.exists(tmpFile),
                 "temp file must not exist after successful put (atomic rename cleans it up)");
 
-        // Overwriting must also be atomic - verify data integrity
         storage.put("raft-state", "term=6".getBytes());
         assertArrayEquals("term=6".getBytes(), Files.readAllBytes(datFile));
         assertFalse(Files.exists(tmpFile));
@@ -213,7 +208,6 @@ final class FileStorageTest {
         storage1.appendToLog("wal", "entry1".getBytes());
         storage1.appendToLog("wal", "entry2".getBytes());
 
-        // Create a new storage instance pointing at the same directory
         Storage storage2 = Storage.file(dir);
         assertArrayEquals("value".getBytes(), storage2.get("key"));
 
@@ -236,33 +230,25 @@ final class FileStorageTest {
         Path storeDir = tempDir.resolve("truncated-wal");
         Storage storage = Storage.file(storeDir);
 
-        // Write 2 complete entries to the WAL
         byte[] entry1 = "first-entry".getBytes();
         byte[] entry2 = "second-entry".getBytes();
         storage.appendToLog("recovery-log", entry1);
         storage.appendToLog("recovery-log", entry2);
 
-        // Verify both entries are readable before corruption
         List<byte[]> beforeCorruption = storage.readLog("recovery-log");
         assertEquals(2, beforeCorruption.size());
 
-        // Simulate a crash mid-write by truncating the WAL file:
-        // remove the last few bytes so the second entry's data+CRC is incomplete.
-        // WAL layout: [8-byte container header][ [4-byte length][data][4-byte CRC32C] per entry ].
-        // Truncating the tail damages the last frame (after the header), which is discarded.
+        // Simulate a crash mid-write: truncate the WAL's last 3 bytes so the second entry's
+        // CRC is incomplete. The WAL layout is an 8-byte container header followed by
+        // [4-byte length][data][4-byte CRC32C] per entry, so truncating the tail damages only
+        // the last frame, which readLog() must discard.
         Path walFile = storeDir.resolve("recovery-log.wal");
         long originalSize = Files.size(walFile);
 
-        // Remove the last 3 bytes - this makes the second entry's CRC incomplete,
-        // simulating a crash during the write of the second entry.
         try (FileChannel channel = FileChannel.open(walFile, StandardOpenOption.WRITE)) {
             channel.truncate(originalSize - 3);
         }
 
-        // Before the fix: readLog() would throw IOException/UncheckedIOException
-        // because it tried to read beyond the buffer for the truncated entry.
-        // After the fix: the truncated trailing entry is silently discarded,
-        // and only the first (complete) entry is returned.
         Storage freshStorage = Storage.file(storeDir);
         List<byte[]> recovered = freshStorage.readLog("recovery-log");
 
@@ -294,11 +280,9 @@ final class FileStorageTest {
         assertTrue((int) twoGiB < 0, "(int) 2GiB wraps negative");
     }
 
-    // ------------------------------------------------------------------
     // WAL container header (WalContainer): every .wal file self-identifies with an 8-byte
-    // header at offset 0, validated before any frame is read (fail closed on a foreign/corrupt/
-    // newer file). A file below the header floor is fresh (empty/first-boot/torn-header).
-    // ------------------------------------------------------------------
+    // header at offset 0, validated before any frame is read (fail closed on a foreign, corrupt,
+    // or newer file). A file below the header floor is fresh (empty, first-boot, or torn header).
 
     /** The valid 8-byte container header: [WAL_FILE_MAGIC:4][fileVersion:1][flags:1=0][reserved:2=0]. */
     private static byte[] validHeader() {
@@ -317,7 +301,6 @@ final class FileStorageTest {
         storage.appendToLog("raft-log", "entry-1".getBytes());
         storage.appendToLog("raft-log", "entry-2".getBytes());
 
-        // The file's leading 8 bytes are exactly the container header, then the frames.
         byte[] fileBytes = Files.readAllBytes(storeDir.resolve("raft-log.wal"));
         assertArrayEquals(validHeader(), java.util.Arrays.copyOf(fileBytes, 8),
                 "the .wal file must begin with the 8-byte container header");
@@ -351,7 +334,7 @@ final class FileStorageTest {
         Path storeDir = tempDir.resolve("empty-wal");
         Storage storage = Storage.file(storeDir);
         Files.createDirectories(storeDir);
-        Files.write(storeDir.resolve("raft-log.wal"), new byte[0]); // 0-byte file
+        Files.write(storeDir.resolve("raft-log.wal"), new byte[0]);
 
         assertTrue(storage.readLog("raft-log").isEmpty(),
                 "a 0-byte .wal (first boot / torn) must read as fresh, not throw");
@@ -362,7 +345,7 @@ final class FileStorageTest {
         Path storeDir = tempDir.resolve("header-only");
         Storage storage = Storage.file(storeDir);
         Files.createDirectories(storeDir);
-        Files.write(storeDir.resolve("raft-log.wal"), validHeader()); // header, no frames
+        Files.write(storeDir.resolve("raft-log.wal"), validHeader());
 
         assertTrue(storage.readLog("raft-log").isEmpty(),
                 "a header-only .wal (crash after header, before first frame) must read as fresh");

@@ -45,41 +45,40 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Gate-4 scenario 5 (THE key new proof) — <b>a hostile peer injected into a LIVE consensus cluster over
- * the real Netty wire.</b> The Gate-1/2/3 work hardened every codec + reject path in isolation (unit +
- * fuzz); this proves the hardening HOLDS end-to-end: an external attacker that speaks the consensus wire
- * and blasts malformed / oversized / undecodable / dormant-type frames at a running follower is
- * REJECTED at the codec/transport boundary, does NOT crash or wedge the node, does NOT destabilize
- * consensus, and the cluster stays consistent — an honest write still commits + replicates on the very
- * node that was attacked.
+ * A hostile peer injected into a LIVE consensus cluster over the real Netty wire. Unit and fuzz tests
+ * harden each codec and reject path in isolation; this proves the hardening HOLDS end-to-end: an
+ * external attacker that speaks the consensus wire and blasts malformed / oversized / undecodable /
+ * dormant-type frames at a running follower is REJECTED at the codec/transport boundary, does NOT crash
+ * or wedge the node, does NOT destabilize consensus, and the cluster stays consistent: an honest write
+ * still commits + replicates on the very node that was attacked.
  *
  * <p>Wiring mirrors {@code NettyConsensusLivenessTest.RealWireCluster}: three real {@link RaftNode}s, each
  * on its own owner thread behind a plaintext {@link NettyRaftTransport} + {@link RaftTransportAdapter}
- * (built with a counting {@link RaftTransportMetrics} sink so the WH-10 decode-drop is observable) +
+ * (built with a counting {@link RaftTransportMetrics} sink so the decode-drop is observable) +
  * {@link CoalescingRaftTransport}. After a stable leader is elected, a raw TCP socket connects to a
- * FOLLOWER's real listen port (the attacker never completed any consensus handshake — it just speaks the
+ * FOLLOWER's real listen port (the attacker never completed any consensus handshake, it just speaks the
  * {@code [4B senderId][FrameCodec frame]} wire) and injects the hostile-frame battery.
  *
- * <h2>The injected battery (each maps to a Gate-1 finding / reject path)</h2>
+ * <h2>The injected battery</h2>
  * <ul>
- *   <li><b>Oversized length prefix</b> (declared &gt; 16 MiB) — {@code RaftFrameDecoder}'s
+ *   <li><b>Oversized length prefix</b> (declared &gt; 16 MiB): {@code RaftFrameDecoder}'s
  *       length-before-allocation gate rejects it with {@code CorruptedFrameException}; no giant alloc.</li>
- *   <li><b>Corrupt CRC32C</b> — {@code FrameCodec.decode} fails the CRC before trusting version/type; the
+ *   <li><b>Corrupt CRC32C</b>: {@code FrameCodec.decode} fails the CRC before trusting version/type; the
  *       desynced connection is dropped.</li>
- *   <li><b>Dormant/undecodable type</b> (WH-10: a {@code HYPARVIEW_*} code with no consensus codec) — frames
- *       and CRC-verifies cleanly, then {@code RaftMessageCodec.decode} rejects it → a counted, rate-limited
+ *   <li><b>Dormant/undecodable type</b> (a {@code HYPARVIEW_*} code with no consensus codec): frames and
+ *       CRC-verifies cleanly, then {@code RaftMessageCodec.decode} rejects it, a counted, rate-limited
  *       drop ({@code onInboundFrameDropped}), connection kept.</li>
- *   <li><b>Structurally-malformed {@code APPEND_ENTRIES}</b> (numEntries = {@code Integer.MAX_VALUE}) — the
- *       codec's bound-before-allocation gate rejects it → counted drop, no OOM.</li>
- *   <li><b>Truncated/partial frame</b> then abrupt close — the decoder never emits a half-frame; the socket
+ *   <li><b>Structurally-malformed {@code APPEND_ENTRIES}</b> (numEntries = {@code Integer.MAX_VALUE}): the
+ *       codec's bound-before-allocation gate rejects it, counted drop, no OOM.</li>
+ *   <li><b>Truncated/partial frame</b> then abrupt close: the decoder never emits a half-frame; the socket
  *       drop is absorbed.</li>
  * </ul>
  *
- * <p>Note on scope: identity forgery (WH-08/09, forged {@code senderId} rejected by an enforced
+ * <p>Note on scope: identity forgery (a forged {@code senderId} rejected by an enforced
  * {@link io.configd.transport.PeerIdentityPolicy}) is an mTLS property proven over real mTLS sockets by
  * {@code RaftPeerIdentityBindingTest} / {@code NettyRaftPeerIdentityBindingTest}; this plaintext live-cluster
- * test deliberately covers the codec/transport reject paths that do not need mTLS. The poison-pill committed
- * command (WH-01) is a state-machine apply property (deterministic non-mutating skip) covered by
+ * test deliberately covers the codec/transport reject paths that do not need mTLS. A poison-pill committed
+ * command is a state-machine apply property (deterministic non-mutating skip) covered by
  * {@code CommandCodecFuzzTest} + {@code ConfigStateMachine.apply}; it cannot be injected by a non-leader peer
  * without being rejected first at the Raft term/log layer, so it is not a live-injection vector.
  */
@@ -89,7 +88,7 @@ final class HostilePeerInjectionE2ETest {
     private static final int NODES = 3;
     private static final int GROUP = 0;
     private static final long BASE_SEED = 0xB01DL;
-    private static final int HOSTILE_SENDER = 99; // not a cluster member — an external attacker's claimed id
+    private static final int HOSTILE_SENDER = 99; // not a cluster member, an external attacker's claimed id
 
     private static final int TICK_PERIOD_MS = 10;
     private static final int HEARTBEAT_MS = 50;
@@ -135,16 +134,16 @@ final class HostilePeerInjectionE2ETest {
         assertTrue(follower >= 0, "the cluster must have a follower to attack");
         int droppedBefore = cluster.inboundDropped[follower].get();
 
-        // --- INJECT the hostile-frame battery at the follower's real consensus listen port ---
+        // inject the hostile-frame battery at the follower's real consensus listen port
         cluster.injectHostileBattery(follower);
 
-        // --- 1) the follower COUNTED the decode-boundary rejects (WH-10 + malformed AppendEntries) ---
+        // 1) the follower COUNTED the decode-boundary rejects (the undecodable type + the malformed AppendEntries)
         assertTrue(cluster.awaitUntilMs(REPLICATE_BUDGET_MS,
                         () -> cluster.inboundDropped[follower].get() >= droppedBefore + 2),
                 "the follower must have counted the undecodable + malformed frames as inbound drops (was "
                         + droppedBefore + ", now " + cluster.inboundDropped[follower].get() + ")");
 
-        // --- 2) NO destabilization: the same leader holds the same term across a stability window ---
+        // 2) no destabilization: the same leader holds the same term across a stability window
         long stabilityEnd = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(STABILITY_WINDOW_MS);
         long observations = 0;
         while (System.nanoTime() < stabilityEnd) {
@@ -157,8 +156,8 @@ final class HostilePeerInjectionE2ETest {
         }
         assertTrue(observations >= 20, "vacuity: the stability window must actually have polled");
 
-        // --- 3) STILL CONSISTENT: an honest write commits + replicates on ALL nodes, incl. the attacked
-        //         follower (its inbound pipeline + apply loop survived the barrage intact) ---
+        // 3) still consistent: an honest write commits + replicates on ALL nodes, incl. the attacked
+        // follower (its inbound pipeline + apply loop survived the barrage intact)
         long committed = cluster.commitAndAwaitReplication(leader, "after", "post-attack");
         assertTrue(committed > 0, "an honest write must still commit after the hostile barrage");
         assertValue(cluster.stores[follower], "before", "baseline",
@@ -179,9 +178,7 @@ final class HostilePeerInjectionE2ETest {
                 ctx + ": key '" + key + "' must hold its committed value");
     }
 
-    // =======================================================================
     // hostile-frame construction (the [4B senderId][FrameCodec frame] consensus wire)
-    // =======================================================================
 
     /** senderId prefix + a well-formed FrameCodec frame (valid CRC), exactly as a real peer would frame it. */
     private static byte[] raftWire(int senderId, MessageType type, int group, long term, byte[] payload) {
@@ -211,9 +208,7 @@ final class HostilePeerInjectionE2ETest {
         return raftWire(HOSTILE_SENDER, MessageType.APPEND_ENTRIES, GROUP, 0L, payload);
     }
 
-    // =======================================================================
     // real-wire cluster (mirrors NettyConsensusLivenessTest.RealWireCluster; metrics sink + ports + inject added)
-    // =======================================================================
 
     private final class Cluster {
         private final NodeId[] ids = new NodeId[NODES];
@@ -255,7 +250,7 @@ final class HostilePeerInjectionE2ETest {
                 transports[i] = new NettyRaftTransport(ids[i],
                         new InetSocketAddress("127.0.0.1", ports[i]), peerAddrs, null, null);
                 final int idx = i;
-                // Count the WH-10 decode-boundary drops so the reject is observable, not just behavioural.
+                // Count the decode-boundary drops so the reject is observable, not just behavioural.
                 RaftTransportMetrics sink = new RaftTransportMetrics() {
                     @Override public void onInboundFrameDropped() {
                         inboundDropped[idx].incrementAndGet();
@@ -308,7 +303,7 @@ final class HostilePeerInjectionE2ETest {
             byte[] oversized = new byte[]{
                     0, 0, 0, (byte) HOSTILE_SENDER,          // senderId
                     (byte) 0x7F, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, // frame length = 0x7FFFFFFF
-                    0, 0, 0, 0                                // a little filler (never read — rejected first)
+                    0, 0, 0, 0                                // a little filler (never read, rejected first)
             };
             sendRaw(follower, oversized);
 
@@ -317,7 +312,7 @@ final class HostilePeerInjectionE2ETest {
             corrupt[corrupt.length - 5] ^= (byte) 0xFF; // flip a byte before the CRC trailer => CRC mismatch
             sendRaw(follower, corrupt);
 
-            // 3) dormant/undecodable type (WH-10): a HYPARVIEW code with no consensus codec, valid CRC.
+            // 3) dormant/undecodable type: a HYPARVIEW code with no consensus codec, valid CRC.
             sendRaw(follower, raftWire(HOSTILE_SENDER, MessageType.HYPARVIEW_JOIN, GROUP, 0L, new byte[8]));
 
             // 4) structurally-malformed APPEND_ENTRIES (numEntries = Integer.MAX_VALUE), valid CRC.
@@ -338,10 +333,10 @@ final class HostilePeerInjectionE2ETest {
                 try {
                     s.getInputStream().read(new byte[64]);
                 } catch (java.io.IOException ignored) {
-                    // server closed the desynced connection — a valid rejection
+                    // server closed the desynced connection, a valid rejection
                 }
             } catch (java.io.IOException dropped) {
-                // connect/write raced the server reset — the survival assertions are authoritative
+                // connect/write raced the server reset, the survival assertions are authoritative
             }
         }
 

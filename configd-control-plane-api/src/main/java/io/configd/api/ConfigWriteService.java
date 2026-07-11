@@ -22,7 +22,7 @@ import java.util.Objects;
  * Acknowledgement is <b>commit-confirmed</b>. A write returns
  * {@link WriteResult.Committed} only after the entry is quorum-committed AND
  * applied, carrying the applied-mutation sequence {@code seq} (the client's read
- * cursor; see section 6 for read-your-writes). The failure taxonomy is explicit:
+ * cursor for read-your-writes). The failure taxonomy is explicit:
  * {@link WriteResult.NotLeader} (pre-append, definite), {@link WriteResult.Lost}
  * (post-append, definite - leadership lost before commit, safe to retry),
  * {@link WriteResult.Indeterminate} (deadline expired with the outcome unknown -
@@ -117,9 +117,6 @@ public final class ConfigWriteService {
         ProposeCommitResult propose(ConfigScope scope, List<String> keys, byte[] command);
     }
 
-    /**
-     * Validates a write before proposing.
-     */
     @FunctionalInterface
     public interface WriteValidator {
         /**
@@ -132,9 +129,6 @@ public final class ConfigWriteService {
         String validate(String key, byte[] value);
     }
 
-    /**
-     * Supplies the current leader's NodeId (may return null if unknown).
-     */
     @FunctionalInterface
     public interface LeaderHintSupplier {
         /**
@@ -168,8 +162,6 @@ public final class ConfigWriteService {
     private static final int MAX_PRINCIPAL_LIMITERS = 10_000;
 
     /**
-     * Creates a write service.
-     *
      * @param proposer           routes proposals to the correct Raft group and awaits commit
      * @param validator          validates writes (may be null for no validation)
      * @param rateLimiter        rate limiter (may be null for no rate limiting)

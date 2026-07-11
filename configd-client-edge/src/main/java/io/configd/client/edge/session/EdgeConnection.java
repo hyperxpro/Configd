@@ -27,13 +27,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * One physical edge connection and its state machine over a blocking {@link Socket}/{@code SSLSocket} with a
  * single owner <b>reader thread</b> — the reference-client counterpart to the server's per-connection Netty
- * pipeline, grown from the {@code EdgeProtocolClient} raw-socket seed. The reader thread is the
- * demultiplexer: {@code read → bounds → decode → dispatch}. Application writes ({@code AUTH}/{@code REFRESH_AUTH}
- * now; {@code SUBSCRIBE}/{@code CURSOR_ACK}/{@code WATCH_*} in later gates) are serialized under a single write
- * lock, so the socket has exactly one reader and one writer and no frame interleaving.
+ * pipeline. The reader thread is the demultiplexer: {@code read → bounds → decode → dispatch}. Application
+ * writes ({@code AUTH}/{@code REFRESH_AUTH}, {@code SUBSCRIBE}/{@code CURSOR_ACK}/{@code WATCH_*}) are
+ * serialized under a single write lock, so the socket has exactly one reader and one writer and no frame
+ * interleaving.
  *
  * <p>A connection advances monotonically {@code CONNECTING → TLS_HANDSHAKE → AUTHENTICATING → AUTHENTICATED →
- * CLOSING → CLOSED} and never re-opens — a reconnect is a fresh {@code EdgeConnection} (§06 F10-1). It is
+ * CLOSING → CLOSED} and never re-opens — a reconnect is a fresh {@code EdgeConnection}. It is
  * hostile-server-hardened by construction: every inbound frame goes through {@link EdgeFrameReader} (bounds
  * before allocation, CRC before interpret, strict-end via the shared codec); handshake / connect / read-idle
  * deadlines bound every blocking step; a decode failure or terminal frame closes cleanly with a classified
@@ -59,9 +59,9 @@ public final class EdgeConnection {
     private volatile Thread reader;
     private volatile boolean closing;
 
-    /** The pinned business version for inbound decode; {@code null} until a business frame pins it (Gate 2). */
+    /** The pinned business version for inbound decode; {@code null} until a business frame pins it. */
     private volatile Byte pinnedVersion;
-    /** Whether a HEARTBEAT-silence read-idle timeout is fatal; disarmed until streaming begins (Gate 2). */
+    /** Whether a HEARTBEAT-silence read-idle timeout is fatal; disarmed until streaming begins. */
     private volatile boolean idleDeadlineArmed;
 
     /** Gate that lets the handler pause reads (reactive backpressure): the reader parks when it has no demand. */
@@ -84,9 +84,9 @@ public final class EdgeConnection {
      * auth lifecycle advances it to {@link EdgeConnectionState#AUTHENTICATED}).
      *
      * @throws AuthFailedException   if the TLS/mTLS handshake fails (a rejected client cert, or an
-     *                               unverifiable server endpoint — F9)
+     *                               unverifiable server endpoint)
      * @throws UnavailableException  if the TCP connect is refused or times out (a capacity/transport
-     *                               condition — retry with backoff, §06 F10-2)
+     *                               condition — retry with backoff)
      */
     public void connect() {
         closing = false;
@@ -103,11 +103,11 @@ public final class EdgeConnection {
             }
         } catch (SSLException tlsFailure) {
             // A handshake failure is an authentication failure (our cert rejected, or the server endpoint
-            // unverifiable) — re-authenticate / fix the material; not a codec bug (§03 AU3-2 / §06 F9).
+            // unverifiable) — re-authenticate / fix the material; not a codec bug.
             throw new AuthFailedException("edge TLS handshake failed: " + tlsFailure.getMessage(), tlsFailure);
         } catch (IOException connectFailure) {
             // A pre-handshake connect refusal / timeout is a capacity condition (the silent session-cap
-            // close, §06 F10-2), retryable — never a protocol error.
+            // close), retryable — never a protocol error.
             throw new UnavailableException(
                     "edge connect to " + address + " failed: " + connectFailure.getMessage(), connectFailure);
         }
@@ -147,12 +147,12 @@ public final class EdgeConnection {
         }
     }
 
-    /** Pins the inbound business version (Gate 2, once the client sends its first business frame). */
+    /** Pins the inbound business version, once the client sends its first business frame. */
     public void pinVersion(byte version) {
         this.pinnedVersion = version;
     }
 
-    /** Arms the HEARTBEAT-silence read-idle deadline as fatal (Gate 2, once streaming begins). */
+    /** Arms the HEARTBEAT-silence read-idle deadline as fatal, once streaming begins. */
     public void armIdleDeadline() {
         this.idleDeadlineArmed = true;
     }
@@ -208,10 +208,6 @@ public final class EdgeConnection {
         closed.complete(null); // no-op if a terminal already completed it exceptionally
     }
 
-    // -----------------------------------------------------------------------
-    // reader thread
-    // -----------------------------------------------------------------------
-
     private void startReader() {
         Thread t = new Thread(this::runReader, readerThreadName);
         t.setDaemon(true);
@@ -223,7 +219,7 @@ public final class EdgeConnection {
         while (!closing) {
             // Reactive backpressure: if the handler has no demand for more frames, park until it regains some
             // (or the connection closes). This stops draining the socket, so the server sees the outbound
-            // queue back up and demotes a genuinely slow consumer (§06 F10-3), without us buffering unbounded.
+            // queue back up and demotes a genuinely slow consumer, without us buffering unbounded.
             if (!handler.wantsMoreFrames()) {
                 readGate.lock();
                 try {
@@ -242,7 +238,7 @@ public final class EdgeConnection {
             try {
                 frame = EdgeFrameReader.readFrame(in, pinnedVersion, limits.maxFrameBytes());
             } catch (EdgeFrameCodec.CodecException ce) {
-                // A malformed / oversize / truncated / bad-CRC frame: fail clean, never a misparse (§06 F3).
+                // A malformed / oversize / truncated / bad-CRC frame: fail clean, never a misparse.
                 deliverTerminal(new ProtocolViolationException(
                         "malformed server frame: " + ce.getMessage(), ce.code(), null));
                 return;
@@ -278,7 +274,7 @@ public final class EdgeConnection {
                 return react(ErrorClassifier.classify(ec.code(), Carrier.ERROR_CLOSE, ec.message()));
             }
             case EdgeFrame.WatchCanceled wc -> {
-                // Carry the watch_id so a multiplexed handler can terminate only this watch (W6-4).
+                // Carry the watch_id so a multiplexed handler can terminate only this watch.
                 return reactWatch(wc.watchId(), ErrorClassifier.classify(wc.code(), Carrier.WATCH_CANCELED, wc.message()));
             }
             case EdgeFrame.Heartbeat hb -> handler.onHeartbeat(hb);
@@ -292,8 +288,9 @@ public final class EdgeConnection {
                         "server sent a client-only REFRESH_AUTH frame"));
                 return false;
             }
-            // Business / watch frames (SUBSCRIBE_OK, NOTIFY, SNAPSHOT_*, WATCH_*) belong to the later gates;
-            // the reader is a real demultiplexer, not a stub — it routes them to the extension seam.
+            // Business / watch frames (SUBSCRIBE_OK, NOTIFY, SNAPSHOT_*, WATCH_*) are handled by the
+            // registered handler; the reader is a real demultiplexer, not a stub — it routes them to the
+            // extension seam.
             default -> handler.onFrame(frame);
         }
         return true;

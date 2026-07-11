@@ -19,7 +19,7 @@ import java.util.function.Predicate;
  * <p><b>Trust model (an explicit boundary, not a hole).</b> The incremental delta chain carries per-delta
  * Ed25519 tamper-evidence, verified by {@code SignedChainVerifier} <b>before</b> {@link #applyDelta} is called.
  * The hydration <b>snapshot</b>, by contrast, carries <b>no</b> per-snapshot signature — the edge snapshot body
- * is trailer-less (just entries; §06 F7) and its authenticity rests on the <b>server's mTLS identity</b> plus
+ * is trailer-less (just entries) and its authenticity rests on the <b>server's mTLS identity</b> plus
  * the frame CRC (transport integrity), not a cryptographic signature. So a client hydrating from a snapshot
  * <b>trusts the server's base-state bytes on the strength of the authenticated transport</b>, and the signed
  * chain is the tamper-evidence on every subsequent increment. {@link #loadSnapshot} therefore applies the
@@ -47,7 +47,7 @@ public final class LocalConfigView {
      * Applies one verified delta (single-writer). {@code PUT}s stamp the value with the delta's
      * {@code toVersion}; {@code DELETE}s remove the key. A prefix filter drops non-matching mutations from
      * storage but the store version still advances to {@code toVersion} (the chain advances regardless — the
-     * server always streams the full signed chain, §01).
+     * server always streams the full signed chain).
      */
     public void applyDelta(ConfigDelta delta, long commitTimestampMillis) {
         HamtMap<String, VersionedValue> data = state.data();
@@ -85,7 +85,7 @@ public final class LocalConfigView {
     }
 
     /**
-     * A monotonic-guarded read (INV-M1): returns the value only if this view has advanced to at least
+     * A monotonic-guarded read: returns the value only if this view has advanced to at least
      * {@code minVersion} (the caller's last-observed store version). If the view is <b>behind</b> that cursor —
      * it would serve a value older than one the caller has already seen — the read is refused with an
      * {@link IllegalStateException}, mirroring the edge server's {@code cursor-behind} refusal. A view only

@@ -28,8 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 200). If the leader was then killed / isolated / starved in the window
  * <em>between local append and quorum commit</em>, a new leader could win with a
  * log that never contained the un-replicated entry, overwrite the slot, and the
- * acknowledged write vanished - a contract section 6 violation (ack-with-commit-
- * sequence), observed live in {@code docs/audit-session-1/smoke-test.md section 3}.
+ * acknowledged write vanished.
  * <p>
  * This test drives the deterministic simulator (see
  * {@link RaftSimulation#electionRandom} and {@link SimulationDeterminismTest})
@@ -166,7 +165,7 @@ class AckEqualsCommitTest {
             }
         }
 
-        // ---- Propose the target write and observe its ACK at the live boundary ----
+        // Propose the target write and observe its ACK at the live boundary.
         // Post-fix: register whenCommitOutcome (the seam the HTTP path blocks on).
         // Pre-fix: that seam is absent; the ack is the propose acceptance.
         AckObserver obs = h.ackObserver();
@@ -185,7 +184,6 @@ class AckEqualsCommitTest {
             case SLOW_FOLLOWER_QUORUM_DELAY -> h.crashNode(leader);
         }
 
-        // Let the surviving quorum elect a new leader.
         int newLeader = h.awaitStableLeader(Set.of(leader), 3000);
         if (newLeader < 0) {
             return new ScenarioResult(Outcome.INCONCLUSIVE, 0); // surviving quorum could not elect
@@ -240,10 +238,8 @@ class AckEqualsCommitTest {
         return z ^ (z >>> 31);
     }
 
-    // =======================================================================
-    // Ack observer - abstracts the ack boundary so the SAME test runs against
+    // Ack observer: abstracts the ack boundary so the SAME test runs against
     // both states of the tree (pre-fix: propose-accept; post-fix: commit seam).
-    // =======================================================================
 
     /**
      * Records whether a proposed write was ACKNOWLEDGED as committed at the HTTP
@@ -257,11 +253,9 @@ class AckEqualsCommitTest {
         void markCommitted() { committed = true; }
     }
 
-    // =======================================================================
     // Self-contained deterministic harness with CRASH + commit-seam support.
     // Modeled on ConsistencyPropertyTests.ClusterHarness; kept separate so the
     // shared harness used by dozens of tests is untouched.
-    // =======================================================================
     private static final class Harness {
         private final RaftSimulation sim;
         private final List<RaftNode> nodes = new ArrayList<>();

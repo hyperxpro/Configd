@@ -29,10 +29,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class ConsistencyPropertyTests {
 
-    // -----------------------------------------------------------------------
-    // Simulation harness - wires RaftNodes through SimulatedNetwork
-    // -----------------------------------------------------------------------
-
     /**
      * A fully-wired simulated Raft cluster with N nodes, each backed by a
      * {@link ConfigStateMachine} and {@link VersionedConfigStore}.
@@ -48,28 +44,28 @@ class ConsistencyPropertyTests {
         private final List<ConfigStateMachine> stateMachines;
         private final List<VersionedConfigStore> stores;
         /**
-         * Stage 2 M3: one heartbeat coalescer per node (each node is a single group in this cross-node
-         * sim). Wiring the coalesce->drain pipeline here means the no-spurious-election sweeps exercise it
-         * every tick - a drain that drops or delays a heartbeat surfaces as a spurious election (the sweep
-         * goes RED). One group per node => each drain sends a plain AppendEntries (identical payload; the
-         * per-seed schedule is a re-established M3 baseline, see drainHeartbeats).
+         * One heartbeat coalescer per node (each node is a single group in this cross-node sim). Wiring
+         * the coalesce-to-drain pipeline here means the no-spurious-election sweeps exercise it every
+         * tick - a drain that drops or delays a heartbeat surfaces as a spurious election (the sweep goes
+         * red). One group per node means each drain sends a plain AppendEntries (identical payload; the
+         * per-seed schedule is a re-established baseline, see drainHeartbeats).
          */
         private final List<HeartbeatCoalescer> coalescers;
         private final int nodeCount;
 
         /**
-         * Stage 2 M3 S3 - heartbeat-drain fault injection (test-the-tester). {@link #NONE} is the real
-         * coalescing drain. {@link #DROP} models a broken coalescer that loses coalesced heartbeats (they
-         * are drained from the buffer but never sent); {@link #DELAY} sends them {@code hbFaultDelayMs}
-         * later (modelling a coalescing window that holds a heartbeat past the election timeout). Either
-         * fault MUST drive election churn - that is what proves the no-spurious-election sweep is
-         * non-vacuous (a correct drain stays green; a broken one goes RED).
+         * Heartbeat-drain fault injection (test-the-tester). {@link #NONE} is the real coalescing drain.
+         * {@link #DROP} models a broken coalescer that loses coalesced heartbeats (they are drained from
+         * the buffer but never sent); {@link #DELAY} sends them {@code hbFaultDelayMs} later (modelling a
+         * coalescing window that holds a heartbeat past the election timeout). Either fault must drive
+         * election churn - that is what proves the no-spurious-election sweep is non-vacuous (a correct
+         * drain stays green, a broken one goes red).
          */
         enum HeartbeatFault { NONE, DROP, DELAY }
         private HeartbeatFault hbFault = HeartbeatFault.NONE;
         private long hbFaultDelayMs = 0;
         /** When non-null with {@link HeartbeatFault#DROP}, drop heartbeats only to THIS peer (the single-
-         *  peer / partial-aggregate starvation fault, red-team D); null drops to all peers. */
+         *  peer / partial-aggregate starvation fault); null drops to all peers. */
         private NodeId hbDropVictim = null;
         /** Per-node count of PreVote requests sent - the starvation signal: a follower denied heartbeats
          *  times out and churns PreVotes (which PreVote shields from becoming a spurious election). */
@@ -84,12 +80,11 @@ class ConsistencyPropertyTests {
 
         /**
          * Builds a cluster whose nodes report in-node invariant breaches to the
-         * supplied {@link RaftNode.InvariantChecker} (B4 adversarial sim, section 3 seam A).
-         * The default 2-arg form passes {@link RaftNode.InvariantChecker#NOOP} to
-         * preserve the historical behaviour of {@code ConsistencyPropertyTests} and
-         * {@code SeedSweepTest}; the adversarial harness passes a throwing checker so
-         * the 8 named in-node checks (plus {@code durable_prefix_no_gap}) fire at
-         * their mutation sites.
+         * supplied {@link RaftNode.InvariantChecker}. The default 2-arg form passes
+         * {@link RaftNode.InvariantChecker#NOOP} so {@code ConsistencyPropertyTests} and
+         * {@code SeedSweepTest} stay silent; the adversarial harness passes a throwing
+         * checker so the named in-node checks (plus {@code durable_prefix_no_gap}) fire
+         * at their mutation sites.
          */
         ClusterHarness(long seed, int nodeCount, RaftNode.InvariantChecker invariantChecker) {
             this.sim = new RaftSimulation(seed, nodeCount);
@@ -113,13 +108,13 @@ class ConsistencyPropertyTests {
                 VersionedConfigStore store = new VersionedConfigStore();
                 ConfigStateMachine sm = new ConfigStateMachine(store);
 
-                // Stage 2 M3: route this node's sends through the coalescing decorator. With one group per
-                // node the drain emits a plain AppendEntries (the base path is byte-identical), but the
-                // record->drain pipeline is genuinely exercised every tick - a broken drain (drop/delay)
-                // would slip the election timeout and the no-spurious-election sweeps would go RED.
+                // Route this node's sends through the coalescing decorator. With one group per node
+                // the drain emits a plain AppendEntries (the base path is byte-identical), but the
+                // record-to-drain pipeline is genuinely exercised every tick - a broken drain (drop or
+                // delay) would slip the election timeout and the no-spurious-election sweeps would go red.
                 final int nodeIndex = i;
                 RaftTransport baseTransport = (target, message) -> {
-                    // S3 starvation signal: count PreVote requests this node emits (red-team D).
+                    // Starvation signal: count PreVote requests this node emits.
                     if (message instanceof RequestVoteRequest rv && rv.preVote()) {
                         preVotesSent[nodeIndex]++;
                     }
@@ -168,8 +163,8 @@ class ConsistencyPropertyTests {
             bindOwnersIfNeeded();
             sim.tick();
             for (int i = 0; i < nodes.size(); i++) {
-                // Stage 2 M3: open the coalescing window, tick, then drain this node's heartbeats EVEN IF
-                // tick() throws (H-2 - a dropped heartbeat would starve a follower into a spurious election).
+                // Open the coalescing window, tick, then drain this node's heartbeats even if tick()
+                // throws - a dropped heartbeat would starve a follower into a spurious election.
                 HeartbeatCoalescer hc = coalescers.get(i);
                 hc.beginTick();
                 try {
@@ -181,12 +176,12 @@ class ConsistencyPropertyTests {
         }
 
         /**
-         * Stage 2 M3: send node {@code i}'s coalesced heartbeats (one group per node => each drained peer
-         * carries a single AppendEntries) via the same {@link SimulatedNetwork} path as a normal send, at
-         * the current clock - identical payload. (On a tick that mixes a buffered heartbeat with an
-         * immediately-sent entry-carrying AppendEntries, the cross-tick PRNG draw order can shift since
-         * heartbeats drain after in-tick entry sends, so the M3 sweep is a re-established baseline - green
-         * on the new trajectory - not the identical prior schedule. D-020 review, finding 1.)
+         * Send node {@code i}'s coalesced heartbeats (one group per node, so each drained peer carries a
+         * single AppendEntries) via the same {@link SimulatedNetwork} path as a normal send, at the
+         * current clock - identical payload. On a tick that mixes a buffered heartbeat with an
+         * immediately-sent entry-carrying AppendEntries, the cross-tick PRNG draw order can shift, since
+         * heartbeats drain after in-tick entry sends - so a run exercising this path is a re-established
+         * baseline (green on the new trajectory), not the identical prior schedule.
          */
         private void drainHeartbeats(int i, HeartbeatCoalescer hc) {
             Map<NodeId, Map<Integer, AppendEntriesRequest>> drained = hc.drainAndEndTick();
@@ -207,16 +202,15 @@ class ConsistencyPropertyTests {
             }
         }
 
-        /** Stage 2 M3 S3: inject an ALL-peers heartbeat-drain fault. delayMs ignored unless DELAY. */
+        /** Inject an all-peers heartbeat-drain fault. delayMs is ignored unless DELAY. */
         void injectHeartbeatFault(HeartbeatFault fault, long delayMs) {
             this.hbFault = fault;
             this.hbFaultDelayMs = delayMs;
             this.hbDropVictim = null;
         }
 
-        /** Stage 2 M3 S3 (red-team D): drop coalesced heartbeats only to {@code victim} (partial-aggregate
-         *  starvation), leaving every other peer served - the per-peer failure a real coalescer is most
-         *  likely to get wrong. */
+        /** Drop coalesced heartbeats only to {@code victim} (partial-aggregate starvation), leaving
+         *  every other peer served - the per-peer failure a real coalescer is most likely to get wrong. */
         void dropHeartbeatsToPeer(NodeId victim) {
             this.hbFault = HeartbeatFault.DROP;
             this.hbDropVictim = victim;
@@ -235,9 +229,9 @@ class ConsistencyPropertyTests {
          * ACTIVE and routes any off-drive-thread {@link RaftNode} access through the wired
          * {@link RaftNode.InvariantChecker} - a throwing checker (e.g. {@code SeedSweepTest}) fails
          * the seed, {@code NOOP} stays silent. This puts {@code raft_owner_thread} on the continuous
-         * per-tick invariant surface alongside the in-node checks (threading-contract section 5.4). Nodes
-         * are never reconstructed mid-run, so a one-time bind is complete; the coalesced-heartbeat work's
-         * owner-executor pool extends this to genuinely distinct per-node owner threads.
+         * per-tick invariant surface alongside the in-node checks. Nodes are never reconstructed
+         * mid-run, so a one-time bind here is complete; elsewhere, an owner-executor pool extends the
+         * same pattern to genuinely distinct per-node owner threads.
          */
         private void bindOwnersIfNeeded() {
             if (ownersBound) {
@@ -352,10 +346,6 @@ class ConsistencyPropertyTests {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Helpers
-    // -----------------------------------------------------------------------
-
     private static byte[] bytes(String s) {
         return s.getBytes(StandardCharsets.UTF_8);
     }
@@ -364,13 +354,9 @@ class ConsistencyPropertyTests {
         return new String(b, StandardCharsets.UTF_8);
     }
 
-    // =======================================================================
-    // INV-L1: Linearizability of writes per Raft group
-    //
-    // INV-L1: For all operations op1, op2 on the same Raft group:
-    //   if op1 completes before op2 begins (real time),
-    //   then op1's effect is visible to op2
-    // =======================================================================
+    // INV-L1: Linearizability of writes per Raft group.
+    // For all operations op1, op2 on the same Raft group: if op1 completes before op2
+    // begins (real time), then op1's effect is visible to op2.
 
     @Nested
     class LinearizabilityTest {
@@ -386,19 +372,16 @@ class ConsistencyPropertyTests {
             int leader = cluster.electLeader(1200);
             assertTrue(leader >= 0, "Leader must be elected");
 
-            // Phase 1: commit a write and record the commit version
             long commitSeq = cluster.proposeAndCommit(leader, "lin-key", "value-A", 100);
             assertTrue(commitSeq > 0, "Write must commit");
 
-            // Phase 2: after the write completes, issue a ReadIndex read
             long readId = cluster.node(leader).readIndex();
             assertTrue(readId >= 0, "ReadIndex must be accepted by leader");
 
-            // Wait for ReadIndex to become ready (heartbeat confirms leadership)
+            // ReadIndex becomes ready once a heartbeat round confirms leadership.
             boolean ready = cluster.awaitReadReady(leader, readId, 200);
             assertTrue(ready, "ReadIndex must become ready within timeout");
 
-            // Phase 3: read must see the committed write
             ReadResult result = cluster.store(leader).get("lin-key");
             assertTrue(result.found(), "INV-L1 violated: committed write not visible via ReadIndex");
             assertEquals("value-A", str(result.value()),
@@ -421,17 +404,14 @@ class ConsistencyPropertyTests {
             assertTrue(leader >= 0, "Leader must be elected");
 
             for (int i = 0; i < 10; i++) {
-                // Write
                 long commitSeq = cluster.proposeAndCommit(leader, "seq-key", "val-" + i, 100);
                 assertTrue(commitSeq > 0, "Write " + i + " must commit");
 
-                // ReadIndex after write
                 long readId = cluster.node(leader).readIndex();
                 assertTrue(readId >= 0, "ReadIndex " + i + " must be accepted");
                 boolean ready = cluster.awaitReadReady(leader, readId, 200);
                 assertTrue(ready, "ReadIndex " + i + " must become ready");
 
-                // Verify the latest value is visible
                 ReadResult result = cluster.store(leader).get("seq-key");
                 assertTrue(result.found(), "INV-L1 violated at iteration " + i);
                 assertEquals("val-" + i, str(result.value()),
@@ -455,21 +435,17 @@ class ConsistencyPropertyTests {
             int leader = cluster.electLeader(1200);
             assertTrue(leader >= 0, "Leader must be elected");
 
-            // Commit initial value
             long seq1 = cluster.proposeAndCommit(leader, "timing-key", "before", 100);
             assertTrue(seq1 > 0);
 
-            // Issue ReadIndex BEFORE the next write
             long readId = cluster.node(leader).readIndex();
             assertTrue(readId >= 0);
 
-            // Now commit a new value
             long seq2 = cluster.proposeAndCommit(leader, "timing-key", "after", 100);
             assertTrue(seq2 > seq1);
 
-            // The read was issued before the second write, so it reflects
-            // at least the first write. It MAY or MAY NOT see the second
-            // write, but it MUST see the first.
+            // The read was issued before the second write, so it reflects at least the first
+            // write. It may or may not see the second write, but it must see the first.
             boolean ready = cluster.awaitReadReady(leader, readId, 200);
             assertTrue(ready, "ReadIndex must become ready");
 
@@ -493,28 +469,22 @@ class ConsistencyPropertyTests {
             int leader = cluster.electLeader(800);
             assertTrue(leader >= 0, "Leader must be elected (seed=" + seed + ")");
 
-            // Commit a value under the old leader
             long commitSeq = cluster.proposeAndCommit(leader, "failover-key", "committed-value", 100);
             assertTrue(commitSeq > 0, "Write must commit (seed=" + seed + ")");
 
-            // Allow replication to propagate
             cluster.runTicks(200);
 
-            // Partition the old leader
             cluster.sim().isolateNode(NodeId.of(leader));
 
-            // Wait for new leader
             int newLeader = cluster.awaitStableLeader(Set.of(leader), 2000);
             assertTrue(newLeader >= 0,
                     "New leader must be elected (seed=" + seed + ")");
 
-            // Issue ReadIndex on new leader
             long readId = cluster.node(newLeader).readIndex();
             assertTrue(readId >= 0, "ReadIndex must be accepted by new leader (seed=" + seed + ")");
             boolean ready = cluster.awaitReadReady(newLeader, readId, 200);
             assertTrue(ready, "ReadIndex must become ready on new leader (seed=" + seed + ")");
 
-            // The committed value from the old leader must be visible
             ReadResult result = cluster.store(newLeader).get("failover-key");
             assertTrue(result.found(),
                     "INV-L1 violated: committed value not visible on new leader (seed=" + seed + ")");
@@ -525,14 +495,10 @@ class ConsistencyPropertyTests {
         }
     }
 
-    // =======================================================================
-    // INV-S1/S2: Edge Staleness Bounds
-    //
-    // INV-S1: staleness(e, t) = wall_time(t) - timestamp(last_applied(e, t))
-    // INV-S2: Under normal network conditions:
-    //   P(staleness > 500ms) < 0.01 (p99)
-    //   P(staleness > 2s) < 0.0001 (p9999)
-    // =======================================================================
+    // INV-S1/S2: Edge staleness bounds.
+    // INV-S1: staleness(e, t) = wall_time(t) - timestamp(last_applied(e, t)).
+    // INV-S2: under normal network conditions, P(staleness > 500ms) < 0.01 (p99) and
+    // P(staleness > 2s) < 0.0001 (p9999).
 
     @Nested
     class StalenessUpperBoundTest {
@@ -551,42 +517,40 @@ class ConsistencyPropertyTests {
             // Initially DISCONNECTED (no frontier known yet)
             assertEquals(StalenessTracker.State.DISCONNECTED, tracker.currentState());
 
-            // Record update (commit ts == wall-now) -> CURRENT
+            // Record an update whose commit ts equals wall-now.
             tracker.recordUpdate(1, 10_000);
             assertEquals(StalenessTracker.State.CURRENT, tracker.currentState());
             assertTrue(tracker.stalenessMs() < 500,
                     "INV-S1: staleness must be < 500ms immediately after update");
 
-            // TRUE STALL begins: no further deltas, no heartbeats - the frontier freezes.
-            // Advance 499ms -> still CURRENT
+            // True stall begins: no further deltas, no heartbeats - the frontier freezes.
             clock.advanceMs(499);
             assertEquals(StalenessTracker.State.CURRENT, tracker.currentState());
 
-            // Cross 500ms threshold -> STALE
+            // Crossing the 500ms threshold moves to STALE.
             clock.advanceMs(2);
             assertEquals(StalenessTracker.State.STALE, tracker.currentState());
             assertTrue(tracker.stalenessMs() >= 500);
 
-            // Cross 5s threshold -> DEGRADED
+            // Crossing the 5s threshold moves to DEGRADED.
             clock.advanceMs(4500);
             assertEquals(StalenessTracker.State.DEGRADED, tracker.currentState());
 
-            // Cross 30s threshold -> DISCONNECTED
+            // Crossing the 30s threshold moves to DISCONNECTED.
             clock.advanceMs(25000);
             assertEquals(StalenessTracker.State.DISCONNECTED, tracker.currentState());
 
-            // Record update (commit ts == wall-now 40_001) -> back to CURRENT
+            // A fresh update whose commit ts equals wall-now returns the tracker to CURRENT.
             tracker.recordUpdate(2, 40_001);
             assertEquals(StalenessTracker.State.CURRENT, tracker.currentState());
         }
 
         /**
-         * STALENESS-FRONTIER REGRESSION TEST. An idle-but-heartbeating edge
-         * ({@code latestSeq == cursor}) stays CURRENT across >=250s of idle time - the exact
-         * the prior defect. The pre-fix idle-time proxy would have walked this edge to
-         * DISCONNECTED (and triggered a needless re-bootstrap) despite it serving perfectly
-         * fresh data. A heartbeat with {@code latestSeq > cursor} does NOT reset staleness
-         * (the edge is genuinely behind).
+         * An idle-but-heartbeating edge ({@code latestSeq == cursor}) stays CURRENT across
+         * more than 250s of idle time: an idle-time-based staleness proxy would incorrectly
+         * walk this edge to DISCONNECTED (and trigger a needless re-bootstrap) despite it
+         * serving perfectly fresh data. A heartbeat with {@code latestSeq > cursor} does NOT
+         * reset staleness (the edge is genuinely behind).
          */
         @Test
         void idleButHeartbeatingEdgeStaysCurrentAndBehindHeartbeatDoesNot() {
@@ -635,7 +599,6 @@ class ConsistencyPropertyTests {
             LocalConfigStore edge = new LocalConfigStore();
             StalenessTracker tracker = new StalenessTracker(clock);
 
-            // Initial sync
             cluster.proposeAndCommit(leader, "init", "data", 100);
             edge.loadSnapshot(controlPlane.snapshot());
             tracker.recordUpdate(edge.currentVersion(), clock.currentTimeMillis());
@@ -651,7 +614,6 @@ class ConsistencyPropertyTests {
                 cluster.tick();
                 clock.advanceMs(1);
 
-                // Periodic writes and edge sync
                 if (t % 20 == 0 && t > 0) {
                     long seq = cluster.proposeAndCommit(leader, "key-" + t, "val-" + t, 50);
                     if (seq > 0) {
@@ -663,7 +625,6 @@ class ConsistencyPropertyTests {
                     }
                 }
 
-                // Sample staleness
                 totalSamples++;
                 long staleness = tracker.stalenessMs();
                 if (staleness > 500) {
@@ -674,7 +635,6 @@ class ConsistencyPropertyTests {
                 }
             }
 
-            // Under normal conditions, vast majority of samples must be < 500ms
             double staleRatio = (double) staleSamples / totalSamples;
             assertTrue(staleRatio < 0.01,
                     "INV-S2 violated: p99 staleness > 500ms. Stale ratio=" + staleRatio
@@ -696,16 +656,13 @@ class ConsistencyPropertyTests {
             SimulatedClock clock = new SimulatedClock(1_000_000L);
             StalenessTracker tracker = new StalenessTracker(clock);
 
-            // Start current
             tracker.recordUpdate(1, clock.currentTimeMillis());
             assertEquals(StalenessTracker.State.CURRENT, tracker.currentState());
 
-            // Simulate partition: no updates for 600ms
             clock.advanceMs(600);
             assertEquals(StalenessTracker.State.STALE, tracker.currentState(),
                     "INV-S1: must be STALE after 600ms without update");
 
-            // Simulate reconnect: update arrives
             tracker.recordUpdate(10, clock.currentTimeMillis());
             assertEquals(StalenessTracker.State.CURRENT, tracker.currentState(),
                     "INV-S1: must recover to CURRENT after update");
@@ -737,12 +694,9 @@ class ConsistencyPropertyTests {
         }
     }
 
-    // =======================================================================
-    // INV-V1: Sequence Monotonicity
-    //
-    // INV-V1: For all committed entries e1, e2 in Raft group g:
-    //   if e1 committed before e2, then seq(e1) < seq(e2)
-    // =======================================================================
+    // INV-V1: Sequence monotonicity.
+    // For all committed entries e1, e2 in Raft group g: if e1 committed before e2,
+    // then seq(e1) < seq(e2).
 
     @Nested
     class SequenceMonotonicityTest {
@@ -811,7 +765,6 @@ class ConsistencyPropertyTests {
             int leader = cluster.electLeader(1200);
             assertTrue(leader >= 0, "Leader must be elected");
 
-            // Record sequences on all replicas
             List<List<Long>> perNodeSequences = new ArrayList<>();
             for (int i = 0; i < 3; i++) {
                 List<Long> seqs = new CopyOnWriteArrayList<>();
@@ -824,10 +777,8 @@ class ConsistencyPropertyTests {
                 assertTrue(seq > 0, "Entry " + i + " must commit");
             }
 
-            // Allow full replication
             cluster.runTicks(300);
 
-            // Every replica that received entries must have strictly increasing sequences
             for (int nodeIdx = 0; nodeIdx < 3; nodeIdx++) {
                 List<Long> seqs = perNodeSequences.get(nodeIdx);
                 for (int i = 1; i < seqs.size(); i++) {
@@ -840,12 +791,9 @@ class ConsistencyPropertyTests {
         }
     }
 
-    // =======================================================================
-    // INV-V2: Sequence Gap-Free
-    //
-    // INV-V2: For all consecutive committed entries e_i, e_{i+1} in group g:
-    //   seq(e_{i+1}) = seq(e_i) + 1
-    // =======================================================================
+    // INV-V2: Sequence gap-free.
+    // For all consecutive committed entries e_i, e_{i+1} in group g:
+    // seq(e_{i+1}) = seq(e_i) + 1.
 
     @Nested
     class SequenceGapFreeTest {
@@ -908,7 +856,6 @@ class ConsistencyPropertyTests {
             int leader = cluster.electLeader(800);
             assertTrue(leader >= 0, "Leader must be elected");
 
-            // Commit entries under old leader
             for (int i = 0; i < 5; i++) {
                 long seq = cluster.proposeAndCommit(leader, "k" + i, "v" + i, 100);
                 assertTrue(seq > 0, "Pre-failover entry " + i + " must commit");
@@ -917,23 +864,19 @@ class ConsistencyPropertyTests {
             long versionBeforeFailover = cluster.store(leader).currentVersion();
             cluster.runTicks(200);
 
-            // Partition old leader
             cluster.sim().isolateNode(NodeId.of(leader));
             int newLeader = cluster.awaitStableLeader(Set.of(leader), 2000);
             assertTrue(newLeader >= 0, "New leader must be elected");
 
-            // Collect sequences from new leader
             List<Long> newLeaderSeqs = new CopyOnWriteArrayList<>();
             cluster.stateMachine(newLeader).addListener((mutations, version) ->
                     newLeaderSeqs.add(version));
 
-            // Commit more entries under new leader
             for (int i = 5; i < 15; i++) {
                 long seq = cluster.proposeAndCommit(newLeader, "k" + i, "v" + i, 100);
                 assertTrue(seq > 0, "Post-failover entry " + i + " must commit");
             }
 
-            // The new leader's sequences must be gap-free
             for (int i = 1; i < newLeaderSeqs.size(); i++) {
                 assertEquals(newLeaderSeqs.get(i - 1) + 1, newLeaderSeqs.get(i),
                         "INV-V2 violated after failover: gap between seq["
@@ -941,7 +884,6 @@ class ConsistencyPropertyTests {
                                 + " and seq[" + i + "]=" + newLeaderSeqs.get(i));
             }
 
-            // First entry on new leader must continue from where old leader left off
             if (!newLeaderSeqs.isEmpty()) {
                 assertTrue(newLeaderSeqs.getFirst() > versionBeforeFailover,
                         "New leader's first seq (" + newLeaderSeqs.getFirst()
@@ -951,12 +893,9 @@ class ConsistencyPropertyTests {
         }
     }
 
-    // =======================================================================
-    // INV-M1: Monotonic Read
-    //
-    // INV-M1: For all reads r1, r2 by client c where r1 happens-before r2:
-    //   version(response(r2)) >= version(response(r1))
-    // =======================================================================
+    // INV-M1: Monotonic read.
+    // For all reads r1, r2 by client c where r1 happens-before r2:
+    // version(response(r2)) >= version(response(r1)).
 
     @Nested
     class MonotonicReadTest {
@@ -1034,30 +973,22 @@ class ConsistencyPropertyTests {
             store.put("key", bytes("v1"), 1);
             store.put("key", bytes("v2"), 2);
 
-            // Read with minVersion=2 succeeds
             ReadResult r1 = store.get("key", 2);
             assertTrue(r1.found(), "Read at minVersion=2 with store at 2 must succeed");
 
-            // Read with minVersion=3 fails (store is at 2)
             ReadResult r2 = store.get("key", 3);
             assertFalse(r2.found(),
                     "INV-M1: Read with minVersion=3 from store at version=2 must fail");
 
-            // Advance store to version 3
             store.put("key", bytes("v3"), 3);
             ReadResult r3 = store.get("key", 3);
             assertTrue(r3.found(), "Read at minVersion=3 with store at 3 must succeed");
         }
     }
 
-    // =======================================================================
-    // INV-M2: Monotonic Reads Survive Edge Failover
-    //
-    // INV-M2: For all reads r1, r2 of key k by client c
-    //   where r1 happens-before r2:
-    //   if value(r1) was written at version V,
-    //   then value(r2) was written at version >= V
-    // =======================================================================
+    // INV-M2: Monotonic reads survive edge failover.
+    // For all reads r1, r2 of key k by client c where r1 happens-before r2: if
+    // value(r1) was written at version V, then value(r2) was written at version >= V.
 
     @Nested
     class MonotonicReadFailoverTest {
@@ -1071,23 +1002,19 @@ class ConsistencyPropertyTests {
         void cursorFromEdgeAEnforcedOnEdgeB() {
             VersionedConfigStore controlPlane = new VersionedConfigStore();
 
-            // Set up control plane state
             controlPlane.put("failover-key", bytes("v1"), 1);
             controlPlane.put("failover-key", bytes("v2"), 2);
             controlPlane.put("failover-key", bytes("v3"), 3);
             ConfigSnapshot snap3 = controlPlane.snapshot();
 
-            // Edge A has all data
             LocalConfigStore edgeA = new LocalConfigStore();
             edgeA.loadSnapshot(snap3);
 
-            // Client reads from edge A and gets cursor at version 3
             VersionCursor clientCursor = new VersionCursor(3, 3000);
             ReadResult readA = edgeA.get("failover-key", clientCursor);
             assertTrue(readA.found(), "Edge A must serve read at cursor=3");
             assertEquals("v3", str(readA.value()));
 
-            // Edge B is up to date - client failover succeeds
             LocalConfigStore edgeB = new LocalConfigStore();
             edgeB.loadSnapshot(snap3);
 
@@ -1110,12 +1037,10 @@ class ConsistencyPropertyTests {
             controlPlane.put("key", bytes("v2"), 2);
             controlPlane.put("key", bytes("v3"), 3);
 
-            // Edge A has all data, client gets cursor=3
             LocalConfigStore edgeA = new LocalConfigStore();
             edgeA.loadSnapshot(controlPlane.snapshot());
             VersionCursor clientCursor = new VersionCursor(3, 3000);
 
-            // Edge B only has version 1 (stale)
             VersionedConfigStore staleCP = new VersionedConfigStore();
             staleCP.put("key", bytes("v1"), 1);
             LocalConfigStore edgeB = new LocalConfigStore();
@@ -1139,7 +1064,6 @@ class ConsistencyPropertyTests {
             controlPlane.put("key", bytes("v3"), 3);
             ConfigSnapshot snap3 = controlPlane.snapshot();
 
-            // Edge B starts stale at version 1
             VersionedConfigStore staleCP = new VersionedConfigStore();
             staleCP.put("key", bytes("v1"), 1);
             LocalConfigStore edgeB = new LocalConfigStore();
@@ -1147,14 +1071,11 @@ class ConsistencyPropertyTests {
 
             VersionCursor clientCursor = new VersionCursor(3, 3000);
 
-            // Initially rejected
             ReadResult beforeCatchUp = edgeB.get("key", clientCursor);
             assertFalse(beforeCatchUp.found(), "Should be rejected before catch-up");
 
-            // Edge B catches up via full snapshot load
             edgeB.loadSnapshot(snap3);
 
-            // Now the read succeeds
             ReadResult afterCatchUp = edgeB.get("key", clientCursor);
             assertTrue(afterCatchUp.found(),
                     "INV-M2: Edge B must serve read after catching up to version >= 3");
@@ -1174,28 +1095,24 @@ class ConsistencyPropertyTests {
 
             VersionedConfigStore controlPlane = cluster.store(leader);
 
-            // Commit several entries
             for (int i = 1; i <= 5; i++) {
                 long seq = cluster.proposeAndCommit(leader, "config.db", "db-v" + i, 200);
                 assertTrue(seq > 0, "Write " + i + " must commit");
             }
             ConfigSnapshot snapAfterWrites = controlPlane.snapshot();
 
-            // Edge A and Edge B both sync to the latest snapshot
             LocalConfigStore edgeA = new LocalConfigStore();
             edgeA.loadSnapshot(snapAfterWrites);
 
             LocalConfigStore edgeB = new LocalConfigStore();
             edgeB.loadSnapshot(snapAfterWrites);
 
-            // Client reads from Edge A
             VersionCursor cursor = new VersionCursor(
                     edgeA.currentVersion(), edgeA.currentVersion() * 1000);
             ReadResult readA = edgeA.get("config.db", cursor);
             assertTrue(readA.found());
             String valueFromA = str(readA.value());
 
-            // Client fails over to Edge B with cursor
             ReadResult readB = edgeB.get("config.db", cursor);
             assertTrue(readB.found(),
                     "INV-M2: Edge B (synced to same version) must honor cursor");
@@ -1203,28 +1120,22 @@ class ConsistencyPropertyTests {
                     "INV-M2: Edge B version " + readB.version()
                             + " must be >= cursor " + cursor.version());
 
-            // Now commit more on control plane
             long newSeq = cluster.proposeAndCommit(leader, "config.db", "db-v6", 100);
             assertTrue(newSeq > 0);
 
-            // Sync only Edge B (simulating Edge A going down)
+            // Sync only Edge B, simulating Edge A going down.
             ConfigSnapshot newSnap = controlPlane.snapshot();
             ConfigDelta delta = DeltaComputer.compute(snapAfterWrites, newSnap);
             edgeB.applyDelta(delta);
 
-            // Client reading from Edge B with old cursor still works (newer data)
             ReadResult readB2 = edgeB.get("config.db", cursor);
             assertTrue(readB2.found(), "INV-M2: Edge B with newer data must serve old cursor");
             assertTrue(readB2.version() >= cursor.version());
         }
     }
 
-    // =======================================================================
-    // INV-W1: Per-Key Total Order
-    //
-    // INV-W1: For all writes w1, w2 to key k where w1 committed before w2:
-    //   seq(w1) < seq(w2)
-    // =======================================================================
+    // INV-W1: Per-key total order.
+    // For all writes w1, w2 to key k where w1 committed before w2: seq(w1) < seq(w2).
 
     @Nested
     class PerKeyTotalOrderTest {
@@ -1303,7 +1214,6 @@ class ConsistencyPropertyTests {
             int leader = cluster.electLeader(800);
             assertTrue(leader >= 0, "Leader must be elected");
 
-            // Writes under old leader
             long lastSeqOldLeader = -1;
             for (int i = 0; i < 5; i++) {
                 lastSeqOldLeader = cluster.proposeAndCommit(leader, "ordered-key", "old-" + i, 100);
@@ -1312,17 +1222,14 @@ class ConsistencyPropertyTests {
 
             cluster.runTicks(200);
 
-            // Record the version of the key from any replica
             ReadResult oldResult = cluster.store(leader).get("ordered-key");
             assertTrue(oldResult.found());
             long oldVersion = oldResult.version();
 
-            // Partition old leader
             cluster.sim().isolateNode(NodeId.of(leader));
             int newLeader = cluster.awaitStableLeader(Set.of(leader), 2000);
             assertTrue(newLeader >= 0, "New leader must be elected");
 
-            // Writes under new leader
             for (int i = 0; i < 5; i++) {
                 long seq = cluster.proposeAndCommit(newLeader, "ordered-key", "new-" + i, 100);
                 assertTrue(seq > 0, "New leader write " + i + " must commit");
@@ -1331,7 +1238,6 @@ class ConsistencyPropertyTests {
                                 + " must be > old version " + oldVersion);
             }
 
-            // Final value must be from the new leader
             ReadResult newResult = cluster.store(newLeader).get("ordered-key");
             assertTrue(newResult.found());
             assertEquals("new-4", str(newResult.value()));
@@ -1339,12 +1245,9 @@ class ConsistencyPropertyTests {
         }
     }
 
-    // =======================================================================
-    // INV-W2: Intra-Group Order
-    //
-    // INV-W2: For all writes w1, w2 in group g where w1 committed before w2:
-    //   seq(w1) < seq(w2) AND hlc(w1) < hlc(w2)
-    // =======================================================================
+    // INV-W2: Intra-group order.
+    // For all writes w1, w2 in group g where w1 committed before w2:
+    // seq(w1) < seq(w2) and hlc(w1) < hlc(w2).
 
     @Nested
     class IntraGroupOrderTest {
@@ -1427,7 +1330,6 @@ class ConsistencyPropertyTests {
             int leader = cluster.electLeader(1200);
             assertTrue(leader >= 0, "Leader must be elected");
 
-            // Record per-node commit ordering
             List<List<String>> perNodeOrder = new ArrayList<>();
             for (int i = 0; i < 3; i++) {
                 List<String> order = new CopyOnWriteArrayList<>();
@@ -1445,18 +1347,16 @@ class ConsistencyPropertyTests {
                 assertTrue(seq > 0, "Write " + i + " must commit");
             }
 
-            // Allow full replication
             cluster.runTicks(300);
 
-            // All non-empty replicas must have the same order
             List<String> leaderOrder = perNodeOrder.get(leader);
             assertFalse(leaderOrder.isEmpty(), "Leader must have committed entries");
 
             for (int i = 0; i < 3; i++) {
                 if (i == leader) continue;
                 List<String> replicaOrder = perNodeOrder.get(i);
-                // Replica may have a subset if still catching up, but what it
-                // has must match the leader's prefix
+                // A replica may have a subset if still catching up, but what it has must
+                // match the leader's prefix.
                 for (int j = 0; j < replicaOrder.size(); j++) {
                     assertEquals(leaderOrder.get(j), replicaOrder.get(j),
                             "INV-W2 violated: Node " + i + " disagrees with leader"
@@ -1467,14 +1367,10 @@ class ConsistencyPropertyTests {
         }
     }
 
-    // =======================================================================
-    // INV-RYW1: Read-Your-Writes
-    //
-    // INV-RYW1: For all writes w by client c that commit at seq S,
-    //   for all subsequent reads r by c with cursor.version >= S,
-    //   in the same region:
-    //     version(response(r)) >= S (within ryw_timeout)
-    // =======================================================================
+    // INV-RYW1: Read-your-writes.
+    // For all writes w by client c that commit at seq S, for all subsequent reads r
+    // by c with cursor.version >= S, in the same region: version(response(r)) >= S
+    // (within ryw_timeout).
 
     @Nested
     class ReadYourWritesTest {
@@ -1555,18 +1451,15 @@ class ConsistencyPropertyTests {
             VersionedConfigStore controlPlane = cluster.store(leader);
             LocalConfigStore edge = new LocalConfigStore();
 
-            // Write then sync to edge
             long seq1 = cluster.proposeAndCommit(leader, "ephemeral", "temp-data", 100);
             assertTrue(seq1 > 0);
             ConfigSnapshot snap1 = controlPlane.snapshot();
             edge.loadSnapshot(snap1);
 
-            // Verify key exists
             VersionCursor cursor1 = new VersionCursor(seq1, seq1 * 1000);
             ReadResult r1 = edge.get("ephemeral", cursor1);
             assertTrue(r1.found(), "Key must exist before delete");
 
-            // Delete and sync
             long prevVersion = controlPlane.currentVersion();
             boolean accepted = cluster.proposeDelete(leader, "ephemeral");
             assertTrue(accepted);
@@ -1580,7 +1473,6 @@ class ConsistencyPropertyTests {
             ConfigDelta delta = DeltaComputer.compute(snap1, controlPlane.snapshot());
             edge.applyDelta(delta);
 
-            // After delete, read with new cursor must not find the key
             VersionCursor cursor2 = new VersionCursor(deleteSeq, deleteSeq * 1000);
             ReadResult r2 = edge.get("ephemeral", cursor2);
             assertFalse(r2.found(),
@@ -1600,7 +1492,6 @@ class ConsistencyPropertyTests {
             VersionedConfigStore controlPlane = cluster.store(leader);
             LocalConfigStore edge = new LocalConfigStore();
 
-            // Write multiple keys
             long lastSeq = -1;
             String[] keys = {"db.host", "db.port", "db.name"};
             String[] values = {"prod.db.internal", "5432", "config_db"};
@@ -1609,11 +1500,9 @@ class ConsistencyPropertyTests {
                 assertTrue(lastSeq > 0, "Write to " + keys[i] + " must commit");
             }
 
-            // Sync edge
             edge.loadSnapshot(controlPlane.snapshot());
             VersionCursor cursor = new VersionCursor(lastSeq, lastSeq * 1000);
 
-            // All keys must be readable with the cursor
             for (int i = 0; i < keys.length; i++) {
                 ReadResult result = edge.get(keys[i], cursor);
                 assertTrue(result.found(),
@@ -1623,10 +1512,6 @@ class ConsistencyPropertyTests {
             }
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Version Monotonicity at Edge
-    // -----------------------------------------------------------------------
 
     @Nested
     class VersionMonotonicityEdgeTest {
@@ -1694,9 +1579,7 @@ class ConsistencyPropertyTests {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // INV-6 (TLA+): No Stale Overwrite
-    // -----------------------------------------------------------------------
+    // INV-6 (TLA+): no stale overwrite.
 
     @Nested
     class NoStaleOverwriteTest {
@@ -1785,10 +1668,6 @@ class ConsistencyPropertyTests {
                     "INV-6 violated: committed value was overwritten");
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Election Safety: At most one leader per term
-    // -----------------------------------------------------------------------
 
     @Nested
     class ElectionSafetyTest {

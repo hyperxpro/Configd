@@ -25,18 +25,18 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The Gate-4 HTTP control-plane client against the scriptable {@link MockControlPlane}: the get/put/delete happy
- * paths (seq-from-body, version-from-header), every §07 status reaction, leader-following (hint follow-once /
+ * Tests the HTTP control-plane client against the scriptable {@link MockControlPlane}: the get/put/delete happy
+ * paths (seq-from-body, version-from-header), every status reaction, leader-following (hint follow-once /
  * hintless N=1 loop / unresolvable-hint / anti-SSRF), the indeterminate-write contract, the replay guard, the
  * strong-read fail-close, the query composition (the {@code consistency=linearizable} loose-substring literal /
- * exact {@code scope=}), branch-on-code-not-body, and the transfer-leadership 5th route.
+ * exact {@code scope=}), branch-on-code-not-body, and the transfer-leadership route.
  */
 @Timeout(30)
 class ConfigdHttpClientTest {
 
     private static final RetryPolicy FAST = new RetryPolicy(Duration.ofMillis(2), Duration.ofMillis(10), 4);
 
-    // -------- happy paths --------
+    // happy paths
 
     @Test
     void getReturnsValueAndVersionFromHeader() throws Exception {
@@ -91,7 +91,7 @@ class ConfigdHttpClientTest {
         }
     }
 
-    // -------- status reactions --------
+    // status reactions
 
     @Test
     void badRequest400IsTerminal() throws Exception {
@@ -141,11 +141,11 @@ class ConfigdHttpClientTest {
         }
     }
 
-    // -------- leader following (§05) --------
+    // leader following
 
     @Test
     void hintless503RetriesSameEndpointThenSucceeds() throws Exception {
-        // The REQUIRED N=1 election loop: a hintless 503 is retried within the bounded budget.
+        // The election loop that is required even at N=1: a hintless 503 is retried within the bounded budget.
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.text(503, "Not Leader")); // no X-Leader-Hint (leader unknown)
             s.enqueue(Response.committed(9));
@@ -161,7 +161,7 @@ class ConfigdHttpClientTest {
             n1.enqueue(Response.of(503, Map.of("X-Leader-Hint", "2"), "Not Leader (leader=Node-2)"));
             n2.enqueue(Response.committed(11));
             // A LinkedHashMap pins the entry order so node 1 is the deterministic starting endpoint (Map.of
-            // iteration order is unspecified — any node is a valid entry point, so the client is order-agnostic).
+            // iteration order is unspecified -- any node is a valid entry point, so the client is order-agnostic).
             java.util.Map<Integer, java.net.URI> map = new java.util.LinkedHashMap<>();
             map.put(1, n1.baseUri());
             map.put(2, n2.baseUri());
@@ -178,7 +178,7 @@ class ConfigdHttpClientTest {
 
     @Test
     void unresolvableHintDegradesToHintlessRetry() throws Exception {
-        // Anti-SSRF: a hint naming a NodeId not in the map is NOT chased — it degrades to a hintless retry.
+        // Anti-SSRF: a hint naming a NodeId not in the map is NOT chased -- it degrades to a hintless retry.
         try (MockControlPlane s = new MockControlPlane()) {
             s.enqueue(Response.of(503, Map.of("X-Leader-Hint", "99"), "Not Leader")); // 99 not in the map
             s.enqueue(Response.committed(7));
@@ -192,7 +192,7 @@ class ConfigdHttpClientTest {
         }
     }
 
-    // -------- indeterminate write (§04 D4-8) --------
+    // indeterminate write
 
     @Test
     void indeterminate504RetriesToDefinite() throws Exception {
@@ -210,18 +210,19 @@ class ConfigdHttpClientTest {
             for (int i = 0; i < FAST.maxAttempts(); i++) {
                 s.enqueue(Response.text(504, "unconfirmed"));
             }
-            // Budget exhausted with the last outcome indeterminate ⇒ UNKNOWN, never a false definite failure.
+            // Budget exhausted with the last outcome still indeterminate: the result is unknown, never a
+            // false definite failure.
             assertThrows(IndeterminateException.class,
                     () -> c.blocking().put("k", "v".getBytes(), WriteOptions.defaults()));
         }
     }
 
-    // -------- strong-read fail-close (§04 D3-5) --------
+    // strong-read fail-close
 
     @Test
     void strongReadFailClosedNeverServesStale() throws Exception {
-        // A strong-read fail-closed 503 (X-Fail-Closed) that never resolves exhausts as Unavailable — the client
-        // NEVER returns a stale value for it.
+        // A strong-read fail-closed 503 (X-Fail-Closed) that never resolves exhausts as Unavailable -- the client
+        // never returns a stale value for it.
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             for (int i = 0; i < FAST.maxAttempts(); i++) {
                 s.enqueue(Response.of(503, Map.of("X-Fail-Closed", "strong-read"), "Fail-closed: strong-read"));
@@ -230,7 +231,7 @@ class ConfigdHttpClientTest {
         }
     }
 
-    // -------- replay guard (§05 R6-4) --------
+    // replay guard
 
     @Test
     void replayGuard409RetriesWithAFreshNonce() throws Exception {
@@ -250,7 +251,7 @@ class ConfigdHttpClientTest {
         }
     }
 
-    // -------- query composition (§04 D3-4/D7) --------
+    // query composition
 
     @Test
     void linearizableEmitsExactLiteralAndScopeIsExact() throws Exception {
@@ -267,18 +268,18 @@ class ConfigdHttpClientTest {
         }
     }
 
-    // -------- branch on code, not body (§07 E6) --------
+    // branch on code, not body
 
     @Test
     void errorBodyThatLooksLikeJsonIsNotParsedAsSuccess() throws Exception {
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
-            // A 403 whose plaintext body happens to look like JSON under application/json — still Forbidden.
+            // A 403 whose plaintext body happens to look like JSON under application/json is still Forbidden.
             s.enqueue(Response.of(403, Map.of("Content-Type", "application/json"), "{\"granted\":true}"));
             assertThrows(ForbiddenException.class, () -> c.blocking().get("k", GetOptions.defaults()));
         }
     }
 
-    // -------- transfer-leadership (the 5th route, §04 D2-2a) --------
+    // transfer-leadership (the admin route)
 
     @Test
     void transferLeadershipInitiated() throws Exception {
@@ -293,8 +294,8 @@ class ConfigdHttpClientTest {
 
     @Test
     void transferLeadership409PreconditionIsTerminalNotReplayRetry() throws Exception {
-        // A 409 on the transfer route is a PRECONDITION failure (target==self / not a voter), NOT a replayed
-        // nonce — it must be terminal, never retried as a fresh-nonce replay (§04 D2-2a).
+        // A 409 on the transfer route is a precondition failure (target == self, or not a voter), not a replayed
+        // nonce -- it must be terminal, never retried as a fresh-nonce replay.
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.text(409, "Leadership transfer rejected: target is not a voter"));
             assertThrows(BadRequestException.class, () -> c.blocking().transferLeadership(0, 2));
@@ -309,8 +310,6 @@ class ConfigdHttpClientTest {
             assertThrows(ForbiddenException.class, () -> c.blocking().transferLeadership(0, 2));
         }
     }
-
-    // -----------------------------------------------------------------------
 
     private static ConfigdHttpClient client(MockControlPlane server) {
         return ConfigdHttpClient.builder()

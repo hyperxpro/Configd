@@ -10,10 +10,10 @@ import java.util.random.RandomGeneratorFactory;
  * - the edge-plane analogue of {@link AdversarialSchedule}, kept
  * <b>entirely separate</b> from it. It draws from its <em>own</em>
  * {@code mixSeed} sub-stream ({@link #TAG_EDGE_FAULT}) so it never perturbs the CP
- * schedule's fault/workload streams: every historical CP seed (the 507-seed gate,
+ * schedule's fault/workload streams: every existing CP seed (the 507-seed gate,
  * {@code SeedSweepTest}) stays byte-identical.
  *
- * <h2>New mixSeed tag registry</h2>
+ * <h2>mixSeed tag registry</h2>
  * All edge tags are {@code >= 1_010} and collide with no existing tag (CP tags:
  * 1_001 fault, 1_002 workload, 2_001 net, 3_001 skew, 3_002 netcfg; per-node
  * election streams use the small node id). They live in {@link EdgeFanOutSim} /
@@ -25,7 +25,7 @@ import java.util.random.RandomGeneratorFactory;
  *   <li>{@code 1_012} - this edge-fault schedule ({@link #TAG_EDGE_FAULT})</li>
  * </ul>
  *
- * <p>Edge fault families (do NOT reuse {@link AdversarialSchedule.FaultKind} - 
+ * <p>Edge fault families (do NOT reuse {@link AdversarialSchedule.FaultKind} -
  * the CP grammar is untouched): edge partition add/remove (CP<->edge channel),
  * edge crash + restart, and lag begin/end.
  */

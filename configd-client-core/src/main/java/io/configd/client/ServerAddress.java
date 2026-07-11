@@ -4,8 +4,8 @@ import java.util.Objects;
 
 /**
  * A resolvable edge endpoint — a host name and port. The host is kept as a <b>name</b> (not pre-resolved) so
- * the TLS layer can verify the server certificate's SAN against it ({@code HTTPS} endpoint identification,
- * §06 F9-4). There is no wire discovery: endpoints are operator-provided.
+ * the TLS layer can verify the server certificate's SAN against it ({@code HTTPS} endpoint identification).
+ * There is no wire discovery: endpoints are operator-provided.
  */
 public record ServerAddress(String host, int port) {
 

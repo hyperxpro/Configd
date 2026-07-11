@@ -16,7 +16,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * The Gate-5 to Gate-6 exp seam at the edge: {@link EdgeAuthConfig#tokenCloseDeadlineMillis} closes a token
+ * The token-expiry seam at the edge: {@link EdgeAuthConfig#tokenCloseDeadlineMillis} closes a token
  * connection at the authority-issued {@code exp + leeway} when the authenticated result carries one (as an
  * OIDC token does), and falls back to the byte-identical {@code now + defaultTokenTtlMs} for a static token
  * that carries no authority expiry.
@@ -63,7 +63,7 @@ final class EdgeAuthConfigExpiryTest {
     @Test
     void staticTokenWithoutAuthorityExpiryClosesAtNowPlusTtl() {
         long now = 1_000_000_000_000L;
-        // NO_EXPIRY (a static bearer/basic token): byte-identical to the pre-Gate-6 session cap, no leeway.
+        // NO_EXPIRY (a static bearer/basic token): byte-identical to the prior session cap, no leeway.
         assertEquals(now + 3_600_000L,
                 config().tokenCloseDeadlineMillis(authenticated(AuthResult.NO_EXPIRY), now));
         assertEquals(config().staticTokenCloseDeadlineMillis(now),

@@ -53,9 +53,7 @@ class EdgeFrameCodecFuzzTest {
     private static final int MIN_FRAME = EdgeFrameCodec.HEADER_SIZE + EdgeFrameCodec.TRAILER_SIZE; // 10
     private static final byte V2 = EdgeFrameCodec.EDGE_WIRE_VERSION_V2;
 
-    // -----------------------------------------------------------------------
     // 1. Arbitrary bytes.
-    // -----------------------------------------------------------------------
 
     @Property(tries = 2000, seed = "424242")
     void arbitraryBytesYieldFrameOrCodecExceptionOnly(@ForAll("adversarialSized") byte[] data) {
@@ -83,9 +81,7 @@ class EdgeFrameCodecFuzzTest {
         });
     }
 
-    // -----------------------------------------------------------------------
     // 2. Structured length-lie on a valid frame.
-    // -----------------------------------------------------------------------
 
     @Property(tries = 500, seed = "1001")
     void lengthPrefixLieIsRejectedAsCodecException(
@@ -148,9 +144,7 @@ class EdgeFrameCodecFuzzTest {
         });
     }
 
-    // -----------------------------------------------------------------------
     // 3 & 4. Oversize / boundary length at the codec level.
-    // -----------------------------------------------------------------------
 
     /**
      * The OOM lever at the edge codec: a length prefix at MAX_EDGE_FRAME_SIZE+1 or
@@ -203,9 +197,7 @@ class EdgeFrameCodecFuzzTest {
         assertEquals(new EdgeFrame.CursorAck(42), f);
     }
 
-    // -----------------------------------------------------------------------
     // 5. Watch frames (0x02). Same single-typed-failure oracle.
-    // -----------------------------------------------------------------------
 
     /** Truncating a valid 0x02 watch frame at any boundary yields a CodecException only. */
     @Property(tries = 500, seed = "2000")
@@ -263,7 +255,7 @@ class EdgeFrameCodecFuzzTest {
         for (int hc : hostile) {
             byte[] wire = EdgeFrameCodec.encode(
                     new EdgeFrame.WatchProgress(7L, WatchCursor.fromNow(), 123L), V2);
-            // cursor count is at offset HEADER(6) + watchId(8) + topologyEpoch(8) = 22 (A4 prefix).
+            // cursor count is at offset HEADER(6) + watchId(8) + topologyEpoch(8) = 22.
             ByteBuffer.wrap(wire).putInt(22, hc);
             repairCrc(wire);
             assertTimeoutPreemptively(DECODE_BUDGET, () -> {
@@ -279,7 +271,7 @@ class EdgeFrameCodecFuzzTest {
     void unsortedOrDuplicateGidCursorRejected() {
         WatchCursor twoComp = new WatchCursor(List.of(
                 new WatchCursor.Component(0, 1L), new WatchCursor.Component(1, 2L)));
-        // Layout after the A4 epoch prefix: watchId@6, topologyEpoch@14, count@22, comp0.gid@26,
+        // Layout after the epoch prefix: watchId@6, topologyEpoch@14, count@22, comp0.gid@26,
         // comp0.S@30, comp1.gid@38.
         byte[] dup = EdgeFrameCodec.encode(new EdgeFrame.WatchProgress(7L, twoComp, 9L), V2);
         ByteBuffer.wrap(dup).putInt(38, 0); // comp1.gid := comp0.gid (duplicate)
@@ -328,25 +320,22 @@ class EdgeFrameCodecFuzzTest {
         assertEquals(ErrorCode.FRAME_CORRUPT, ex.code());
     }
 
-    // -----------------------------------------------------------------------
-    // 6. Gate-2 amplifier reject paths, machine-swept.
+    // 6. Amplifier reject paths, machine-swept.
     //
-    // The Gate-2 hardening added two client-facing amplifier bounds to the edge
-    // codec; EdgeSubscribeBoundsTest / EdgeFrameCodecStrictnessTest pin the
-    // hand-aimed unit cases, and section 1's arbitrary-byte oracle exercises them
-    // incidentally. These properties sweep the exact hostile field with the
-    // fuzzer so the bound is proven across the whole int range, not a few points.
+    // Two client-facing amplifier bounds guard the edge codec; EdgeSubscribeBoundsTest /
+    // EdgeFrameCodecStrictnessTest pin the hand-aimed unit cases, and section 1's
+    // arbitrary-byte oracle exercises them incidentally. These properties sweep the
+    // exact hostile field with the fuzzer so the bound is proven across the whole int
+    // range, not a few points.
     //
-    // (The Raft-plane Gate-2 reject paths - WH-05 negative InstallSnapshot offset
-    //  and WH-06 trailing-byte strictness - are machine-swept in
-    //  RaftMessageCodecFuzzTest, the sibling suite in configd-server. The
-    //  SNAPSHOT_CHUNK decode cap is bounded by MAX_EDGE_FRAME_SIZE and covered by
-    //  the section-1 arbitrary-byte oracle; its encode cap
+    // (The Raft-plane reject paths - a negative InstallSnapshot offset and trailing-byte
+    //  strictness - are machine-swept in RaftMessageCodecFuzzTest, the sibling suite in
+    //  configd-server. The SNAPSHOT_CHUNK decode cap is bounded by MAX_EDGE_FRAME_SIZE and
+    //  covered by the section-1 arbitrary-byte oracle; its encode cap
     //  MAX_SNAPSHOT_CHUNK_BYTES is pinned by EdgeSnapshotCodecTest.)
-    // -----------------------------------------------------------------------
 
     /**
-     * WH-12: sweep the SUBSCRIBE {@code prefixCount} across the full int range on a CRC-valid frame
+     * Sweep the SUBSCRIBE {@code prefixCount} across the full int range on a CRC-valid frame
      * that carries only {@code filler} trailing bytes. The tight {@code prefixCount * 4 <= remaining}
      * pre-check and the {@link EdgeFrameCodec#MAX_PREFIXES} cap must keep decode total: a valid
      * {@link EdgeFrame} or a {@link EdgeFrameCodec.CodecException} - never an
@@ -371,7 +360,7 @@ class EdgeFrameCodecFuzzTest {
     }
 
     /**
-     * WH-12 boundary: {@code MAX_PREFIXES + 1} with EXACTLY enough filler that the tight byte-bound
+     * Boundary: {@code MAX_PREFIXES + 1} with EXACTLY enough filler that the tight byte-bound
      * passes, so the element-count cap - not the byte-bound - is the guard that fires. Proves the cap
      * is a real second line and rejects before allocation, as FRAME_CORRUPT.
      */
@@ -386,7 +375,7 @@ class EdgeFrameCodecFuzzTest {
     }
 
     /**
-     * WH-14: a NOTIFY payload strictly larger than {@link EdgeFrameCodec#MAX_NOTIFY_BATCH_BYTES} is
+     * A NOTIFY payload strictly larger than {@link EdgeFrameCodec#MAX_NOTIFY_BATCH_BYTES} is
      * rejected as {@link ErrorCode#FRAME_TOO_LARGE} at decode - the byte-sum cap is checked BEFORE the
      * count field is even read - while a payload at/under the cap stays total (here: a
      * {@code count}-led parse that surfaces as a clean CodecException on the zero-filled body). Sweeps
@@ -453,9 +442,7 @@ class EdgeFrameCodecFuzzTest {
         return f;
     }
 
-    // -----------------------------------------------------------------------
     // Oracle + helpers.
-    // -----------------------------------------------------------------------
 
     private static void assertOracleHolds(byte[] data) {
         assertTimeoutPreemptively(DECODE_BUDGET, () -> {
@@ -491,9 +478,7 @@ class EdgeFrameCodecFuzzTest {
         return "len=" + data.length + " hex=" + hex + (data.length > 48 ? "..." : "");
     }
 
-    // -----------------------------------------------------------------------
     // Arbitraries.
-    // -----------------------------------------------------------------------
 
     @Provide
     Arbitrary<byte[]> adversarialSized() {

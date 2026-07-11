@@ -29,10 +29,6 @@ public final class ConfigValidator {
     private final ConcurrentNavigableMap<String, Validator> prefixValidators =
             new ConcurrentSkipListMap<>();
 
-    // -----------------------------------------------------------------------
-    // Registration
-    // -----------------------------------------------------------------------
-
     /**
      * Registers a validator for the given key prefix.
      * <p>
@@ -63,10 +59,6 @@ public final class ConfigValidator {
     public boolean deregister(String prefix) {
         return prefixValidators.remove(prefix) != null;
     }
-
-    // -----------------------------------------------------------------------
-    // Validation
-    // -----------------------------------------------------------------------
 
     /**
      * Validates a config key-value pair against the registered validators.
@@ -110,30 +102,20 @@ public final class ConfigValidator {
         return ValidationResult.Valid.INSTANCE;
     }
 
-    // -----------------------------------------------------------------------
-    // Internal
-    // -----------------------------------------------------------------------
-
     /**
      * Finds the validator with the longest prefix that matches the given key.
      * Uses descending iteration from the key itself to find the best match.
      */
     private Validator findLongestPrefixValidator(String key) {
-        // Iterate from the key downward to find the longest matching prefix
         Map.Entry<String, Validator> entry = prefixValidators.floorEntry(key);
         while (entry != null) {
             if (key.startsWith(entry.getKey())) {
                 return entry.getValue();
             }
-            // Try the next lower entry
             entry = prefixValidators.lowerEntry(entry.getKey());
         }
         return null;
     }
-
-    // -----------------------------------------------------------------------
-    // Validator functional interface
-    // -----------------------------------------------------------------------
 
     /**
      * A validation function for config values.
@@ -153,10 +135,6 @@ public final class ConfigValidator {
          */
         ValidationResult validate(String key, byte[] value);
     }
-
-    // -----------------------------------------------------------------------
-    // ValidationResult sealed hierarchy
-    // -----------------------------------------------------------------------
 
     /**
      * The result of validating a config value. Sealed to the two permitted

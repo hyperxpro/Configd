@@ -18,17 +18,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Codec proof for the Gate-3c anchor-witness wire types ({@code RAFT_WITNESS} / {@code RAFT_WITNESS_REPLY}).
+ * Codec proof for the anchor-witness wire types ({@code RAFT_WITNESS} / {@code RAFT_WITNESS_REPLY}).
  * Pins the frozen 29-byte body layout (golden), the round-trip, the fail-closed decode paths, and the
- * security-relevant property that the sender identity is the transport-authenticated {@code from}, never a
- * spoofable body field (W5).
+ * security-relevant property that the sender identity is the transport-authenticated {@code from}, never
+ * a spoofable body field.
  */
 final class RaftWitnessCodecTest {
 
     private static final int GID = 4;
     private static final NodeId SENDER = NodeId.of(2);
-
-    // ---- golden: the frozen 29-byte body layout ----
 
     @Test
     void witnessBodyIsFrozen29ByteGolden() {
@@ -60,8 +58,6 @@ final class RaftWitnessCodecTest {
         assertEquals(-1, votedFor);
     }
 
-    // ---- round-trip via decodeWitness(frame, from) ----
-
     @Test
     void witnessRoundTripsWithFromInjectedAsSender() {
         WitnessMessage sent = new WitnessMessage(SENDER, 100L, 7L, 3, 55L, true);
@@ -91,11 +87,9 @@ final class RaftWitnessCodecTest {
         assertEquals(150L, got.seenOfYouSeq());
     }
 
-    // ---- W5: the sender cannot be spoofed in the body ----
-
     @Test
     void senderIsFromNotBody_spoofResistant() {
-        // A hostile-but-authenticated peer forges a body claiming to be node 999. The wire carries NO
+        // A hostile-but-authenticated peer forges a body claiming to be node 999. The wire carries no
         // in-body sender, so after decode the attributed sender is the transport-authenticated `from`.
         WitnessMessage forged = new WitnessMessage(NodeId.of(999), 5L, 1L, 999, 5L, false);
         FrameCodec.Frame frame = RaftMessageCodec.encode(forged, GID);
@@ -104,8 +98,6 @@ final class RaftWitnessCodecTest {
         assertEquals(authenticatedFrom, got.sender(),
                 "the witness tables are keyed on the authenticated origin, never a body-claimed id");
     }
-
-    // ---- fail-closed decode paths ----
 
     @Test
     void genericDecodeRejectsWitnessFramesDirectionally() {

@@ -14,35 +14,29 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Verifies vote (and term) persistence across a CRASH-RESTART.
+ * Verifies vote (and term) persistence across a crash-restart.
  * <p>
  * Election Safety (Raft section 5.2) requires that {@code votedFor} survive a process
  * restart: a node must never grant a second vote in the same term to a
- * <em>different</em> candidate. The grant path
- * ({@code RaftNode.handleRequestVote}) persists the vote via
- * {@code durableState.vote(candidate)} BEFORE updating the in-memory field. The
- * gaps guarded here are:
- * <ul>
- *   <li>{@code handleRequestVote} "removed call to DurableRaftState::vote"
- *       A missing persistence call leaves the in-memory {@code votedFor} is still set, so a
- *       SAME-PROCESS double-vote is still rejected; the loss only shows up
- *       across a restart, where the recovered {@code votedFor} is null.</li>
- *   <li>{@code DurableRaftState.persistValues} "removed call to Storage::sync"
- *       See also the equivalent-behavior note in
- *       {@code docs/session-2/mutation-kill-list.md}: {@code Storage.put} is
- *       self-durable (temp+force+atomic-rename+dir-fsync in {@code FileStorage},
- *       modelled faithfully by {@code CrashStorage.put}), so the trailing
- *       {@code sync()} after a {@code put} is redundant and its removal is
- *       behaviorally invisible. This test pins the vote DURABILITY itself
- *       (which the load-bearing {@code put} provides); the redundant sync is
- *       documented as equivalent rather than killed by a fake assertion.</li>
- * </ul>
- * The test models a real power loss with {@link CrashStorage}: the live node's
- * persisted vote reaches the durable image immediately (self-durable
- * {@code put}); a {@link CrashStorage#recoveredView()} boots a fresh node over
- * exactly the bytes that reached the platter. Removing the
- * {@code durableState.vote(...)} call makes the recovered {@code votedFor} null
- * and the post-restart double-vote SUCCEED - which this test catches.
+ * <em>different</em> candidate. The grant path ({@code RaftNode.handleRequestVote}) persists
+ * the vote via {@code durableState.vote(candidate)} before updating the in-memory field.
+ * <p>
+ * If that persistence call were missing, the in-memory {@code votedFor} would still be set,
+ * so a same-process double-vote would still be rejected; the loss only shows up across a
+ * restart, where the recovered {@code votedFor} is null.
+ * <p>
+ * Separately, {@code Storage.put} is self-durable (temp+force+atomic-rename+dir-fsync in
+ * {@code FileStorage}, modelled faithfully by {@code CrashStorage.put}), so a trailing
+ * {@code sync()} call after a {@code put} is redundant - removing it is behaviorally
+ * invisible. This test pins the vote's durability itself (which the load-bearing
+ * {@code put} provides), not that redundant sync.
+ * <p>
+ * The test models a real power loss with {@link CrashStorage}: the live node's persisted
+ * vote reaches the durable image immediately (self-durable {@code put}); a
+ * {@link CrashStorage#recoveredView()} boots a fresh node over exactly the bytes that
+ * reached the platter. Removing the {@code durableState.vote(...)} call makes the
+ * recovered {@code votedFor} null and the post-restart double-vote succeed - which this
+ * test catches.
  */
 class VotePersistenceCrashTest {
 

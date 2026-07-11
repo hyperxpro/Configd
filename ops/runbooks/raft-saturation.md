@@ -1,8 +1,7 @@
 # Runbook: Raft Apply Backlog / Wedged Leader / Election Livelock
 
 **Alert:** `ConfigdRaftApplyBacklog` (warn, `max(configd_raft_pending_apply_entries) > 5000`, 5m)
-**Also covers (no direct alert):** stuck/wedged leader, election livelock
-(the RR-095 / RR-103 family).
+**Also covers (no direct alert):** stuck/wedged leader, election livelock.
 **Severity:** warn (early indicator before `ConfigdWriteCommitFastBurn`)
 
 The leader is committing entries faster than the state machine applies them
@@ -42,8 +41,8 @@ Open `Configd Control Plane` (`ops/dashboards/configd-control-plane.json`).
    signature-verification spike, or a GC pause during apply
    (`Configd Runtime` GC panel).
 3. **Wedged leader (backlog NOT growing, but no commits either).** This is
-   the RR-095/RR-103 family: the leader holds leadership but inflight
-   replication is starved.
+   a known wedged-leader failure mode: the leader holds leadership but
+   inflight replication is starved.
    - `Configd Control Plane` **"Term changes / min"** flat (it is **not**
      re-electing — it still thinks it is leader) and `configd_write_commit_total`
      flat at zero.
@@ -72,14 +71,15 @@ Open `Configd Control Plane` (`ops/dashboards/configd-control-plane.json`).
    `ConfigSigner` library in `pom.xml` was not swapped. If GC, follow
    [resource-leak.md](resource-leak.md). If fsync await is high, follow
    [disk-full-fsync.md](disk-full-fsync.md).
-3. **Wedged leader (RR-095/RR-103):** force a leadership change by recycling
+3. **Wedged leader:** force a leadership change by recycling
    the wedged leader so a fresh voter takes over and unblocks progress:
    ```sh
    kubectl -n configd delete pod <leader>
    ```
    Confirm the new leader's `configd_write_commit_total` rate resumes. File
    against the consensus owner with the leader's logs (leaderId/term/role
-   evidence) — a recurring wedge is a P1 (RR-095 is a known stall family).
+   evidence) — a recurring wedge is a P1 (a known stall family, see
+   `Rr095StallSeedDiagnosisTest`).
 4. **Election livelock:** go to [control-plane-down.md](control-plane-down.md)
    — recycle the churn-source voter.
 
@@ -94,8 +94,8 @@ Open `Configd Control Plane` (`ops/dashboards/configd-control-plane.json`).
 
 ## Escalation
 
-- Page the consensus owner if the leader re-wedges after recycle (RR-095
-  family stall recurring) — this is a correctness-adjacent P1, not a capacity
+- Page the consensus owner if the leader re-wedges after recycle (a known
+  stall family recurring) — this is a correctness-adjacent P1, not a capacity
   event.
 - Escalate to [control-plane-down.md](control-plane-down.md) if the backlog
   is a symptom of leader churn rather than apply cost.
@@ -104,9 +104,10 @@ Open `Configd Control Plane` (`ops/dashboards/configd-control-plane.json`).
 
 `Rr095StallSeedDiagnosisTest`
 (`configd-testkit/src/test/java/io/configd/testkit/Rr095StallSeedDiagnosisTest.java`)
-re-runs the registered stall seeds against the RR-103-fixed kernel and proves
-the wedge family; `LivenessBoundedProgressSweepTest` (same module)
-distinguishes never-heals (RR-095) from recovers-after-heal (RR-103). The
+re-runs the registered stall seeds against the fixed kernel and proves the
+wedge family is closed; `LivenessBoundedProgressSweepTest` (same module)
+distinguishes stalls that never heal from stalls that recover once the
+fault clears. The
 apply-backlog gauge being live (not hardwired to 0) is proven by
 `MetricsWiringContractTest.gaugesAndElectionsCounterAreNotHardwiredToZero`
 (`configd-server/src/test/java/io/configd/server/MetricsWiringContractTest.java`).
@@ -116,7 +117,8 @@ wedge = a recycled leader resumes `configd_write_commit_total`.
 
 ## Related
 
-- RR-095 (stall seeds) / RR-103 (per-peer inflight leak, S4 fix).
-- `docs/decisions/adr-0001-embedded-raft-consensus.md` — apply pipeline.
+- Wedged-leader stall seeds and the per-peer inflight-leak fix that closed
+  them.
+- `docs/adr/adr-0001-embedded-raft-consensus.md` — apply pipeline.
 - [write-commit-latency.md](write-commit-latency.md), [control-plane-down.md](control-plane-down.md),
   [resource-leak.md](resource-leak.md), [disk-full-fsync.md](disk-full-fsync.md)

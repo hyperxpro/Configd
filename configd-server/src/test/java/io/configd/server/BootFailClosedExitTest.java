@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * H-BOOT: a fail-closed boot must EXIT cleanly, never hang. The Raft/API/edge transports start
+ * A fail-closed boot must EXIT cleanly, never hang. The Raft/API/edge transports start
  * NON-daemon Netty event loops, so a fail-closed throw AFTER the transport has started (an unreachable
  * IdP during auth-chain build, a missing provider module, an API/edge port already in use, a
  * TLS-without-manager refusal) used to kill the main thread while the event loops kept the JVM alive -

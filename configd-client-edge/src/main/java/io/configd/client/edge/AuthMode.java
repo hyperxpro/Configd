@@ -4,18 +4,17 @@ import io.configd.client.ConfigdClientConfig;
 
 /**
  * How the edge client presents its identity — derived from the {@link ConfigdClientConfig}, not asked of the
- * server (there is no negotiation, §00). A driver presents the credential it has and reads the outcome
- * (§03 AU2-1).
+ * server: there is no negotiation. A driver presents the credential it has and reads the outcome.
  */
 public enum AuthMode {
 
     /** A framed bearer/basic {@code AUTH} credential: the client sends exactly one pre-auth {@code AUTH}. */
     TOKEN,
 
-    /** A client certificate at the TLS handshake: no {@code AUTH} frame, byte-identical to a pre-auth-arc client. */
+    /** A client certificate at the TLS handshake: no {@code AUTH} frame is sent. */
     MTLS,
 
-    /** Authentication disabled: the client presents nothing but stays ready to (§03 AU4-3). */
+    /** Authentication disabled: the client presents nothing but stays ready. */
     NO_AUTH;
 
     /**

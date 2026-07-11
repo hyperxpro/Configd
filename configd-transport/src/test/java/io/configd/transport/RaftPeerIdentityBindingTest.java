@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Red-team tests for the WH-08/09 peer-identity binding on the JDK Raft transport
+ * Red-team tests for peer-identity binding on the JDK Raft transport
  * ({@link TcpRaftTransport}). Each test performs the attack over a real mTLS socket and asserts the
  * server rejects it - a control is verified only by a test that performs the attack, never by reading
  * config. The Netty twin ({@code NettyRaftPeerIdentityBindingTest}) runs the same scenarios for
@@ -57,9 +57,9 @@ class RaftPeerIdentityBindingTest {
     private static Path node2Ks;
     private static Path clientKs;
     private static Path trustStore;
-    /** A SEPARATE peer trust store containing ONLY the real node leaves (node1, node2) - R3. */
+    /** A SEPARATE peer trust store containing ONLY the real node leaves (node1, node2). */
     private static Path peerTrust;
-    /** An impostor {@code CN=raft-node-1} with a DIFFERENT key, NOT in {@link #peerTrust} (T5). */
+    /** An impostor {@code CN=raft-node-1} with a DIFFERENT key, NOT in {@link #peerTrust}. */
     private static Path impostorKs;
     /** A node cert whose identity is carried in a SAN URI (SPIFFE), not the CN (SAN-URI marker mode). */
     private static Path sanNode2Ks;
@@ -100,9 +100,9 @@ class RaftPeerIdentityBindingTest {
         importCert(trustStore, "node2", node2Cert);
         importCert(trustStore, "client", clientCert);
 
-        // R3 separate peer trust anchor: a store the server uses for the Raft interior that trusts ONLY
+        // Separate peer trust anchor: a store the server uses for the Raft interior that trusts ONLY
         // the real node leaves. An impostor CN=raft-node-1 (different key) is NOT in it, so it cannot
-        // complete the peer handshake even though its CN matches an allow-list entry (T5, structural).
+        // complete the peer handshake even though its CN matches an allow-list entry (a structural check).
         peerTrust = fixtureDir.resolve("peer-trust.p12");
         impostorKs = fixtureDir.resolve("impostor-ks.p12");
         importCert(peerTrust, "node1", node1Cert);
@@ -281,7 +281,7 @@ class RaftPeerIdentityBindingTest {
                 "an enforced allow-list without mTLS must fail loud at startup, never fail open");
     }
 
-    // ---- Test 7: separate peer CA (R3) - a client-CA cert with a matching CN fails the HANDSHAKE. ----
+    // ---- Test 7: separate peer CA - a client-CA cert with a matching CN fails the HANDSHAKE. ----
 
     @Test
     @Timeout(120)
@@ -290,7 +290,7 @@ class RaftPeerIdentityBindingTest {
         AtomicInteger rejections = new AtomicInteger();
         // The server uses a SEPARATE peer trust anchor (node1+node2 only). The impostor presents a valid
         // self-signed CN=raft-node-1 whose CN matches the allow-list - but its cert is not in the peer
-        // trust store, so the handshake fails structurally, BEFORE resolve() ever runs (T5).
+        // trust store, so the handshake fails structurally, BEFORE resolve() ever runs.
         int port = startServerWithPeerTrust(ENFORCED, peerTrust, inbound, rejections);
 
         connectHandshakeWrite(impostorKs, 1, port);
@@ -359,7 +359,7 @@ class RaftPeerIdentityBindingTest {
         return startServer(policy, trustStore, null, inbound, rejections);
     }
 
-    /** Starts the server (node-1) with a SEPARATE peer trust store (R3) for the Raft interior. */
+    /** Starts the server (node-1) with a SEPARATE peer trust store for the Raft interior. */
     private int startServerWithPeerTrust(PeerIdentityPolicy policy, Path peerTrustStore,
             AtomicInteger inbound, AtomicInteger rejections) throws Exception {
         return startServer(policy, trustStore, peerTrustStore, inbound, rejections);

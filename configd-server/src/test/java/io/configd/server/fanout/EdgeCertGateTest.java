@@ -22,12 +22,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The {@link EdgeCertGate} wiring: the online-revocation admission decision (checker {@code ->} status
- * {@code ->} off/lax/strict) and the cert-{@code notAfter} close deadline. The lax-vs-strict decision
- * itself is proven exhaustively by {@code RevocationPolicyTest}; here we prove the gate threads a real
- * chain to the checker and honours the result, and that {@code OFF} never consults the checker
- * (byte-identical). The interior exemption is structural - the Raft transport never constructs one of
- * these - so there is no interior code path to reach a checker.
+ * The {@link EdgeCertGate} wiring: the online-revocation admission decision (checker, then status, then
+ * off/lax/strict) and the cert-{@code notAfter} close deadline. The lax-vs-strict decision itself is
+ * proven exhaustively by {@code RevocationPolicyTest}; here we prove the gate threads a real chain to the
+ * checker and honours the result, and that {@code OFF} never consults the checker (byte-identical). The
+ * interior exemption is structural - the Raft transport never constructs one of these - so there is no
+ * interior code path to reach a checker.
  */
 class EdgeCertGateTest {
 
@@ -88,7 +88,7 @@ class EdgeCertGateTest {
 
     @Test
     void aNullCheckerUnderStrictIsUnknownFailClosed() {
-        // No responder wired (the v1 default) + strict => every cert is UNKNOWN => rejected.
+        // No responder wired (the default) plus strict means every cert is UNKNOWN, so it is rejected.
         assertFalse(gate(RevocationMode.STRICT, null).admit(List.of(leaf)),
                 "strict with no configured responder rejects every cert (documented foot-gun)");
         assertTrue(gate(RevocationMode.LAX, null).admit(List.of(leaf)),

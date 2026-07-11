@@ -2,7 +2,7 @@ package io.configd.client;
 
 /**
  * The terminal frame that carries an {@link io.configd.distribution.wire.ErrorCode} — the <b>scope</b> half
- * of the {@code (code, carrier)} reaction key (§07 E3-3). A pure code-byte switch is insufficient because
+ * of the {@code (code, carrier)} reaction key. A pure code-byte switch is insufficient because
  * several codes are scope-overloaded: an {@code ERROR_CLOSE} is connection-fatal (except the non-fatal
  * {@code DEMOTED_TO_CATCHUP}), whereas a {@code WATCH_CANCELED} is per-watch (the connection and sibling
  * watches survive).

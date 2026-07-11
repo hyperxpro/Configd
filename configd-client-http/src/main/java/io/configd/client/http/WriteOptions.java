@@ -2,7 +2,7 @@ package io.configd.client.http;
 
 import java.util.Objects;
 
-/** Options for a {@link ConfigdHttpClient#put} / {@link ConfigdHttpClient#delete} (§04 D4/D5/D7). */
+/** Options for a {@link ConfigdHttpClient#put} / {@link ConfigdHttpClient#delete}. */
 public record WriteOptions(Scope scope) {
 
     public WriteOptions {

@@ -25,18 +25,18 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Gate-4 node-join fail-closed default at the SERVER boot level (finding T6): an authenticated cluster
- * with TLS on the Raft interior MUST enumerate its peers, else the server refuses to start. Without an
- * allow-list, any client certificate the CA trusts could forge a peer's {@code senderId} and join
- * consensus - exactly the hole this gate closes.
+ * The node-join fail-closed default at the server boot level: an authenticated cluster with TLS on the
+ * Raft interior must enumerate its peers, else the server refuses to start. Without an allow-list, any
+ * client certificate the CA trusts could forge a peer's {@code senderId} and join consensus - exactly
+ * the hole this gate closes.
  *
  * <p>Proves both directions at the real {@code ConfigdServer.start} boot:
  * <ul>
  *   <li>auth-enabled + TLS + <b>no</b> allow-list &rarr; boot error (the gate fires before the transport
  *       binds);</li>
  *   <li>auth-enabled + TLS + an enumerated allow-list &rarr; boots (the intended production posture);</li>
- *   <li>auth-<b>disabled</b> + TLS + no allow-list &rarr; boots (byte-identity of the legacy loud-warning
- *       escape - dev/test/shared-cert fleets are unchanged).</li>
+ *   <li>auth-<b>disabled</b> + TLS + no allow-list &rarr; boots (the legacy loud-warning escape stays
+ *       byte-identical - dev/test/shared-cert fleets are unchanged).</li>
  * </ul>
  * The predicate itself is additionally unit-proven by {@code PeerIdentityPolicyTest.bootGate*}.
  */
@@ -137,7 +137,7 @@ class NodeJoinBootGateTest {
     @Test
     @Timeout(60)
     void authEnabledTlsWithoutAllowListRefusesToStart(@TempDir Path dataDir) {
-        // auth on (--auth-token) + TLS on + peer addresses configured + NO allow-list -> boot error. The
+        // auth on (--auth-token) + TLS on + peer addresses configured + no allow-list -> boot error. The
         // gate fires at the transport wiring, before the Raft transport binds, so no socket is opened.
         ServerConfig config = tlsConfig(dataDir, /*auth=*/true);
         IllegalStateException ex = assertThrows(IllegalStateException.class,
@@ -164,8 +164,8 @@ class NodeJoinBootGateTest {
     @Test
     @Timeout(60)
     void authDisabledTlsWithoutAllowListStillBoots(@TempDir Path dataDir) {
-        // Byte-identity of the legacy escape: with auth DISABLED, an empty allow-list keeps the loud-warning
-        // open gate (dev/test/shared-cert fleets are unchanged). The gate must NOT fire here.
+        // Byte-identity of the legacy escape: with auth disabled, an empty allow-list keeps the loud-warning
+        // open gate (dev/test/shared-cert fleets are unchanged). The gate must not fire here.
         ServerConfig config = tlsConfig(dataDir, /*auth=*/false);
         ConfigdServer server = ConfigdServer.start(config);
         try {

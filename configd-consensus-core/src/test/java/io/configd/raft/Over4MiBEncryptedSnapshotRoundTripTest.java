@@ -28,8 +28,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Gate 5.2 — a genuinely &gt; 4 MiB snapshot exercised across BOTH the paths a small snapshot never
- * hits together: the multi-chunk InstallSnapshot wire transfer AND the whole-blob AES-256-GCM
+ * A genuinely &gt; 4 MiB snapshot exercised across BOTH the paths a small snapshot never hits
+ * together: the multi-chunk InstallSnapshot wire transfer AND the whole-blob AES-256-GCM
  * encryption at rest.
  *
  * <h2>As-built truth this test pins (read before editing)</h2>
@@ -157,7 +157,6 @@ class Over4MiBEncryptedSnapshotRoundTripTest {
             cluster.deliverMessagesTo(active);
         }
 
-        // Force the leader's snapshot payload to be genuinely > 4 MiB, then take the snapshot.
         byte[] leaderSnapshot = blob(OVER_FOUR_MIB, "OVER-4MIB-SNAPSHOT-SENTINEL");
         cluster.stateMachines.get(N1).snapshotData = leaderSnapshot;
         assertTrue(leader.triggerSnapshot(), "leader must take the > 4 MiB snapshot");
@@ -218,7 +217,6 @@ class Over4MiBEncryptedSnapshotRoundTripTest {
         RaftLog logA = new RaftLog(storageA, env);
         logA.persistSnapshot(new SnapshotState(payloadTerm1, 100, 3));
 
-        // --- the on-disk blob is genuinely GCM-encrypted, term-stamped, and holds no plaintext ---
         byte[] rawTerm1 = Files.readAllBytes(dirA.resolve(BLOB_FILE));
         assertEquals(IntegrityEnvelope.ALG_AES256_GCM, rawTerm1[ALG_ID_OFFSET],
                 "a > 4 MiB snapshot written with encryption ON must be an AES-256-GCM envelope");
@@ -227,13 +225,13 @@ class Over4MiBEncryptedSnapshotRoundTripTest {
         assertFalse(new String(rawTerm1, StandardCharsets.ISO_8859_1).contains(sentinel),
                 "the at-rest ciphertext must not contain the plaintext sentinel");
 
-        // --- decrypts + integrity-verifies + round-trips byte-for-byte through the SAME envelope the
-        //     recovery path uses (env.unwrap = readSnapshotBlob's crypto; gid 0 = the default RaftLog scope) ---
+        // Decrypts, integrity-verifies, and round-trips through the SAME envelope the recovery path
+        // uses (env.unwrap = readSnapshotBlob's crypto; gid 0 = the default RaftLog scope).
         byte[] decrypted = env.unwrap(RaftArtifactMagic.SNAP_MAGIC, 0, rawTerm1);
         assertArrayEquals(payloadTerm1, snapshotDataOf(decrypted),
                 "the decrypted > 4 MiB snapshot must be byte-for-byte the original");
 
-        // --- a tampered ciphertext byte is REFUSED even with the CRC repaired (only the GCM tag catches it) ---
+        // A tampered ciphertext byte is refused even with the CRC repaired - only the GCM tag catches it.
         byte[] tampered = rawTerm1.clone();
         int ctByte = tampered.length / 2; // deep inside the ciphertext, past the GCM prefix
         tampered[ctByte] ^= 0x40;
@@ -242,7 +240,7 @@ class Over4MiBEncryptedSnapshotRoundTripTest {
         assertThrows(IntegrityException.class, () -> new RaftLog(storageA, env),
                 "recovery must REFUSE a tampered encrypted snapshot (fail closed), not load attacker state");
 
-        // --- key-term rotation: a new snapshot stamps the NEW term; an old-term blob still decrypts ---
+        // Key-term rotation: a new snapshot stamps the new term; an old-term blob still decrypts.
         km.rotateTo(rootAtTerm(2));
         assertEquals(2, km.activeTerm(), "the manager now writes on term 2");
 

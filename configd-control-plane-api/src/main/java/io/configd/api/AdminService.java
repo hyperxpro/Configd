@@ -15,33 +15,25 @@ import java.util.Set;
  */
 public final class AdminService {
 
-    /**
-     * Result of an admin operation.
-     */
     public sealed interface AdminResult {
         record Success(String message) implements AdminResult {}
         record Failure(String reason) implements AdminResult {}
         record NotLeader(NodeId leaderId) implements AdminResult {}
     }
 
-    /**
-     * Provides cluster state information.
-     */
     public interface ClusterStateProvider {
-        /** Returns the current leader, or null if unknown. */
+        /** The current leader, or null if unknown. */
         NodeId currentLeader();
-        /** Returns all known nodes in the cluster. */
         Set<NodeId> clusterNodes();
-        /** Returns true if this node is the current leader. */
         boolean isLeader();
-        /** Returns the current Raft term. */
+        /** The current Raft term. */
         long currentTerm();
-        /** Returns the commit index. */
         long commitIndex();
     }
 
     /**
-     * Executes membership changes through the Raft protocol.
+     * Executes membership changes through the Raft protocol (not a direct membership map) to
+     * preserve Raft's safety guarantees across a reconfiguration.
      */
     public interface MembershipChanger {
         boolean addNode(NodeId node);
@@ -57,9 +49,6 @@ public final class AdminService {
         this.membershipChanger = Objects.requireNonNull(membershipChanger, "membershipChanger must not be null");
     }
 
-    /**
-     * Adds a node to the cluster.
-     */
     public AdminResult addNode(NodeId node) {
         Objects.requireNonNull(node, "node must not be null");
         if (!stateProvider.isLeader()) {
@@ -71,9 +60,6 @@ public final class AdminService {
                 : new AdminResult.Failure("Failed to add node " + node);
     }
 
-    /**
-     * Removes a node from the cluster.
-     */
     public AdminResult removeNode(NodeId node) {
         Objects.requireNonNull(node, "node must not be null");
         if (!stateProvider.isLeader()) {
@@ -85,9 +71,6 @@ public final class AdminService {
                 : new AdminResult.Failure("Failed to remove node " + node);
     }
 
-    /**
-     * Transfers leadership to another node.
-     */
     public AdminResult transferLeadership(NodeId target) {
         Objects.requireNonNull(target, "target must not be null");
         if (!stateProvider.isLeader()) {
@@ -99,9 +82,6 @@ public final class AdminService {
                 : new AdminResult.Failure("Failed to initiate leadership transfer to " + target);
     }
 
-    /**
-     * Returns current cluster state summary.
-     */
     public ClusterStatus clusterStatus() {
         return new ClusterStatus(
                 stateProvider.currentLeader(),
@@ -112,9 +92,6 @@ public final class AdminService {
         );
     }
 
-    /**
-     * Cluster state summary.
-     */
     public record ClusterStatus(
             NodeId leader,
             Set<NodeId> nodes,

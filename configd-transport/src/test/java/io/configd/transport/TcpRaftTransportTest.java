@@ -493,7 +493,7 @@ class TcpRaftTransportTest {
         FrameCodec.Frame frame = new FrameCodec.Frame(
                 MessageType.HEARTBEAT, 0, 0L, new byte[0]);
 
-        // Without the F-0051 fix: send() succeeds, handshake passes because
+        // Without the fix: send() succeeds, handshake passes because
         // endpoint identification is disabled, SAN mismatch is ignored, and
         // `received` latches to zero.
         // With the fix: the handshake fails with an SSLHandshakeException

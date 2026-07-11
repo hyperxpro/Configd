@@ -50,7 +50,6 @@ class HyParViewOverlayTest {
         for (int i = 1; i <= 5; i++) {
             overlay.join(NodeId.of(i));
         }
-        // At least one node should have been moved to passive
         assertFalse(overlay.passiveView().isEmpty());
     }
 
@@ -62,7 +61,6 @@ class HyParViewOverlayTest {
 
         overlay.peerFailed(NodeId.of(1));
 
-        // Failed peer removed from active, moved to passive
         assertFalse(overlay.activeView().contains(NodeId.of(1)));
         assertTrue(overlay.passiveView().contains(NodeId.of(1)));
     }
@@ -92,7 +90,6 @@ class HyParViewOverlayTest {
 
     @Test
     void shuffleExchangesPassiveEntries() {
-        // Build up some passive entries
         for (int i = 1; i <= 3; i++) {
             overlay.join(NodeId.of(i));
         }

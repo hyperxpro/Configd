@@ -9,7 +9,7 @@ import java.util.Set;
 import java.util.function.Predicate;
 
 /**
- * The server-side keep/drop predicate for a filtered SUBSCRIBE drain (ADR-0045). One
+ * The server-side keep/drop predicate for a filtered SUBSCRIBE drain. One
  * instance per filtering session, built from the edge's subscribed prefix set and the
  * deployment's strong-read prefixes. It decides whether a whole signed delta is delivered to
  * this edge or dropped; it NEVER rewrites or coalesces a delta (ADR-0038 leg (a) stands), so

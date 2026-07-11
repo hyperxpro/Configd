@@ -19,9 +19,9 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  * A scriptable loopback HTTP control-plane double for the reference-client unit tests. Each incoming request
  * pops the next enqueued {@link Response} (a FIFO applied to any request), so a retry sequence is scripted as
  * {@code enqueue(503); enqueue(200)}. Every request is recorded (method / path / query / headers / body) for
- * assertions — the query especially, to prove the {@code consistency=linearizable} literal and the replay
- * headers are emitted exactly. Bodies are plaintext under {@code application/json} to mirror the real server
- * (§04 D2-5a) so the "branch on code, not body" contract is exercised.
+ * assertions -- the query especially, to prove the {@code consistency=linearizable} literal and the replay
+ * headers are emitted exactly. Bodies are plaintext under {@code application/json} to mirror the real server,
+ * so the "branch on code, not body" contract is exercised.
  */
 final class MockControlPlane implements AutoCloseable {
 

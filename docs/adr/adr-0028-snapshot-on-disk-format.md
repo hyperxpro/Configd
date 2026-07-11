@@ -1,11 +1,11 @@
 # ADR-0028: Snapshot On-Disk / On-Wire Format
 
 ## Status
-Accepted (closes DOC-028 / iter-1 D-004 + iter-2 R-002)
+Accepted
 
 > **Where the current bytes live.** This ADR records the *decision* for the snapshot body format
 > and its three-form, skip-unknown-TLV trailer. The byte-authoritative description of that body as
-> it rides the wire — the reassembled `SNAPSHOT_CHUNK` payload and its trailer detection — is now in
+> it rides the wire - the reassembled `SNAPSHOT_CHUNK` payload and its trailer detection - is now in
 > [`rfc/driver-protocol/06-wire-framing.md`](../rfc/driver-protocol/06-wire-framing.md) §7 (F7-2),
 > validated against the codecs. Read the RFC for the layout; read this ADR for why it is shaped that
 > way. Where the two disagree, **the code (and the RFC) win**.
@@ -14,21 +14,21 @@ Accepted (closes DOC-028 / iter-1 D-004 + iter-2 R-002)
 
 `ConfigStateMachine.snapshot()` / `restoreSnapshot()` produce and
 consume the byte sequence transferred during Raft `InstallSnapshot`
-RPCs and persisted on followers as the recovery base. Three open
-issues motivated authoring a dedicated ADR:
+RPCs and persisted on followers as the recovery base. Three things
+motivated writing this ADR:
 
-1. **DOC-028:** three runbooks (`ops/runbooks/snapshot-install.md`,
+1. Three runbooks (`ops/runbooks/snapshot-install.md`,
    `ops/runbooks/restore-from-snapshot.md`, plus the conformance
-   template) cite `adr-0009-snapshot-format.md`. That
-   file does not exist - `adr-0009-...` is the JDK runtime ADR
-   (superseded by ADR-0022). The snapshot format had no ADR.
-2. **iter-1 D-004 closure** added a trailing `signingEpoch` long to
-   keep the monotonic Ed25519 epoch alive across `InstallSnapshot`.
-3. **iter-2 R-002** observed that the `remaining() >= 8` probe used
-   to detect the trailer is non-extensible: any second trailer field
-   silently corrupts N-1 readers.
+   template) cited `adr-0009-snapshot-format.md`. That file does not
+   exist - `adr-0009-...` is the JDK runtime ADR (superseded by
+   ADR-0022). The snapshot format itself had no ADR.
+2. A trailing `signingEpoch` long was added to keep the monotonic
+   Ed25519 epoch alive across `InstallSnapshot`.
+3. The `remaining() >= 8` probe originally used to detect that trailer
+   is non-extensible: any second trailer field would silently corrupt
+   N-1 readers.
 
-This ADR documents the format that closes (1)-(3).
+This ADR documents the format that addresses all three.
 
 ## Decision
 
@@ -73,28 +73,29 @@ trailer length that runs past the buffer is rejected as corrupt.
 
 `restoreSnapshot()` accepts three byte forms:
 
-1. **Legacy (pre-D-004):** body only, no trailer bytes after the last
+1. **Legacy (original):** body only, no trailer bytes after the last
    entry. `signingEpoch` stays at the in-memory value.
-2. **iter-1 raw 8-byte trailer:** exactly `Long.BYTES` extra bytes
-   after the body, interpreted as `signingEpoch`. This is the
-   first-cut shipped by D-004; `ConfigStateMachine` reads it as
-   `buf.remaining() >= 8 => buf.getLong()`.
+2. **Raw 8-byte trailer:** exactly `Long.BYTES` extra bytes after the
+   body, interpreted as `signingEpoch`. This was the first-cut trailer
+   format; `ConfigStateMachine` reads it as `buf.remaining() >= 8 =>
+   buf.getLong()`.
 3. **TLV trailer (this ADR):** magic `0xC0FD7A11` + length-prefixed
    record block.
 
 A reader chooses by inspecting the trailer prefix: if the next four
 bytes equal the magic, decode TLV; if exactly 8 trailing bytes remain,
-decode the legacy raw long; otherwise treat as no trailer. F1 (R-002)
-adds the regression tests `legacyNoTrailerLoads`,
-`rawEpochTrailerStillLoads`, and `tlvTrailerLoadsAndPreservesEpoch` in
-`configd-config-store/src/test/java/io/configd/store/ConfigStateMachineTest.java`.
+decode the legacy raw long; otherwise treat as no trailer. The
+regression tests `legacyNoTrailerLoads`, `rawEpochTrailerStillLoads`,
+and `tlvTrailerLoadsAndPreservesEpoch` in
+`configd-config-store/src/test/java/io/configd/store/ConfigStateMachineTest.java`
+cover all three forms.
 
 ### Determinism / signing contract
 
 Entries are serialized in the order returned by `HamtMap.forEach`,
 which is consistent for the same logical map contents. Keys are
-length-prefixed with `int` (not `short`) - this is the F-0013 fix; the
-2-byte short silently truncated keys > 65535 bytes.
+length-prefixed with `int` (not `short`); a 2-byte short would silently
+truncate keys longer than 65535 bytes.
 
 Snapshot bytes are not themselves Ed25519-signed (the signature lives
 on the per-delta `ConfigDelta` payload via `ConfigSigner`, see
@@ -105,8 +106,8 @@ pre-snapshot deltas under a re-issued low epoch.
 
 ### Bounds
 
-To bound allocation under adversarial / corrupted input
-(F-0053 fix), `restoreSnapshot()` rejects:
+To bound allocation under adversarial or corrupted input,
+`restoreSnapshot()` rejects:
 
 - `entryCount < 0` or `> MAX_SNAPSHOT_ENTRIES` (1e8)
 - `keyLen < 0` or `> MAX_SNAPSHOT_KEY_LEN` (1 MiB)
@@ -119,12 +120,13 @@ A rejected snapshot increments
 
 ### Chunking
 
-The current implementation transfers the entire byte sequence in a
-single `InstallSnapshot` RPC payload. Chunking (per the Raft paper
-section 7) is **deferred**: the bound above (1 MiB per value x 1e8 entries)
-is theoretical; observed snapshots fit in the gRPC-equivalent frame.
-When chunking is added, it will be a transport-level concern carrying
-this same trailer at the end of the last chunk.
+A large snapshot streams to a lagging follower as ordered chunks rather
+than one `InstallSnapshot` RPC payload - see
+[`adr-0029-wire-format-v1.md`](adr-0029-wire-format-v1.md) and
+`RaftNode.MAX_SNAPSHOT_CHUNK_BYTES`. Chunking is a transport-level
+concern: this trailer format is unaffected, since it rides at the end
+of the last chunk and is decoded once, after the follower reassembles
+the full byte sequence.
 
 ### CRC
 
@@ -140,9 +142,10 @@ this ADR's evolution rule.
 
 ## Influenced by
 
-- iter-1 D-004 closure (signing-epoch durability across InstallSnapshot).
-- iter-2 R-002 (non-extensible 8-byte probe corrupts future readers).
-- iter-1 F-0013 / F-0053 (key length + envelope bound checks).
+- The need for signing-epoch durability across InstallSnapshot.
+- The realization that a non-extensible 8-byte probe corrupts future
+  readers once a second trailer field is added.
+- Key-length and envelope bound checks against adversarial input.
 - Etcd's snapshot v3 format - TLV-with-magic is the standard
   forward-compat pattern.
 
@@ -157,8 +160,8 @@ on disk in those forms; rejecting them would force an offline migration.
 ## Rejected alternatives
 
 - **Bump a leading format-version byte.** Forces every reader to
-  branch up-front; once we add chunking the version-byte approach
-  conflates wire and content versioning. TLV is more local.
+  branch up-front; once chunking enters the picture, the version-byte
+  approach conflates wire and content versioning. TLV is more local.
 - **Sign the entire snapshot bytes with Ed25519.** Doubles the
   signing-key surface (state-machine snapshot vs per-delta) without
   adding integrity over the per-delta path. Deferred until an at-rest
@@ -174,18 +177,13 @@ on disk in those forms; rejecting them would force an offline migration.
   wire-version bump.
 - **Negative:** Two trailer forms must be supported in `restoreSnapshot`
   for at least one major release after this ADR; the legacy raw-epoch
-  branch can be removed only after a section 8.10 deprecation cycle.
+  branch can be removed only after a full deprecation cycle.
 - **Risks and mitigations:** A bug in trailer parsing could silently
-  drop `signingEpoch` and reopen the D-004 fanout-skip window. Mitigated
-  by the three regression tests above and by `configd_snapshot_install_failed_total`
-  emission on any structural reject.
-
-## Reviewers
-
-- principal-distributed-systems-architect: yes
-- distributed-systems-researcher: yes
-- security-red-team: yes (TLV permits future signing-key-fingerprint
-  field without breaking N-1)
+  drop `signingEpoch` and reopen the window where a stale edge replays
+  pre-snapshot deltas under a re-issued low epoch. Mitigated by the
+  three regression tests above and by
+  `configd_snapshot_install_failed_total` emission on any structural
+  reject.
 
 ## Verification
 
@@ -196,7 +194,8 @@ on disk in those forms; rejecting them would force an offline migration.
   cross-checks against the TLA+ `SnapshotInstallSpec` traces.
 - **Invalidated by:** any new field landing in the snapshot body
   without a matching TLV record, or any reader that probes
-  `buf.remaining() >= N` for a hard-coded N (the iter-1 R-002 anti-pattern).
+  `buf.remaining() >= N` for a hard-coded N instead of checking the
+  magic prefix.
 - **Operator check:** after an `InstallSnapshot` round-trip, confirm
   the new leader's first signed delta carries an epoch strictly
   greater than the highest pre-snapshot epoch the edge has stored.

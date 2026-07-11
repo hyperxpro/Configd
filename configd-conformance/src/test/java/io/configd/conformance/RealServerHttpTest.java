@@ -38,15 +38,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Real-server conformance for the Gate-4 HTTP control plane: drives the thin {@link ConfigdHttpClient} against a
+ * Real-server conformance for the HTTP control plane: drives the thin {@link ConfigdHttpClient} against a
  * live {@link HttpApiServer} + {@link AdminApiHandler} (the actual routes, statuses, headers, bearer auth, ACL,
- * and the leadership-transfer 5th route) — not a mock. Proves the client's get/put/delete wire (seq-from-body,
+ * and the leadership-transfer 5th route) -- not a mock. Proves the client's get/put/delete wire (seq-from-body,
  * version-from-header), bearer authentication, the reserved-prefix ADMIN gate (403 without ADMIN), and the
  * transfer-leadership route interoperate with the real server.
  */
-// Server-obeys + client-conforms on the HTTP control plane: get (value + X-Config-Version header), put/delete
-// (seq from the body), bearer auth, the reserved-prefix ADMIN gate (403 without ADMIN — authz taxonomy), and
-// the leadership-transfer 5th route, all against a live HttpApiServer + AdminApiHandler.
 @Timeout(60)
 @Tag("clause:D2-1")
 @Tag("clause:D2-3")
@@ -111,7 +108,7 @@ class RealServerHttpTest {
         server.start();
         URI base = URI.create("http://127.0.0.1:" + server.port());
 
-        // ---- the writer principal: get a seeded key, put, delete ----
+        // The writer principal: get a seeded key, put, delete.
         try (ConfigdHttpClient writer = client(base, "writer-tok")) {
             GetResult read = writer.blocking().get("app/name", GetOptions.defaults());
             assertTrue(read.found());
@@ -131,13 +128,13 @@ class RealServerHttpTest {
             assertThrows(ForbiddenException.class, () -> writer.blocking().transferLeadership(0, 2));
         }
 
-        // ---- the admin principal: reserved-prefix read passes the ADMIN gate, transfer is initiated ----
+        // The admin principal: reserved-prefix read passes the ADMIN gate, transfer is initiated.
         try (ConfigdHttpClient admin = client(base, "admin-tok")) {
-            // ADMIN gate passes (not 403): the key is absent ⇒ a definite 404 ⇒ empty result.
+            // ADMIN gate passes (not 403): the key is absent, so this is a definite 404 and an empty result.
             GetResult reserved = admin.blocking().get("_acl/roles/x", GetOptions.defaults());
             assertFalse(reserved.found(), "admin passes the ADMIN gate; the key is simply absent (404)");
 
-            // The 5th route: a 200 = transfer INITIATED (asynchronous). No exception ⇒ success.
+            // The 5th route: a 200 means transfer INITIATED (asynchronous). No exception means success.
             admin.blocking().transferLeadership(0, 2);
         }
     }

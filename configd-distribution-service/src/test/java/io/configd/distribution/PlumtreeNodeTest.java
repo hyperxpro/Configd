@@ -54,7 +54,6 @@ class PlumtreeNodeTest {
         node.receiveEagerPush(sender, id, new byte[]{1});
         node.drainOutbox();
 
-        // Receive same message again
         assertFalse(node.receiveEagerPush(sender, id, new byte[]{1}));
         var messages = node.drainOutbox();
         assertTrue(messages.stream()
@@ -94,7 +93,7 @@ class PlumtreeNodeTest {
         var id = new PlumtreeNode.MessageId(99, 200);
         node.receiveIHave(lazyPeer, id);
 
-        // Tick past timeout
+        // Tick past the IHave timeout (5, from setUp) so the graft fires.
         for (int i = 0; i < 6; i++) {
             node.tick();
         }
@@ -103,7 +102,6 @@ class PlumtreeNodeTest {
         assertTrue(messages.stream()
                 .anyMatch(m -> m instanceof PlumtreeNode.OutboundMessage.Graft g
                         && g.target().equals(lazyPeer)));
-        // Peer should now be eager
         assertTrue(node.eagerPeers().contains(lazyPeer));
     }
 
@@ -143,7 +141,6 @@ class PlumtreeNodeTest {
         long eagerPushCount = messages.stream()
                 .filter(m -> m instanceof PlumtreeNode.OutboundMessage.EagerPush)
                 .count();
-        // Should forward to peer2 and peer3, not sender
         assertEquals(2, eagerPushCount);
         assertTrue(messages.stream()
                 .filter(m -> m instanceof PlumtreeNode.OutboundMessage.EagerPush)

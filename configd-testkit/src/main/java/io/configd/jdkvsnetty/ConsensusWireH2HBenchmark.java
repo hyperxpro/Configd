@@ -13,16 +13,16 @@ import java.util.concurrent.TimeUnit;
 /**
  * JDK-vs-Netty head-to-head - <b>surface 4: inter-node consensus wire</b>.
  *
- * <p>The prior baseline measured the <em>current</em> (unoptimized) JDK send path and reasoned
- * about Netty. This benchmark races the <b>best JDK</b> form against the <b>best Netty</b> form of
- * the same send, apples-to-apples (identical payloads, warmup, measurement), so the verdict
- * rests on measurement, not a prior. Run with {@code -prof gc} (metric
+ * <p>Reasoning qualitatively about Netty from the current (unoptimized) JDK send path isn't
+ * enough to settle the question. This benchmark races the <b>best JDK</b> form against the
+ * <b>best Netty</b> form of the same send, apples-to-apples (identical payloads, warmup,
+ * measurement), so the verdict rests on measurement. Run with {@code -prof gc} (metric
  * {@code gc.alloc.rate.norm}, B/op - CPU-count-independent, so trustworthy on the 2-vCPU box).
  *
  * <h2>The on-wire bytes (must be byte-identical across all legs)</h2>
  * Production {@code TcpRaftTransport.encodeWire} emits {@code [4B big-endian senderId] ||
- * FrameCodec.encode(type,group,term,payload)}. {@code ConsensusWireH2HCorrectnessTest} proves
- * every leg below reproduces those exact bytes.
+ * FrameCodec.encode(type,group,term,payload)}. {@code WireH2HCorrectnessTest} proves every leg
+ * below reproduces those exact bytes.
  *
  * <h2>Legs</h2>
  * <ul>
@@ -33,15 +33,13 @@ import java.util.concurrent.TimeUnit;
  *       dependency. Expected ~ 0 B/op steady state.</li>
  *   <li>{@code nettyBestSendPooled} - BEST Netty: the same bytes written into a pooled,
  *       reference-counted {@code ByteBuf} from {@code PooledByteBufAllocator}, released back to
- *       the pool each op (steady-state pooled behaviour). Added in
- *       {@code ConsensusWireNettyH2HBenchmark} once the Netty dependency is wired; kept in a
- *       separate class so the no-dependency JDK numbers stand alone.</li>
+ *       the pool each op (steady-state pooled behaviour).</li>
  * </ul>
  *
- * <p><b>Why this surface is near-decided before Netty is built:</b> the codec already ships a
- * zero-copy {@code encode(ByteBuffer)} that escape-analysis proves to ~0 B/op. Netty cannot
- * beat zero; the only open question is whether a pooled {@code ByteBuf} matches the reused JDK
- * buffer (it can, not beat it). The race confirms this rather than asserting it.
+ * <p><b>Why this surface was expected to be close:</b> the codec already ships a zero-copy
+ * {@code encode(ByteBuffer)} that escape-analysis proves to ~0 B/op, so Netty cannot beat zero -
+ * the only open question was whether a pooled {@code ByteBuf} matches the reused JDK buffer. The
+ * benchmarks below confirm it matches (it does not beat it).
  */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)

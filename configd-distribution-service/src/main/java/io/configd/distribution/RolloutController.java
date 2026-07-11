@@ -33,7 +33,7 @@ public final class RolloutController {
      * Rollout stages, in order of increasing reach.
      */
     public enum Stage {
-        CANARY(0.001),         // ~0.1% of nodes
+        CANARY(0.001),
         ONE_PERCENT(0.01),
         TEN_PERCENT(0.10),
         FIFTY_PERCENT(0.50),

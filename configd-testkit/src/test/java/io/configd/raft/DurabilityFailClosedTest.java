@@ -17,12 +17,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The fsyncgate fail-closed policy at the durability seam (design section 6 section 4.1), closing the
- * open 2.1-6 GAP. A WAL-fsync OR an anchor-fsync that throws in a live leader flush must: NOT advance
- * {@code durableIndex}, NOT commit, NOT ack, and hand off to the {@link RaftNode.DurabilityFailureHandler}
- * (which panics/exits in production). This wires the failure at BOTH seams into a live-RaftNode flush
- * cycle and asserts no-durable-advance + no-commit + the panic. It also pins the boot-time
- * anchor-preallocation ENOSPC cell.
+ * The fsync fail-closed policy at the durability seam. A WAL-fsync OR an anchor-fsync that throws
+ * in a live leader flush must: NOT advance {@code durableIndex}, NOT commit, NOT ack, and hand off
+ * to the {@link RaftNode.DurabilityFailureHandler} (which panics/exits in production). This wires
+ * the failure at BOTH seams into a live-RaftNode flush cycle and asserts no-durable-advance +
+ * no-commit + the panic. It also pins the boot-time anchor-preallocation ENOSPC cell.
  *
  * <p>In this package (io.configd.raft) so it can reach the package-private anchor sync-fault seam.
  */

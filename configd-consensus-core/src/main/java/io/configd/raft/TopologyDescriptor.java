@@ -7,7 +7,7 @@ import java.nio.ByteBuffer;
 /**
  * The authenticated, versioned deploy-time topology descriptor - the frozen-format replacement
  * for the plaintext {@code raft-shard-count.meta} marker. It serves BOTH the fixed-N deploy guard
- * (a different {@code N} on restart is a loud reshard rejection) AND the A4 topology-epoch authority
+ * (a different {@code N} on restart is a loud reshard rejection) AND the topology-epoch authority
  * that {@code ShardMap.epoch()} returns.
  *
  * <p>The descriptor is a node-level {@link IntegrityEnvelope} record under {@link RaftArtifactMagic#TOPO_MAGIC}
@@ -26,7 +26,7 @@ import java.nio.ByteBuffer;
  *
  * <p><b>Magic single-sourcing.</b> {@link RaftArtifactMagic#TOPO_MAGIC} is the frozen registry value
  * and is package-private; this codec lives in the SAME package so it reads that value directly - one
- * source of truth, no cross-module mirror (unlike Gate 1's {@code WAL_FILE_MAGIC}, whose authoritative
+ * source of truth, no cross-module mirror (unlike {@code WAL_FILE_MAGIC}, whose authoritative
  * definition sits in {@code configd-common} and must be mirrored). {@code RaftArtifactMagicTest} pins
  * the value distinct and non-zero.
  *
@@ -44,9 +44,9 @@ public final class TopologyDescriptor {
     public static final short FORMAT_VERSION = 1;
 
     /**
-     * The v1 static-N topology epoch. {@code ShardMap.epoch()} returns this for the life of a
-     * static-N deployment; a future v2 dynamic reshard bumps it monotonically. Cluster-wide
-     * consistent - every node reads the same deploy-time descriptor.
+     * The static-N topology epoch. {@code ShardMap.epoch()} returns this for the life of a
+     * static-N deployment; a dynamic reshard (not yet implemented) would bump it monotonically.
+     * Cluster-wide consistent - every node reads the same deploy-time descriptor.
      */
     public static final long INITIAL_EPOCH = 1L;
 
@@ -83,7 +83,7 @@ public final class TopologyDescriptor {
         return shardCount;
     }
 
-    /** The topology epoch (v1 = {@link #INITIAL_EPOCH}); the authority for {@code ShardMap.epoch()}. */
+    /** The topology epoch (currently {@link #INITIAL_EPOCH}); the authority for {@code ShardMap.epoch()}. */
     public long topologyEpoch() {
         return topologyEpoch;
     }

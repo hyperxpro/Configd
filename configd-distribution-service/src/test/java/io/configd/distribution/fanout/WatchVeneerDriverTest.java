@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * End-to-end watch veneer matrix driven through {@link FanOutConnectionDriver}. Exercises the
  * security gate (the crux), fail-closed behavior, {@code watch_id} no-reuse, the per-connection
- * watch caps (W8-6), multiplex isolation, cursor resume, the behind-buffer catch-up, and the
+ * watch caps, multiplex isolation, cursor resume, the behind-buffer catch-up, and the
  * path-grammar (BAD_SUBSCRIBE) surface. Uses a real {@link FanOutBuffer} + {@link SnapshotReplaySource}, a recording
  * {@link RecordingTransportSink} (the transport delegate behind the veneer), a
  * {@link FakeClock}, and a lambda {@link WatchAuthorizer} - no threads, no I/O.
@@ -76,8 +76,6 @@ class WatchVeneerDriverTest {
         driver.session().tick(clock.now());
     }
 
-    // ---- the security gate (W7) - the crux ---------------------------------
-
     @Test
     void denyingAuthorizerRejectsWithNotAuthorizedAndZeroDataFrames() {
         setup(DENY);
@@ -89,7 +87,7 @@ class WatchVeneerDriverTest {
         EdgeFrame.WatchCanceled cancel = assertInstanceOf(EdgeFrame.WatchCanceled.class, out.sent().get(0));
         assertEquals(1L, cancel.watchId());
         assertEquals(ErrorCode.NOT_AUTHORIZED, cancel.code());
-        // Zero payload-bearing frames precede it (W7-5).
+        // Zero payload-bearing frames precede it.
         assertTrue(out.sentOfType(EdgeFrame.WatchCreated.class).isEmpty());
         assertTrue(out.sentOfType(EdgeFrame.WatchEvent.class).isEmpty());
         assertTrue(out.sentOfType(EdgeFrame.SubscribeOk.class).isEmpty());
@@ -118,9 +116,9 @@ class WatchVeneerDriverTest {
 
     @Test
     void fullChainVerifyDenyEmitsZeroNotifyBeforeReject() {
-        // The matrix-5 mechanism: a full_chain_verify watch's verbatim carrier is the
-        // connection-level NOTIFY. The gate must reject BEFORE the core drain starts, so not a
-        // single NOTIFY leaks the full chain to a non-root principal.
+        // A full_chain_verify watch's verbatim carrier is the connection-level NOTIFY. The gate must
+        // reject before the core drain starts, so not a single NOTIFY leaks the full chain to a
+        // non-root principal.
         setup(DENY);
         buffer.publish(put(1, "/secret/k", "v")); // data exists - a NOTIFY would fire if subscribed
         feed(fullCreate(1, EdgeFrame.WATCH_FLAG_FULL_CHAIN_VERIFY, WatchCursor.fromNow()));
@@ -132,8 +130,6 @@ class WatchVeneerDriverTest {
         EdgeFrame.WatchCanceled cancel = assertInstanceOf(EdgeFrame.WatchCanceled.class, out.sent().get(0));
         assertEquals(ErrorCode.NOT_AUTHORIZED, cancel.code());
     }
-
-    // ---- fail-closed --------------------------------------------------------
 
     @Test
     void nullAuthorizerFailsClosed() {
@@ -155,8 +151,6 @@ class WatchVeneerDriverTest {
         feed(keyCreate(1, "/k/a"));
         assertReject(1, ErrorCode.NOT_AUTHORIZED);
     }
-
-    // ---- multiplex isolation (matrix 10) -----------------------------------
 
     @Test
     void cancelOfOneWatchDoesNotPerturbAnother() {
@@ -182,8 +176,6 @@ class WatchVeneerDriverTest {
         assertFalse(round2.stream().anyMatch(e -> e.watchId() == 1L), "the canceled watch receives nothing");
     }
 
-    // ---- watch_id no-reuse (matrix 11) -------------------------------------
-
     @Test
     void reusingACanceledWatchIdIsRejectedAsBadSubscribe() {
         setup(ALLOW);
@@ -191,12 +183,10 @@ class WatchVeneerDriverTest {
         feed(cancel(1)); // id 1 stays burned in everUsed
         out.clear();
 
-        feed(keyCreate(1, "/k/b")); // reuse id 1 -> BAD_SUBSCRIBE (W2-8)
+        feed(keyCreate(1, "/k/b")); // reuse id 1 -> BAD_SUBSCRIBE
         assertEquals(1, out.sent().size());
         assertReject(1, ErrorCode.BAD_SUBSCRIBE);
     }
-
-    // ---- per-connection watch caps (W8-6 abuse control) --------------------
 
     @Test
     void liveWatchesAreAcceptedUpToTheCapThenTheNextIsRejected() {
@@ -228,7 +218,7 @@ class WatchVeneerDriverTest {
     void watchIdBudgetIsAcceptedToTheCapThenExhausted() {
         setup(ALLOW);
         // Churn create+cancel so liveCount stays <= 1 (the live cap never trips) while the
-        // never-shrinking watch_id budget (everUsed, W2-8) climbs. Driven at the real
+        // never-shrinking watch_id budget (everUsed) climbs. Driven at the real
         // MAX_WATCH_IDS_PER_CONNECTION.
         int budget = FanOutConnectionDriver.MAX_WATCH_IDS_PER_CONNECTION;
         for (int id = 1; id < budget; id++) {
@@ -254,8 +244,6 @@ class WatchVeneerDriverTest {
         assertTrue(out.sentOfType(EdgeFrame.WatchCreated.class).isEmpty(), "no ack for the over-budget watch");
     }
 
-    // ---- cursor resume (matrix 12) -----------------------------------------
-
     @Test
     void resumeFromVectorCursorDeliversExactlyReadSinceSet() {
         setup(ALLOW, "edge-1", new FanOutBuffer(64), snapshotAt(0));
@@ -274,8 +262,6 @@ class WatchVeneerDriverTest {
         assertEquals(List.of(3L, 4L, 5L), delivered);
         assertEquals(expected, delivered, "resume(gid=0,S) == scalar readSince(S)");
     }
-
-    // ---- behind-buffer catch-up (matrix 14) --------------------------------
 
     @Test
     void resumeOlderThanBufferSurfacesAsWatchSnapshotSubstream() {
@@ -299,8 +285,6 @@ class WatchVeneerDriverTest {
         assertEquals(1, ends.size());
         assertEquals(1L, ends.get(0).watchId());
     }
-
-    // ---- path grammar (matrix N4) ------------------------------------------
 
     @Test
     void malformedTargetsAreRejectedAsBadSubscribe() {
@@ -335,10 +319,10 @@ class WatchVeneerDriverTest {
 
     @Test
     void fullTargetWithNonEmptyPathIsStructurallyRejectedAtTheWire() {
-        // A FULL target MUST carry an empty path (W5-4). The EdgeFrame.WatchCreate record enforces
-        // this structurally, so a malformed FULL frame is a codec FRAME_CORRUPT and never reaches
-        // the veneer - there is no veneer path that can build it. Documented here as the structural
-        // invariant that discharges the "FULL non-empty -> BAD_SUBSCRIBE" matrix cell.
+        // A FULL target must carry an empty path. The EdgeFrame.WatchCreate record enforces this
+        // structurally, so a malformed FULL frame is a codec FRAME_CORRUPT and never reaches the
+        // veneer - there is no veneer path that can build one. This documents that structural
+        // invariant directly, since the veneer itself has nothing to test here.
         assertThrows(IllegalArgumentException.class, () -> new EdgeFrame.WatchCreate(
                 1, 0, EdgeFrame.WATCH_TARGET_FULL, "/x".getBytes(StandardCharsets.UTF_8),
                 WatchCursor.fromNow(), 0));
@@ -354,8 +338,6 @@ class WatchVeneerDriverTest {
         assertEquals(1, out.sentOfType(EdgeFrame.WatchCreated.class).size());
     }
 
-    // ---- legacy guards ------------------------------------------------------
-
     @Test
     void subscribeOnAWatchConnectionIsAProtocolViolation() {
         setup(ALLOW);
@@ -364,8 +346,6 @@ class WatchVeneerDriverTest {
         assertEquals(ErrorCode.PROTOCOL_VIOLATION, teardowns.get(teardowns.size() - 1),
                 "SUBSCRIBE cannot be mixed onto a watch connection (W5-12)");
     }
-
-    // ---- helpers ------------------------------------------------------------
 
     private void assertReject(long watchId, ErrorCode code) {
         EdgeFrame.WatchCanceled cancel = assertInstanceOf(EdgeFrame.WatchCanceled.class, out.sent().get(0));

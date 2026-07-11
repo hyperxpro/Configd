@@ -14,9 +14,9 @@ import java.util.TreeSet;
  * where the "built-in default" is the {@code defaultValue} argument the caller passes to
  * {@code getInt}/{@code getBoolean}/... (applied here only when no source defines the key). The first
  * source that DEFINES a key wins for that key - a partially-overriding source shadows only the keys it
- * actually defines, so a deployment with no YAML file (only system properties + environment) is
- * byte-identical to the pre-config-SPI behavior, and every existing {@code -D} and env override keeps
- * sitting above the new YAML layer.
+ * actually defines, so a deployment with no YAML file (only system properties + environment) behaves
+ * identically to reading system properties and the environment directly, and every existing {@code -D}
+ * and env override keeps sitting above the YAML layer.
  */
 public final class LayeredConfigSource implements ConfigSource {
 
@@ -47,8 +47,8 @@ public final class LayeredConfigSource implements ConfigSource {
 
     @Override
     public boolean anyLayerTrue(String key) {
-        // OR across every layer (not first-present-wins): reproduces the legacy
-        // "system-property true OR env-alias true" flags. Each source applies its own single-layer test.
+        // OR across every layer (not first-present-wins): matches flags whose original semantics were
+        // "system-property true OR env-alias true". Each source applies its own single-layer test.
         for (ConfigSource source : sources) {
             if (source.anyLayerTrue(key)) {
                 return true;

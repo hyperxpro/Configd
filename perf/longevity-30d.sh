@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# C3 — 30-day longevity harness.
+# 30-day longevity harness.
 #
 # Same workload shape as soak-72h but for 30 days, with daily snapshot
 # install + truncate cycles to verify long-running snapshot subsystem
@@ -13,8 +13,9 @@
 # Usage:
 #   perf/longevity-30d.sh [--duration=<seconds>] [--seed=<int>] [--out=<dir>]
 #
-# YELLOW per gap-closure §4. Real 30-day runs are calendar-bound — record
-# the measured elapsed honestly. Smoke runs in CI use --duration=600.
+# This is a calendar-bound run (status=YELLOW until it actually runs for
+# 30 days) — record the measured elapsed honestly. Smoke runs in CI use
+# --duration=600.
 
 set -euo pipefail
 

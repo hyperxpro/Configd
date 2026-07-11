@@ -9,7 +9,7 @@ import io.configd.common.auth.Principal;
  * frame decoder can read it (to apply the pre-auth frame ceiling) and the gate can write it, both on the
  * single event loop; on the JDK transport it is a reader-thread-local.
  *
- * <p>It exists ONLY when token/basic auth is configured for the edge; the mTLS-only / plaintext posture is
+ * <p>It exists only when token/basic auth is configured for the edge; the mTLS-only / plaintext posture is
  * byte-identical to before and never installs it.
  */
 public sealed interface AuthState permits AuthState.Unauthenticated, AuthState.Authenticated {
@@ -18,8 +18,8 @@ public sealed interface AuthState permits AuthState.Unauthenticated, AuthState.A
     AuthState UNAUTHENTICATED = new Unauthenticated();
 
     /**
-     * {@code expiresAtMillis} sentinel for a connection with no active expiry (a cert connection when
-     * {@code enforceCertNotAfter} is off - the byte-identical Gate-3 path). No expiry one-shot is armed.
+     * {@code expiresAtMillis} sentinel for a connection with no active expiry: a cert connection with
+     * {@code enforceCertNotAfter} off. No expiry one-shot is armed for it.
      */
     long NO_EXPIRY = Long.MAX_VALUE;
 

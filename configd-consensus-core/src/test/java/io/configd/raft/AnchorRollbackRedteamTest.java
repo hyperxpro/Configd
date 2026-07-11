@@ -23,26 +23,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * RED-TEAM (Gate 3a): independent, real-on-disk rollback / truncation attacks on the dual-slot
- * {@code raft-anchor} recovery path ({@link AnchorFile} + {@link RaftLog#recoverWithAnchor}).
+ * Independent, real-on-disk rollback / truncation attacks on the dual-slot {@code raft-anchor}
+ * recovery path ({@link AnchorFile} + {@link RaftLog#recoverWithAnchor}).
  *
- * <p>Every attack here mutates the ACTUAL bytes of {@code raft-anchor} / {@code raft-log.wal} on a
- * real {@link Storage#file} directory and then drives the REAL {@code new RaftLog(...)} recovery,
- * asserting the recovery decision (REFUSE vs accept). This goes BEYOND {@link AnchorFileTest} /
+ * <p>Every attack here mutates the actual bytes of {@code raft-anchor} / {@code raft-log.wal} on a
+ * real {@link Storage#file} directory and then drives the real {@code new RaftLog(...)} recovery,
+ * asserting the recovery decision (refuse vs accept). This goes beyond {@link AnchorFileTest} /
  * {@link RaftAnchorRecoveryTest} (which use the writer's own API) by crafting adversarial bytes the
  * writer would never emit: forged slot-length prefixes, whole-file image rollbacks captured at an
- * earlier durable point, and a genuine FRESH image overwritten onto a live shard.
+ * earlier durable point, and a genuine fresh image overwritten onto a live shard.
  *
  * <p>The suite is organised as:
  * <ul>
- *   <li><b>CLOSED</b> - attacks the anchor exists to catch; recovery MUST REFUSE.</li>
- *   <li><b>SAFE</b> - legal crash / Raft interleavings that MUST NOT spuriously REFUSE (false
- *       positives are as serious as misses: a spurious REFUSE bricks a healthy node).</li>
- *   <li><b>RESIDUAL (R-a)</b> - the one documented, ratified boundary of a purely-LOCAL anchor: a
- *       within-term rollback of the durable floor to a prior authenticated state. This test asserts
- *       the CURRENT accepting behaviour (it documents the gap - it is NOT weakened) and is the
- *       load-bearing reason the design mandates the external {@code AnchorWitness} (§4 A1.7),
- *       which is NOT wired in this Gate-3a branch.</li>
+ *   <li><b>CLOSED</b> - attacks the anchor exists to catch; recovery must refuse.</li>
+ *   <li><b>SAFE</b> - legal crash / Raft interleavings that must not spuriously refuse (false
+ *       positives are as serious as misses: a spurious refuse bricks a healthy node).</li>
+ *   <li><b>RESIDUAL</b> - the one documented boundary of a purely local anchor: a within-term
+ *       rollback of the durable floor to a prior authenticated state. This test asserts the current
+ *       accepting behaviour (it documents the gap, not a weakening) and is the reason the design
+ *       mandates an external {@code AnchorWitness}, which is not wired here.</li>
  * </ul>
  */
 class AnchorRollbackRedteamTest {
@@ -59,9 +58,7 @@ class AnchorRollbackRedteamTest {
         return new LogEntry(index, term, cmd.getBytes(StandardCharsets.UTF_8));
     }
 
-    // =====================================================================================
     // CLOSED - recovery MUST REFUSE
-    // =====================================================================================
 
     /**
      * Attack 1 - tail-truncation of committed data, swept across EVERY W' in [snapshotIndex, A).
@@ -256,9 +253,9 @@ class AnchorRollbackRedteamTest {
     }
 
     /**
-     * Attack 6c (Deviation C) - a foreign-gid anchor spliced into this shard. Its slots carry
-     * scopeId=1, so a gid=0 reader authenticates NEITHER slot => present-but-both-invalid REFUSE,
-     * which fires at anchor-open before any WAL scope assert. Still a REFUSE.
+     * Attack 6c - a foreign-gid anchor spliced into this shard. Its slots carry scopeId=1, so a
+     * gid=0 reader authenticates neither slot: present-but-both-invalid refuse fires at anchor-open
+     * before any WAL scope assert. Still a refuse.
      */
     @Test
     void foreignGidAnchorImageRefuses(@TempDir Path dir) throws Exception {
@@ -283,9 +280,7 @@ class AnchorRollbackRedteamTest {
                 "a foreign-gid anchor authenticates no slot for this gid => REFUSE, got: " + ex.getMessage());
     }
 
-    // =====================================================================================
     // SAFE - legal crash / Raft interleavings that MUST NOT spuriously REFUSE
-    // =====================================================================================
 
     /**
      * False-positive 7a - the legal leader-flush crash between the WAL fsync and the anchor fsync:
@@ -428,37 +423,35 @@ class AnchorRollbackRedteamTest {
         recovered.closeAnchor();
     }
 
-    // =====================================================================================
-    // RESIDUAL (R-a) - the documented, ratified boundary of a purely-LOCAL anchor.
-    // =====================================================================================
+    // RESIDUAL - the documented boundary of a purely local anchor.
 
     /**
-     * FINDING/RESIDUAL R-a (design §4 §4, matrix 4b/14/15/17) - a WITHIN-TERM rollback of the
-     * durable floor to a prior authenticated state, composed with a matching WAL truncation, is
-     * ACCEPTED by the local anchor and SILENTLY loses committed-and-acked data. This test performs
-     * the strongest, cheapest realisation and ASSERTS the accepting behaviour (it documents the
-     * gap - it is deliberately NOT written as an expected-REFUSE).
+     * Residual finding - a within-term rollback of the durable floor to a prior authenticated
+     * state, composed with a matching WAL truncation, is accepted by the local anchor and silently
+     * loses committed-and-acked data. This test performs the strongest, cheapest realisation and
+     * asserts the accepting behaviour (it documents the gap - it is deliberately not written as an
+     * expected-refuse).
      *
      * <p>Mechanism (all on real bytes, no key needed for the rollback step):
      * <ol>
-     *   <li>Commit indices 1..3 (per-entry), then a BATCH of 4..6 in ONE anchor write. The live slot
+     *   <li>Commit indices 1..3 (per-entry), then a batch of 4..6 in one anchor write. The live slot
      *       now holds (seq S, floor 6); the stale slot holds (seq S-1, floor 3) - a genuine prior
      *       authenticated floor sitting one seq back.</li>
-     *   <li>Zero the live slot's UNAUTHENTICATED 4-byte recordLen prefix. Dual-slot recovery
-     *       ("read highest VALID seq, tolerate a torn other slot" - required for crash-atomicity)
-     *       now promotes the seq-1 slot: a FREE, keyless one-step rollback of the floor 6 -&gt; 3,
-     *       dropping THREE committed indices in a single step.</li>
+     *   <li>Zero the live slot's unauthenticated 4-byte recordLen prefix. Dual-slot recovery
+     *       ("read highest valid seq, tolerate a torn other slot" - required for crash-atomicity)
+     *       now promotes the seq-1 slot: a free, keyless one-step rollback of the floor 6 to 3,
+     *       dropping three committed indices in a single step.</li>
      *   <li>Truncate the WAL to index 3 to match the rolled-back floor.</li>
      * </ol>
-     * Recovery sees W==A==3, same term, contiguous, valid chain =&gt; every gate passes =&gt; ACCEPT.
-     * Committed indices 4,5,6 are gone with no refusal.
+     * Recovery sees W==A==3, same term, contiguous, valid chain, so every gate passes and it
+     * accepts. Committed indices 4, 5, 6 are gone with no refusal.
      *
-     * <p>This is NOT a code defect against Gate-3a's stated guarantee: the design explicitly carves
-     * this out as residual R-a, closable ONLY by external monotonic storage / a peer-quorum
-     * {@code AnchorWitness} (§4 A1.7). That witness is NOT wired in this branch, so R-a is LIVE here.
-     * On a multi-replica cluster the rolled-back node re-syncs from the quorum; on a single replica
-     * this is silent committed-data loss. The test stands as the executable proof that the local
-     * anchor's anti-rollback guarantee ends exactly at "the adversary cannot also roll the anchor".
+     * <p>This is not a code defect: the design explicitly carves this out as a residual, closable
+     * only by external monotonic storage or a peer-quorum {@code AnchorWitness}, which is not wired
+     * here, so the gap is live in this test. On a multi-replica cluster the rolled-back node
+     * re-syncs from the quorum; on a single replica this is silent committed-data loss. The test
+     * stands as the executable proof that the local anchor's anti-rollback guarantee ends exactly
+     * at "the adversary cannot also roll the anchor".
      */
     @Test
     void RESIDUAL_R_a_oneStepFloorRollbackThenTruncateSilentlyLosesCommittedData(@TempDir Path dir)
@@ -484,8 +477,8 @@ class AnchorRollbackRedteamTest {
         try {
             recovered = new RaftLog(Storage.file(dir), keyed(), GID);
         } catch (IntegrityException unexpected) {
-            // If this ever throws, the LOCAL anchor closed R-a on its own - a WELCOME surprise that
-            // would mean the residual is narrower than documented. Surface it loudly rather than
+            // If this ever throws, the local anchor closed the residual gap on its own - a welcome
+            // surprise meaning the gap is narrower than documented. Surface it loudly rather than
             // silently passing the try/catch.
             fail("R-a UNEXPECTEDLY refused - the local anchor closed a within-term one-step floor "
                     + "rollback the design says only AnchorWitness can catch: " + unexpected.getMessage());
@@ -500,9 +493,7 @@ class AnchorRollbackRedteamTest {
         recovered.closeAnchor();
     }
 
-    // =====================================================================================
     // Real-byte helpers
-    // =====================================================================================
 
     /**
      * Truncates {@code raft-log.wal} to keep exactly the first {@code keepFrames} complete frames

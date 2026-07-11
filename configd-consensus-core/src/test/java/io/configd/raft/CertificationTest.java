@@ -15,20 +15,18 @@ import java.util.random.RandomGenerator;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Certification tests for Raft safety properties (CERT-0011 through CERT-0014).
+ * Certification tests for Raft safety properties.
  * <p>
  * These tests exercise adversarial scenarios that are critical for correctness
  * but are not covered by the standard test suite:
  * <ul>
- *   <li>CERT-0011: Figure 8 adversarial - leader commits prior-term entry indirectly</li>
- *   <li>CERT-0012: Joint consensus with leader failure mid-transition</li>
- *   <li>CERT-0013: ReadIndex invalidation on leader step-down</li>
- *   <li>CERT-0014: Config entry truncation and revert on follower</li>
+ *   <li>Figure 8 adversarial - leader commits prior-term entry indirectly</li>
+ *   <li>Joint consensus with leader failure mid-transition</li>
+ *   <li>ReadIndex invalidation on leader step-down</li>
+ *   <li>Config entry truncation and revert on follower</li>
  * </ul>
  */
 class CertificationTest {
-
-    // Test infrastructure
 
     static final class TestTransport implements RaftTransport {
         private final List<SentMessage> messages = new ArrayList<>();
@@ -293,8 +291,8 @@ class CertificationTest {
         }
     }
 
-    // CERT-0011: Figure 8 adversarial - leader cannot commit prior-term
-    // entries based on replication count alone (Raft section 5.4.2, Figure 8)
+    // Figure 8 adversarial - leader cannot commit prior-term entries based on
+    // replication count alone (Raft section 5.4.2, Figure 8).
 
     @Nested
     class Figure8Adversarial {
@@ -314,18 +312,6 @@ class CertificationTest {
          */
         @Test
         void leaderCannotCommitPriorTermEntryByReplicationCountAlone() {
-            // This body used to assert a by-construction
-            // tautology (`term1EntryIndex > commitBefore || termAt(idx) == term1`,
-            // both disjuncts always true) and so could NOT see the section 5.4.2 guard
-            // mutant (`log.termAt(n) != currentTerm` -> `false` at
-            // RaftNode.maybeAdvanceCommitIndex), which makes the Figure-8
-            // lost-write reachable. The body below CONSTRUCTS Raft Figure 8 and
-            // drives the production maybeAdvanceCommitIndex (via the real
-            // handleAppendEntriesResponse entry point) with a prior-term entry at
-            // a quorum, asserting the guard blocks the early commit. Deleting the
-            // guard fails this test (capture:
-            // docs/session-2/captures/rr-085-figure8.txt).
-            //
             // Figure 8 (Raft section 5.4.2): an old entry replicated to a MAJORITY by a
             // re-elected leader must NOT be considered committed by replication
             // count alone - only committing a CURRENT-term entry commits it
@@ -343,8 +329,8 @@ class CertificationTest {
 
             cluster.dropAllMessages();
             leader.propose("X".getBytes());
-            cluster.deliverFromTo(Set.of(n1), Set.of(n2)); // n2 appends X
-            cluster.dropAllMessages();                     // drop n2's ack
+            cluster.deliverFromTo(Set.of(n1), Set.of(n2));
+            cluster.dropAllMessages();
 
             long idxX = leader.log().lastIndex();
             assertEquals(term1, leader.log().termAt(idxX), "X must be a term-1 entry");
@@ -405,12 +391,11 @@ class CertificationTest {
             TestCluster cluster = new TestCluster(3);
             NodeId n1 = NodeId.of(1), n2 = NodeId.of(2), n3 = NodeId.of(3);
 
-            // Elect n1, commit a no-op, propose a client entry
             cluster.electLeader(n1);
             RaftNode leader = cluster.nodes.get(n1);
             long leaderTerm = leader.currentTerm();
 
-            // Propose a command and replicate to n2 only
+            // Propose a command and replicate to n2 only.
             leader.propose("entry-A".getBytes());
             cluster.deliverMessagesTo(Set.of(n2));
             cluster.deliverMessagesTo(Set.of(n1));
@@ -419,8 +404,6 @@ class CertificationTest {
             // n2 becomes leader in leaderTerm+1, n2 will first commit
             // its no-op (at a new index in the new term), which
             // indirectly commits all prior entries up to that index.
-
-            // Force n2 to become leader
             cluster.dropAllMessages();
             cluster.triggerElectionTimeout(n2);
             cluster.deliverAllMessages(10);
@@ -430,15 +413,12 @@ class CertificationTest {
             long newTerm = newLeader.currentTerm();
             assertTrue(newTerm > leaderTerm);
 
-            // After full message delivery, the no-op from newTerm should be
-            // committed, which brings along the prior-term entries.
-            // The commit index should be >= the old entry's index.
             assertTrue(newLeader.log().commitIndex() > 0,
                     "New leader should have committed entries including prior-term entries via no-op");
         }
     }
 
-    // CERT-0012: Joint consensus with leader failure mid-transition
+    // Joint consensus with leader failure mid-transition.
 
     @Nested
     class JointConsensusLeaderFailure {
@@ -454,12 +434,9 @@ class CertificationTest {
             NodeId n1 = NodeId.of(1), n2 = NodeId.of(2), n3 = NodeId.of(3);
             NodeId n4 = NodeId.of(4);
 
-            // Elect n1 as leader
             cluster.electLeader(n1);
             RaftNode leader = cluster.nodes.get(n1);
             assertEquals(RaftRole.LEADER, leader.role());
-
-            // Add n4 to the cluster
             cluster.addNode(n4, Set.of(n1, n2, n3));
 
             // Propose config change: {1,2,3} -> {1,2,3,4}
@@ -477,7 +454,7 @@ class CertificationTest {
             //   new {1,2,3,4}: need 3 of 4 -> n2+n3+n4 needed
             // So n4 must participate for the election to succeed.
             //
-            // First, tick n3 and n4 past election timeout to clear leaderId
+            // First, tick n3 and n4 past election timeout to clear leaderId.
             cluster.dropAllMessages();
             long leaderTerm = leader.currentTerm();
             cluster.triggerElectionTimeout(n3);
@@ -510,25 +487,19 @@ class CertificationTest {
             NodeId n1 = NodeId.of(1), n2 = NodeId.of(2), n3 = NodeId.of(3);
             NodeId n4 = NodeId.of(4);
 
-            // Elect n1 and propose reconfig
             cluster.electLeader(n1);
             RaftNode leader = cluster.nodes.get(n1);
             cluster.addNode(n4, Set.of(n1, n2, n3));
             assertTrue(leader.proposeConfigChange(Set.of(n1, n2, n3, n4)));
-
-            // Deliver to all (including n3)
             cluster.deliverAllMessages(10);
 
-            // Now "crash" n1 by isolating it
+            // Now "crash" n1 by isolating it; only n2, n3, n4 communicate from here on.
             cluster.dropAllMessages();
             cluster.triggerElectionTimeout(n2);
-
-            // Let n2, n3, n4 communicate (excluding n1)
             for (int i = 0; i < 20; i++) {
                 cluster.deliverMessagesBetween(Set.of(n2, n3, n4), Set.of(n2, n3, n4));
             }
 
-            // Find the new leader among n2, n3, n4
             RaftNode newLeader = null;
             for (NodeId id : List.of(n2, n3, n4)) {
                 if (cluster.nodes.get(id).role() == RaftRole.LEADER) {
@@ -537,22 +508,19 @@ class CertificationTest {
                 }
             }
 
-            // The cluster should elect a new leader from surviving nodes
-            // (The joint config requires dual majority: old {1,2,3} and new {1,2,3,4}.
-            // With n1 down, old majority needs 2-of-3 surviving: n2+n3 suffices.
-            // New majority needs 3-of-4: n2+n3+n4 suffices.)
+            // The joint config requires dual majority: old {1,2,3} and new {1,2,3,4}.
+            // With n1 down, old majority needs 2-of-3 surviving (n2+n3 suffices) and
+            // new majority needs 3-of-4 (n2+n3+n4 suffices), so a new leader can emerge.
             if (newLeader != null) {
-                // New leader can accept proposals
                 assertEquals(ProposalResult.ACCEPTED,
                         newLeader.propose("after-reconfig-failure".getBytes()).result());
             }
-            // If no leader yet, at least verify term advanced and no split-brain
             assertTrue(cluster.countLeaders() <= 1,
                     "Must never have more than one leader in the same term");
         }
     }
 
-    // CERT-0013: ReadIndex invalidation on leader step-down
+    // ReadIndex invalidation on leader step-down.
 
     @Nested
     class ReadIndexInvalidation {
@@ -567,27 +535,22 @@ class CertificationTest {
             TestCluster cluster = new TestCluster(3);
             NodeId n1 = NodeId.of(1), n2 = NodeId.of(2), n3 = NodeId.of(3);
 
-            // Elect n1 as leader
             cluster.electLeader(n1);
             RaftNode leader = cluster.nodes.get(n1);
             assertEquals(RaftRole.LEADER, leader.role());
 
-            // Start a ReadIndex request
             long readId = leader.readIndex();
             assertTrue(readId >= 0, "ReadIndex should return a valid read ID for leader");
 
-            // Now simulate leader discovering a higher term (step-down)
-            // Send it an AppendEntries from a "leader" with a higher term
+            // Simulate the leader discovering a higher term by feeding it an
+            // AppendEntries from a "leader" at that term.
             long higherTerm = leader.currentTerm() + 1;
             AppendEntriesRequest fakeMsg = new AppendEntriesRequest(
                     higherTerm, n2, 0, 0, List.of(), 0);
             leader.handleMessage(fakeMsg);
 
-            // n1 should have stepped down
             assertEquals(RaftRole.FOLLOWER, leader.role(),
                     "Leader should step down after seeing higher term");
-
-            // The pending read should NOT be ready (it was invalidated)
             assertFalse(leader.isReadReady(readId),
                     "Pending ReadIndex must be invalidated after step-down");
         }
@@ -602,11 +565,9 @@ class CertificationTest {
             TestCluster cluster = new TestCluster(3);
             NodeId n1 = NodeId.of(1), n2 = NodeId.of(2), n3 = NodeId.of(3);
 
-            // Elect n1
             cluster.electLeader(n1);
             RaftNode leader = cluster.nodes.get(n1);
 
-            // Start read
             long readId = leader.readIndex();
             assertTrue(readId >= 0);
 
@@ -622,7 +583,7 @@ class CertificationTest {
         }
     }
 
-    // CERT-0014: Config entry truncation and revert
+    // Config entry truncation and revert.
 
     @Nested
     class ConfigEntryTruncation {
@@ -641,44 +602,36 @@ class CertificationTest {
             NodeId n1 = NodeId.of(1), n2 = NodeId.of(2), n3 = NodeId.of(3);
             NodeId n4 = NodeId.of(4);
 
-            // Elect n1 as leader
             cluster.electLeader(n1);
             RaftNode leader = cluster.nodes.get(n1);
-
-            // Add n4 node
             cluster.addNode(n4, Set.of(n1, n2, n3));
-
-            // Propose config change adding n4
             assertTrue(leader.proposeConfigChange(Set.of(n1, n2, n3, n4)));
 
-            // Replicate to n2 only (not n3)
+            // Replicate to n2 only (not n3).
             cluster.deliverMessagesTo(Set.of(n2));
             cluster.deliverMessagesTo(Set.of(n1));
 
-            // n2 now has the joint config entry
             RaftNode node2 = cluster.nodes.get(n2);
             assertTrue(node2.clusterConfig().isJoint(),
                     "n2 should have joint config after receiving config entry");
 
-            // Now "crash" n1 and let n3 become leader with a different log
+            // Now "crash" n1 and let n3 try to become leader with a different log.
             cluster.dropAllMessages();
             cluster.triggerElectionTimeout(n3);
 
-            // n3 starts election. Let n3 get votes from at least n2
-            // (n3 may or may not win depending on log comparison -
-            // but even if n3 doesn't win, we test the truncation path)
+            // n3 may or may not win depending on log comparison; even if it doesn't,
+            // this exercises the truncation path below.
             for (int i = 0; i < 15; i++) {
                 cluster.deliverMessagesBetween(Set.of(n2, n3), Set.of(n2, n3));
             }
 
-            // If n3 becomes leader, it will send AppendEntries that may
-            // truncate n2's config entry. Check that after full sync,
-            // no node has stale joint config from the old leader.
+            // If n3 becomes leader, it will send AppendEntries that may truncate
+            // n2's config entry. After full sync, no node should have stale joint
+            // config from the old leader.
             for (int i = 0; i < 20; i++) {
                 cluster.deliverMessagesBetween(Set.of(n2, n3), Set.of(n2, n3));
             }
 
-            // Safety invariant: at most one leader, and no split-brain
             assertTrue(cluster.countLeaders() <= 1,
                     "At most one leader should exist");
         }
@@ -693,34 +646,29 @@ class CertificationTest {
             NodeId n1 = NodeId.of(1), n2 = NodeId.of(2), n3 = NodeId.of(3);
             NodeId n4 = NodeId.of(4);
 
-            // Elect n1 and propose config change
             cluster.electLeader(n1);
             RaftNode leader = cluster.nodes.get(n1);
             cluster.addNode(n4, Set.of(n1, n2, n3));
             assertTrue(leader.proposeConfigChange(Set.of(n1, n2, n3, n4)));
 
-            // Replicate to n2
             cluster.deliverMessagesTo(Set.of(n2));
             cluster.deliverMessagesTo(Set.of(n1));
 
             RaftNode node2 = cluster.nodes.get(n2);
             assertTrue(node2.clusterConfig().isJoint());
 
-            // Now isolate n1, let n3 become leader
             cluster.dropAllMessages();
             cluster.triggerElectionTimeout(n3);
-
-            // Only deliver among n2 and n3
             for (int i = 0; i < 20; i++) {
                 cluster.deliverMessagesBetween(Set.of(n2, n3), Set.of(n2, n3));
             }
 
-            // If n3 won the election and truncated the config entry on n2,
-            // n2 should have reverted to the original config {1,2,3}
+            // If n3 won the election and truncated the config entry on n2, n2 should
+            // have reverted to the original config {1,2,3}.
             RaftNode node2After = cluster.nodes.get(n2);
             RaftNode node3 = cluster.nodes.get(n3);
 
-            // Check that n3's config is the original (it never had the config entry)
+            // n3's config should be the original one - it never had the config entry.
             assertFalse(node3.clusterConfig().isJoint(),
                     "n3 should have simple (non-joint) config");
             assertEquals(Set.of(n1, n2, n3), node3.clusterConfig().voters(),
@@ -728,7 +676,7 @@ class CertificationTest {
         }
     }
 
-    // CERT-0015: Leadership transfer blocked during reconfig
+    // Leadership transfer blocked during reconfig.
 
     @Nested
     class LeadershipTransferDuringReconfig {
@@ -748,11 +696,9 @@ class CertificationTest {
             RaftNode leader = cluster.nodes.get(n1);
             cluster.addNode(n4, Set.of(n1, n2, n3));
 
-            // Propose config change
             assertTrue(leader.proposeConfigChange(Set.of(n1, n2, n3, n4)));
             assertTrue(leader.clusterConfig().isJoint());
 
-            // Try to transfer leadership - should be rejected
             assertFalse(leader.transferLeadership(n2),
                     "Leadership transfer must be blocked during pending config change");
             assertNull(leader.transferTarget(),
@@ -760,7 +706,7 @@ class CertificationTest {
         }
     }
 
-    // CERT-0016: RCFG magic collision guard
+    // RCFG magic collision guard.
 
     @Nested
     class RcfgMagicGuard {
@@ -796,13 +742,12 @@ class CertificationTest {
             cluster.electLeader(n1);
             RaftNode leader = cluster.nodes.get(n1);
 
-            // Normal command
             ProposalResult result = leader.propose("normal-command".getBytes()).result();
             assertEquals(ProposalResult.ACCEPTED, result);
         }
     }
 
-    // CERT-0017: inflightCount never goes negative
+    // inflightCount never goes negative.
 
     @Nested
     class InflightCountSafety {
@@ -820,19 +765,15 @@ class CertificationTest {
             RaftNode leader = cluster.nodes.get(n1);
             assertEquals(RaftRole.LEADER, leader.role());
 
-            // Deliver all messages to synchronize
             cluster.deliverAllMessages(10);
 
-            // Send a spurious AppendEntriesResponse to the leader
-            // (simulating a duplicate/late response)
+            // A spurious (duplicate/late) AppendEntriesResponse must not drive the
+            // inflight count negative - that would eventually block all sends to
+            // this peer. Proposing afterward verifies the leader is still functional.
             AppendEntriesResponse spurious = new AppendEntriesResponse(
                     leader.currentTerm(), true, leader.log().lastIndex(), n2);
             leader.handleMessage(spurious);
 
-            // Leader should handle this gracefully without crashing
-            // or having negative inflight count. If it did go negative,
-            // it would eventually block all sends to that peer.
-            // Verify leader is still functional by proposing
             ProposalResult result = leader.propose("after-spurious".getBytes()).result();
             assertEquals(ProposalResult.ACCEPTED, result);
         }

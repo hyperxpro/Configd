@@ -31,8 +31,6 @@ import java.util.function.BiConsumer;
  */
 public final class HamtMap<K, V> {
 
-    // -- Constants ----------------------------------------------------------
-
     /** Bits consumed per trie level. */
     private static final int BITS = 5;
 
@@ -48,11 +46,7 @@ public final class HamtMap<K, V> {
     /** Demote array node to bitmap node at or below this child count. */
     private static final int DEMOTE_THRESHOLD = 8;
 
-    // -- Singleton empty map ------------------------------------------------
-
     private static final HamtMap<?, ?> EMPTY = new HamtMap<>(null, 0);
-
-    // -- Fields -------------------------------------------------------------
 
     private final Node<K, V> root;
     private final int size;
@@ -67,8 +61,6 @@ public final class HamtMap<K, V> {
     public static <K, V> HamtMap<K, V> empty() {
         return (HamtMap<K, V>) EMPTY;
     }
-
-    // -- Public API ---------------------------------------------------------
 
     /** Number of key-value pairs. */
     public int size() {
@@ -144,19 +136,13 @@ public final class HamtMap<K, V> {
         }
     }
 
-    // -- Hash spreading -----------------------------------------------------
-
     private static int spread(int h) {
         return h ^ (h >>> 16);
     }
 
-    // -- Size delta carrier -------------------------------------------------
-
     static final class SizeChange {
         int delta;
     }
-
-    // -- Node sealed hierarchy ----------------------------------------------
 
     sealed interface Node<K, V>
             permits BitmapIndexedNode, ArrayNode, CollisionNode {
@@ -169,10 +155,6 @@ public final class HamtMap<K, V> {
 
         void forEach(BiConsumer<K, V> action);
     }
-
-    // -----------------------------------------------------------------------
-    // BitmapIndexedNode
-    // -----------------------------------------------------------------------
 
     /**
      * Sparse trie node. A 32-bit {@code bitmap} marks which of the 32
@@ -202,8 +184,6 @@ public final class HamtMap<K, V> {
             return Integer.bitCount(bitmap & (bit - 1));
         }
 
-        // -- get (zero allocation) -----------------------------------------
-
         @Override
         @SuppressWarnings("unchecked")
         public V get(K key, int hash, int shift) {
@@ -221,8 +201,6 @@ public final class HamtMap<K, V> {
             return key.equals(k) ? (V) v : null;
         }
 
-        // -- put -----------------------------------------------------------
-
         @Override
         @SuppressWarnings("unchecked")
         public Node<K, V> put(K key, V value, int hash, int shift, SizeChange sc) {
@@ -231,7 +209,6 @@ public final class HamtMap<K, V> {
             int idx = index(bit);
 
             if ((bitmap & bit) == 0) {
-                // Empty slot - insert inline leaf
                 sc.delta = 1;
                 int n = Integer.bitCount(bitmap);
                 if (n >= PROMOTE_THRESHOLD) {
@@ -249,7 +226,6 @@ public final class HamtMap<K, V> {
             Object existingVal = array[2 * idx + 1];
 
             if (existingKey == null) {
-                // Sub-node - recurse
                 Node<K, V> child = (Node<K, V>) existingVal;
                 Node<K, V> newChild = child.put(key, value, hash, shift + BITS, sc);
                 if (newChild == child) {
@@ -260,7 +236,6 @@ public final class HamtMap<K, V> {
 
             K ek = (K) existingKey;
             if (key.equals(ek)) {
-                // Same key - update value in place
                 if (value.equals(existingVal)) {
                     return this;
                 }
@@ -268,7 +243,6 @@ public final class HamtMap<K, V> {
                 return cloneAndSet(2 * idx + 1, value);
             }
 
-            // Different key, same hash fragment at this level - merge
             sc.delta = 1;
             int existingHash = spread(ek.hashCode());
             Node<K, V> merged = mergeLeaves(shift + BITS,
@@ -276,8 +250,6 @@ public final class HamtMap<K, V> {
                     key, value, hash);
             return cloneAndSetNode(2 * idx, merged);
         }
-
-        // -- remove --------------------------------------------------------
 
         @Override
         @SuppressWarnings("unchecked")
@@ -316,8 +288,6 @@ public final class HamtMap<K, V> {
             return this;
         }
 
-        // -- forEach -------------------------------------------------------
-
         @Override
         @SuppressWarnings("unchecked")
         public void forEach(BiConsumer<K, V> action) {
@@ -332,8 +302,6 @@ public final class HamtMap<K, V> {
                 }
             }
         }
-
-        // -- internal helpers ----------------------------------------------
 
         private BitmapIndexedNode<K, V> cloneAndSet(int pos, Object val) {
             Object[] c = array.clone();
@@ -397,10 +365,6 @@ public final class HamtMap<K, V> {
             return new ArrayNode<>(n + 1, children);
         }
     }
-
-    // -----------------------------------------------------------------------
-    // ArrayNode
-    // -----------------------------------------------------------------------
 
     /**
      * Full 32-slot node. Direct array indexing (O(1), no bitCount).
@@ -506,10 +470,6 @@ public final class HamtMap<K, V> {
             return new BitmapIndexedNode<>(bitmap, arr);
         }
     }
-
-    // -----------------------------------------------------------------------
-    // CollisionNode
-    // -----------------------------------------------------------------------
 
     /**
      * Handles full 32-bit hash collisions. Stores entries as a flat
@@ -621,10 +581,6 @@ public final class HamtMap<K, V> {
             return -1;
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Shared helpers
-    // -----------------------------------------------------------------------
 
     /**
      * Creates a single-leaf BitmapIndexedNode at the given shift level.

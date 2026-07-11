@@ -124,6 +124,6 @@ InstallSnapshot RPC failures end-to-end).
 
 ## Related
 
-- `spec/SnapshotInstallSpec.tla`, `docs/decisions/adr-0028-snapshot-on-disk-format.md`
+- `spec/SnapshotInstallSpec.tla`, `docs/adr/adr-0028-snapshot-on-disk-format.md`
 - [restore-from-snapshot.md](restore-from-snapshot.md),
   [disaster-recovery.md](disaster-recovery.md), [disk-full-fsync.md](disk-full-fsync.md)

@@ -29,35 +29,35 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Gate 8 live proof — the <b>decentralized leadership auto-balance loop actually rebalances a real
+ * Live proof that the <b>decentralized leadership auto-balance loop actually rebalances a real
  * multi-node cluster.</b>
  *
  * <p>Every other test of the balancer proves a fragment: {@code LeaderBalancePlannerTest} proves the
  * pure decision is convergent, {@code LeaderBalanceLoopTest} proves the loop's control behaviour over a
  * {@code FakeCluster} model, and {@code EncryptedMultiShardClusterCompositionTest} stands up a real
  * cluster but pins the loop OFF so its leadership-stability assertions cannot race a shed. None of them
- * proves the loop — wired into a live {@link ConfigdServer}, on its own thread, driving the real
- * owner-confined {@code transferLeadership} path over loopback TCP — takes a genuinely concentrated
+ * proves the loop, wired into a live {@link ConfigdServer}, on its own thread, driving the real
+ * owner-confined {@code transferLeadership} path over loopback TCP: takes a genuinely concentrated
  * cluster and spreads it back out. That is the property here.
  *
  * <p>Both scenarios boot a real three-node, six-shard cluster over loopback (encryption OFF, to isolate
  * the balance behaviour), then deliberately concentrate every shard's leadership onto node 0 by driving
  * the same {@link RaftNode#transferLeadership} primitive the admin endpoint and the loop use. The
  * concentration is genuine: node 0 ends up leading all (or all-but-one) of the six groups, a leader
- * spread of {@code 6-0 = 6} — far past the actionable threshold of 2.
+ * spread of {@code 6-0 = 6}, far past the actionable threshold of 2.
  *
  * <h2>The two halves</h2>
  * <ul>
  *   <li><b>Loop ON</b> ({@link #autobalanceOnRebalancesAConcentratedCluster}): with
  *       {@code autobalance.enabled=true} the loop sheds one led group per cadence to an under-loaded
  *       peer until the spread converges to {@code <= 1} (the balanced target for 6 groups over 3 nodes is
- *       {@code {2,2,2}}, spread 0). The convergence is via <em>genuine transfers</em> — the
- *       {@code transfers_initiated} counter on the running server proves the loop drove them — and the
+ *       {@code {2,2,2}}, spread 0). The convergence is via <em>genuine transfers</em>: the
+ *       {@code transfers_initiated} counter on the running server proves the loop drove them, and the
  *       cluster stays correct: a write proposed AFTER rebalancing commits and replicates on all three.</li>
  *   <li><b>Kill switch OFF</b> ({@link #killSwitchOffLeavesAConcentratedClusterConcentrated}): with
  *       {@code autobalance.enabled=false} the SAME concentrated cluster does NOT self-balance within a
  *       window comfortably longer than the ON cluster took to converge. This is the control that proves
- *       the loop — not incidental election churn — is what rebalanced.</li>
+ *       the loop, not incidental election churn, is what rebalanced.</li>
  * </ul>
  *
  * <p><b>Why concentration is clean even with the loop live.</b> The loop's instability gate backs the
@@ -65,11 +65,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * test issues bumps a term, so while the test is actively concentrating, the live loop is held in
  * {@code term_churn} back-off and cannot erode the concentration out from under it; it only begins
  * shedding once the test stops transferring and the window clears. The test therefore observes a real
- * concentrated start, then real convergence — no race to win.
+ * concentrated start, then real convergence: no race to win.
  *
  * <p>The cadence/cooldown/instability knobs are shortened from their production defaults so a bounded
  * test converges in tens of seconds, but the planner's real safety logic is untouched: the actionable
- * threshold stays 2, jitter/cooldown/churn back-off all still apply. Everything is deadline-polled — no
+ * threshold stays 2, jitter/cooldown/churn back-off all still apply. Everything is deadline-polled, no
  * sleep-as-synchronisation; the per-method {@link Timeout} is pure hang detection on the throttled
  * 2-vCPU box. The election budget is widened to the ratio proven stable by
  * {@code NettyConsensusLivenessTest} so scheduling jitter cannot manufacture a spurious election (or an
@@ -128,7 +128,7 @@ class LeadershipAutoBalanceE2ETest {
         System.setProperty("configd.raft.ownerPoolSize", "2");
         // Heartbeat 100ms << election 1500-3000ms (ratio ~15-30): a concentrated node 0 leading all six
         // groups still heartbeats every follower well inside the election floor, so it never involuntarily
-        // sheds leadership through a missed heartbeat — leaving the auto-balance loop as the ONLY thing that
+        // sheds leadership through a missed heartbeat, leaving the auto-balance loop as the ONLY thing that
         // can move a leader off node 0.
         System.setProperty("configd.raft.electionTimeoutMinMs", "1500");
         System.setProperty("configd.raft.electionTimeoutMaxMs", "3000");
@@ -137,7 +137,7 @@ class LeadershipAutoBalanceE2ETest {
         System.setProperty("configd.raft.autobalance.intervalMs", "1500");
         System.setProperty("configd.raft.autobalance.jitterPct", "0"); // deterministic cadence for a bounded test
         System.setProperty("configd.raft.autobalance.cooldownMs", "1500");
-        System.setProperty("configd.raft.autobalance.imbalanceThreshold", "2"); // production default — unchanged
+        System.setProperty("configd.raft.autobalance.imbalanceThreshold", "2"); // production default, unchanged
         System.setProperty("configd.raft.autobalance.instabilityWindowMs", "1000");
         // Each test sets `enabled` itself.
     }
@@ -167,7 +167,7 @@ class LeadershipAutoBalanceE2ETest {
         System.setProperty("configd.raft.autobalance.enabled", "true");
         ConfigdServer[] servers = bootCluster(root);
 
-        // Every shard must first elect a stable leader — the natural boot distribution is roughly even, so
+        // Every shard must first elect a stable leader: the natural boot distribution is roughly even, so
         // this is the balanced baseline the concentration then deliberately breaks.
         awaitAllShardsLed(servers);
 
@@ -220,7 +220,7 @@ class LeadershipAutoBalanceE2ETest {
 
         // With the loop off, nothing rebalances: over a window comfortably longer than the ON cluster took
         // to converge, the spread must NOT fall to the balanced floor. (awaitSpreadAtMost polls the full
-        // window and only returns true if it ever reaches the target — so a false return is the proof that
+        // window and only returns true if it ever reaches the target, so a false return is the proof that
         // it never did.) This is what isolates the loop as the cause of the ON convergence.
         assertFalse(awaitSpreadAtMost(servers, BALANCED_SPREAD, OBSERVE_MS),
                 "without the auto-balance loop the concentrated cluster must NOT self-balance within "
@@ -234,13 +234,11 @@ class LeadershipAutoBalanceE2ETest {
                 + endSpread + " — no self-balancing without the loop: " + distribution(servers));
     }
 
-    // =======================================================================
-    // cluster boot (mirrors EncryptedMultiShardClusterCompositionTest's loopback harness)
-    // =======================================================================
-
+    // Mirrors EncryptedMultiShardClusterCompositionTest's loopback harness.
     private ConfigdServer[] bootCluster(Path root) throws Exception {
-        // ONE shared cluster signing key, OUTSIDE every node's data dir (D-1 co-location guard) and
-        // pre-created so the concurrent boots never race to mint it.
+        // ONE shared cluster signing key, kept outside every node's data dir (a co-located key would
+        // be readable by anyone with access to the data dir, defeating the at-rest integrity
+        // guarantee it backs) and pre-created so the concurrent boots never race to mint it.
         Path signingKey = root.resolve("secrets").resolve("signing-key.bin");
         Files.createDirectories(signingKey.getParent());
         SigningKeyStore.loadOrCreate(signingKey);
@@ -279,10 +277,6 @@ class LeadershipAutoBalanceE2ETest {
         });
     }
 
-    // =======================================================================
-    // leadership observation + concentration (deadline-polled; no sleep-as-sync)
-    // =======================================================================
-
     /** The single node reporting LEADER for {@code gid}, or -1 (none yet, or a transient split). */
     private static int shardLeader(ConfigdServer[] servers, int gid) {
         int leader = -1;
@@ -290,7 +284,7 @@ class LeadershipAutoBalanceE2ETest {
             RaftNode node = servers[i].driver().getGroup(gid);
             if (node != null && node.monitorView().role() == RaftRole.LEADER) {
                 if (leader >= 0) {
-                    return -1; // two leaders observed (transient) — not settled
+                    return -1; // two leaders observed (transient), not settled
                 }
                 leader = i;
             }
@@ -304,7 +298,7 @@ class LeadershipAutoBalanceE2ETest {
         for (int gid = 0; gid < SHARDS; gid++) {
             int leader = shardLeader(servers, gid);
             if (leader < 0) {
-                return null; // a shard is mid-election / split — the whole reading is not settled
+                return null; // a shard is mid-election / split, the whole reading is not settled
             }
             counts[leader]++;
         }
@@ -375,7 +369,7 @@ class LeadershipAutoBalanceE2ETest {
             }
             for (int gid = 0; gid < SHARDS; gid++) {
                 int leader = shardLeader(servers, gid);
-                if (leader > 0) { // a node other than node 0 leads it — only its leader can move it
+                if (leader > 0) { // a node other than node 0 leads it, only its leader can move it
                     tryTransfer(servers[leader], gid, NODE0);
                 }
             }
@@ -386,7 +380,7 @@ class LeadershipAutoBalanceE2ETest {
     /**
      * Best-effort leadership transfer of {@code gid} to {@code target}, driven on the group's owner thread
      * exactly as {@code DriverLeadershipAdmin} does. A failure (no longer leader, target not caught up, a
-     * concurrent election) is swallowed — the caller re-sweeps until the leadership actually lands.
+     * concurrent election) is swallowed, the caller re-sweeps until the leadership actually lands.
      */
     private static void tryTransfer(ConfigdServer from, int gid, NodeId target) {
         MultiRaftDriver driver = from.driver();
@@ -437,10 +431,6 @@ class LeadershipAutoBalanceE2ETest {
         }
         return false;
     }
-
-    // =======================================================================
-    // metrics + replication assertions
-    // =======================================================================
 
     private static long totalTransfersInitiated(ConfigdServer[] servers) {
         long total = 0;

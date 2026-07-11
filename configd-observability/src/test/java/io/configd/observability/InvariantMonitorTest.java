@@ -21,10 +21,6 @@ class InvariantMonitorTest {
         metrics = new MetricsRegistry();
     }
 
-    // -----------------------------------------------------------------------
-    // Test mode - violations throw AssertionError
-    // -----------------------------------------------------------------------
-
     @Nested
     class TestMode {
 
@@ -74,10 +70,6 @@ class InvariantMonitorTest {
             assertEquals(1, count);
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Production mode - violations record silently
-    // -----------------------------------------------------------------------
 
     @Nested
     class ProductionMode {
@@ -135,10 +127,6 @@ class InvariantMonitorTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Registered invariants and checkAll
-    // -----------------------------------------------------------------------
-
     @Nested
     class RegisteredInvariants {
 
@@ -187,10 +175,6 @@ class InvariantMonitorTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Violations map
-    // -----------------------------------------------------------------------
-
     @Nested
     class ViolationsMap {
 
@@ -209,10 +193,6 @@ class InvariantMonitorTest {
                     () -> violations.put("hack", 999L));
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Data-plane invariant helpers (INV-M1 monotonic_read, INV-S1 staleness_bound)
-    // -----------------------------------------------------------------------
 
     @Nested
     class MonotonicRead {
@@ -284,10 +264,6 @@ class InvariantMonitorTest {
             assertEquals(1L, metrics.counter("invariant.violation.staleness_bound").get());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Validation
-    // -----------------------------------------------------------------------
 
     @Nested
     class Validation {

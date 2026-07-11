@@ -8,7 +8,7 @@ package io.configd.api;
  * Extends {@link IllegalArgumentException} (so it is a {@link RuntimeException} the loader's
  * fail-closed-to-last-good {@code catch (RuntimeException)} handles, and so callers that expect the
  * documented {@code IllegalArgumentException} contract still match) while remaining a distinct,
- * assertable type for tests and structured logging. Carrying this type is purely additive over the base {@link IllegalArgumentException} contract.
+ * assertable type for tests and structured logging.
  */
 public final class PolicyParseException extends IllegalArgumentException {
 

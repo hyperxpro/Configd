@@ -1,47 +1,44 @@
 #!/usr/bin/env bash
-# =============================================================================
-# soak.sh — Session 5 / Workstream E REAL soak workload (leak / drift detector)
-# -----------------------------------------------------------------------------
-# Wires a REAL 3-node control-plane cluster (same launch shape as
-# gates/smoke-multinode.sh / perf/wsB-live-write.sh — none of which we modify)
-# under ZGC (ADR-0041), drives it at a BOX-SUSTAINABLE write rate, and every
-# ~SAMPLE_SEC appends a TREND line so heap creep / FD leak / thread leak / GC
-# degradation / commit-latency drift are visible over the run.
+# soak.sh — real-cluster soak workload (leak / drift detector)
 #
-# Honesty (methodology §4 rule 6): this is a real-duration workload. A SHORT
-# run is a SMOKE, never a soak — pass --duration=300 (5 min) to validate the
-# harness; the LEAD launches the long (24 h) run from the main session so it
-# outlives this agent. The duration contract of soak-72h.sh is unchanged; this
-# is the workload that script's stub said "Phase 10" would wire.
+# Wires a real 3-node control-plane cluster (same launch shape as
+# gates/smoke-multinode.sh / perf/wsB-live-write.sh), drives it at a
+# box-sustainable write rate, and every ~SAMPLE_SEC appends a trend line so
+# heap creep, fd leaks, thread leaks, GC degradation, and commit-latency
+# drift are visible over the run.
 #
-# WHY NOT THE 10k/s SLO: the box's sustainable end-to-end commit rate is
-# ~136-172/s (manifest M-9 / wsB-calibrate.txt); 10k/s is ENV-BLOCKED. A soak
-# detects LEAKS and DRIFT, which are RATE-INDEPENDENT — a steady ~100/s with
-# headroom over the ~136/s floor is the right, sustainable soak rate. We are
-# NOT measuring throughput here (that is Workstream B); we are watching for
-# resource creep at a constant, comfortably-sustainable load.
+# Honesty: this is a real-duration workload. A short run is a smoke, never a
+# soak — pass --duration=300 (5 min) to validate the harness; production runs
+# go for 24h+ so they outlive any single session.
+#
+# Why not drive at the top-line write SLO: the box's sustainable end-to-end
+# commit rate tops out around 136-172/s (see wsB-calibrate.txt), so a much
+# higher target rate is env-blocked on this hardware. A soak detects leaks
+# and drift, which are rate-independent — a steady ~100/s with headroom over
+# that floor is the right, sustainable soak rate. This harness does not
+# measure throughput; it watches for resource creep at a constant,
+# comfortably-sustainable load.
 #
 # Usage:
 #   perf/soak.sh [--duration=<sec>] [--rate=<commits/s>] [--seed=<int>] \
 #                [--sample=<sec>] [--out=<dir>]
 #
 # Examples:
-#   perf/soak.sh --duration=300                      # 5-min SMOKE (validation)
-#   perf/soak.sh --duration=86400 --out=perf/results/soak-24h   # LEAD's 24 h run
+#   perf/soak.sh --duration=300                                  # 5-min smoke (validation)
+#   perf/soak.sh --duration=86400 --out=perf/results/soak-24h    # 24h run
 #
 # Requires: freshly-built shaded server jar + benchmarks.jar.
 #   ./mvnw -pl configd-server -am package
 #   ./mvnw -pl configd-testkit -am package
 # Idempotent: cleans up its own ports/dirs on entry + exit.
-# =============================================================================
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JAR="${CONFIGD_JAR:-$(ls "$ROOT"/configd-server/target/configd-server-*.jar 2>/dev/null | grep -v original- | head -1)}"
 BENCH="$ROOT/configd-testkit/target/benchmarks.jar"
 
-DURATION_SEC=$((24 * 3600))   # default 24 h; the LEAD overrides for the real run
-RATE=100                      # commits/s — box-sustainable (M-9 floor ~136/s)
+DURATION_SEC=$((24 * 3600))   # default 24 h; override for a real run
+RATE=100                      # commits/s — box-sustainable (~136/s floor observed)
 SEED=42
 SAMPLE_SEC=30                 # trend-line cadence
 OUT_DIR=""
@@ -62,17 +59,18 @@ while [[ $# -gt 0 ]]; do
 done
 
 OUT_DIR="${OUT_DIR:-$ROOT/perf/results/soak-$(date -u +%Y%m%dT%H%M%SZ)}"
-# SOAK_BASE: data+WAL root. Default /tmp (legacy callers / dev-box). On the EC2
-# measurement box set SOAK_BASE=/mnt/nvme/... for the fsync-honest WAL path.
+# SOAK_BASE: data+WAL root. Defaults to /tmp for local/dev runs; for a
+# fsync-honest measurement, set SOAK_BASE=/mnt/nvme/... (real NVMe path).
 BASE="${SOAK_BASE:-/tmp/configd-soak-$$}"
 RAFT_BASE=9290
 API_BASE=8280
 PEERS_ADDR="1=127.0.0.1:9291,2=127.0.0.1:9292,3=127.0.0.1:9293"
 HEAP="${SOAK_HEAP:--Xmx1g -Xms1g}"
-GCFLAGS="${SOAK_GC:--XX:+UseZGC}"   # ADR-0041: ZGC for serving JVMs
-# SOAK_JVM_EXTRA: extra per-node JVM flags (default none). On the EC2 box used to
-# add -XX:NativeMemoryTracking=summary + -XX:+HeapDumpOnOutOfMemoryError so an
-# off-heap/direct-buffer leak or an OOM is captured, not just inferred.
+GCFLAGS="${SOAK_GC:--XX:+UseZGC}"
+# SOAK_JVM_EXTRA: extra per-node JVM flags (default none). For a real
+# measurement run, add -XX:NativeMemoryTracking=summary and
+# -XX:+HeapDumpOnOutOfMemoryError so an off-heap/direct-buffer leak or an
+# OOM is captured, not just inferred.
 JVM_EXTRA="${SOAK_JVM_EXTRA:-}"
 PIDS=()
 
@@ -94,13 +92,12 @@ trap cleanup EXIT
 [ -f "$JAR" ]   || fail "shaded jar not found: $JAR (build: ./mvnw -pl configd-server -am package)"
 [ -f "$BENCH" ] || fail "benchmarks.jar not found (build: ./mvnw -pl configd-testkit -am package)"
 
-# -----------------------------------------------------------------------------
 # Launch the 3-node ZGC cluster, each with its own gc log for cumulative pause.
-# -----------------------------------------------------------------------------
-# Shared cluster signing key, mounted OUTSIDE every node data dir. Required since the D-1
-# fail-closed guard (ADR-0043): the PA-2021 at-rest integrity key is derived from the signing
-# key, so a key co-located inside the data dir it protects is REFUSED at boot. Default to the
-# pre-generated key from deploy/compose/setup-secrets.sh; override with SOAK_SIGNKEY.
+# Shared cluster signing key, mounted OUTSIDE every node data dir. Required
+# because the fail-closed guard (ADR-0043) derives the at-rest integrity key
+# from the signing key, so a key co-located inside the data dir it protects
+# is refused at boot. Defaults to the pre-generated key from
+# deploy/compose/setup-secrets.sh; override with SOAK_SIGNKEY.
 SIGNKEY="${SOAK_SIGNKEY:-$ROOT/deploy/compose/secrets/signing-key.bin}"
 [ -s "$SIGNKEY" ] || fail "shared signing key not found: $SIGNKEY (run deploy/compose/setup-secrets.sh)"
 echo "[soak] launching 3-node cluster ($GCFLAGS $HEAP) under $BASE; out=$OUT_DIR; signing-key=$SIGNKEY"
@@ -134,13 +131,11 @@ echo "[soak] all 3 nodes ready"
 
 NODEMAP="1=http://$(api 1),2=http://$(api 2),3=http://$(api 3)"
 
-# -----------------------------------------------------------------------------
 # Trend sampler: RSS, heap-used, open FD count, thread count, cumulative GC
 # (cycles + cumulative cycle-seconds from the ZGC log), and a sampled commit
 # latency p50/p99 (from the driver window in flight). One CSV row per sample.
 # All three node PIDs are summed where a fleet-wide number is meaningful (RSS,
 # FDs, threads); per-node columns let a single-node leak stand out.
-# -----------------------------------------------------------------------------
 proc_rss_kb() { awk '/VmRSS/{print $2}' "/proc/$1/status" 2>/dev/null || echo 0; }
 proc_threads() { awk '/Threads/{print $2}' "/proc/$1/status" 2>/dev/null || echo 0; }
 proc_fds() { ls "/proc/$1/fd" 2>/dev/null | wc -l; }
@@ -186,13 +181,11 @@ echo "soak harness" > "$RESULT"
   fi
 } >> "$RESULT"
 
-# -----------------------------------------------------------------------------
 # Drive in SAMPLE_SEC windows: each window runs the open-loop CO-corrected
 # driver for SAMPLE_SEC at RATE, then we read its p50/p99 from ATRATE-HISTOGRAM
 # and append a trend row. Looping the driver (vs one long invocation) gives a
 # per-window latency sample so drift is visible across the run; the cluster
-# stays UP the whole time, so leaks accumulate.
-# -----------------------------------------------------------------------------
+# stays up the whole time, so leaks accumulate.
 sample_idx=0
 while [ "$(date +%s)" -lt "$deadline" ]; do
   win_start=$(date +%s)
@@ -236,11 +229,9 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   sample_idx=$((sample_idx + 1))
 done
 
-# -----------------------------------------------------------------------------
-# Closeout: flat-trend check (first vs last sample) so the run self-reports leak
-# signals. Thresholds are deliberately generous for a SMOKE; the LEAD reads the
-# CSV for the real run.
-# -----------------------------------------------------------------------------
+# Closeout: flat-trend check (first vs last sample) so the run self-reports
+# leak signals. Thresholds are deliberately generous for a smoke; review the
+# CSV directly for the real run.
 finish() {
   local status="${1:-DONE}"
   local t_end; t_end=$(date +%s)
@@ -253,18 +244,19 @@ finish() {
   } >> "$RESULT"
 
   if [ "$sample_idx" -ge 2 ]; then
-    # Memory leak/drift verdict — STEADY-STATE ONLY, keyed on WALL-CLOCK elapsed.
-    # The JVM heap-commit ramp (ZGC committing toward -Xms/-Xmx, plus JIT warmup) runs well
-    # past 170 s on this throttling 2-vCPU box, so a sample-fraction split is fragile on a
-    # short run. Instead we discard every sample inside the warmup floor (WARMUP_FLOOR_SEC,
-    # default 180 s) and compare the FIRST-HALF MEDIAN vs the SECOND-HALF MEDIAN of the
-    # POST-WARMUP samples. A genuine leak shows as 2nd-half-median > 1st-half-median; a
-    # transient throttle spike cannot dominate a median. CRUCIALLY: if there are too few
-    # post-warmup samples for a stable median (a short SMOKE), the memory verdict is
-    # OBSERVATIONAL — the harness reports the trend but does NOT assert leak/no-leak, because
-    # a 5-min smoke is too short to separate heap warmup from a slow leak (that is exactly
-    # what the long run is for; methodology §4 rule 6). FD/thread leaks ARE meaningful from
-    # t0 (they don't warm up), so those keep the first-vs-last comparison and ARE asserted.
+    # Memory leak/drift verdict — steady-state only, keyed on wall-clock elapsed.
+    # The JVM heap-commit ramp (ZGC committing toward -Xms/-Xmx, plus JIT warmup) runs
+    # well past 170s on a throttled 2-vCPU box, so a sample-fraction split is fragile on
+    # a short run. Instead we discard every sample inside the warmup floor
+    # (WARMUP_FLOOR_SEC, default 180s) and compare the first-half median vs the
+    # second-half median of the post-warmup samples. A genuine leak shows as
+    # 2nd-half-median > 1st-half-median; a transient throttle spike cannot dominate a
+    # median. If there are too few post-warmup samples for a stable median (a short
+    # smoke), the memory verdict is observational — the harness reports the trend but
+    # does not assert leak/no-leak, because a 5-minute smoke is too short to separate
+    # heap warmup from a slow leak (that is exactly what the long run is for). FD and
+    # thread leaks are meaningful from t0 (they don't warm up), so those keep the
+    # first-vs-last comparison and are asserted.
     WARMUP_FLOOR_SEC="${SOAK_WARMUP_FLOOR_SEC:-180}"
     local first last npost
     first=$(sed -n '2p' "$TREND")

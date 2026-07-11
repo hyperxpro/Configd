@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Test-the-tester for {@link EdgeInvariants}: each edge invariant is observed
  * <b>FIRING</b> on a deliberately-constructed violation, so the checker is proven
- * non-vacuous (an assertion never seen to fire is unverified - contract section 4.5).
+ * non-vacuous (an assertion never seen to fire is unverified).
  * <p>
  * The four firings (one per invariant clause) and their capture is the deliverable:
  * <ol>
@@ -53,7 +53,7 @@ class EdgeInvariantsTestTheTesterTest {
         return new ConfigSnapshot(data, version, version);
     }
 
-    // ---- (a) per-edge version monotonicity fires ---------------------------
+    // (a) per-edge version monotonicity fires.
 
     @Test
     void versionMonotonicityCheckerFiresOnDecreasingStoreVersion() {
@@ -109,7 +109,7 @@ class EdgeInvariantsTestTheTesterTest {
         inv.checkAll(List.of(edge), now.get(), e -> true);
     }
 
-    // ---- (b) no-stale-overwrite fires + production guard protects ----------
+    // (b) no-stale-overwrite fires; production guard protects.
 
     @Test
     void noStaleOverwriteCheckerFiresOnDecreasingKeyVersion() {
@@ -126,8 +126,9 @@ class EdgeInvariantsTestTheTesterTest {
         // version 5 - a per-key stale overwrite, which invariant (b) must catch. We inject
         // this via the UNSAFE force-load hook (BYPASSING the codec): the production snapshot
         // path serializes through EdgeSnapshotCodec, which RESTAMPS every key to the snapshot
-        // seq (per the apply-sequence invariant) - so a per-key regression cannot survive the real path and a bug must
-        // be injected directly to prove the checker's non-vacuity. (Same discipline as (a).)
+        // seq (per the apply-sequence invariant), so a per-key regression cannot survive the
+        // real path and a bug must be injected directly to prove the checker's non-vacuity.
+        // (Same discipline as (a).)
         edge.forceLoadSnapshotUnsafeForTest(snapshotWith(11, "k", "v5", 5), 11);
 
         SimInvariants.SafetyViolation ex = assertThrows(SimInvariants.SafetyViolation.class,
@@ -195,7 +196,7 @@ class EdgeInvariantsTestTheTesterTest {
         assertDoesNotThrow(() -> inv.checkAll(List.of(edge), now.get(), e -> true));
     }
 
-    // ---- (c) convergence finalCheck fires on divergence --------------------
+    // (c) convergence finalCheck fires on divergence.
 
     @Test
     void convergenceFinalCheckFiresOnDivergentEdgeState() {
@@ -224,7 +225,7 @@ class EdgeInvariantsTestTheTesterTest {
                 "a converged edge must pass finalCheck");
     }
 
-    // ---- (d) eventual-delivery bound recorded with correct lateness --------
+    // (d) eventual-delivery bound recorded with correct lateness.
 
     @Test
     void eventualDeliveryViolationIsRecordedWithCorrectLateness() {
@@ -282,7 +283,7 @@ class EdgeInvariantsTestTheTesterTest {
                 "no violation when the edge observed the seq before the bound");
     }
 
-    // ---- helpers -----------------------------------------------------------
+    // Helpers.
 
     private static io.configd.distribution.CommitNotification notification(
             long seq, long fromVersion, long toVersion, String key, String value) {

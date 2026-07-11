@@ -4,12 +4,9 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * A named, reusable bundle of {@link PolicyRule}s.
- * <p>
- * This is the production realization of the docs-only
- * {@code docs/design/namespace-model/sketch/.../PolicySet} concept, deliberately <b>without</b> the
- * sketch's {@code Scope} or glob {@code PathPattern}: a policy here is simply a named list of literal
- * prefix rules. Immutable: the rule list is defensively copied to an unmodifiable snapshot.
+ * A named, reusable bundle of {@link PolicyRule}s: a policy is simply a named list of literal
+ * prefix rules, deliberately without a scope or glob pattern concept. Immutable: the rule list is
+ * defensively copied to an unmodifiable snapshot.
  */
 public record Policy(String name, List<PolicyRule> rules) {
 

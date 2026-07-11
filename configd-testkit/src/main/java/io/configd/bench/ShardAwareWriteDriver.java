@@ -131,12 +131,10 @@ public final class ShardAwareWriteDriver {
         }
     }
 
-    // ------------------------------------------------------------------
     // calibrate-sharded: CLOSED-loop max sustainable commit rate. N workers each loop
     // send-as-fast-as-possible, routing per shard; the achieved 200/s is the cluster's real
     // throughput ceiling at this concurrency (no open-loop schedule to fall behind, so it is NOT
     // contaminated by driver backpressure the way an over-driven open-loop atrate run is).
-    // ------------------------------------------------------------------
     private static void calibrate(String[] args) throws Exception {
         Map<Integer, String> nodes = parseNodeMap(args[1]);
         int n = Integer.parseInt(args[2]);

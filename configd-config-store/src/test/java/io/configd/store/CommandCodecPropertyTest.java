@@ -221,8 +221,6 @@ class CommandCodecPropertyTest {
         assertEquals(key, decoded.key());
     }
 
-    // ---- Arbitraries ----
-
     @Provide
     Arbitrary<List<ConfigMutation>> mutationLists() {
         Arbitrary<ConfigMutation> putArb = Combinators.combine(

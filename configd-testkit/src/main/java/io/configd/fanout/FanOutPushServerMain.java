@@ -23,10 +23,10 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Fan-out head-to-head (surface 3) - the <b>server side</b>. Boots the production
+ * Fan-out head-to-head - the <b>server side</b>. Boots the production
  * {@link NettyFanOutServer} (plaintext loopback) over a synthetic {@link FanOutBuffer}
  * {@code CommitNotificationSource}, then publishes committed notifications on command so the
- * fan-out push path can be measured under load. The ONLY thing that varies across a head-to-head
+ * fan-out push path can be measured under load. The only thing that varies across a head-to-head
  * pair is the Netty transport tier, forced by {@code -Dconfigd.netty.transport=io_uring|epoll}
  * (fail-loud - a {@code tier=} that does not match the forced value is the silent-fallback trap and
  * is asserted against by the driver).
@@ -70,15 +70,15 @@ public final class FanOutPushServerMain {
         FanOutBuffer buffer = new FanOutBuffer(1 << 20);
         AtomicReference<ConfigSnapshot> snapshot = new AtomicReference<>(ConfigSnapshot.EMPTY);
 
-        // BENCHMARK ISOLATION (charter section 4.1 apples-to-apples): the slow-consumer governor is a
-        // SESSION-policy layer ABOVE the transport. This measures the TRANSPORT; the governor's
-        // demotion->snapshot->reconnect path (tested by the slow-consumer demotion contract) would
-        // otherwise inject run-to-run noise that wrecks the 2-batch syscall delta - and crucially
-        // does so IDENTICALLY
-        // regardless of transport, so it adds nothing to an io_uring-vs-epoll comparison. We raise the
-        // transport-queue + ack-lag thresholds (IDENTICAL for both transports) so a keeping-up
-        // subscriber that briefly lags (e.g. under strace overhead) is not demoted. Defaults are
-        // benchmark-tolerant; override with -Dconfigd.fanout.* to exercise the production policy.
+        // Benchmark isolation (apples-to-apples): the slow-consumer governor is a session-policy
+        // layer above the transport. This measures the transport; the governor's
+        // demotion->snapshot->reconnect path (tested elsewhere by the slow-consumer demotion
+        // contract) would otherwise inject run-to-run noise that wrecks the 2-batch syscall delta,
+        // and it does so identically regardless of transport, so it adds nothing to an
+        // io_uring-vs-epoll comparison. We raise the transport-queue and ack-lag thresholds
+        // (identical for both transports) so a keeping-up subscriber that briefly lags (e.g. under
+        // strace overhead) is not demoted. Defaults are benchmark-tolerant; override with
+        // -Dconfigd.fanout.* to exercise the production policy.
         int transportQueueFrames = Integer.getInteger("configd.fanout.transportQueueFrames", 65_536);
         FanOutConfig config = new FanOutConfig(
                 Integer.getInteger("configd.fanout.queueFrames", 65_536),  // session offered-not-acked bound

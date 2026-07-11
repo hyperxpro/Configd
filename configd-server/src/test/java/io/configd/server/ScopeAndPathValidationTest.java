@@ -23,19 +23,20 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 /**
- * The edge contract for scope-through-the-API + the superset key-validation gate,
- * driven through the transport-agnostic {@link AdminApiHandler} decision core (both the JDK and Netty
- * HTTP adapters delegate to it, so this is the single source of truth). Proves:
+ * The edge contract for scope-through-the-API and the superset key-validation gate, driven through the
+ * transport-agnostic {@link AdminApiHandler} decision core (both the JDK and Netty HTTP adapters delegate
+ * to it, so this is the single source of truth). Proves:
  *
  * <ul>
  *   <li><b>Superset key validation</b>: a corpus of currently-valid keys all pass; only
- *       blank / &gt;1024-byte keys are rejected 400 - no currently-valid key becomes invalid. The strict
- *       RFC section 1 A3 grammar (absolute, seg-char, canonical) would reject several corpus keys ({@code db.host}
+ *       blank / &gt;1024-byte keys are rejected 400 - no currently-valid key becomes invalid. A strict
+ *       grammar (absolute, seg-char, canonical) would reject several corpus keys ({@code db.host}
  *       not absolute, {@code a//b} empty segment, {@code secure/../killswitch} dot-dot, {@code :}/{@code @}),
  *       which is exactly why it is NOT applied to this legacy flat-key surface.</li>
  *   <li><b>Scope parsing</b>: {@code ?scope=} is parsed case-insensitively and threaded to the
- *       write path (PUT/DELETE) and the read path (GET); absent => {@code GLOBAL} (A2-3 default, byte
- *       identical); an unknown value => 400 and NEVER routes (fail-closed, no silent mis-route).</li>
+ *       write path (PUT/DELETE) and the read path (GET); absent => {@code GLOBAL} (the default, byte
+ *       identical to the prior surface); an unknown value => 400 and NEVER routes (fail-closed, no
+ *       silent mis-route).</li>
  * </ul>
  *
  * <p>See {@code ShardedRoutingTest} for the read-your-writes-per-scope proof over the REAL routing seams,
@@ -103,15 +104,15 @@ class ScopeAndPathValidationTest {
     @Test
     void supersetGateAcceptsEveryCurrentlyValidKey() throws Exception {
         AdminApiHandler h = handler(new Recorder());
-        String boundary = "x".repeat(1024); // exactly the deployed 1024-byte limit (A3-5)
+        String boundary = "x".repeat(1024); // exactly the deployed 1024-byte limit
         List<String> valid = List.of(
-                "db.host",                 // legacy dotted key (not absolute -> A3 would reject)
-                "app/feature",             // slashed (not absolute -> A3 would reject)
+                "db.host",                 // legacy dotted key (not absolute under a strict grammar)
+                "app/feature",             // slashed (not absolute under a strict grammar)
                 "secure/../killswitch",    // dot-dot - strong-read suite depends on this passing
-                "a//b",                    // empty segment (A3 would reject)
+                "a//b",                    // empty segment (a strict grammar would reject)
                 "key_with-mixed.chars",
-                "service:port",            // colon (not a seg-char -> A3 would reject)
-                "team@payments",           // at (not a seg-char -> A3 would reject)
+                "service:port",            // colon (not a seg-char under a strict grammar)
+                "team@payments",           // at (not a seg-char under a strict grammar)
                 "naïve-café",   // multi-byte UTF-8
                 "/leading-slash",
                 boundary);
@@ -157,7 +158,7 @@ class ScopeAndPathValidationTest {
         assertEquals(200, h.handle(req("PUT", "k", "scope=local", "b".getBytes(StandardCharsets.UTF_8))).status());
         assertEquals(ConfigScope.LOCAL, rec.writeScope.get(), "scope value parse is case-insensitive");
 
-        // Absent scope => GLOBAL (A2-3 default - byte-identical to the prior surface).
+        // Absent scope => GLOBAL (the default - byte-identical to the prior surface).
         assertEquals(200, h.handle(req("PUT", "k", null, "b".getBytes(StandardCharsets.UTF_8))).status());
         assertEquals(ConfigScope.GLOBAL, rec.writeScope.get());
 
@@ -192,7 +193,7 @@ class ScopeAndPathValidationTest {
         assertNull(rec.readScope.get(), "an unknown scope must not route to the reader");
     }
 
-    // ---- the read 503 X-Leader-Hint is scope-aware (regression for the review finding) -------
+    // the read 503 X-Leader-Hint is scope-aware
 
     @Test
     void read503LeaderHintIsResolvedForTheRequestScope() throws Exception {

@@ -28,7 +28,7 @@ public enum FrameType {
     HEARTBEAT(0x08),
     ERROR_CLOSE(0x09),
 
-    // ---- Watch frames (W5-1); 0x02-only ----
+    // Watch frames (W5-1); 0x02-only
     /** Client-to-server: create/resume a watch (target + cursor vector + flags). */
     WATCH_CREATE(0x0A),
     /** Client-to-server: cancel a watch by {@code watch_id}. */
@@ -48,7 +48,7 @@ public enum FrameType {
     /** Server-to-client: per-{@code (watch_id, gid)} catch-up snapshot trailer. */
     WATCH_SNAPSHOT_END(0x12),
 
-    // ---- Auth-phase frames (AU3-3); 0x04-only, version-pin-exempt ----
+    // Auth-phase frames (AU3-3); 0x04-only, version-pin-exempt
     /** Client-to-server: present a token/basic credential to authenticate the connection. */
     AUTH(0x13),
     /** Client-to-server: present a fresh credential to extend an already-authenticated connection. */

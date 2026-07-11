@@ -133,7 +133,7 @@ class YamlConfigSourceTest {
         assertThrows(ConfigException.class, () -> YamlConfigSource.fromYaml(deep, "deep"));
     }
 
-    // ---- layering: YAML sits below system properties + environment -------------------------------
+    // layering: YAML sits below system properties + environment
 
     @Test
     void systemPropertyOverridesYamlFile() {

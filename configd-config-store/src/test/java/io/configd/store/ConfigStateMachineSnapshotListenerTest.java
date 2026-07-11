@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * Tests for the O-6 Seam 2a additive snapshot-install listener on {@link ConfigStateMachine}. A snapshot
+ * Tests for the additive snapshot-install listener on {@link ConfigStateMachine}. A snapshot
  * install wholesale-replaces the store with no per-mutation {@link ConfigStateMachine.ConfigChangeListener}
  * notification, so this hook is how the config-policy loader learns of {@code _acl/} changes delivered via
  * InstallSnapshot (follower catch-up / runtime restore). The hook must fire on a SUCCESSFUL restore, NOT

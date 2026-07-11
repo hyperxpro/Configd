@@ -32,8 +32,6 @@ class RevocationPolicyTest {
         return new RevocationPolicy(m, true, 3_000L);
     }
 
-    // ---- the admission matrix (the heart of lax-vs-strict) ----
-
     @Test
     void offAdmitsEverything() {
         RevocationPolicy off = mode(RevocationMode.OFF);
@@ -64,8 +62,6 @@ class RevocationPolicyTest {
         assertTrue(strict.shouldAlarm(RevocationStatus.UNKNOWN), "strict also alarms on unreachable");
     }
 
-    // ---- mode parsing: fail-closed ----
-
     @Test
     void parseIsCaseInsensitive() {
         assertEquals(RevocationMode.OFF, RevocationMode.parse("OFF"));
@@ -77,8 +73,6 @@ class RevocationPolicyTest {
     void parseRejectsAnUnknownMode() {
         assertThrows(IllegalArgumentException.class, () -> RevocationMode.parse("soft-fail"));
     }
-
-    // ---- fromConfig: safe default + the exempt-inter-node invariant ----
 
     @Test
     void fromConfigDefaultsToOffAndInteriorExempt() {

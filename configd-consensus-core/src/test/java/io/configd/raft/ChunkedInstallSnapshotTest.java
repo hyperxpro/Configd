@@ -79,7 +79,6 @@ class ChunkedInstallSnapshotTest {
             follower.handleMessage(chunk(10, 1, 4, full, 8, false, cfg));
             follower.handleMessage(chunk(10, 1, 8, full, 10, true, cfg));
 
-            // Installed state is byte-identical to the full blob.
             assertArrayEquals(full, sm.restoredFrom);
             assertEquals(10, log.snapshotIndex());
             assertEquals(1, log.snapshotTerm());
@@ -181,7 +180,6 @@ class ChunkedInstallSnapshotTest {
             byte[] snapA = blob(12);
             byte[] snapB = blob(6);
 
-            // Start assembling snapshot A (index 10).
             follower.handleMessage(chunk(10, 1, 0, snapA, 4, false, null));
             // A newer snapshot B (index 20) supersedes it; its single chunk installs cleanly and
             // the stale partial for A is discarded rather than spliced in.
@@ -235,8 +233,8 @@ class ChunkedInstallSnapshotTest {
             List<InstallSnapshotResponse> r = transport.messagesOfType(InstallSnapshotResponse.class);
             assertEquals(0, r.getLast().nextExpectedOffset(), "the dropped partial is reported as position 0");
 
-            // The otherwise-silent wedge is now counted: the refusal tally moves and surfaces in the
-            // RaftMetrics snapshot the server per-shard gauge reads.
+            // The refusal tally makes this wedge observable: it surfaces in the RaftMetrics snapshot
+            // the server's per-shard gauge reads.
             assertEquals(1, follower.snapshotReassemblyRefused(),
                     "the reassembly refusal must increment the snapshot-reassembly-refused tally");
             assertEquals(1, follower.metrics().snapshotReassemblyRefused(),
@@ -324,7 +322,6 @@ class ChunkedInstallSnapshotTest {
             long snapIndex = leader.log().snapshotIndex();
             assertTrue(snapIndex > 0);
 
-            // Emit the first chunk to the lagging follower.
             cluster.transports.values().forEach(InstallSnapshotTest.TestTransport::clear);
             for (int i = 0; i < 51; i++) {
                 leader.tick();
@@ -401,15 +398,14 @@ class ChunkedInstallSnapshotTest {
             }
             long term = leader.currentTerm();
 
-            // Drive the transfer forward a couple of chunks (offset climbs to 4).
             leader.handleMessage(new InstallSnapshotResponse(term, true, lagging, 1L, 2));
             leader.handleMessage(new InstallSnapshotResponse(term, true, lagging, 1L, 4));
 
-            // The follower restarts mid-transfer: it is ALIVE and acking, but its in-memory partial
+            // The follower restarts mid-transfer: it is alive and acking, but its in-memory partial
             // is gone, so it now reports accumulated 0. The leader must immediately re-sync to 0 and
-            // re-prime from the beginning - NOT keep sending high offsets forever (the confirmed
-            // wedge under the old ack-counting logic, where an alive-rejecting follower kept the
-            // stall backstop from ever firing).
+            // re-prime from the beginning, not keep sending high offsets forever - a plain
+            // ack-counting sender would let an alive-but-rejecting follower keep the stall backstop
+            // from ever firing.
             leaderTransport.clear();
             leader.handleMessage(new InstallSnapshotResponse(term, true, lagging, 1L, 0));
             List<InstallSnapshotRequest> resent = leaderTransport.messagesTo(lagging, InstallSnapshotRequest.class);
@@ -505,7 +501,7 @@ class ChunkedInstallSnapshotTest {
 
     /** Elects N1, commits+compacts so node 3 lags behind a snapshot, sets the chunk size, and
      * returns the snapshot index. Leaves the leader in {@code cluster.nodes.get(N1)}. Package-visible
-     * so {@code RaftNodeDropMetricsTest} can reuse this proven sender setup. */
+     * so {@code RaftNodeDropMetricsTest} can reuse this sender setup. */
     static long setUpLaggingSnapshot(InstallSnapshotTest.TestCluster cluster, int chunkBytes) {
         cluster.electLeader(N1);
         RaftNode leader = cluster.nodes.get(N1);
@@ -627,7 +623,7 @@ class ChunkedInstallSnapshotTest {
                 if (!droppedOnce[0] && sent.target().equals(dropTarget)
                         && sent.message() instanceof InstallSnapshotRequest isr
                         && isr.offset() == dropOffset) {
-                    droppedOnce[0] = true; // drop this one chunk, exactly once
+                    droppedOnce[0] = true;
                     continue;
                 }
                 toDeliver.computeIfAbsent(sent.target(), k -> new ArrayList<>()).add(sent.message());
@@ -681,7 +677,7 @@ class ChunkedInstallSnapshotTest {
                     .messagesTo(lagging, InstallSnapshotRequest.class);
             assertFalse(reqs.isEmpty());
             InstallSnapshotRequest req = reqs.getFirst();
-            // Identical to the historical single-blob wire: offset 0, done true, full data, config.
+            // Matches the unchunked single-blob wire: offset 0, done true, full data, config.
             assertEquals(0, req.offset());
             assertTrue(req.done());
             assertTrue(req.data().length > 0);

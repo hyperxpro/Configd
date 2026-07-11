@@ -7,7 +7,7 @@ import io.configd.common.Clock;
  * core takes time only through {@code tick(nowMillis)}, so the clock is rarely read
  * directly - but it satisfies the constructor and lets tests assert the no-wall-clock
  * contract by advancing time explicitly. ({@code SimulatedClock} lives in another
- * module's test scope, so this module supplies its own per the brief.)
+ * module's test scope, so this module supplies its own.)
  */
 final class FakeClock implements Clock {
 

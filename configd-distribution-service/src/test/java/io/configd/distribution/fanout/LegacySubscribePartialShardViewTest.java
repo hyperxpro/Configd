@@ -63,8 +63,6 @@ class LegacySubscribePartialShardViewTest {
     private FanOutBuffer[] buffers;
     private FanOutConnectionDriver driver;
 
-    // ---- harness ------------------------------------------------------------
-
     private void setup(int shards, boolean allowPartialShardView, WatchAuthorizer auth) {
         this.out = new RecordingTransportSink();       // fresh sink per driver
         this.teardowns = new java.util.ArrayList<>();
@@ -95,8 +93,6 @@ class LegacySubscribePartialShardViewTest {
         driver.drainInboundCommands();
     }
 
-    // ---- (a) N>1 legacy SUBSCRIBE without the opt-in is refused, zero frames -
-
     @Test
     void nGreaterThanOneLegacySubscribeWithoutOptInIsRefusedBadSubscribeWithZeroFrames() {
         // The authorizer WOULD grant this subscribe, proving the SPLIT guard - not the authz gate -
@@ -111,15 +107,14 @@ class LegacySubscribePartialShardViewTest {
                 "zero data frames precede the refusal - not even SUBSCRIBE_OK or a snapshot");
     }
 
-    // ---- (a2) a SUBSCRIBE from a superseded topology epoch is refused STALE_TOPOLOGY -----
-
     @Test
     void staleEpochLegacySubscribeIsRefusedStaleTopologyBeforePartialViewGuard() {
-        // The coordinator is at the v1 initial epoch (1). A SUBSCRIBE whose resume token binds a
+        // The coordinator starts at the initial epoch (1). A SUBSCRIBE whose resume token binds a
         // superseded epoch (2) is refused STALE_TOPOLOGY (the etcd ErrCompacted model - the client drops
-        // its cursor and re-hydrates). Checked BEFORE the N>1 partial-view guard, so STALE_TOPOLOGY wins
-        // over BAD_SUBSCRIBE (the whole cursor generation is invalid regardless of the partial-view
-        // posture). The authorizer WOULD grant it, proving the epoch gate - not authz - is what refuses.
+        // its cursor and re-hydrates). This is checked before the N>1 partial-view guard, so
+        // STALE_TOPOLOGY wins over BAD_SUBSCRIBE (the whole cursor generation is invalid regardless of
+        // the partial-view posture). The authorizer would grant it, proving the epoch gate - not authz -
+        // is what refuses.
         setup(3, false, grantSubscribe("edge-1"));
         feed(new EdgeFrame.Subscribe(true, List.of(), 2L, 0L, -1L, "edge-1", false));
         assertEquals(List.of(ErrorCode.STALE_TOPOLOGY), teardowns,
@@ -127,8 +122,6 @@ class LegacySubscribePartialShardViewTest {
                         + "BAD_SUBSCRIBE");
         assertTrue(out.sent().isEmpty(), "zero data frames precede the refusal");
     }
-
-    // ---- (b) N>1 legacy SUBSCRIBE WITH the opt-in is admitted (escape hatch) -
 
     @Test
     void nGreaterThanOneLegacySubscribeWithOptInIsAdmitted() {
@@ -140,8 +133,6 @@ class LegacySubscribePartialShardViewTest {
         assertFalse(teardowns.contains(ErrorCode.BAD_SUBSCRIBE), "the partial-view guard does not fire");
         assertTrue(teardowns.isEmpty(), "no teardown on an admitted feed");
     }
-
-    // ---- (c) N>1 WATCH is admitted regardless of the flag -------------------
 
     @Test
     void nGreaterThanOneWatchIsAdmittedAndCoversAllShardsRegardlessOfTheFlag() {
@@ -157,8 +148,6 @@ class LegacySubscribePartialShardViewTest {
         assertFalse(teardowns.contains(ErrorCode.BAD_SUBSCRIBE),
                 "a WATCH is never refused by the partial-view gate");
     }
-
-    // ---- (d) N=1 legacy SUBSCRIBE is byte-identical; the flag is never read --
 
     @Test
     void nEquals1LegacySubscribeIsByteIdenticalWithTheFlagOffOrOn() {
@@ -179,8 +168,6 @@ class LegacySubscribePartialShardViewTest {
         assertEquals(flagOff, flagOn,
                 "at N=1 the legacy SUBSCRIBE is byte-identical whether allowPartialShardView is off or on");
     }
-
-    // ---- helpers ------------------------------------------------------------
 
     private static EdgeFrame.Subscribe subscribe() {
         return new EdgeFrame.Subscribe(true, List.of(), 0L, -1L, "edge-1"); // FULL from-now

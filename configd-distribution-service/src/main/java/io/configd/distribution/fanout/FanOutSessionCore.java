@@ -128,13 +128,13 @@ public final class FanOutSessionCore {
     private int consecutiveTransientGaps;
 
     /**
-     * The server-side prefix filter for this session (ADR-0045), or null when filtering is
+     * The server-side prefix filter for this session, or null when filtering is
      * inactive (match-all / full-chain passthrough - the byte-identical legacy path). Set at
      * {@link #onSubscribe}.
      */
     private ServerPrefixFilter prefixFilter;
 
-    /** Whether this session filters whole signed deltas server-side (ADR-0045). */
+    /** Whether this session filters whole signed deltas server-side. */
     private boolean filterActive;
 
     /**
@@ -203,9 +203,7 @@ public final class FanOutSessionCore {
         this.demotionListener = demotionListener;
     }
 
-    // -----------------------------------------------------------------------
-    // Subscribe
-    // -----------------------------------------------------------------------
+    // Subscribe.
 
     /**
      * Handles the edge's {@code SUBSCRIBE} and emits {@code SUBSCRIBE_OK}. The session
@@ -241,7 +239,7 @@ public final class FanOutSessionCore {
 
         // Server-side prefix filtering is active only when the deployment posture is on, the edge
         // opted in (acceptsFiltered), and the subscription is a non-empty prefix set. When inactive
-        // the session is the byte-identical full-chain legacy path (ADR-0045).
+        // the session is the byte-identical full-chain legacy path.
         this.filterActive = ServerPrefixFilter.isActive(config, subscribe);
         this.prefixFilter = filterActive
                 ? new ServerPrefixFilter(subscribe.prefixes(), config.strongReadPrefixes())
@@ -297,9 +295,7 @@ public final class FanOutSessionCore {
         return EdgeFrame.Mode.TAIL;
     }
 
-    // -----------------------------------------------------------------------
-    // Tick (the drain / catch-up / heartbeat loop)
-    // -----------------------------------------------------------------------
+    // Tick (the drain / catch-up / heartbeat loop).
 
     /**
      * Advances the session one step at logical time {@code nowMillis}: performs an owed
@@ -355,7 +351,7 @@ public final class FanOutSessionCore {
         // an unconfirmed snapshot, whose cutover advances highestDeliveredSeq).
         if (highestDeliveredSeq - lastAckedSeq > config.ackLagDemoteSeqs()) {
             demote(DemotionEvent.REASON_ACK_LAG);
-            return true; // demoted (the notice is emitted, or parked per RR-104 would-block)
+            return true; // demoted (the notice is emitted, or parked as would-block)
         }
 
         Result r = source.readSince(cursor);
@@ -662,9 +658,7 @@ public final class FanOutSessionCore {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Cursor ack
-    // -----------------------------------------------------------------------
+    // Cursor ack.
 
     /**
      * Records a {@code CURSOR_ACK}: advances {@link #lastAckedSeq} and releases every
@@ -690,9 +684,7 @@ public final class FanOutSessionCore {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Demotion / close
-    // -----------------------------------------------------------------------
+    // Demotion / close.
 
     private void demote(String reason) {
         demotionCount++;
@@ -773,9 +765,7 @@ public final class FanOutSessionCore {
                 + 4 + nonceLen;
     }
 
-    // -----------------------------------------------------------------------
-    // Read-only state accessors
-    // -----------------------------------------------------------------------
+    // Read-only state accessors.
 
     /** The current session state. */
     public SessionState state() {

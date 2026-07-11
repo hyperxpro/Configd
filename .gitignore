@@ -4,7 +4,7 @@ build/
 *.bin
 # Gate tooling cache (gate-6 alerts downloads ~124 MB promtool here); regenerated, never committed
 .gate-tools/
-# jcstress (B6/RR-011) drops a results dump in CWD by default; never commit it
+# jcstress drops a results dump in CWD by default; never commit it
 jcstress-results-*.bin.gz
 *.class
 *.jar
@@ -30,8 +30,6 @@ desktop.ini
 
 # Logs and temp
 *.log
-# Exception: committed forensic evidence backing docs/STATE-OF-REALITY.md
-!verification-runs/state-of-reality/live-mvn-test.log
 *.tmp
 *.temp
 *.bak
@@ -46,7 +44,7 @@ desktop.ini
 .claude/
 .jqwik-database
 
-# TLC model-checker working artifacts (RR-062): the states/ fingerprint+queue
+# TLC model-checker working artifacts: the states/ fingerprint+queue
 # directories are regenerated on every run and must never be committed; the *.bin
 # TTrace dumps (covered by *.bin above) are opaque and version-fragile — the
 # reproducible counterexamples are the committed seeded-bug cfgs + recipe instead

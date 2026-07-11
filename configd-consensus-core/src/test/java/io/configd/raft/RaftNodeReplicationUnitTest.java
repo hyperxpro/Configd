@@ -53,8 +53,6 @@ class RaftNodeReplicationUnitTest {
 
     /** A leader of a 3-node cluster {1,2,3}, elected, no-op committed. */
     private static RaftNode electedLeader(RecordingTransport transport) {
-        // Build a routing cluster to get node 1 to leader with its no-op committed,
-        // then return node 1 wired to the given transport for further probing.
         Map<NodeId, RaftNode> nodes = new HashMap<>();
         Map<NodeId, RecordingTransport> ts = new HashMap<>();
         List<NodeId> all = List.of(N1, N2, N3);
@@ -111,8 +109,7 @@ class RaftNodeReplicationUnitTest {
             // Bump follower to term 5.
             follower.handleMessage(new RequestVoteResponse(5, false, N2, false));
             t.clear();
-            // Kills handleAppendEntries L1191 ORDER_ELSE (req.term() < currentTerm):
-            // a stale-term AppendEntries must get a NOT-success response, no append.
+            // A stale-term AppendEntries must get a NOT-success response, no append.
             follower.handleMessage(new AppendEntriesRequest(3, N2, 0, 0, List.of(), 0));
             List<AppendEntriesResponse> resps = t.of(AppendEntriesResponse.class);
             assertEquals(1, resps.size());
@@ -125,7 +122,7 @@ class RaftNodeReplicationUnitTest {
             RecordingTransport t = new RecordingTransport();
             RaftNode node = plainFollower(t);
             // A leader at term 1 sends an empty heartbeat. The follower records the
-            // leader id (kills L1208 leaderId = req.leaderId()) and stays FOLLOWER.
+            // leader id and stays FOLLOWER.
             node.handleMessage(new AppendEntriesRequest(1, N2, 0, 0, List.of(), 0));
             assertEquals(RaftRole.FOLLOWER, node.role());
             assertEquals(N2, node.leaderId(), "follower must record the leader id");
@@ -136,8 +133,7 @@ class RaftNodeReplicationUnitTest {
             RecordingTransport t = new RecordingTransport();
             RaftNode node = plainFollower(t);
             node.handleMessage(new RequestVoteResponse(2, false, N3, false)); // term -> 2
-            // A higher-term (5) AppendEntries must bump the term and stay/become
-            // FOLLOWER. Kills handleAppendEntries L1198 (req.term() > currentTerm).
+            // A higher-term (5) AppendEntries must bump the term and stay/become FOLLOWER.
             node.handleMessage(new AppendEntriesRequest(5, N2, 0, 0, List.of(), 0));
             assertEquals(5, node.currentTerm());
             assertEquals(RaftRole.FOLLOWER, node.role());
@@ -148,8 +144,7 @@ class RaftNodeReplicationUnitTest {
             RecordingTransport t = new RecordingTransport();
             RaftNode follower = plainFollower(t);
             // Leader at term 1 appends entries [1,2] with leaderCommit=5. The follower
-            // must clamp commitIndex to min(leaderCommit, lastNewIndex=2) = 2, NOT 5.
-            // Kills handleAppendEntries L1240 Math.min clamp and L1237 boundary.
+            // must clamp commitIndex to min(leaderCommit, lastNewIndex=2) = 2, not 5.
             List<LogEntry> batch = List.of(new LogEntry(1, 1, new byte[]{1}),
                     new LogEntry(2, 1, new byte[]{2}));
             follower.handleMessage(new AppendEntriesRequest(1, N2, 0, 0, batch, 5));
@@ -171,8 +166,7 @@ class RaftNodeReplicationUnitTest {
                     List.of(new LogEntry(1, 1, new byte[]{1}), new LogEntry(2, 1, new byte[]{2})), 0));
             t.clear();
             // An empty heartbeat with prevLogIndex=2 must echo matchIndex=prevLogIndex=2
-            // (not lastIndex via some other path). Kills the empty-batch matchIndex
-            // computation (req.entries().isEmpty() ? prevLogIndex : last).
+            // (not lastIndex via some other path).
             follower.handleMessage(new AppendEntriesRequest(1, N2, 2, 1, List.of(), 2));
             List<AppendEntriesResponse> resps = t.of(AppendEntriesResponse.class);
             assertEquals(1, resps.size());
@@ -205,8 +199,7 @@ class RaftNodeReplicationUnitTest {
             RecordingTransport t = new RecordingTransport();
             RaftNode leader = electedLeader(t);
             long term = leader.currentTerm();
-            // Kills handleAppendEntriesResponse L1262 ORDER_ELSE (resp.term() >
-            // currentTerm): a response from a higher term must demote the leader.
+            // A response from a higher term must demote the leader.
             leader.handleMessage(new AppendEntriesResponse(term + 5, false, 0, N2));
             assertEquals(RaftRole.FOLLOWER, leader.role());
             assertEquals(term + 5, leader.currentTerm());
@@ -219,9 +212,7 @@ class RaftNodeReplicationUnitTest {
             long term = leader.currentTerm();
             // Repeatedly reject from N2. nextIndex starts at lastIndex()+1 and is
             // decremented by one each rejection, but the Math.max(1, ni-1) floor
-            // pins it at 1 - it must NEVER reach 0 (which would make prevLogIndex
-            // -1). Kills the Math.max floor mutant (max(1,..)->max(0,..)) and the
-            // ni-1 arithmetic.
+            // pins it at 1 - it must never reach 0 (which would make prevLogIndex -1).
             for (int i = 0; i < 50; i++) {
                 t.clear();
                 leader.handleMessage(new AppendEntriesResponse(term, false, 0, N2));
@@ -244,8 +235,7 @@ class RaftNodeReplicationUnitTest {
             RaftNode leader = electedLeader(t);
             long term = leader.currentTerm();
             long last = leader.log().lastIndex();
-            // A success at matchIndex=last sets nextIndex = last+1. Kills the
-            // success branch's `newMatchIndex + 1` wiring.
+            // A success at matchIndex=last sets nextIndex = last+1.
             leader.handleMessage(new AppendEntriesResponse(term, true, last, N2));
             leader.handleMessage(new AppendEntriesResponse(term, true, last, N3));
             // Both peers acked the leader's last index -> it must commit (advance).
@@ -266,9 +256,8 @@ class RaftNodeReplicationUnitTest {
             long term = leader.currentTerm();
             long before = leader.log().commitIndex();
             long last = leader.log().lastIndex();
-            // Only ONE peer (N2) of the 3-node cluster acks -> self+N2 = 2 of 3 is a
-            // quorum here actually (majority of 3 = 2). Use a stricter check: revert
-            // to a fresh index. Append a new entry first via propose so last grows.
+            // Self + N2 is already a majority of 3, so proposing a fresh entry gives an
+            // index that no peer has acked yet, which is what the first assertion below checks.
             assertEquals(ProposalResult.ACCEPTED, leader.propose("x".getBytes()).result());
             long newLast = leader.log().lastIndex();
             t.clear();
@@ -292,7 +281,6 @@ class RaftNodeReplicationUnitTest {
             RecordingTransport t = new RecordingTransport();
             RaftNode leader = electedLeader(t);
             long term = leader.currentTerm();
-            // Kills handleInstallSnapshotResponse L2119 (resp.term() > currentTerm).
             leader.handleMessage(new InstallSnapshotResponse(term + 3, true, N2, 100));
             assertEquals(RaftRole.FOLLOWER, leader.role());
             assertEquals(term + 3, leader.currentTerm());
@@ -304,8 +292,7 @@ class RaftNodeReplicationUnitTest {
             RaftNode leader = electedLeader(t);
             long term = leader.currentTerm();
             RaftRole before = leader.role();
-            // A response from a PRIOR term must be ignored (no step-down, no state
-            // change). Kills the L2125 `resp.term() != currentTerm` stale guard.
+            // A response from a prior term must be ignored (no step-down, no state change).
             leader.handleMessage(new InstallSnapshotResponse(term - 1 < 0 ? 0 : term - 1, true, N2, 100));
             assertEquals(before, leader.role());
             assertEquals(term, leader.currentTerm());
@@ -322,7 +309,6 @@ class RaftNodeReplicationUnitTest {
             RecordingTransport t = new RecordingTransport();
             RaftNode leader = electedLeader(t);
             long term = leader.currentTerm();
-            // Kills handleRequestVoteResponse L1371 (resp.term() > currentTerm).
             leader.handleMessage(new RequestVoteResponse(term + 2, false, N2, false));
             assertEquals(RaftRole.FOLLOWER, leader.role());
             assertEquals(term + 2, leader.currentTerm());
@@ -331,8 +317,7 @@ class RaftNodeReplicationUnitTest {
         @Test
         void preVoteRejectsStaleTermCandidate() {
             // A follower at term 5 receiving a PreVote from a candidate at term 3
-            // must respond NOT-granted. Kills handlePreVoteRequest L1352 ORDER_ELSE
-            // (req.term() < currentTerm).
+            // must respond not-granted.
             RecordingTransport t = new RecordingTransport();
             RaftConfig config = RaftConfig.of(N1, Set.of(N2, N3));
             RaftNode follower = new RaftNode(config, new RaftLog(), t, new CountingStateMachine(),
@@ -351,8 +336,7 @@ class RaftNodeReplicationUnitTest {
         @Test
         void preVoteGrantsToUpToDateCandidateWithNoRecentLeader() {
             // A fresh follower (no known leader) with an empty log receives a PreVote
-            // from an up-to-date candidate -> grants. Kills the wouldGrantPreVote
-            // composition (logOk && !hasRecentLeader).
+            // from an up-to-date candidate -> grants.
             RecordingTransport t = new RecordingTransport();
             RaftConfig config = RaftConfig.of(N1, Set.of(N2, N3));
             RaftNode follower = new RaftNode(config, new RaftLog(), t, new CountingStateMachine(),
@@ -372,9 +356,8 @@ class RaftNodeReplicationUnitTest {
             follower.handleMessage(new RequestVoteResponse(5, false, N2, false)); // term -> 5
             RaftRole before = follower.role();
             t.clear();
-            // Kills handleTimeoutNow L1419 ORDER_ELSE (req.term() < currentTerm):
-            // a stale TimeoutNow must NOT start an election (no role change to
-            // CANDIDATE, no vote requests emitted).
+            // A stale TimeoutNow must not start an election (no role change to
+            // candidate, no vote requests emitted).
             follower.handleMessage(new TimeoutNowRequest(3, N2));
             assertEquals(before, follower.role());
             assertTrue(t.of(RequestVoteRequest.class).isEmpty(),
@@ -390,9 +373,8 @@ class RaftNodeReplicationUnitTest {
             follower.handleMessage(new RequestVoteResponse(4, false, N2, false)); // term -> 4
             t.clear();
             // A TimeoutNow at the current term bypasses PreVote and starts an election
-            // that increments the term to 5 and votes for self. Kills startElection
-            // L1527 MathMutator (currentTerm + 1) and the setTermAndVote removal: the
-            // emitted RequestVote must carry term 5 (old+1), not 3 (old-1).
+            // that increments the term to 5 and votes for self; the emitted RequestVote
+            // must carry term 5 (old+1), not 3 (old-1).
             follower.handleMessage(new TimeoutNowRequest(4, N2));
             assertEquals(RaftRole.CANDIDATE, follower.role());
             assertEquals(5, follower.currentTerm(), "election must increment term by exactly one");
@@ -419,9 +401,8 @@ class RaftNodeReplicationUnitTest {
             // Grant a vote at term 5.
             node.handleMessage(new RequestVoteRequest(5, N2, 0, 0, false));
             assertEquals(N2, node.votedFor());
-            // An AppendEntries at the SAME term 5 must NOT clear the vote (becomeFollower
-            // L1437 boundary `newTerm > currentTerm` - only a strict increase adopts a
-            // new term and clears the vote).
+            // An AppendEntries at the same term 5 must not clear the vote - only a strict
+            // term increase (newTerm > currentTerm) adopts a new term and clears the vote.
             node.handleMessage(new AppendEntriesRequest(5, N3, 0, 0, List.of(), 0));
             assertEquals(5, node.currentTerm());
             assertEquals(N2, node.votedFor(), "same-term step-down must preserve the vote");
@@ -437,10 +418,8 @@ class RaftNodeReplicationUnitTest {
         void followerInstallsNewerSnapshotAndAdvancesApplied() {
             RecordingTransport t = new RecordingTransport();
             RaftNode follower = plainFollower(t);
-            // A snapshot at index 5 (> our snapshotIndex 0) must install: lastApplied,
-            // commitIndex and snapshotIndex all advance to 5. Kills handleInstallSnapshot
-            // L1981 boundary, L2008 persist, L2012 compact, L2015 commit boundary,
-            // L2018 setLastApplied.
+            // A snapshot at index 5 (greater than our snapshotIndex 0) must install:
+            // lastApplied, commitIndex, and snapshotIndex all advance to 5.
             follower.handleMessage(new InstallSnapshotRequest(1, N2, 5, 1, 0,
                     new byte[]{9}, true, null));
             assertEquals(5, follower.log().snapshotIndex());
@@ -458,9 +437,8 @@ class RaftNodeReplicationUnitTest {
             // First install index 5.
             follower.handleMessage(new InstallSnapshotRequest(1, N2, 5, 1, 0, new byte[]{9}, true, null));
             t.clear();
-            // A second snapshot at index 5 (== our snapshotIndex) must be ignored - no
-            // re-install - but still acked success. Kills handleInstallSnapshot L1981
-            // boundary (lastIncludedIndex <= snapshotIndex).
+            // A second snapshot at index 5 (equal to our snapshotIndex) must be ignored -
+            // no re-install - but still acked success.
             follower.handleMessage(new InstallSnapshotRequest(1, N2, 5, 1, 0, new byte[]{8}, true, null));
             assertEquals(5, follower.log().snapshotIndex(), "must not re-install at the same point");
             List<InstallSnapshotResponse> resps = t.of(InstallSnapshotResponse.class);
@@ -474,8 +452,8 @@ class RaftNodeReplicationUnitTest {
             RaftNode follower = plainFollower(t);
             follower.handleMessage(new RequestVoteResponse(5, false, N2, false)); // term -> 5
             t.clear();
-            // A snapshot from term 3 (< 5) must be rejected with success=false and no
-            // install. Kills handleInstallSnapshot L1957 stale guard.
+            // A snapshot from term 3 (less than 5) must be rejected with success=false
+            // and no install.
             follower.handleMessage(new InstallSnapshotRequest(3, N2, 9, 1, 0, new byte[]{9}, true, null));
             assertEquals(0, follower.log().snapshotIndex());
             List<InstallSnapshotResponse> resps = t.of(InstallSnapshotResponse.class);
@@ -488,8 +466,7 @@ class RaftNodeReplicationUnitTest {
             RecordingTransport t = new RecordingTransport();
             RaftNode follower = plainFollower(t);
             // A follower receiving an InstallSnapshotResponse must ignore it (role !=
-            // LEADER). Kills handleInstallSnapshotResponse L2114. Observable: no state
-            // change / no NPE on the leader-only maps.
+            // LEADER); observable as no state change and no NPE on the leader-only maps.
             assertDoesNotThrow(() ->
                     follower.handleMessage(new InstallSnapshotResponse(0, true, N2, 5)));
             assertEquals(RaftRole.FOLLOWER, follower.role());
@@ -501,10 +478,9 @@ class RaftNodeReplicationUnitTest {
             RaftNode leader = electedLeader(t);
             long term = leader.currentTerm();
             long matchBefore = leader.log().commitIndex();
-            // A success response from a PRIOR term must be ignored (no matchIndex
-            // bump / commit advance). Kills handleInstallSnapshotResponse L2125 stale
-            // guard. (The leader has no latestSnapshot anyway, but the stale guard must
-            // short-circuit before the success block.)
+            // A success response from a prior term must be ignored (no matchIndex bump
+            // or commit advance). The leader has no latestSnapshot in this scenario, but
+            // the stale-term guard must still short-circuit before the success handling.
             leader.handleMessage(new InstallSnapshotResponse(term - 1 < 0 ? 0 : term - 1, true, N2, 99));
             assertEquals(RaftRole.LEADER, leader.role());
             assertEquals(matchBefore, leader.log().commitIndex());

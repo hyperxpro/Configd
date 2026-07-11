@@ -19,10 +19,6 @@ class CommandCodecTest {
         return s.getBytes(StandardCharsets.UTF_8);
     }
 
-    // -----------------------------------------------------------------------
-    // PUT encode/decode
-    // -----------------------------------------------------------------------
-
     @Nested
     class PutCommand {
 
@@ -99,10 +95,6 @@ class CommandCodecTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // DELETE encode/decode
-    // -----------------------------------------------------------------------
-
     @Nested
     class DeleteCommand {
 
@@ -122,10 +114,6 @@ class CommandCodecTest {
                     () -> CommandCodec.encodeDelete(null));
         }
     }
-
-    // -----------------------------------------------------------------------
-    // BATCH encode/decode
-    // -----------------------------------------------------------------------
 
     @Nested
     class BatchCommand {
@@ -187,10 +175,6 @@ class CommandCodecTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // NOOP (empty command)
-    // -----------------------------------------------------------------------
-
     @Nested
     class NoopCommand {
 
@@ -207,10 +191,6 @@ class CommandCodecTest {
             assertSame(a, b);
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Error handling
-    // -----------------------------------------------------------------------
 
     @Nested
     class ErrorHandling {
@@ -229,13 +209,10 @@ class CommandCodecTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // WH-01/02/03/04 hardening: decode is TOTAL / fail-closed. Every malformed
-    // input surfaces as MalformedCommandException (a subtype of
-    // IllegalArgumentException) and NEVER as BufferUnderflowException, so the
-    // Raft apply loop can catch the malformed-decode case specifically and skip
-    // the poison-pill entry deterministically instead of crash-looping.
-    // -----------------------------------------------------------------------
+    // decode is TOTAL / fail-closed: every malformed input surfaces as MalformedCommandException
+    // (a subtype of IllegalArgumentException) and NEVER as BufferUnderflowException, so the Raft
+    // apply loop can catch the malformed-decode case specifically and skip the poison-pill entry
+    // deterministically instead of crash-looping.
 
     @Nested
     class TotalDecodeHardening {
@@ -487,10 +464,6 @@ class CommandCodecTest {
             };
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Binary format correctness
-    // -----------------------------------------------------------------------
 
     @Nested
     class BinaryFormat {

@@ -27,7 +27,7 @@ import java.util.List;
  *   <li>{@code op_type} PUT/DELETE -> write; READ -> read.</li>
  *   <li>{@code status} ok->OK, info->INFO, fail->FAIL (the checker-neutral kinds).</li>
  *   <li>a write's value is its {@code arg} token; a read's value is its {@code ret}
- *       (observed token, or {@code ""} for ⊥/absent).</li>
+ *       (observed token, or {@code ""} for bottom/absent).</li>
  *   <li>{@code invoke_ts}/{@code response_ts} are the real-time backbone
  *       (the sim's monotonic, total {@code SimulatedClock}).</li>
  * </ul>
@@ -69,7 +69,7 @@ public final class SimHistoryCheck {
             String opType = strField(line, "op_type");
             String key = strField(line, "key");
             String arg = strField(line, "arg");          // write token (null for reads)
-            String ret = strField(line, "ret");          // observed token (null for writes / ⊥)
+            String ret = strField(line, "ret");          // observed token (null for writes / bottom)
             String status = strField(line, "status");
             int client = (int) longField(line, "client_id");
             long invoke = longField(line, "invoke_ts");
@@ -87,7 +87,7 @@ public final class SimHistoryCheck {
                 case "fail" -> Op.Status.FAIL;
                 default -> throw new IllegalArgumentException("unknown status: " + status + " in " + line);
             };
-            // A write carries its arg token; a read carries the observed ret (⊥ => "").
+            // A write carries its arg token; a read carries the observed ret (bottom => "").
             String value = (type == Op.Type.READ)
                     ? (ret == null ? "" : ret)
                     : (arg == null ? "" : arg);

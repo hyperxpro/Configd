@@ -143,10 +143,6 @@ class NoDeltasSinceOnConsumerPathTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Scan-root derivation (reactor pom <modules> − EXEMPT_MODULES + extras)
-    // -----------------------------------------------------------------------
-
     /** Every non-exempt {@code <module>/src/main/java} plus the extra roots. */
     private static List<Path> scanRoots() throws IOException {
         Path root = reactorRoot();
@@ -198,10 +194,6 @@ class NoDeltasSinceOnConsumerPathTest {
                 + Path.of("").toAbsolutePath() + ")");
         throw new AssertionError("unreachable");
     }
-
-    // -----------------------------------------------------------------------
-    // Matching (pattern-aware logic - reads a line, strips comments and strings, then scans)
-    // -----------------------------------------------------------------------
 
     private static void scanFile(Path file, List<String> violations) throws IOException {
         String name = file.getFileName().toString();

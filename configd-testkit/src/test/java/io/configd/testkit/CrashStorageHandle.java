@@ -7,8 +7,8 @@ import io.configd.common.Storage;
  * adversarial simulation ({@link AdversarialSim}) uses to inject crash-restart
  * faults. Implemented in package {@code io.configd.raft} by
  * {@code CrashStorageAdapter}, which wraps the package-private {@code CrashStorage}
- * consumed from the consensus-core test-jar (lead decision: test-jar reuse, no
- * class duplication).
+ * consumed from the consensus-core test-jar (reusing it instead of duplicating
+ * the class).
  * <p>
  * Public so the cross-package adapter can implement it; the methods mirror
  * {@code CrashStorage}'s crash-arming and restart-view contract.

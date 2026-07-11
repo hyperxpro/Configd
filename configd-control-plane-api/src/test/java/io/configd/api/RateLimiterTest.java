@@ -18,11 +18,9 @@ class RateLimiterTest {
 
         RateLimiter limiter = new RateLimiter(clock, 100, 10);
 
-        // Should be able to acquire burst permits
         for (int i = 0; i < 10; i++) {
             assertTrue(limiter.tryAcquire(), "permit " + i);
         }
-        // Next should fail
         assertFalse(limiter.tryAcquire());
     }
 
@@ -36,7 +34,6 @@ class RateLimiterTest {
 
         RateLimiter limiter = new RateLimiter(clock, 1000, 5);
 
-        // Drain all
         for (int i = 0; i < 5; i++) limiter.tryAcquire();
         assertFalse(limiter.tryAcquire());
 
@@ -55,10 +52,8 @@ class RateLimiterTest {
 
         RateLimiter limiter = new RateLimiter(clock, 100, 5);
 
-        // Wait a long time
         nanos.addAndGet(10_000_000_000L); // 10 seconds
 
-        // Should only get max 5 permits
         int acquired = 0;
         while (limiter.tryAcquire()) acquired++;
         assertEquals(5, acquired);
@@ -81,9 +76,9 @@ class RateLimiterTest {
     }
 
     /**
-     * Regression test: concurrent threads must not over-allocate permits.
-     * Before the fix, threads that lost the lastRefillNanos CAS would still
-     * count refilled permits, inflating the bucket beyond its true capacity.
+     * A thread that loses the lastRefillNanos CAS must discard the permits it computed for that
+     * window, not credit them again - otherwise concurrent losers double-count the same refill
+     * window and the bucket over-allocates beyond its capacity.
      */
     @Test
     void concurrentAccessDoesNotOverAllocatePermits() throws Exception {
@@ -96,14 +91,12 @@ class RateLimiterTest {
         // 1000 permits/sec, burst of 100
         RateLimiter limiter = new RateLimiter(clock, 1000, 100);
 
-        // Drain all burst permits
         for (int i = 0; i < 100; i++) assertTrue(limiter.tryAcquire());
         assertFalse(limiter.tryAcquire());
 
         // Advance time by exactly 50ms = 50 new permits at 1000/sec
         nanos.addAndGet(50_000_000L);
 
-        // Now have exactly 50 threads each try to acquire 1 permit concurrently
         int threadCount = 50;
         java.util.concurrent.atomic.AtomicInteger acquired = new java.util.concurrent.atomic.AtomicInteger(0);
         java.util.concurrent.CountDownLatch ready = new java.util.concurrent.CountDownLatch(threadCount);
@@ -122,10 +115,9 @@ class RateLimiterTest {
         }
 
         ready.await();
-        go.countDown(); // all threads race to acquire
+        go.countDown();
         done.await(5, java.util.concurrent.TimeUnit.SECONDS);
 
-        // Exactly 50 permits were available; no thread should have gotten more
         assertEquals(50, acquired.get(),
                 "Concurrent acquire must not exceed available permits (was " + acquired.get() + ")");
     }

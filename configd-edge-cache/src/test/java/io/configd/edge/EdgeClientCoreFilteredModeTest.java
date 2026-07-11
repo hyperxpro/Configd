@@ -17,12 +17,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The edge filtered-stream engine proofs (ADR-0045 tests (d) convergence + covered-S dual
- * cursor). Drives {@link EdgeClientCore} with a SUBSCRIBE_OK confirming filtering, a
- * non-contiguous (server-filtered) NOTIFY stream, and cursor-advance HEARTBEATs, and asserts:
- * the applied store converges to the full-then-local-filter result, the transport cursor
- * (covered-S) tracks the heartbeat while the store version tracks matched toVersions, and the
- * edge acks the covered-S so filtering never trips the server's ack-lag.
+ * The edge filtered-stream engine proofs: convergence plus the covered-S dual cursor. Drives
+ * {@link EdgeClientCore} with a SUBSCRIBE_OK confirming filtering, a non-contiguous
+ * (server-filtered) NOTIFY stream, and cursor-advance HEARTBEATs, and asserts: the applied
+ * store converges to the full-then-local-filter result, the transport cursor (covered-S)
+ * tracks the heartbeat while the store version tracks matched toVersions, and the edge acks
+ * the covered-S so filtering never trips the server's ack-lag.
  */
 class EdgeClientCoreFilteredModeTest {
 
@@ -107,7 +107,7 @@ class EdgeClientCoreFilteredModeTest {
 
     @Test
     void filteredEdgeMatchesAFullSubscriberRestrictedToPrefix() {
-        // (d) The strongest convergence check: a filtered edge's final store equals a full-chain
+        // The strongest convergence check: a filtered edge's final store equals a full-chain
         // edge's store restricted to the prefix. Build both over the same underlying commit chain.
         EdgeClientCore full = new EdgeClientCore(clock, null, null, StrongReadKeyClass.DEFAULT,
                 new RecordingSink(), EdgeClientCore.DEFAULT_HEARTBEAT_MS,

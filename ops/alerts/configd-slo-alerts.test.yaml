@@ -1,9 +1,10 @@
-# promtool test rules — proves each S6 alert FIRES on its injected condition and
-# STAYS QUIET on normal operation (charter §3.3 / §10). Run: promtool test rules
-# ops/alerts/configd-slo-alerts.test.yaml (gate-6 downloads a pinned promtool).
+# promtool test rules — proves each alert fires on its injected condition and
+# stays quiet on normal operation. Run: promtool test rules
+# ops/alerts/configd-slo-alerts.test.yaml (CI downloads a pinned promtool).
 #
 # Synthetic series mirror the real emitted series (bare names; cluster/instance are
-# Prometheus-added). Thresholds under test are the PROPOSED S5-baseline thresholds.
+# Prometheus-added). Thresholds under test are the proposed baseline thresholds
+# from ops/alerts/configd-slo-alerts.yaml.
 
 rule_files:
   - configd-slo-alerts.yaml

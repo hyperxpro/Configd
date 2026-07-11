@@ -58,7 +58,7 @@ public final class ConfigdMetrics {
      */
     public static final String NAME_COMMAND_MALFORMED = "configd.command.malformed";
     /**
-     * Raft peer-identity mismatch alarm counter (WH-08/WH-09). Incremented on a consensus-transport
+     * Raft peer-identity mismatch alarm counter. Incremented on a consensus-transport
      * reader / event-loop thread (or the inbound-routing thread) when a peer's authenticated TLS
      * certificate identity does not authorize the {@code senderId} / in-body {@code leaderId} /
      * {@code candidateId} it presents - a cert-valid-but-Byzantine cluster member impersonating another
@@ -68,7 +68,7 @@ public final class ConfigdMetrics {
      */
     public static final String NAME_RAFT_PEER_IDENTITY_MISMATCH = "configd.raft.peer.identity.mismatch";
     /**
-     * Inbound Raft-frame decode-drop counter (WH-10). Incremented on the inbound-routing thread when a
+     * Inbound Raft-frame decode-drop counter. Incremented on the inbound-routing thread when a
      * frame that framed and CRC-verified cleanly could not be decoded into an actionable
      * {@code RaftMessage} - a dormant/undecodable {@link io.configd.transport.MessageType} with no
      * consensus codec ({@code PLUMTREE_*}/{@code HYPARVIEW_*}/{@code HEARTBEAT}) or a
@@ -133,7 +133,7 @@ public final class ConfigdMetrics {
      * Consensus-transport connection-decode-drop counter. Incremented when a peer connection is dropped
      * at the frame-envelope decode boundary - an out-of-range frame length, an unrecognised wire version,
      * or a CRC / type / reserved-field failure - in either the JDK or Netty transport (bridged through
-     * {@code ServerRaftTransportMetrics}). Distinct from {@link #NAME_RAFT_DECODE_DROPPED} (WH-10), which
+     * {@code ServerRaftTransportMetrics}). Distinct from {@link #NAME_RAFT_DECODE_DROPPED}, which
      * keeps the connection: this desync CLOSES it. A sustained non-zero value is a version-skew or
      * hostile-peer signal worth alerting on; eager-created so it emits {@code _total 0} from the first scrape.
      */

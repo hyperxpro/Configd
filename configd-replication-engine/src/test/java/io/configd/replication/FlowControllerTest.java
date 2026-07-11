@@ -24,10 +24,6 @@ class FlowControllerTest {
         controller = new FlowController(INITIAL_CREDITS);
     }
 
-    // ========================================================================
-    // Constructor validation
-    // ========================================================================
-
     @Nested
     class ConstructorValidation {
 
@@ -49,10 +45,6 @@ class FlowControllerTest {
         }
     }
 
-    // ========================================================================
-    // Follower management
-    // ========================================================================
-
     @Nested
     class FollowerManagement {
 
@@ -66,7 +58,6 @@ class FlowControllerTest {
         void addFollowerIsIdempotent() {
             controller.addFollower(FOLLOWER_1);
             controller.acquireCredits(FOLLOWER_1, 5);
-            // Adding again should preserve existing credits
             controller.addFollower(FOLLOWER_1);
             assertEquals(INITIAL_CREDITS - 5, controller.availableCredits(FOLLOWER_1));
         }
@@ -98,10 +89,6 @@ class FlowControllerTest {
         }
     }
 
-    // ========================================================================
-    // Credit acquisition
-    // ========================================================================
-
     @Nested
     class CreditAcquisition {
 
@@ -119,18 +106,16 @@ class FlowControllerTest {
 
         @Test
         void acquireMoreThanAvailable() {
-            // Consume most credits
             controller.acquireCredits(FOLLOWER_1, 8);
 
-            // Request more than remaining
             int granted = controller.acquireCredits(FOLLOWER_1, 5);
-            assertEquals(2, granted); // Only 2 remaining
+            assertEquals(2, granted);
             assertEquals(0, controller.availableCredits(FOLLOWER_1));
         }
 
         @Test
         void acquireWhenThrottledReturnsZero() {
-            controller.acquireCredits(FOLLOWER_1, INITIAL_CREDITS); // exhaust all
+            controller.acquireCredits(FOLLOWER_1, INITIAL_CREDITS);
             int granted = controller.acquireCredits(FOLLOWER_1, 1);
             assertEquals(0, granted);
         }
@@ -163,10 +148,6 @@ class FlowControllerTest {
         }
     }
 
-    // ========================================================================
-    // Credit release
-    // ========================================================================
-
     @Nested
     class CreditRelease {
 
@@ -184,7 +165,6 @@ class FlowControllerTest {
 
         @Test
         void releaseCapsAtInitialCredits() {
-            // Release without acquiring - should not exceed initial
             controller.releaseCredits(FOLLOWER_1, 5);
             assertEquals(INITIAL_CREDITS, controller.availableCredits(FOLLOWER_1));
         }
@@ -220,10 +200,6 @@ class FlowControllerTest {
         }
     }
 
-    // ========================================================================
-    // Throttling
-    // ========================================================================
-
     @Nested
     class Throttling {
 
@@ -246,10 +222,6 @@ class FlowControllerTest {
                     () -> controller.isThrottled(NodeId.of(99)));
         }
     }
-
-    // ========================================================================
-    // Reset all
-    // ========================================================================
 
     @Nested
     class ResetAll {
@@ -276,10 +248,6 @@ class FlowControllerTest {
         }
     }
 
-    // ========================================================================
-    // Multi-follower isolation
-    // ========================================================================
-
     @Nested
     class MultiFollowerIsolation {
 
@@ -290,7 +258,6 @@ class FlowControllerTest {
 
             controller.acquireCredits(FOLLOWER_1, 8);
 
-            // Follower 2 should be unaffected
             assertEquals(INITIAL_CREDITS, controller.availableCredits(FOLLOWER_2));
             assertEquals(INITIAL_CREDITS - 8, controller.availableCredits(FOLLOWER_1));
         }

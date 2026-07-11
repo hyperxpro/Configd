@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Unit tests for {@link PeerIdentityPolicy} - the WH-08/09 cert-identity &harr; NodeId resolver. Pure
+ * Unit tests for {@link PeerIdentityPolicy} - the cert-identity &harr; NodeId resolver. Pure
  * (no TLS); the on-the-wire enforcement is proven by the transport red-team tests.
  */
 class PeerIdentityPolicyTest {
@@ -126,7 +126,7 @@ class PeerIdentityPolicyTest {
         }
     }
 
-    // ---- fromConfig(ConfigSource): the Gate-1 config path (parity with fromSystemProperties) ----
+    // ---- fromConfig(ConfigSource): the config path (parity with fromSystemProperties) ----
 
     @Test
     void fromConfigParsesAllowListAndMarker() {
@@ -183,7 +183,7 @@ class PeerIdentityPolicyTest {
                 "a null cert is never an authorized peer (fail closed)");
     }
 
-    // ---- requireEnforcedUnderAuth: the Group-B fail-closed default (finding T6) ----
+    // ---- requireEnforcedUnderAuth: the fail-closed default ----
 
     @Test
     void bootGateThrowsWhenAuthAndTlsButNoAllowList() {

@@ -86,7 +86,7 @@ record VaultConfig(
                 yield new Auth(Auth.Method.TOKEN, null, null, token);
             }
             // kubernetes / cert / jwt auth are pluggable extension points (present the platform identity to
-            // the matching Vault auth mount); not wired in v1. Fail loud rather than guess a method.
+            // the matching Vault auth mount) but are not implemented. Fail loud rather than guess a method.
             default -> throw new ConfigException(PREFIX + "auth.method='" + method + "' is not supported;"
                     + " use 'approle' (default) or 'token'. kubernetes/cert/jwt are future extension points.");
         };

@@ -40,29 +40,29 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The INTEGRATED N&gt;1 sweep - the proof that the production pieces COMPOSE.
+ * The integrated N&gt;1 sweep - the proof that the production pieces compose.
  * The component proofs each cover one surface ({@code MultiGroupBringupTest} = real bring-up + per-shard
  * store isolation; {@code ShardedFanOutTest} = the sharded fan-out on synthetic runtimes;
  * {@code SharedNodeFaultIsolationLiveTest} = cross-shard fault isolation). This closes the integration
- * gap: it drives the REAL production bring-up ({@link ConfigdServer#buildRaftGroup}) for N&gt;1 groups on a
- * real {@link MultiRaftDriver} + a SHARED-owner pool (P&lt;N), wires the REAL sharded fan-out
+ * gap: it drives the real production bring-up ({@link ConfigdServer#buildRaftGroup}) for N&gt;1 groups on a
+ * real {@link MultiRaftDriver} + a shared-owner pool (P&lt;N), wires the real sharded fan-out
  * ({@link ConfigdServer#registerShardedFanOut}) over those runtimes, and proves they work together:
  *
  * <ul>
- *   <li><b>Per-shard store isolation (S2/S4)</b> - a committed write to shard k lands in shard k's store
- *       ONLY; siblings never see it.</li>
- *   <li><b>G1 fan-out, integrated</b> - each shard's committed write also lands in THAT shard's fan-out
- *       buffer (per-shard seq, monotone), and in NO other shard's buffer (cross-shard fan-out
+ *   <li><b>Per-shard store isolation</b> - a committed write to shard k lands in shard k's store only;
+ *       siblings never see it.</li>
+ *   <li><b>Fan-out, integrated</b> - each shard's committed write also lands in that shard's fan-out
+ *       buffer (per-shard seq, monotone), and in no other shard's buffer (cross-shard fan-out
  *       isolation).</li>
  *   <li><b>Shared-owner fidelity</b> - N=4 groups on P=2 owners (owner0={0,2}, owner1={1,3}), the
  *       production shape where groups co-own threads.</li>
  * </ul>
  *
- * <p>The thread-safety net non-vacuity (missed-hop + starvation) is proven by
+ * <p>The thread-safety net's non-vacuity (missed-hop + starvation) is proven by
  * {@code OwnerIsolationMultiOwnerTest} + {@code SharedNodeFaultIsolationLiveTest}; the coalesced-heartbeat
- * flat-in-N property by {@code HeartbeatCoalescingTest}. The {@code wiring-g} block runs all of
- * them as the cumulative "N&gt;1 is correct" sweep that GATES the boot-guard removal (G4). N&gt;1 is still
- * boot-refused here; this is the proof that lifting the guard is justified.
+ * flat-in-N property by {@code HeartbeatCoalescingTest}. Together these form the cumulative proof that
+ * N&gt;1 is correct. The server still boot-refuses N&gt;1 at this point; this sweep is what justifies lifting
+ * that guard.
  */
 class MultiShardIntegratedSweepTest {
 
@@ -86,7 +86,7 @@ class MultiShardIntegratedSweepTest {
         MultiRaftDriver driver = new MultiRaftDriver(NODE, Clock.system());
         driver.setOwnerPool(pool);
 
-        // (1) REAL production bring-up: N groups via buildRaftGroup, registered + owner-bound + self-elected.
+        // (1) Real production bring-up: N groups via buildRaftGroup, registered + owner-bound + self-elected.
         Storage nodeStorage = Storage.file(dataDir);
         List<ConfigdServer.RaftGroupRuntime> runtimes = new ArrayList<>(n);
         for (int gid = 0; gid < n; gid++) {
@@ -97,18 +97,18 @@ class MultiShardIntegratedSweepTest {
             assertEquals(RaftRole.LEADER, runtimes.get(gid).raftNode().role(), "group " + gid + " is LEADER");
         }
 
-        // (2) REAL sharded fan-out wired over the real runtimes.
+        // (2) Real sharded fan-out wired over the real runtimes.
         ConfigdServer.ShardedFanOut fan = ConfigdServer.registerShardedFanOut(
                 runtimes, Clock.system(), new MetricsRegistry().counter("fanout.buffer.dropped"), 10_000);
         assertEquals(n, fan.buffers().size(), "one fan-out buffer per shard");
 
-        // (3) Commit a DISTINCT key to each shard (on its owner), driving real consensus to apply.
+        // (3) Commit a distinct key to each shard (on its owner), driving real consensus to apply.
         for (int gid = 0; gid < n; gid++) {
             proposeAndAwaitApply(driver, runtimes.get(gid), gid, "k" + gid,
                     ("val" + gid).getBytes(StandardCharsets.UTF_8));
         }
 
-        // (4a) Per-shard STORE isolation (S2/S4): group k holds ONLY its own key.
+        // (4a) Per-shard store isolation: group k holds only its own key.
         for (int writer = 0; writer < n; writer++) {
             for (int observer = 0; observer < n; observer++) {
                 boolean present = runtimes.get(observer).configStore().get("k" + writer).found();
@@ -120,8 +120,8 @@ class MultiShardIntegratedSweepTest {
             }
         }
 
-        // (4b) Per-shard FAN-OUT isolation (G1 integrated): each shard's buffer has exactly its own commit,
-        // at per-shard seq 1, carrying its own key - and NO other shard's key.
+        // (4b) Per-shard fan-out isolation: each shard's buffer has exactly its own commit, at
+        // per-shard seq 1, carrying its own key - and no other shard's key.
         for (int gid = 0; gid < n; gid++) {
             List<CommitNotification> out = drain(fan.buffers().get(gid));
             assertEquals(1, out.size(), "shard " + gid + " fan-out buffer holds exactly its own commit");
@@ -131,8 +131,7 @@ class MultiShardIntegratedSweepTest {
         }
     }
 
-    // ---- helpers (mirror MultiGroupBringupTest) ---------------------------------------------
-
+    // These helpers mirror MultiGroupBringupTest's.
     private ConfigdServer.RaftGroupRuntime bringUpLeader(
             MultiRaftDriver driver, int shardCount, int gid, Path dataDir, Storage nodeStorage)
             throws Exception {

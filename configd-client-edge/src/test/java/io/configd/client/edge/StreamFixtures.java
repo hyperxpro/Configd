@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Test builders for the Gate-2 read/hydrate stream: Ed25519 leader key pairs, signed {@link ConfigDelta}s
+ * Test builders for the read/hydrate stream: Ed25519 leader key pairs, signed {@link ConfigDelta}s
  * (byte-identical to the server's signing over {@link ConfigDelta#signingPayload()}), {@code NOTIFY} frames,
  * and a {@code SNAPSHOT_BEGIN/CHUNK/END} sequence for a hydration snapshot.
  */

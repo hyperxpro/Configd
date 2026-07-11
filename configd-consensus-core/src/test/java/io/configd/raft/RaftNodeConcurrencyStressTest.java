@@ -20,33 +20,34 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Concurrent consensus stress harness and proof it catches
- * an injected off-owner-thread access). This is the verification machinery that must exist and be
- * proven to catch a race before the per-owner re-threading is blessed
+ * Concurrent consensus stress harness, and proof that it actually catches an injected
+ * off-owner-thread access. This is the verification machinery that must exist and be shown to
+ * catch a race before the per-owner re-threading model can be trusted
  * (see {@code docs/phase0/threading-contract.md}).
  *
  * <h2>What it models</h2>
- * The threading contract gives each group a single OWNER thread; every
- * OWNER-ONLY entry point of its {@link RaftNode} must execute on that thread, enforced by the
- * {@code assertOwnerThread()} tripwire. Here a single-thread {@code owner} executor stands in for
- * the future {@code ownerExecutor(groupId)}; {@link RaftNode#bindOwnerThread()} binds it.
+ * The threading contract gives each group a single owner thread; every owner-only entry point of
+ * its {@link RaftNode} must execute on that thread, enforced by the {@code assertOwnerThread()}
+ * tripwire. Here a single-thread {@code owner} executor stands in for the future
+ * {@code ownerExecutor(groupId)}; {@link RaftNode#bindOwnerThread()} binds it.
  *
  * <ul>
  *   <li><b>{@link #concurrentOwnerMarshalledAccessStaysGreen()}</b> - many producer threads marshal
- *       the guarded O entry points (tick / propose / maybeCompact / readIndex / metrics /
- *       handleMessage) onto the owner, while a FOREIGN "safe-rider" thread reads the volatile
- *       S-class fields ({@code role()}, {@code leaderId()}) off-owner. The marshalled path and the
- *       S reads must NOT trip the tripwire or any in-node invariant. The riders that touch only volatile/own state are safe to run
- *       off-owner; the harness proves it rather than asserting it.</li>
+ *       the guarded entry points (tick / propose / maybeCompact / readIndex / metrics /
+ *       handleMessage) onto the owner, while a foreign "safe-rider" thread reads the volatile
+ *       fields ({@code role()}, {@code leaderId()}) off-owner. The marshalled path and the volatile
+ *       reads must not trip the tripwire or any in-node invariant; the riders that touch only
+ *       volatile/own state are safe to run off-owner, and the harness proves it rather than just
+ *       asserting it.</li>
  *   <li><b>{@link #offOwnerAccessTripsTheGuard_provesHarnessCatchesARace()}</b> - the
- *       "test the tester": OWNER-ONLY entry points are called DIRECTLY from a foreign thread (the
- *       injected race). Each must trip the {@code raft_owner_thread} tripwire BEFORE touching
+ *       "test the tester": owner-only entry points are called directly from a foreign thread (the
+ *       injected race). Each must trip the {@code raft_owner_thread} tripwire before touching
  *       state. A harness that has not been shown to catch a real race is unproven.</li>
  * </ul>
  *
- * Single-node by design: the threading contract is per-node, so one node is the right
- * unit to prove the tripwire and the marshalling discipline. Multi-node concurrent re-runs
- * are a follow-up for multi-node scenarios.
+ * <p>Single-node by design: the threading contract is per-node, so one node is the right unit to
+ * prove the tripwire and the marshalling discipline. Multi-node concurrent re-runs are a follow-up
+ * for multi-node scenarios.
  */
 class RaftNodeConcurrencyStressTest {
 
@@ -87,7 +88,7 @@ class RaftNodeConcurrencyStressTest {
                 new NoOpStateMachine(), new java.util.Random(42), Storage.inMemory(), checker);
         owner.submit(() -> {
             node.bindOwnerThread();                       // bind rule: first task on the owner executor
-            for (int i = 0; i < 301; i++) node.tick();    // self-elect (single-node), proven idiom
+            for (int i = 0; i < 301; i++) node.tick();    // self-elect (single-node)
             assertEquals(RaftRole.LEADER, node.role());
         }).get();
         return node;
@@ -177,16 +178,15 @@ class RaftNodeConcurrencyStressTest {
             ThrowingChecker checker = new ThrowingChecker();
             RaftNode node = newSingleNodeLeaderBoundTo(owner, checker);
 
-            // THE INJECTED RACE: invoke ALL 14 guarded OWNER-ONLY entry points directly from THIS
+            // The injected race: invoke all 14 guarded owner-only entry points directly from this
             // (foreign) thread. assertOwnerThread() is the first statement of each, so the tripwire
             // fires before any state is touched - a deterministic catch, not a hoped-for corruption.
-            // Covering every guarded entry point proves each guard actually FIRES (not merely that
-            // it is present) - closes the coverage-asymmetry gap and the
-            // remaining-tick-only-mutators gap: the core 7 (tick / handleMessage /
-            // propose / maybeCompact / readIndex / whenCommitOutcome / metrics) PLUS the 7 mutators
-            // re-threading would touch (transferLeadership / triggerSnapshot / isReadReady /
-            // completeRead / whenReadReady / cancelCommitOutcome / proposeConfigChange). This is the
-            // complete mutator/callback entry-point surface of the threading contract.
+            // Covering every guarded entry point proves each guard actually fires, not merely that
+            // it is present: the core 7 (tick / handleMessage / propose / maybeCompact / readIndex /
+            // whenCommitOutcome / metrics) plus the 7 mutators re-threading would touch
+            // (transferLeadership / triggerSnapshot / isReadReady / completeRead / whenReadReady /
+            // cancelCommitOutcome / proposeConfigChange) - the complete mutator/callback entry-point
+            // surface of the threading contract.
             List<Runnable> offOwnerCalls = List.<Runnable>of(
                     // core 7
                     () -> node.tick(),
@@ -196,7 +196,7 @@ class RaftNodeConcurrencyStressTest {
                     () -> node.readIndex(),
                     () -> node.whenCommitOutcome(1L, 1L, o -> { }),
                     () -> node.metrics(),
-                    // the remaining tick-only mutators (the orphaned riders)
+                    // the remaining owner-only mutators
                     () -> node.transferLeadership(PHANTOM),
                     () -> node.triggerSnapshot(),
                     () -> node.isReadReady(1L),

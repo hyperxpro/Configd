@@ -22,10 +22,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * ENOSPC during WAL append, at the CONSENSUS layer (the
  * self-test pins only the storage-level throw; this pins how {@link RaftNode}/{@link RaftLog}
- * REACT). Oracle (`storage-fault-layer-design.md section 2` / arch section 11): a disk-full append must be
- * SURFACED (not swallowed into a mute zombie), must NOT silently advance the log (no partial /
- * no lost-but-acked write), and the node must recover cleanly once space returns - defined
- * degradation, never a crash-loop or silent loss.
+ * REACT). A disk-full append must be SURFACED (not swallowed into a mute zombie), must NOT
+ * silently advance the log (no partial / no lost-but-acked write), and the node must recover
+ * cleanly once space returns - defined degradation, never a crash-loop or silent loss.
  *
  * <p>The load-bearing invariant is {@link RaftLog#append}'s durable-FIRST ordering
  * ({@code storage.appendToLog(...)} BEFORE {@code entries.add(...)}): an ENOSPC throw leaves the
@@ -86,8 +85,8 @@ class StorageEnospcConsensusReactionTest {
     }
 
     /**
-     * ENOSPC during the SNAPSHOT write (distinct from the WAL-append cell above). Oracle
-     * (design section 2): `triggerSnapshot` persists the blob BEFORE compaction truncates the
+     * ENOSPC during the SNAPSHOT write (distinct from the WAL-append cell above):
+     * `triggerSnapshot` persists the blob BEFORE compaction truncates the
      * WAL prefix, so a disk-full on the blob `put` must abort the snapshot with the **WAL prefix
      * intact** - no truncation, no snapshot-index advance, NO loss, no `durable_prefix_no_gap` on
      * a later restart. (The persist-before-truncate ordering this relies on is a durable-log invariant,

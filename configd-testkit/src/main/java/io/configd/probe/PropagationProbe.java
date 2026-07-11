@@ -18,7 +18,7 @@ import java.util.TreeMap;
  * exactly the staleness invariant measurement
  * ({@code staleness = observer_now - commit_timestamp(last_applied)}), where the
  * publish timestamp is the leader-assigned commit timestamp
- * ({@link io.configd.distribution.CommitNotification#commitTimestampMillis()}, per the commit-timestamp spec section 2)
+ * ({@link io.configd.distribution.CommitNotification#commitTimestampMillis()})
  * and the visible timestamp is the observer's clock at apply. Samples are recorded
  * into per-observer and global {@link Histogram}s and surfaced as a structured
  * {@link #report()} plus machine-greppable {@code PROBE-HISTOGRAM:} summary lines.
@@ -97,7 +97,7 @@ public final class PropagationProbe {
 
     /**
      * Records that committed sequence {@code seq} became visible at the boundary at
-     * {@code publishTsMillis} (the leader-assigned commit timestamp - contract section 2 / per the commit-timestamp spec section 2).
+     * {@code publishTsMillis} (the leader-assigned commit timestamp).
      * Idempotent-friendly: re-publishing the same seq overwrites the recorded publish
      * time with the latest, so a re-delivered notification cannot corrupt the clock.
      *
@@ -156,9 +156,7 @@ public final class PropagationProbe {
         globalHistogram.recordValue(staleness);
     }
 
-    // -----------------------------------------------------------------------
-    // Programmatic accessors (exact assertions in tests)
-    // -----------------------------------------------------------------------
+    // Programmatic accessors (exact assertions in tests).
 
     /** Sorted observer ids that have at least one recorded sample or unmatched count. */
     public synchronized List<Integer> observerIds() {
@@ -226,9 +224,9 @@ public final class PropagationProbe {
 
     /**
      * Exact count of recorded samples whose staleness is {@code >= valueMs}, across all
-     * observers. This is the methodology "tail-bin sample count": a p999/p9999 backed
-     * by only a handful of samples at/above its value is low-confidence, and this is how a
-     * report states that count honestly rather than guessing it. Counts the closed interval
+     * observers. A tail percentile (p999/p9999) backed by only a handful of samples at
+     * or above its value is low-confidence; this lets a report state that count
+     * honestly rather than guessing it. Counts the closed interval
      * {@code [valueMs, HIGHEST_TRACKABLE_MILLIS]} on the HdrHistogram.
      *
      * @param valueMs the staleness threshold in ms (inclusive)
@@ -242,9 +240,7 @@ public final class PropagationProbe {
         return globalHistogram.getCountBetweenValues(lo, HIGHEST_TRACKABLE_MILLIS);
     }
 
-    // -----------------------------------------------------------------------
-    // Reporting
-    // -----------------------------------------------------------------------
+    // Reporting.
 
     /**
      * Produces the structured, deterministic text report: one block per observer plus

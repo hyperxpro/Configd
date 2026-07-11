@@ -7,11 +7,12 @@ full treatment -- topology, sharding, security posture, the measured envelope --
 
 ## Topology
 
-v1 is a **single, region-local sharded-Raft cluster**: one Raft group by default (N=1), with
-hash-within-scope sharding wired for horizontal scale (operator-managed leadership). It is **not** a
-global/regional hierarchical-Raft topology -- that design was rejected (ADR-0030, ADR-0031) and never
-built. Writes commit in the region-local root group; committed deltas fan out asynchronously to edge
-readers that hold a local copy and take no part in consensus.
+Configd is a **single, region-local sharded-Raft cluster**: one Raft group by default (N=1), with
+hash-within-scope sharding wired for horizontal scale and leadership auto-balanced across shards (with
+a manual ADMIN transfer route for operator-driven placement). It is **not** a global/regional
+hierarchical-Raft topology -- that design was rejected (ADR-0030, ADR-0031) and never built. Writes
+commit in the region-local root group; committed deltas fan out asynchronously to edge readers that
+hold a local copy and take no part in consensus.
 
 ```mermaid
 flowchart TD
@@ -55,12 +56,12 @@ via Raft ReadIndex, failing closed (HTTP 503) if leadership is unconfirmed.
 - **Cross-group order**: not guaranteed (each group has its own sequence).
 - **Staleness tracking**: `StalenessTracker` transitions CURRENT -> STALE -> DEGRADED -> DISCONNECTED.
 
-## Watches (v1)
+## Watches
 
 The server side of the RFC 2 watch protocol is implemented on the edge endpoint: per-shard cursor
 vectors, whole-target authorization (fail-closed), filtered delivery, and bounded revocation.
 Guarantees: per-key and per-shard order (never cross-shard), at-least-once with `(gid, seq)` dedup.
-**Multi-shard (N>1) watches ship** (a server-side aggregating endpoint, one session per covered shard);
+**Multi-shard (N>1) watches are supported** (a server-side aggregating endpoint, one session per covered shard);
 ordering stays per-shard, a globally-ordered cross-shard watch is out of scope by design. A conforming
 **Java reference client** (`configd-client`) and a `configd-conformance` suite ship; other-language drivers
 are stand-alone implementable from [`../rfc/driver-protocol/`](../rfc/driver-protocol/).

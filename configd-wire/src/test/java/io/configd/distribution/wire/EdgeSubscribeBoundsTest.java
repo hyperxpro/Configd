@@ -11,15 +11,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * WH-12 red-team: the SUBSCRIBE {@code prefixCount} pre-allocation bound. Before the fix a
- * {@code prefixCount} was bounds-checked against {@code remaining} BYTES (not elements), so a
- * 2 MiB frame could declare {@code prefixCount ~= 2.1M} and drive an
- * {@code new ArrayList<>(2.1M)} (~8-17 MB) before the read loop - a pre-authorization heap
- * amplifier. The fix pre-checks {@code prefixCount * 4 <= remaining} (min prefix = a u32 length
- * of a zero-length string = 4 bytes) and caps the element count at
- * {@link EdgeFrameCodec#MAX_PREFIXES}. Both reject BEFORE the allocation, as a
- * {@link ErrorCode#FRAME_CORRUPT} {@link EdgeFrameCodec.CodecException}; a well-formed SUBSCRIBE
- * is unchanged (its byte-identity is separately pinned by the golden fixtures).
+ * Red-team coverage for the SUBSCRIBE {@code prefixCount} pre-allocation bound. Bounds-checking
+ * {@code prefixCount} against {@code remaining} BYTES alone is not enough: a 2 MiB frame could
+ * declare {@code prefixCount ~= 2.1M} and drive an {@code new ArrayList<>(2.1M)} (~8-17 MB) before
+ * the read loop - a pre-authorization heap amplifier. The codec pre-checks
+ * {@code prefixCount * 4 <= remaining} (min prefix = a u32 length of a zero-length string = 4
+ * bytes) and caps the element count at {@link EdgeFrameCodec#MAX_PREFIXES}. Both reject BEFORE the
+ * allocation, as a {@link ErrorCode#FRAME_CORRUPT} {@link EdgeFrameCodec.CodecException}; a
+ * well-formed SUBSCRIBE is unchanged (its byte-identity is separately pinned by the golden
+ * fixtures).
  */
 class EdgeSubscribeBoundsTest {
 

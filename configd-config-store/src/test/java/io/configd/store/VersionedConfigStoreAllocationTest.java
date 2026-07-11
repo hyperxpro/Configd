@@ -18,7 +18,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class VersionedConfigStoreAllocationTest {
 
     private static final int ITERATIONS = 10_000;
-    /** Budget: 8 KB. Pre-fix {@code get(...)} would have allocated ~240 KB. */
+    /** Budget: 8 KB total across the loop; the allocating {@code get(...)} path would allocate
+     *  roughly 240 KB over the same iteration count. */
     private static final long MAX_BYTES = 8_192L;
 
     private static final ThreadMXBean TMX =
@@ -81,12 +82,10 @@ class VersionedConfigStoreAllocationTest {
 
         assertEquals(64, rc, "value length must be returned on hit");
         assertEquals(42L, versionOut[0], "version must be copied into versionOut[0]");
-        // Assert that the value bytes are actually copied (not just the length returned).
         for (int i = 0; i < 64; i++) {
             assertEquals(payload[i], dst[i],
                     "getInto must copy value byte " + i + " (kills the arraycopy-removal mutant)");
         }
-        // And it must not write past the value length (the sentinel survives at [64]).
         assertEquals((byte) 0xFF, dst[64], "getInto must not write past the value length");
     }
 

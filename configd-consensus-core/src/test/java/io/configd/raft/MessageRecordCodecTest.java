@@ -11,13 +11,12 @@ import static org.junit.jupiter.api.Assertions.*;
  * {@code toString}/validation of the consensus message records that carry real
  * logic: {@link InstallSnapshotRequest}, {@link SnapshotState}, {@link LogEntry}.
  * <p>
- * No same-module test previously exercised their members. They are
- * NOT pure boilerplate: each has a HAND-WRITTEN {@code equals}/{@code hashCode}
+ * These are NOT pure boilerplate: each has a hand-written {@code equals}/{@code hashCode}
  * that uses {@code Arrays.equals}/{@code Arrays.hashCode} on its {@code byte[]}
  * fields (a default record equals would compare arrays by identity and be
- * wrong), plus compact-constructor validation. This focused test asserts
- * per-field {@code equals} discrimination, hashCode distinctness across distinct
- * instances, non-empty {@code toString}, and the validation guards. Deterministic.
+ * wrong), plus compact-constructor validation. This asserts per-field {@code equals}
+ * discrimination, hashCode distinctness across distinct instances, non-empty
+ * {@code toString}, and the validation guards.
  */
 class MessageRecordCodecTest {
 

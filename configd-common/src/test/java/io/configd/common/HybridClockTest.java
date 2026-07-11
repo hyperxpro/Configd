@@ -31,7 +31,6 @@ class HybridClockTest {
 
     @Test
     void receiveAdvancesClockBeyondRemoteTimestamp() {
-        // Use a fixed clock to control wall time
         var fixedClock = new Clock() {
             long time = 1000;
             public long currentTimeMillis() { return time; }
@@ -40,11 +39,9 @@ class HybridClockTest {
 
         var hlc = new HybridClock(fixedClock);
 
-        // Remote timestamp is far in the future
         var remote = new HybridTimestamp(2000, 5);
         HybridTimestamp result = hlc.receive(remote);
 
-        // Result must be greater than remote
         assertTrue(result.compareTo(remote) > 0,
             "Received timestamp must exceed remote: " + result + " vs " + remote);
     }

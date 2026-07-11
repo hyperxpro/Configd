@@ -20,11 +20,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Filtering must activate through the {@link FanOutConnectionDriver}'s <b>mTLS identity rebind</b>,
- * the production path. {@code bindIdentity} rebuilds the SUBSCRIBE with the verified cert principal
- * over mTLS (identity != {@code "plaintext"}); it MUST carry {@code acceptsFiltered} through, or
- * server-side filtering is silently inert on every real connection (the exact gap the core-level
- * tests miss because they drive {@code onSubscribe} / plaintext directly). ADR-0045.
+ * Filtering must activate through the {@link FanOutConnectionDriver}'s mTLS identity rebind, the
+ * production path. {@code bindIdentity} rebuilds the SUBSCRIBE with the verified cert principal
+ * over mTLS (identity != {@code "plaintext"}); it must carry {@code acceptsFiltered} through, or
+ * server-side filtering is silently inert on every real connection - the exact gap the core-level
+ * tests miss because they drive {@code onSubscribe} / plaintext directly.
  */
 class FanOutFilterMtlsBindTest {
 

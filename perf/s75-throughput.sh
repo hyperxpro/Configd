@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
-# =============================================================================
-# s75-throughput.sh — Session 7.5 real-hardware throughput + §7.0 fsync attribution
-# -----------------------------------------------------------------------------
-# Derived from perf/wsB-live-write.sh (S5, NOT modified) with the S7.5-mandatory
-# changes for the m6id.4xlarge real-hardware campaign:
+# s75-throughput.sh — real-hardware throughput + fsync attribution
 #
-#   (1) DATA + WAL ON /mnt/nvme (local instance-store NVMe), never the EBS root
-#       (charter §13.9). The S5 harness used /tmp (= EBS root here) — forbidden.
-#       The runtime WAL path is ASSERTED under /mnt/nvme before any phase runs.
-#   (2) Shared cluster signing key OUTSIDE every node data dir (--signing-key-file),
-#       so the harness works identically before and after the D-1 fail-closed fix.
+# Same 3-node cluster launch shape as perf/wsB-live-write.sh, adapted for a
+# real-hardware campaign on m6id.4xlarge instances:
+#
+#   (1) Data + WAL live on /mnt/nvme (local instance-store NVMe), never the EBS
+#       root — on this instance type /tmp resolves to EBS, which is forbidden
+#       for this measurement. The runtime WAL path is asserted under
+#       /mnt/nvme before any phase runs.
+#   (2) The shared cluster signing key lives OUTSIDE every node data dir
+#       (--signing-key-file); the fail-closed at-rest-key guard refuses to
+#       boot otherwise.
 #   (3) Per-phase instrumentation: per-process CPU (pidstat) + device I/O incl.
-#       flush/s (iostat -x nvme1n1) sampled for the whole phase, for the §7.0
-#       attribution (fsync-IOPS-bound vs CPU-bound vs system-bound). fsyncs/sec is
-#       primarily derived from achieved_commit_rate (per-entry fsync is proven in
+#       flush/s (iostat -x nvme1n1) sampled for the whole phase, to attribute
+#       the bottleneck (fsync-IOPS-bound vs CPU-bound vs system-bound). fsyncs/sec
+#       is derived from achieved_commit_rate (per-entry fsync is proven in
 #       code: RaftNode.propose->log.append->FileStorage.force(true), 1 fsync/entry);
 #       3 co-located nodes share ONE NVMe so device fsync demand ~= 3x commit rate.
-#   (4) Bigger heaps (default 4g/node, ZGC per ADR-0041) so GC is not a factor and
-#       16 vCPU is the only shared resource under test.
+#   (4) Bigger heaps (default 4g/node, ZGC) so GC is not a factor and 16 vCPU
+#       is the only shared resource under test.
 #
 # Usage:  perf/s75-throughput.sh <calibrate|phase2|phase3|phase4|all> [outdir]
 # Env:    S75_BASE  (default /mnt/nvme/run/s75-<pid>)   S75_HEAP  S75_GC
@@ -25,7 +26,6 @@
 #         S75_RATE4 (burst rate,     default 100000)    S75_DUR4 (default 30)
 #         CONFIGD_JAR  (shaded server jar)              CONFIGD_BENCH (benchmarks.jar)
 # Requires: freshly-built shaded server jar + benchmarks.jar. Idempotent cleanup.
-# =============================================================================
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JAR="${CONFIGD_JAR:-$(ls "$ROOT"/configd-server/target/configd-server-*.jar 2>/dev/null | grep -v original- | head -1)}"
@@ -35,11 +35,11 @@ RAFT_BASE=9290
 API_BASE=8280
 PEERS_ADDR="1=127.0.0.1:9291,2=127.0.0.1:9292,3=127.0.0.1:9293"
 HEAP="${S75_HEAP:--Xmx4g -Xms4g}"
-GCFLAGS="${S75_GC:--XX:+UseZGC}"   # generational ZGC is the only ZGC in JDK 24+ (ADR-0041); -XX:+ZGenerational removed
-# S7.5 PART 2 group-commit sizing sweep: extra JVM flags passed to every node, e.g.
-#   S75_JVM_EXTRA="-Dconfigd.groupCommit.enabled=false"               (PART 1 per-op baseline)
-#   S75_JVM_EXTRA="-Dconfigd.groupCommit.lingerMicros=500"            (linger sweep point)
-#   S75_JVM_EXTRA="-Dconfigd.groupCommit.maxBatch=64"                 (batch-cap sweep point)
+GCFLAGS="${S75_GC:--XX:+UseZGC}"   # generational ZGC is the only ZGC in JDK 24+; the old -XX:+ZGenerational flag was removed
+# S75_JVM_EXTRA: group-commit sizing sweep — extra JVM flags passed to every node, e.g.
+#   S75_JVM_EXTRA="-Dconfigd.groupCommit.enabled=false"      (disable group-commit, per-op baseline)
+#   S75_JVM_EXTRA="-Dconfigd.groupCommit.lingerMicros=500"   (linger sweep point)
+#   S75_JVM_EXTRA="-Dconfigd.groupCommit.maxBatch=64"        (batch-cap sweep point)
 JVM_EXTRA="${S75_JVM_EXTRA:-}"
 MODE="${1:-all}"
 OUT="${2:-$ROOT/docs/session-7.5/captures/throughput}"
@@ -59,7 +59,7 @@ trap cleanup EXIT
 [ -f "$BENCH" ] || fail "benchmarks.jar not found: $BENCH (build: ./mvnw -pl configd-testkit -am package -DskipTests)"
 case "$BASE" in /mnt/nvme/*) : ;; *) fail "S75_BASE must be under /mnt/nvme (got $BASE) — charter §13.9" ;; esac
 mkdir -p "$BASE" "$OUT"
-SIGNKEY="$BASE/cluster-signing-key.bin"   # shared, OUTSIDE every node data dir (D-1-safe)
+SIGNKEY="$BASE/cluster-signing-key.bin"   # shared, OUTSIDE every node data dir (required by the fail-closed key guard)
 
 api() { echo "127.0.0.1:$((API_BASE + $1))"; }
 nvme_dev() { df --output=source /mnt/nvme | tail -1 | xargs basename; }
@@ -79,12 +79,12 @@ launch_node() {
 
 launch_cluster() {
   echo "[s75] launching 3-node cluster ($GCFLAGS $HEAP) under $BASE (NVMe=$(nvme_dev))"
-  # The 3 nodes SHARE one --signing-key-file. SigningKeyStore.loadOrCreate is a non-atomic
-  # exists()-then-CREATE_NEW, so a simultaneous first-boot races: one node creates the key, the
-  # others crash with FileAlreadyExistsException (S7.5 D-1 finding — fix the loadOrCreate race
-  # there). Pre-generate by launching node 1 alone, waiting for the key file to appear, THEN
-  # launching nodes 2 & 3 (they LOAD the now-present key). Mirrors the prod model where the key is
-  # provisioned/mounted before boot, never raced into existence by the nodes.
+  # The 3 nodes share one --signing-key-file. SigningKeyStore.loadOrCreate is a non-atomic
+  # exists()-then-CREATE_NEW, so a simultaneous first boot races: one node creates the key, the
+  # others crash with FileAlreadyExistsException. Pre-generate by launching node 1 alone, waiting
+  # for the key file to appear, then launching nodes 2 & 3 (they load the now-present key). This
+  # mirrors the production model where the key is provisioned/mounted before boot, never raced
+  # into existence by the nodes.
   launch_node 1
   local keyok=0
   for i in $(seq 1 40); do
@@ -123,7 +123,7 @@ resolve_leader() {
   return 1
 }
 
-# §13.9 / §6.2 runtime assertion: the actual WAL file must resolve under /mnt/nvme.
+# Runtime assertion: the actual WAL file must resolve under /mnt/nvme.
 assert_data_on_nvme() {
   local wal; wal=$(find "$BASE" -name "*.wal" 2>/dev/null | head -1)
   [ -n "$wal" ] || fail "no .wal file found under $BASE — cannot confirm data-on-NVMe"

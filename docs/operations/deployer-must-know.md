@@ -1,10 +1,8 @@
-# Deployer MUST-KNOW -- Configd v1
+# Deployer must-knows
 
 These are **system-boundary and deployment conditions the server does NOT enforce for
 you** -- distinct from the runsheet's server-side gates
-([`operator-runsheet.md`](operator-runsheet.md)). Source: the v1 readiness review
-([`../archive/readiness/v1-go-no-go-2026-07-01.md`](../archive/readiness/v1-go-no-go-2026-07-01.md),
-section 4, the MUST-KNOW list, and section 5.1, operability caveats).
+([`operator-runsheet.md`](operator-runsheet.md)).
 
 Read all ten. Each is: **the requirement - why it matters (the concrete failure
 if ignored) - what to do.**
@@ -32,16 +30,16 @@ if ignored) - what to do.**
   AES-256-GCM** at the ADR-0042 seam (a new `algId=2` envelope; the GCM tag replaces
   the HMAC). The default key provider is `local`: the encryption root is
   **HKDF-derived from the cluster signing key**
-  (`-Dconfigd.raft.encryption.kms.provider=local`, the only provider built in v1;
-  naming any other provider is a **fail-loud startup refusal**, never a silent
-  downgrade). No wire-format change, no cluster-wide key distribution, no new boot
-  dependency.
+  (`-Dconfigd.raft.encryption.kms.provider=local`; an external Vault Transit provider
+  also ships for off-host custody, see below). Naming any other, unbundled provider is a
+  **fail-loud startup refusal**, never a silent downgrade. No wire-format change, no
+  cluster-wide key distribution, no new boot dependency.
 - **ONE-WAY DOOR (read this before enabling).** Once **any** encrypted (`algId=2`)
   record is written, you **cannot disable encryption and cannot roll the binary
   back** to a pre-encryption version: recovery **fails closed** -- a reader without
   the encryption capability refuses the `algId=2` records rather than mis-read them,
   so the node cannot replay its own WAL/snapshot. **There is no supported "disable
-  encryption" path in v1; treat enabling as permanent for a given data directory.**
+  encryption" path; treat enabling as permanent for a given data directory.**
   (To move a node back to plaintext you must stand up a fresh data dir under a build
   that still writes plaintext and re-replicate into it -- there is no in-place
   downgrade.) This is the same irreversibility CockroachDB/etcd/Vault document for
@@ -56,7 +54,7 @@ if ignored) - what to do.**
   that derived its root from it is PERMANENTLY UNRECOVERABLE**, exactly as for a
   lost KMS master key -- there is no escape hatch. Before enabling encryption:
   (1) **back up the signing key to durable, off-host storage** kept separate from
-  the data dir and its backups (the D-1 co-location guard already forbids
+  the data dir and its backups (the co-location guard already forbids
   co-locating them), and (2) **test-restore it** -- bring a node up from the key
   backup plus a snapshot and confirm recovery succeeds -- so you know the backup is
   good *before* you hold irreplaceable ciphertext.
@@ -70,7 +68,7 @@ if ignored) - what to do.**
   segment), set `-Dconfigd.raft.encryption.requireEncrypted=true` -- the reader then
   REFUSES any `algId=0/1` record. Set this **only after** the plaintext prefix has
   been compacted away, or the node will refuse to start.
-- **Key rotation is now NON-DESTRUCTIVE (but offline in v1) + fate-sharing.** The at-rest keys are held in
+- **Key rotation is non-destructive, but offline, and fate-shares with the signing key.** The at-rest keys are held in
   a persisted, dual-slot **keyring** (`NodeKeyring`, wired at boot from `ConfigdServer`) that keeps independent
   random per-term roots, decoupled from the signing key. Rotation is **crash-atomic and non-destructive by
   construction**: a **term** rotation (`rotateTerm`) appends a fresh root and **retains every old term** (new
@@ -78,21 +76,20 @@ if ignored) - what to do.**
   (`rewrapForNewSigningKey`) rewraps every retained root under the new signing key's KEK and writes the new
   slot **before** the operator swaps `signing-key.bin`, so all prior data still verifies and a crash on either
   side of the swap boots on the matching slot. This corrects the earlier "rotating the signing key orphans /
-  bricks all `algId=2` data" caveat. **The residual is that rotation is OFFLINE / operator-serialized in v1**
+  bricks all `algId=2` data" caveat. **The residual is that rotation is offline and operator-serialized**
   (there is no online admin trigger yet - do a term/signing-key rotation as an out-of-band maintenance action
   on a stopped node). Confidentiality still **fate-shares with the signing key** under `local` (a signing-key
   compromise decrypts all at-rest data), and key **loss** is still permanent: back up the signing key.
-  **Off-host key custody now ships:** an external **Vault Transit** KMS provider (`configd-kms-vault`) is
+  **Off-host key custody ships:** an external **Vault Transit** KMS provider (`configd-kms-vault`) is
   discovered via `ServiceLoader` and selected with `-Dconfigd.raft.encryption.kms.provider=vault-transit`; it
   seals a per-node custody secret in a versioned `raft-kms-root` carrier (`KmsSealedRootStore`), moving the
   root of trust off-host so confidentiality no longer fate-shares with a co-located signing key. Other cloud
   KMS/HSM backends can be added behind the same SPI without a core edit; only `local` and `vault-transit` ship
-  in v1.
-- **Not covered by encryption at rest (v1).** The **audit log stays HMAC-only** --
+  today.
+- **Not covered by encryption at rest.** The **audit log stays HMAC-only** --
   audit metadata (config key **names**, principals) is **not** encrypted at rest.
   The edge stays memoryless (no at-rest surface). A live-node RAM adversary is out
-  of scope (every at-rest scheme draws this line). (See the readiness review,
-  [section 4](../archive/readiness/v1-go-no-go-2026-07-01.md), item 4.)
+  of scope (every at-rest scheme draws this line).
 
 ## 2. Grant the edge hydration identity whole-store READ -- SUBSCRIBE is gated on it
 
@@ -143,8 +140,7 @@ if ignored) - what to do.**
 - **Why it matters.** At N=1 the ACL gate, the store keys, the read path, and the
   watch filter are **uniformly scope-blind** over a single flat keyspace; `scope`
   is **forward-compat metadata** for future sharding/namespacing, not an
-  authorization dimension ([`known-limitations.md` section 2](known-limitations.md), lines
-  62-63; [readiness review section 4 item 5](../archive/readiness/v1-go-no-go-2026-07-01.md)). A grant or a
+  authorization dimension (see [`known-limitations.md`](known-limitations.md)). A grant or a
   watch is decided on the **key**, independent of scope -- so two "tenants"
   separated only by `scope` share one authorization namespace.
 - **What to do.** Achieve tenant isolation with **distinct key prefixes + ACL
@@ -204,25 +200,24 @@ if ignored) - what to do.**
      installed" (over-cap, or a transfer that never completed). Fold this into the
      first-30-days burn-in alerting -- the [burn-in contract](burn-in-contract.md)
      section 2C snapshot row.
-  - The old **"snapshot too large for v1 wire"** stderr drop no longer occurs for
-    total state above 4 MiB (chunking handles it); a codec reject now only means a
-    single **chunk** exceeded the per-chunk cap (a chunk-size misconfiguration).
+  - A codec reject now only means a single **chunk** exceeded the per-chunk cap (a
+    chunk-size misconfiguration) -- total state above 4 MiB is handled by chunking.
 - **What IS rolling-safe vs all-at-once (the format-compatibility contract).** This "upgrade together" rule
-  is specific to a **Raft frame-format (`WIRE_VERSION`) change** and to the pre-chunking→chunking transition
-  above. Per the whole-system upgrade contract (C0-C9,
-  [`../design/group-b/07-upgrade-capability-as-built.md`](../design/group-b/07-upgrade-capability-as-built.md)):
-  the **edge/client plane** (first-frame version pin), the **at-rest keyring/encryption** formats, and the
-  **`_acl/format` policy** version are all **rolling-safe** (every format is version-discriminated and fails
-  closed on an unknown version -- never a silent misparse). Only a **Raft node↔node frame-format bump** has no
-  in-band negotiation and therefore requires an all-at-once (blue/green or brief stop-the-world) upgrade. If
-  you are deploying this release fresh, the pre-chunking corruption case is historical (no pre-chunking build
-  exists in your cluster).
+  is specific to a **Raft frame-format (`WIRE_VERSION`) change** and to the pre-chunking->chunking transition
+  above. Per the whole-system upgrade contract
+  ([`../design/group-b/07-upgrade-capability-as-built.md`](../design/group-b/07-upgrade-capability-as-built.md)),
+  the **edge/client plane** (first-frame version pin), the
+  **at-rest keyring/encryption** formats, and the **`_acl/format` policy** version are all **rolling-safe**
+  (every format is version-discriminated and fails closed on an unknown version -- never a silent misparse).
+  Only a **Raft node↔node frame-format bump** has no in-band negotiation and therefore requires an
+  all-at-once (blue/green or brief stop-the-world) upgrade. If you are deploying a fresh cluster, the
+  pre-chunking corruption case is historical (no pre-chunking build exists in your cluster).
 
 ## 5. Horizontal scale at N>1 -- leadership auto-balance ships (on by default); still monitor it
 
 - **Requirement.** If you deploy multiple machines for horizontal write scale, aim for **one group-leader
-  per box (1-1-1)**. v1 ships a built-in **leadership auto-balancer** that maintains this for you, but you
-  should still monitor the distribution (the balancer is built and E2E-tested, not yet load-measured at
+  per box (1-1-1)**. The server ships a built-in **leadership auto-balancer** that maintains this for you, but you
+  should still monitor the distribution (the balancer is built and end-to-end tested, not yet load-measured at
   scale).
 - **Why it matters.** The proven **2.45x across 3 machines** (near-linear,
   656->1075->1607 w/s;
@@ -273,17 +268,17 @@ if ignored) - what to do.**
   - **Monitor leadership distribution continuously.** The auto-balancer corrects drift automatically, but
     verify it is doing so (watch `raft_node_leader_count`); a persistent full sweep may need a manual transfer
     or a controlled restart.
-  - The remaining leadership residual is **transfer-on-graceful-shutdown** (SIGTERM flips readiness to draining
-    -- item on B7 below -- but does not hand off a group's leadership first; recovery relies on the normal
-    election after the node leaves). At **N=1 (the v1 default)** the balancer is dormant and this item does not
+  - The remaining leadership residual is **transfer-on-graceful-shutdown** (SIGTERM flips readiness to draining,
+    see item 9 below, but does not hand off a group's leadership first; recovery relies on the normal
+    election after the node leaves). At **N=1 (the default)** the balancer is dormant and this item does not
     apply.
 
-## 6. Keep control-plane and edge identity policies consistent -- one person is two principals in v1
+## 6. Keep control-plane and edge identity policies consistent -- one person is two principals
 
 - **Requirement.** If you use both the control-plane API and the edge watch surface,
   keep the bearer token (or OIDC) policy and the certificate-DN (mTLS) policy
   consistent for the same human operator.
-- **Why it matters.** In v1, the control-plane API authenticates with a **bearer
+- **Why it matters.** The control-plane API authenticates with a **bearer
   token or HTTP Basic (incl. OIDC-validated bearer)** and the edge authenticates with **mTLS** client
   certificates **and/or** a token/basic `AUTH` frame (§06 §6A) -- so one
   person can hold two distinct principals: their bearer/token identity on the API
@@ -298,7 +293,7 @@ if ignored) - what to do.**
   the `_acl/` policy for both identity types whenever you change access to sensitive
   keys.
 
-## 7. No silent unauthenticated PUBLIC bind (B5) -- default is loopback
+## 7. No silent unauthenticated PUBLIC bind -- default is loopback
 
 - **Requirement.** The default bind address is now **loopback (`127.0.0.1`)**, not `0.0.0.0`. If you bind a
   **non-loopback** interface while **auth is OFF**, the server **refuses to start** unless you explicitly
@@ -306,15 +301,15 @@ if ignored) - what to do.**
   `configd.security.allowInsecurePublicBind=true`), which then logs a loud warning and continues.
 - **Why it matters.** This closes the Redis/etcd "default-open" footgun class: an unauthenticated store bound
   to a public interface silently accepts writes/admin from anyone who can reach the port. This is a
-  **footgun-fix, NOT "auth required by default"** -- v1 remains **secure-by-config**: a deliberate no-auth,
+  **footgun-fix, NOT "auth required by default"** -- Configd remains **secure-by-config**: a deliberate no-auth,
   public deployment stays fully possible, it just can no longer happen **by accident/silently**. (Auth and
-  encryption remain a workload choice, per the Group-B posture.)
+  encryption remain a workload choice.)
 - **What to do.** For production, set `--auth-token` (or another authenticator) **and** bind the intended
   interface -- auth-on public binds need no override. For a deliberate no-auth public deployment (e.g. a
   private network segment you trust), pass `--allow-insecure-public-bind` **knowingly** and segregate the port
   at the network boundary. Leave the flag unset otherwise.
 
-## 8. Write-admission control is ON by default (B6)
+## 8. Write-admission control is ON by default
 
 - **Requirement.** Write-admission / overload control (`configd.write.maxInflightProposals`) is now **ON by
   default** with a conservative tuned value, so the store protects itself from write floods out of the box.
@@ -325,7 +320,7 @@ if ignored) - what to do.**
   `-Dconfigd.write.maxInflightProposals=N` (0 disables the bound). Watch `configd_write_rejected_overloaded_total`
   and the election-churn signal (burn-in contract §2B) if you see sustained 429s.
 
-## 9. Readiness is shard-aware and drains on SIGTERM (B7)
+## 9. Readiness is shard-aware and drains on SIGTERM
 
 - **Requirement.** `/health/ready` now reflects **every shard this node should be serving**: a node that has
   lost quorum on **any** hosted shard (not just group 0) reports **NOT-ready**. On **SIGTERM** the node flips
@@ -337,7 +332,7 @@ if ignored) - what to do.**
 - **What to do.** Wire your orchestrator's readiness probe to `/health/ready` (it already should) and give the
   pod a graceful-termination window long enough to drain before SIGKILL. No configuration is required.
 
-## 10. Protect key material from core dumps and swap (F3)
+## 10. Protect key material from core dumps and swap
 
 - **Requirement.** In-JVM zeroization of key material is **platform-bounded** (the JVM may copy heap bytes
   during GC; `SecretKeySpec.destroy()` is a no-op on JDK 25 -- Configd uses `Destroyable` root-key types to
@@ -350,7 +345,7 @@ if ignored) - what to do.**
   ensure `-XX:-HeapDumpOnOutOfMemoryError` (already the runsheet default -- heap dumps expose config values,
   see [`security-heap-dump-policy.md`](security-heap-dump-policy.md)); run with swap off (`swapoff -a`) or
   encrypted swap on key-bearing nodes. Treat these as part of the signing-key custody procedure alongside the
-  D-1 co-location guard.
+  co-location guard (item 1 above).
 
 ---
 

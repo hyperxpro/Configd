@@ -15,8 +15,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * B5 (Class-B) footgun guard: an UNAUTHENTICATED store must not bind a NON-LOOPBACK interface SILENTLY
- * (the Redis/etcd "default-open" class). This is deliberately NOT "auth required by default": a no-auth
+ * Footgun guard: an UNAUTHENTICATED store must not bind a NON-LOOPBACK interface SILENTLY (the
+ * Redis/etcd "default-open" class). This is deliberately NOT "auth required by default": a no-auth
  * deployment stays possible via the {@code configd.security.allowInsecurePublicBind} override - the guard
  * only refuses the accidental, unacknowledged case. Default behavior is REFUSE TO START.
  * <p>
@@ -34,7 +34,7 @@ class InsecurePublicBindFailClosedTest {
     @TempDir
     Path tempDir;
 
-    // ---- direct enforcement (independent of ambient system properties) ----
+    // direct enforcement (independent of ambient system properties)
 
     @Test
     void publicBindWithAuthOffAndNoOverrideThrows() {
@@ -94,7 +94,7 @@ class InsecurePublicBindFailClosedTest {
                 "the override path must warn loudly and name the override; stderr was:\n" + stderr);
     }
 
-    // ---- end-to-end: startup is REFUSED (or proceeds under the override) at the real boot ----
+    // end-to-end: startup is REFUSED (or proceeds under the override) at the real boot
 
     @Test
     void serverStartupRefusedOnPublicBindWithAuthOff() {
@@ -120,10 +120,11 @@ class InsecurePublicBindFailClosedTest {
 
     @Test
     void modeNoneWithLeftoverAuthTokenStillRefusesPublicBind() {
-        // The bypass B5 must catch: configd.auth.mode=none disables auth entirely (the open gate wires no
-        // chain/interceptor/ACL) and supersedes the legacy --auth-token. If isAuthEnabled counted the now-inert
-        // token, the guard would believe the store is authenticated and permit an unauthenticated public bind.
-        // mode=none is auth-off regardless of the token, so the guard must still refuse.
+        // The bypass this guards against: configd.auth.mode=none disables auth entirely (the open gate
+        // wires no chain/interceptor/ACL) and supersedes the legacy --auth-token. If isAuthEnabled counted
+        // the now-inert token, the guard would believe the store is authenticated and permit an
+        // unauthenticated public bind. mode=none is auth-off regardless of the token, so the guard must
+        // still refuse.
         String savedOverride = System.getProperty(OVERRIDE);
         String savedAuth = System.getProperty(AUTH_MODE);
         try {

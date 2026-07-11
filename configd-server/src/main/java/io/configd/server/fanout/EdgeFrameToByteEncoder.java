@@ -35,7 +35,7 @@ final class EdgeFrameToByteEncoder extends MessageToByteEncoder<EdgeFrame> {
     private final WireVersionSupplier wireVersion;
 
     EdgeFrameToByteEncoder(WireVersionSupplier wireVersion) {
-        super(true); // preferDirect: encode into a pooled DIRECT buffer (head-to-head best-Netty shape)
+        super(true); // preferDirect: encode into a pooled direct buffer (head-to-head best-Netty shape)
         this.wireVersion = wireVersion;
     }
 

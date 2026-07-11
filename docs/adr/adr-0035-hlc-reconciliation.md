@@ -1,6 +1,7 @@
-# ADR-0035: Reconcile the per-entry HLC fiction - amend the contract to a measurable staleness definition (RR-015)
+# ADR-0035: Reconcile the per-entry HLC fiction - amend the contract to a measurable staleness definition
 
-- **Status:** Accepted (review-architect APPROVED 2026-06-11 - sign-off recorded below; second-reviewer co-sign rides the RR-031/RR-015 consolidated contract pass that applies the section 2/section 4 patch plan)
+- **Status:** Accepted (2026-06-11). The section 2 / section 4 patch plan below was applied to
+  `docs/operations/consistency-contract.md` in the same consolidated contract pass.
 - **Date:** 2026-06-10
 - **Interacts with:** ADR-0004 (version semantics - amended here), ADR-0030 (single-group topology - the enabling premise), ADR-0033 (applied-mutation-sequence definition of S - the section 4 seq reconciliation must agree with it)
 
@@ -25,8 +26,8 @@ The consistency contract promises a per-entry Hybrid Logical Clock that does not
   `clock.nanoTime() - lastUpdateNanos` (`stalenessMs()`), **not** `wall_time - entry_HLC`. So the
   one place section 2's bound is enforced measures a different quantity than the contract defines.
 
-The contract therefore defines a guarantee against a field that does not exist and is enforced against a
-proxy quantity. That is the FICTION classification.
+The contract therefore defines a guarantee against a field that does not exist, and enforces it against a
+proxy quantity instead - that is the core problem this ADR fixes.
 
 ### The enabling premise: ADR-0030 makes the cross-group HLC role moot
 
@@ -38,14 +39,14 @@ The contract uses the per-entry HLC for **two** purposes:
 2. **Edge staleness measurement** (section 2 `:46-66`).
 
 Under ADR-0030 (single region-local Raft group; `ConfigdServer.java:82` `DEFAULT_RAFT_GROUP = 0` is the
-only group; `ConfigScope` routes everything to group 0, RR-078), **there is no second group**, so
+only group; `ConfigScope` routes everything to group 0), **there is no second group**, so
 purpose (1) is unreachable: there is no cross-group order to approximate. The contract already disclaims
-cross-group total order (section 5.3 "NOT GUARANTEED"); the HLC was the *mechanism* for the soft fallback, and
+cross-group total order (section 5.3, "not guaranteed"); the HLC was the *mechanism* for the soft fallback, and
 that fallback now governs an empty set of deployments. Per-entry HLC's only live purpose is (2), the edge
 staleness clock - and section 2's own measurement does not actually need a *per-entry* HLC, only a single
 authoritative time reference for "when was the freshest thing I have applied produced."
 
-## Decision: AMEND (descope per-entry HLC; redefine section 2 staleness as commit-notification propagation)
+## Decision: amend the contract (descope per-entry HLC; redefine section 2 staleness as commit-notification propagation)
 
 We **amend** the contract rather than implement per-entry HLC on the control plane. The driving reasons:
 
@@ -54,9 +55,9 @@ We **amend** the contract rather than implement per-entry HLC on the control pla
    carried by the Raft log's `(index, term)` ordering and the applied-mutation sequence S - none of them
    need a wall-clock-ish timestamp on the entry. The HLC's only job was cross-group *approximate*
    ordering, which ADR-0030 deletes, and an edge *staleness clock*, which is a propagation-latency
-   measurement, not an ordering primitive. (Audited adversarially: I looked for a control-plane invariant
-   that breaks without a per-entry monotone wall-ish stamp and found none. The control plane never
-   compares two entries by time; it compares by `(index, term)`.)
+   measurement, not an ordering primitive. (No control-plane invariant was found that breaks without a
+   per-entry monotone wall-ish stamp: the control plane never compares two entries by time; it compares
+   by `(index, term)`.)
 
 2. **A per-entry HLC stamped on the control plane cannot measure the thing section 2 cares about anyway.** section 2 is
    about *edge* staleness - how far behind the edge data plane is. An HLC assigned at append time on the
@@ -68,16 +69,16 @@ We **amend** the contract rather than implement per-entry HLC on the control pla
    "now - that stamp" at the consumer, accepting the leader->edge one-way-delay as the (small, bounded)
    systematic error - which is exactly what a staleness bound should report.
 
-3. **Cost/benefit.** Implementing per-entry HLC means: a wire-format change to `LogEntry` (touches WAL
-   format -> RR-064 wire-compat stubs, snapshot format ADR-0028, codec ADR-0029), a new field threaded
-   through append/replicate/apply/snapshot, and clock-skew handling on every node - for a field with no
-   control-plane consumer and a now-empty cross-group use case. AMEND removes a fiction; IMPLEMENT adds a
-   durable-format liability to serve a deleted requirement.
+3. **Cost/benefit.** Implementing per-entry HLC means: a wire-format change to `LogEntry` (touching the WAL
+   format and its wire-compat fixtures, the snapshot format in ADR-0028, and the codec in ADR-0029), a new
+   field threaded through append/replicate/apply/snapshot, and clock-skew handling on every node - for a
+   field with no control-plane consumer and a now-empty cross-group use case. Amending removes a fiction;
+   implementing per-entry HLC would add a durable-format liability to serve a deleted requirement.
 
 ### What replaces the section 2 measurement
 
 Redefine edge staleness in terms of **commit-notification timestamps assigned at the leader at commit
-time** - the same apply-path notification ADR-0033 section "Consequences" and the forthcoming section 4.6
+time** - the same apply-path notification ADR-0033's "Consequences" section and ADR-0034's
 commit-notification interface already expose, which the edge data plane consumes:
 
 - When the leader applies a committed mutation (the apply boundary ADR-0033 already instruments - it now
@@ -95,10 +96,10 @@ commit-notification interface already expose, which the edge data plane consumes
 This is implementable today against ADR-0033's apply seam; it requires **no `LogEntry` change**, no WAL/
 snapshot format change, and no new HLC machinery. It measures propagation latency against one clock.
 
-## Exact contract section 2/section 4 text changes (PATCH PLAN - do NOT apply here)
+## Contract text changes for section 2 and section 4 (staged, not applied in this document)
 
-These are staged for the consolidated contract pass (RR-031/RR-015 own the same section 4 text; do not apply in
-this session; `docs/consistency-contract.md` is read-only until that pass).
+(Applied to `docs/operations/consistency-contract.md` in the consolidated contract pass; kept here for
+the historical record of the exact wording.)
 
 ### section 2 - Staleness Measurement (`consistency-contract.md:45-48`, INV-S1 `:59-66`)
 
@@ -108,7 +109,7 @@ this session; `docs/consistency-contract.md` is read-only until that pass).
     between the current wall clock and the timestamp of the most recently applied entry."
   - INSERT: "Staleness at an edge node = `edge_wall_now - commit_timestamp(last_applied_notification)`,
     where `commit_timestamp` is assigned by the **leader at commit/apply time** and delivered on the
-    commit-notification stream (section 4.6). The edge `StalenessTracker` stores the commit timestamp of the
+    commit-notification stream (ADR-0034). The edge `StalenessTracker` stores the commit timestamp of the
     most recently applied notification and reports `now - that`. The systematic error is the bounded
     leader->edge one-way propagation delay; inter-node clock skew is bounded operationally by NTP (target
     skew <= 50 ms) and is the only residual error term. **No per-entry HLC is carried in the Raft log.**"
@@ -136,7 +137,7 @@ this session; `docs/consistency-contract.md` is read-only until that pass).
 - **section 9 summary** (`:235`): "Cross-key order (cross group) ... HLC for approximate ordering" -> "N/A under
   ADR-0030 single-group topology."
 
-## section 4 seq reconciliation with ADR-0033 (PROPOSE EXACT WORDING)
+## Section 4 seq reconciliation with ADR-0033 (proposed wording)
 
 Contract section 4 currently says (`:118`): *"Every committed log entry receives `seq = previous_seq + 1`
 (gap-free within a group)."* ADR-0033 establishes that the client-visible sequence S is the
@@ -164,17 +165,17 @@ INV-V1 (`:128-129`, "if e1 committed before e2 then seq(e1) < seq(e2)") remains 
 stream and needs only the word "mutating" added for precision; it is otherwise unchanged.
 
 This wording is consistent with ADR-0033's "the client seq is the applied-mutation counter, not the log
-index nor contract section 4 seq" and with the section 8 runtime-assertion reconciliation that RR-031 owns
-(`assert_sequence_gap_free` becomes "gap-free over mutating applies"; note section 8's `sequence_monotonic`/
-`sequence_gap_free` assertions were already A2-removed in code per RR-031 - the section 8 row text is RR-031's to
-fix, this ADR only fixes the section 4 definition they reference).
+index nor contract section 4 seq" and with the section 8 runtime-assertion reconciliation applied in the
+same contract pass (`assert_sequence_gap_free` becomes "gap-free over mutating applies"; the
+`sequence_monotonic`/`sequence_gap_free` assertions in section 8 had already been removed from the code
+by that point - this ADR only fixes the section 4 definition they reference).
 
 ## ADR-0004 amended status
 
 ADR-0004 is **amended, not superseded**. Its core decision (per-group monotonic sequence number; reject
 per-key versions and vector clocks) stands and is correct. The amendment, to be stamped on ADR-0004:
 
-> **Amended 2026-06-10 (ADR-0035, RR-015):** The "entries also carry an HLC timestamp" clause and the
+> **Amended 2026-06-10 (ADR-0035):** The "entries also carry an HLC timestamp" clause and the
 > "16-byte (8 seq + 8 HLC)" per-entry footprint are **descoped**. Per-entry HLC was never implemented
 > (`LogEntry` has no timestamp field) and its two uses are obviated: cross-group approximate ordering is
 > moot under the single-group topology (ADR-0030), and edge staleness is measured via leader-assigned
@@ -186,8 +187,8 @@ A one-line "Amended by ADR-0035" pointer is added to ADR-0004's Status line in t
 
 ## Alternatives considered
 
-- **IMPLEMENT per-entry HLC now.** Rejected. Adds a durable-format field (WAL/snapshot/codec change,
-  reopening RR-064 wire-compat) and per-node clock-skew handling to serve (a) a cross-group use case
+- **Implement per-entry HLC now.** Rejected. Adds a durable-format field (WAL/snapshot/codec change,
+  reopening the wire-compat fixture work) and per-node clock-skew handling to serve (a) a cross-group use case
   ADR-0030 deleted and (b) a staleness measurement that a single leader-assigned commit timestamp serves
   more honestly. No control-plane invariant requires it. This would be implementing a fiction faithfully
   rather than removing it.
@@ -196,7 +197,7 @@ A one-line "Amended by ADR-0035" pointer is added to ADR-0004's Status line in t
   update," which is **0 ms immediately after a heartbeat even if the heartbeat carried stale data** - it
   cannot detect a slow/stuck propagation path that still ticks. The commit-notification-timestamp
   definition measures actual data age and is the minimal honest fix. (This is also why the relabel-only
-  option fails the charter's "spec and code may not disagree" *and* "guarantee must be meaningful" bars.)
+  option fails on both counts: the spec and the code must agree, and the guarantee must be meaningful.)
 - **HLC only at the edge, not on log entries.** Rejected as a confused middle: the edge has nothing to
   HLC-stamp that the leader's commit timestamp does not already carry; a second clock at the edge just
   reintroduces the skew term we are trying to make explicit.
@@ -207,17 +208,16 @@ These are owed by the edge data plane implementation:
 
 1. **Leader-assigned commit timestamp on the apply path.** At the apply boundary ADR-0033 instruments,
    capture `t_commit = leader_wall_clock_at_apply` and include it on the commit-notification emitted to
-   the data-plane fan-out (the section 4.6 interface; bounded per ADR-0034, to be written with the section 4.6 work).
-   This is control-plane work but is *enabling* for the edge measurement, so it is flagged for the
-   joint section 4.6 effort, not buried.
+   the data-plane fan-out (the commit-notification interface, ADR-0034). This is control-plane work but is
+   *enabling* for the edge measurement, so it is a joint effort with the edge implementation, not buried.
 2. **Edge `StalenessTracker` consumes `t_commit`.** Make the existing-but-ignored `timestamp` parameter of
    `recordUpdate(version, timestamp)` (`StalenessTracker.java:98`) load-bearing: store it and compute
    `stalenessMs() = edge_wall_now - t_commit_of_last_applied`. Remove the "informational" Javadoc. Keep
-   the INV-S1 wiring through `InvariantMonitor.assertStalenessBound` (already present, F-0073).
-3. **`StalenessUpperBoundTest` must assert the p99 distribution**, not threshold transitions (RR-031
-   notes the current test asserts state transitions, CM-049). With a real commit-timestamp clock this
-   becomes measurable: drive simulated propagation latency, collect the staleness distribution, assert
-   p99 < 500 ms / p9999 < 2 s (INV-S2). This is the discriminating test for the section 2 amendment.
+   the INV-S1 wiring through `InvariantMonitor.assertStalenessBound` (already present).
+3. **`StalenessUpperBoundTest` must assert the p99 distribution**, not just threshold transitions (the
+   current test only asserts state transitions). With a real commit-timestamp clock this becomes
+   measurable: drive simulated propagation latency, collect the staleness distribution, assert p99 < 500 ms
+   / p9999 < 2 s (INV-S2). This is the discriminating test for the section 2 amendment.
 4. **NTP-skew assumption documented + a tripwire.** Record the <= 50 ms inter-node skew assumption and add
    a guard that flags negative or implausibly large `staleness` (clock ran backwards / large skew) as a
    distinct metric rather than silently reporting `staleness ~ 0` or a huge value.
@@ -227,11 +227,27 @@ instantaneous `edgeVersion[e] := commitIndex[e]` with no time component, so no T
 this amendment - the staleness *bound* is a real-time/statistical property checked by the property test,
 not a TLC safety invariant.)
 
-## Sign-off
+## Verification
 
-- review-architect: **APPROVED 2026-06-11.** The AMEND/descope decision is sound and the cited evidence is accurate (verified against the live code and contract): `LogEntry` has no HLC field; `HybridClock` has zero `src/main` consumers; `StalenessTracker.recordUpdate(version, timestamp)` documents `timestamp` "(informational)" and stores `clock.nanoTime()` instead (`configd-edge-cache/src/main/java/io/configd/edge/StalenessTracker.java:96,100,154`); the section 2/section 4/section 5.3/section 9/INV-W2 anchors match the contract verbatim; `DEFAULT_RAFT_GROUP = 0` confirms the ADR-0030 single-group premise that makes cross-group HLC ordering moot. The section 4 seq reconciliation is consistent with ADR-0033 as independently verified in the RR-004 fix review - the client-visible S is the applied-mutation counter that skips no-op/RCFG entries and is surfaced by `StateMachine.apply` (now `long`); the proposed section 4/INV-V1/INV-V2 rewording ("gap-free over the mutation stream") matches the implemented behavior. The section 2 single-leader-clock redefinition is more honest than per-entry HLC (avoids conflating propagation latency with inter-node clock skew) and is implementable against ADR-0033's apply seam with no `LogEntry`/WAL/snapshot/codec format change (no RR-064 wire-compat reopening). Scope is correct: this ADR authorizes the DECISION only; the actual `consistency-contract.md` section 2/section 4 edits are explicitly deferred to the RR-031/RR-015 consolidated pass (contract read-only this session), and the staleness-measurement implementation is handed to Session 3. One non-substantive nit for the consolidated pass: the ADR cites `configd-observability` for `StalenessTracker`; it actually lives in `configd-edge-cache` (line numbers/behavior are correct). No required changes to the decision. **[RESOLVED in the RR-031/RR-015 consolidated pass: the body reference now reads `configd-edge-cache/src/main/java/io/configd/edge/StalenessTracker.java`.]**
-- second reviewer (consensus-correctness-engineer): **CO-SIGNED 2026-06-11** on the RR-031/RR-015 consolidated contract pass. Applied the section 2/section 4 patch plan verbatim to `consistency-contract.md` (section 2 staleness redefinition + INV-S1; section 4 applied-mutation-sequence seq bullet + INV-V1/INV-V2 + comparison-table footnote; section 5.3 cross-group N/A; INV-W2 `hlc` conjunct removed; section 9 cross-group row). Independently re-verified against live code: `LogEntry` is still `(index, term, command)` (no HLC field); the applied-mutation sequence S is the counter `StateMachine.apply` returns (skipping no-op/RCFG), consistent with ADR-0033 and the RR-004 fix; `DEFAULT_RAFT_GROUP = 0` (single group). Fixed the `configd-observability`->`configd-edge-cache` nit in the ADR body. The section 2 measurement implementation + the INV-S2 p99-distribution test remain Session-3-owed (handoff section "What Session 3 must implement"). No changes to the decision.
+The amend/descope decision was checked against the live code and contract: `LogEntry` has no HLC field;
+`HybridClock` has zero `src/main` consumers; `StalenessTracker.recordUpdate(version, timestamp)`
+documented `timestamp` as "(informational)" and stored `clock.nanoTime()` instead
+(`configd-edge-cache/src/main/java/io/configd/edge/StalenessTracker.java:96,100,154`); the section 2,
+section 4, section 5.3, section 9, and INV-W2 anchors match the contract verbatim; `DEFAULT_RAFT_GROUP =
+0` confirms the ADR-0030 single-group premise that makes cross-group HLC ordering moot. The section 4
+seq reconciliation is consistent with ADR-0033 - the client-visible S is the applied-mutation counter
+that skips no-op/RCFG entries and is surfaced by `StateMachine.apply` (now `long`). The single-leader-clock
+redefinition is more honest than per-entry HLC (it avoids conflating propagation latency with inter-node
+clock skew) and is implementable against ADR-0033's apply seam with no `LogEntry`/WAL/snapshot/codec
+format change.
 
-> Open question for the lead recorded in the section "What Session 3 must implement" item 1: the commit-timestamp
-> emission is control-plane work that *enables* an edge guarantee. Confirm it rides the section 4.6/ADR-0034
-> interface effort (joint S2-control-plane / S3-data-plane) rather than being deferred wholesale to S3.
+The section 2 and section 4 patch plan above was applied verbatim to `docs/operations/
+consistency-contract.md` in the same contract pass: the section 2 staleness redefinition and INV-S1, the
+section 4 applied-mutation-sequence seq bullet and INV-V1/INV-V2, the comparison-table footnote, the
+section 5.3 cross-group "N/A" wording, the INV-W2 `hlc` conjunct removal, and the section 9 cross-group
+row. Re-verified against the live code at that point: `LogEntry` was still `(index, term, command)` (no
+HLC field); the applied-mutation sequence S was the counter `StateMachine.apply` returns (skipping
+no-op/RCFG), consistent with ADR-0033; `DEFAULT_RAFT_GROUP = 0` (single group). The staleness-measurement
+implementation and the INV-S2 p99-distribution test were handed off as follow-on work (see "What the edge
+data plane must implement" above; ADR-0039 later completed the measurement mechanism - see the
+implementation-status note in `consistency-contract.md` section 2).

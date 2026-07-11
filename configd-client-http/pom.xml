@@ -13,11 +13,11 @@
     <artifactId>configd-client-http</artifactId>
 
     <!--
-      The HTTP control plane of the reference client: ConfigdHttpClient (get/put/delete + the leadership-transfer
-      admin op) over the JDK HttpClient, the LeaderRouter (X-Leader-Hint follow + bounded backoff-retry, REQUIRED
-      even at N=1), the HTTP status→reaction classifier, and the optional ReplayGuardSigner. Depends only on
-      configd-client-core (credential/TLS/retry/exception primitives) — NO edge, NO Netty, NO server. A pure-HTTP
-      user pulls only core + this module.
+      The HTTP control-plane client: ConfigdHttpClient (get/put/delete plus the leadership-transfer admin op)
+      over the JDK HttpClient, the LeaderRouter (X-Leader-Hint follow with bounded backoff-retry, needed even at
+      N=1), the HTTP status-to-reaction classifier, and the optional ReplayGuardSigner. Depends only on
+      configd-client-core (credential/TLS/retry/exception primitives); no edge, no Netty, no server
+      dependency, so a pure-HTTP user pulls only core and this module.
     -->
     <dependencies>
         <dependency>
@@ -29,8 +29,8 @@
 
     <build>
         <plugins>
-            <!-- Publish a test-jar so the conformance suite reuses MockControlPlane (the scriptable HTTP
-                 control-plane double) for the client-conforms direction, without duplicating the harness. -->
+            <!-- Publish a test-jar so the conformance suite can reuse MockControlPlane (the scriptable HTTP
+                 control-plane double) instead of duplicating it. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>

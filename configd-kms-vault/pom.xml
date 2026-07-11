@@ -20,7 +20,7 @@
       runtime surface is two HTTP endpoints (AppRole login + transit/decrypt), hand-rolled on the JDK
       java.net.http client, so this module adds NO runtime dependency beyond configd-common. Vault holds the
       KEK and only ever hands back a small wrapped blob; Configd derives all data keys locally, so there is no
-      per-record Vault round-trip (KmsProvider R1).
+      per-record Vault round-trip.
     -->
     <dependencies>
         <dependency>

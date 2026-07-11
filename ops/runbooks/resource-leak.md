@@ -3,14 +3,14 @@
 **Alerts:** `ConfigdFileDescriptorLeak`, `ConfigdThreadLeak`, `ConfigdHeapPressure`
 **Severity:** warn (all three)
 
-A monotonic resource climb crossed a generous ceiling derived from the S5
-soak flats (FD ~69, threads ~93, heap ~220–290 MB over a 3.45 h clean run).
-These are leak detectors, not capacity alarms — the margins are wide so the
-GC sawtooth does not false-positive.
+A monotonic resource climb crossed a generous ceiling derived from a measured
+soak's flat baselines (FD ~69, threads ~93, heap ~220–290 MB over a 3.45 h
+clean run). These are leak detectors, not capacity alarms — the margins are
+wide so the GC sawtooth does not false-positive.
 
 ## Symptom
 
-| Alert | Fires when | S5 baseline |
+| Alert | Fires when | Measured baseline |
 |---|---|---|
 | `ConfigdFileDescriptorLeak` | `max(process_open_fds) > 500` for 15m | ~69 |
 | `ConfigdThreadLeak` | `max(jvm_threads_current) > 400` for 15m | ~93 |
@@ -57,7 +57,7 @@ sawtooth (GC, benign).
 ## Resolution steps
 
 1. **Recycle the affected pod to restore service first.** In a multi-replica
-   tier this is safe; the replacement comes up at the S5 baseline.
+   tier this is safe; the replacement comes up at the measured baseline.
    ```sh
    kubectl -n configd delete pod <pod>
    ```
@@ -71,17 +71,17 @@ sawtooth (GC, benign).
 3. **File against the owning component** using the dominant class/thread/
    socket name: fan-out socket leak → `configd-edge-node` fan-out server;
    thread-pool leak → the pool's owner; heap retention → the retaining
-   structure. The S5 soak harness (`perf/soak.sh`) is the regression
+   structure. The soak harness (`perf/soak.sh`) is the regression
    reproducer — attach the trend CSV.
 4. **Do not** raise `-Xmx` or the FD `ulimit` to "fix" a monotonic leak —
-   that only delays the crash (RR-112: the S5 soak ended in a box-OOM at
+   that only delays the crash (an earlier soak run ended in a box-OOM at
    3.45 h, which was host memory exhaustion, not a Configd heap leak; rule
    that out via the host `free -m` / cgroup memory before blaming the JVM).
 
 ## Verification
 
 - The leaking series (`process_open_fds` / `jvm_threads_current` /
-  heap-used floor) returns to and holds at the S5 baseline after recycle.
+  heap-used floor) returns to and holds at the measured baseline after recycle.
 - The corresponding alert clears after its window (15m / 15m / 30m).
 - A follow-up `perf/soak.sh` run holds the resource flat for the soak
   duration — that is the closure criterion, not just a clean recycle.
@@ -99,13 +99,14 @@ No fault harness *injects* a leak — leaks are emergent. The detector is
 `perf/soak.sh` (run `perf/soak.sh --duration=300` for a smoke; the lead's
 real run is `--duration=86400`), which samples `process_open_fds`,
 `jvm_threads_current`, RSS/heap and GC every 30 s and emits a trend line.
-Recovery-verified = the trend lines stay flat at the S5 baseline for the
-soak duration. The alert *firing/quiet* behaviour is proven by
+Recovery-verified = the trend lines stay flat at the measured baseline for
+the soak duration. The alert *firing/quiet* behaviour is proven by
 `ops/alerts/configd-slo-alerts.test.yaml` (`promtool test rules`).
 
 ## Related
 
-- S5 soak flats + RR-112 box-OOM (host memory, not a heap leak).
+- Measured soak flats; an earlier soak's box-OOM was host memory
+  exhaustion, not a heap leak.
 - `ops/dashboards/configd-runtime.json` — the leak dashboard.
-- `docs/decisions/adr-0041-zgc-collector.md` — ZGC reclaim assumption the
+- `docs/adr/adr-0041-gc-collector.md` — ZGC reclaim assumption the
   heap alert depends on.

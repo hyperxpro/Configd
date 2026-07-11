@@ -4,15 +4,15 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 /**
- * Re-run against the INTEGRATED simulator (charter section 4: "re-run the stall-class
- * stall seeds against the integrated simulator config; report deltas in the register").
+ * Re-runs the stall-class stall seeds against the integrated simulator config and
+ * reports the deltas.
  *
  * <p>The seven seeds were characterized on the bare CP sim
  * ({@code new AdversarialSim(seed, 5, 1500).run()} => {@code leaderElected=false}; a
  * never-healed drop/partition schedule - expected liveness artifact, 0 safety impact).
  * This re-run uses the integrated config: the same CP topology/ticks (5 nodes, 1500
  * ticks) with the edge plane LIVE - 3 edges, edge faults, the real
- * {@link C1StreamDriver}, per-tick {@link EdgeInvariants}, and the C3 recovery loop
+ * {@link C1StreamDriver}, per-tick {@link EdgeInvariants}, and the recovery loop
  * enabled on every edge ({@link EdgeFanOutSim#enableEdgeRecovery}, the
  * {@code EdgeBootstrapUnderSustainedWritesTest} seam usage). The CP schedule is
  * byte-identical with edges attached ({@code EdgeSeedCompatTest} pins this), so the
@@ -41,7 +41,7 @@ class Rr095StallSeedsIntegratedRerunTest {
                     /* edgeFaults */ true, new C1StreamDriver(),
                     AdversarialSchedule.defaultIntensity(), EdgeInvariants.BOUND_MS);
             for (int e = 0; e < EDGES; e++) {
-                sim.enableEdgeRecovery(e); // the C3 production directive loop, live
+                sim.enableEdgeRecovery(e); // the production directive loop, live
             }
             sim.run(); // throws SafetyViolation (with the seed) on ANY breach - none expected
 

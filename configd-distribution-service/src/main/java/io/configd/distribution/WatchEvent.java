@@ -44,7 +44,6 @@ public record WatchEvent(List<ConfigMutation> mutations, long version, Set<Strin
             throw new IllegalArgumentException("version must be positive: " + version);
         }
         mutations = List.copyOf(mutations);
-        // Pre-compute affected keys for O(1) access during fan-out
         if (affectedKeys == null) {
             var keys = new HashSet<String>();
             for (ConfigMutation m : mutations) {

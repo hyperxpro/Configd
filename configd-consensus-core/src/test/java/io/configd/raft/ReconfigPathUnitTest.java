@@ -119,8 +119,7 @@ class ReconfigPathUnitTest {
             assertFalse(RaftNode.isConfigChangeEntry(notConfig));
             assertFalse(RaftNode.isConfigChangeEntry(tooShort));
             assertFalse(RaftNode.isConfigChangeEntry(null));
-            // Kills isConfigChangeEntry ConditionalsBoundary (length >= 4): exactly
-            // 4-byte RCFG magic is the minimal valid prefix.
+            // The exactly-4-byte RCFG magic is the minimal valid prefix.
             byte[] exactMagic = new byte[]{0x52, 0x43, 0x46, 0x47};
             assertTrue(RaftNode.isConfigChangeEntry(exactMagic));
             // One wrong magic byte must NOT match.
@@ -130,8 +129,8 @@ class ReconfigPathUnitTest {
 
         @Test
         void deserializeRejectsTruncatedEntry() {
-            // magic + isJoint(0) + oldCount(2) but no voter ids -> BufferUnderflow
-            // mapped to IllegalArgumentException. Kills the truncation catch.
+            // magic + isJoint(0) + oldCount(2) but no voter ids -> BufferUnderflow,
+            // mapped to IllegalArgumentException.
             byte[] truncated = new byte[]{0x52, 0x43, 0x46, 0x47, 0, 0, 0, 0, 2};
             assertThrows(IllegalArgumentException.class,
                     () -> RaftNode.deserializeConfigChange(truncated));
@@ -139,8 +138,8 @@ class ReconfigPathUnitTest {
 
         @Test
         void deserializeRejectsAbsurdVoterCount() {
-            // magic + isJoint(0) + oldCount = 1000 (> 255) must throw. Kills
-            // deserializeConfigChange L1025 ConditionalsBoundary (oldCount > 255).
+            // magic + isJoint(0) + oldCount = 1000 (> 255) must throw: the voter
+            // count is validated against a sane upper bound.
             java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocate(9);
             buf.put(new byte[]{0x52, 0x43, 0x46, 0x47}); // RCFG
             buf.put((byte) 0); // not joint
@@ -160,15 +159,14 @@ class ReconfigPathUnitTest {
             RaftConfig config = RaftConfig.of(N1, Set.of(N2, N3));
             RaftNode follower = new RaftNode(config, new RaftLog(), new CapturingTransport(),
                     new CountingStateMachine(), new java.util.Random(1));
-            // Kills proposeConfigChange L907 (role != LEADER guard).
+            // A non-leader must reject a reconfiguration proposal.
             assertFalse(follower.proposeConfigChange(Set.of(N1, N2)));
         }
 
         @Test
         void rejectsSameVoterSet() {
             // Single-node leader: no-op commits instantly, so the no-op precondition
-            // is satisfied. Proposing the SAME voter set must be rejected. Kills
-            // proposeConfigChange L919 EQUAL_ELSE (newVoters.equals(voters)).
+            // is satisfied. Proposing the SAME voter set must still be rejected.
             RaftConfig config = RaftConfig.of(N1, Set.of());
             RaftNode node = new RaftNode(config, new RaftLog(), new CapturingTransport(),
                     new CountingStateMachine(), new java.util.Random(42));
@@ -196,16 +194,14 @@ class ReconfigPathUnitTest {
             assertTrue(leader.log().commitIndex() >= 1, "no-op must commit");
 
             assertTrue(leader.proposeConfigChange(Set.of(N1, N2, N3, N4)));
-            // proposeConfigChange immediately enters joint in-memory. Kills the
-            // L941 clusterConfig = jointConfig assignment and L934 joint construction.
+            // proposeConfigChange enters the joint configuration immediately, in-memory.
             assertTrue(leader.clusterConfig().isJoint());
             assertEquals(Set.of(N1, N2, N3), leader.clusterConfig().voters());
             assertEquals(Set.of(N1, N2, N3, N4), leader.clusterConfig().newVoters());
 
             cluster.deliverAll(40);
-            // The joint config commits, the leader appends + commits C_new, and the
-            // final config is the simple 4-voter set with pending cleared. Kills
-            // handleCommittedConfigChange transitionToNew + the C_new append.
+            // The joint config commits, the leader appends and commits C_new, and the
+            // final config is the simple 4-voter set with pending cleared.
             assertFalse(leader.clusterConfig().isJoint(), "must reach final simple config");
             assertEquals(Set.of(N1, N2, N3, N4), leader.clusterConfig().voters());
             // A subsequent distinct change is accepted -> configChangePending cleared.
@@ -215,9 +211,7 @@ class ReconfigPathUnitTest {
         @Test
         void leaderRemovingItselfStepsDownWhenFinalConfigCommits() {
             // A leader that reconfigures the cluster to EXCLUDE itself must step down
-            // once the final (self-excluding) config commits. Kills
-            // handleCommittedConfigChange L1922/1933 EQUAL_ELSE (the
-            // `!clusterConfig.isVoter(config.nodeId())` step-down guards).
+            // once the final (self-excluding) config commits.
             RoutingCluster cluster = new RoutingCluster(3);
             cluster.electLeader(N1);
             RaftNode leader = cluster.nodes.get(N1);

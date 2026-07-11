@@ -35,9 +35,9 @@ class KernelBoundaryUnitTest {
 
         @Test
         void jointRejectsEmptyOldOrNewVoters() {
-            // Kills ClusterConfig.joint L65 EQUAL_ELSE (the
-            // `oldVoters.isEmpty() || newVoters.isEmpty()` guard removed): an empty
-            // side must throw, not build a degenerate joint config.
+            // Guards the `oldVoters.isEmpty() || newVoters.isEmpty()` check in
+            // ClusterConfig.joint: an empty side must throw, not build a degenerate
+            // joint config.
             assertThrows(IllegalArgumentException.class,
                     () -> ClusterConfig.joint(Set.of(), Set.of(N1)));
             assertThrows(IllegalArgumentException.class,
@@ -48,10 +48,9 @@ class KernelBoundaryUnitTest {
 
         @Test
         void hashCodeDistinguishesDifferentConfigs() {
-            // Kills hashCode PrimitiveReturns (return 0): if hashCode always returned
-            // 0, these distinct configs would collide. We assert they differ, which
-            // a constant-0 hashCode cannot satisfy. (Hash inequality implies object
-            // inequality, so this is a sound discriminator.)
+            // If hashCode always returned 0, these distinct configs would collide.
+            // Asserting they differ is a discriminator a constant-0 hashCode cannot
+            // satisfy (hash inequality implies object inequality).
             var a = ClusterConfig.simple(Set.of(N1, N2, N3));
             var b = ClusterConfig.simple(Set.of(N1, N2));
             var c = ClusterConfig.joint(Set.of(N1, N2, N3), Set.of(N2, N3, N4));
@@ -61,8 +60,8 @@ class KernelBoundaryUnitTest {
 
         @Test
         void equalsRejectsDifferentTypeAndNull() {
-            // Kills equals L178/179 (BooleanFalse/True return): equals must return
-            // false for a non-ClusterConfig and for null, and true for self.
+            // equals must return false for a non-ClusterConfig and for null, and
+            // true for self.
             var cfg = ClusterConfig.simple(Set.of(N1, N2, N3));
             assertNotEquals(cfg, "not a config");
             assertNotEquals(cfg, null);
@@ -80,9 +79,9 @@ class KernelBoundaryUnitTest {
 
         @Test
         void toStringReflectsSimpleVsJoint() {
-            // Kills toString L192 EQUAL_ELSE (the `!joint` branch) and the
-            // EmptyObjectReturns ("") mutants: the two shapes must render
-            // differently and non-empty, and the joint form must name both sets.
+            // Guards the `!joint` branch and the empty-string degenerate case: the
+            // two shapes must render differently and non-empty, and the joint form
+            // must name both sets.
             var simple = ClusterConfig.simple(Set.of(N1));
             var joint = ClusterConfig.joint(Set.of(N1), Set.of(N2));
             String s = simple.toString();
@@ -102,8 +101,8 @@ class KernelBoundaryUnitTest {
 
         @Test
         void confirmLeadershipConfirmsExactlyAtQuorumNotBelow() {
-            // Kills confirmLeadership L98 EQUAL_ELSE (`ackCount >= quorumSize`):
-            // ack == quorum confirms; ack == quorum-1 does NOT.
+            // Pins the `ackCount >= quorumSize` boundary in confirmLeadership:
+            // ack == quorum confirms; ack == quorum-1 does not.
             ReadIndexState below = new ReadIndexState();
             long r1 = below.startRead(3);
             below.confirmLeadership(r1, 2, 3); // ack 2 < quorum 3 -> not confirmed
@@ -117,8 +116,8 @@ class KernelBoundaryUnitTest {
 
         @Test
         void confirmAllConfirmsAtQuorumBoundaryNotJustBelow() {
-            // Kills confirmAll L179 ConditionalsBoundary (`ackCount < quorumSize`):
-            // ack == quorum confirms; ack == quorum-1 does not.
+            // Pins the `ackCount < quorumSize` boundary in confirmAll: ack == quorum
+            // confirms; ack == quorum-1 does not.
             ReadIndexState atQuorum = new ReadIndexState();
             long a = atQuorum.startRead(3);
             atQuorum.confirmAll(3, 3); // ack == quorum
@@ -132,9 +131,9 @@ class KernelBoundaryUnitTest {
 
         @Test
         void confirmLeadershipOnUnknownReadIdIsSafeNoOp() {
-            // Kills confirmLeadership L94 EQUAL_ELSE (the `pending == null` early
-            // return): if removed, the method would NPE on `pending.withAck(...)`.
-            // A call on a never-started readId must be a silent no-op.
+            // Guards the `pending == null` early return in confirmLeadership: without
+            // it the method would NPE on `pending.withAck(...)`. A call on a
+            // never-started readId must be a silent no-op.
             ReadIndexState state = new ReadIndexState();
             assertDoesNotThrow(() -> state.confirmLeadership(999L, 3, 2));
             assertEquals(0, state.pendingCount());
@@ -142,10 +141,9 @@ class KernelBoundaryUnitTest {
 
         @Test
         void confirmAllLeadershipPreservesAlreadyConfirmedReads() {
-            // Kills the confirmAllLeadership lambda EQUAL_ELSE (the
-            // `leadershipConfirmed() ? pending : pending.confirmed()` ternary):
-            // an already-confirmed read must remain confirmed (idempotent), and an
-            // unconfirmed one becomes confirmed.
+            // Pins the `leadershipConfirmed() ? pending : pending.confirmed()`
+            // ternary in confirmAllLeadership: an already-confirmed read must remain
+            // confirmed (idempotent), and an unconfirmed one becomes confirmed.
             ReadIndexState state = new ReadIndexState();
             long confirmed = state.startRead(2);
             long fresh = state.startRead(2);

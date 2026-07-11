@@ -12,8 +12,8 @@ import java.util.List;
 
 /**
  * Reassembles a {@code SNAPSHOT_BEGIN → SNAPSHOT_CHUNK* → SNAPSHOT_END} transfer into a {@link ConfigSnapshot},
- * hardened against a hostile server (the client mirror of {@code EdgeClientCore}'s snapshot machinery, §06
- * F6-4..F6-6 / WH-13/15). Two failure classes:
+ * hardened against a hostile server (the client mirror of {@code EdgeClientCore}'s snapshot machinery). Two
+ * failure classes:
  *
  * <ul>
  *   <li><b>Caps breach ⇒ {@link ProtocolViolationException} (fail-closed).</b> A {@code SNAPSHOT_BEGIN}
@@ -23,7 +23,7 @@ import java.util.List;
  *       accumulation. An honest server never declares over the frozen ceilings; this is a hostile/buggy peer.</li>
  *   <li><b>Truncation / mismatch ⇒ {@link GapUnrecoverableException} (re-bootstrap).</b> At {@code END}, fewer
  *       chunks than declared, a reassembled length ≠ {@code totalBytes}, or a body that fails to deserialize —
- *       the snapshot is incomplete, so it is <b>discarded and re-subscribed</b>, never applied partially (F6-6).</li>
+ *       the snapshot is incomplete, so it is <b>discarded and re-subscribed</b>, never applied partially.</li>
  * </ul>
  *
  * <p>Not thread-safe: driven from the single reader thread.
@@ -93,7 +93,7 @@ public final class SnapshotReassembler {
 
     /**
      * Ends a transfer and returns the reassembled snapshot. Verifies it received <b>exactly</b> the declared
-     * chunk count and byte length (F6-6); a shortfall discards and re-bootstraps rather than applying a partial
+     * chunk count and byte length; a shortfall discards and re-bootstraps rather than applying a partial
      * snapshot.
      *
      * @throws GapUnrecoverableException on a truncated / mismatched / undecodable snapshot (re-bootstrap)

@@ -46,8 +46,8 @@ public final class Cluster implements AutoCloseable {
                 .mapToObj(k -> k + "=127.0.0.1:" + (raftBase + k))
                 .collect(Collectors.joining(","));
         // Each node's Ed25519 signing key lives OUTSIDE its data dir - in a sibling secrets/ dir
-        // under the cluster baseDir - so the server's D-1 co-location guard (PA-2021) is SATISFIED
-        // rather than disabled. SigningKeyStore.loadOrCreate auto-generates a missing key; the path is
+        // under the cluster baseDir - so the server's co-location guard is SATISFIED rather than
+        // disabled. SigningKeyStore.loadOrCreate auto-generates a missing key; the path is
         // per-node and stable, so a kill -9 + restart recovers the WAL against the same signing key
         // and the at-rest integrity chain stays valid.
         Path secretsDir = baseDir.resolve("secrets");

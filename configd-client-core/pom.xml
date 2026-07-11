@@ -13,13 +13,12 @@
     <artifactId>configd-client-core</artifactId>
 
     <!--
-      The plane-agnostic core of the reference client / SDK: the driver-protocol config, the §07
+      The plane-agnostic core of the reference client / SDK: the driver-protocol config, the
       exception hierarchy (each type IS its normative reaction), the (ErrorCode, carrier) classifier,
       the retry policy, the hostile-server inbound bounds, the cursor-store SPI, the credential source,
-      and the F9 client-side TLS. Depends on the frozen wire contract (configd-wire), the credential
+      and the client-side TLS setup. Depends on the frozen wire contract (configd-wire), the credential
       types (configd-common), and the JDK TLS profile (configd-transport) — it drags no server,
-      consensus, distribution-service, or Netty. Both plane clients (edge now, http in Gate 4) build on
-      this.
+      consensus, distribution-service, or Netty. Both plane clients (edge and http) build on this.
     -->
     <dependencies>
         <dependency>

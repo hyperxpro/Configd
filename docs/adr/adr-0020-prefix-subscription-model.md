@@ -1,10 +1,20 @@
 # ADR-0020: Prefix-Based Subscription Model for Edge Nodes
 
 ## Status
-Accepted
+Accepted, superseded in part by [adr-0038](adr-0038-signed-chain-streaming-no-coalescing.md) and [adr-0040](adr-0040-poison-pill-and-negative-cache.md).
+
+> **Note:** Two later ADRs narrow this one. ADR-0038 replaces the assumption below that
+> in-flight updates to a key may coalesce in transit: fan-out instead streams the verbatim,
+> leader-signed delta chain to every subscriber with no server-side coalescing, and prefix
+> subscription becomes an edge-side storage/serving filter applied after signature
+> verification, not a filter the distribution node applies before sending. ADR-0040 descopes
+> this ADR's "Negative Lookup Optimization" section (the prefix-scoped Bloom filter): it is a
+> defense written for a validation/schema layer and full-keyspace scale this system does not
+> have, and under ADR-0038's storage-filter model a HAMT miss within a subscription is already
+> authoritative non-existence - no Bloom filter is needed or wired.
 
 ## Context
-At 10x current Cloudflare scale, the keyspace reaches 50 billion KV pairs / 16 TB (the gap analysis). Replicating the full keyspace to every edge node is infeasible: 16 TB per edge at 1M edge nodes = 16 exabytes of aggregate storage. Quicksilver's negative lookup problem is already significant - negative lookups are 10x more frequent than positive, and Bloom filters for the full keyspace would require 6 GB/instance (the gap analysis). Edge nodes must receive only the data they need. The system targets < 500ms p99 edge staleness, < 1ms p99 edge reads, and must scale to 10^9 keys in the control plane with edge nodes holding only their working set.
+At 10x current Cloudflare scale, the keyspace reaches 50 billion KV pairs / 16 TB. Replicating the full keyspace to every edge node is infeasible: 16 TB per edge at 1M edge nodes = 16 exabytes of aggregate storage. Quicksilver's negative lookup problem is already significant - negative lookups are 10x more frequent than positive, and Bloom filters for the full keyspace would require 6 GB/instance. Edge nodes must receive only the data they need. The system targets < 500ms p99 edge staleness, < 1ms p99 edge reads, and must scale to 10^9 keys in the control plane with edge nodes holding only their working set.
 
 ## Decision
 We adopt a **prefix-based subscription model** where edge nodes subscribe to specific key prefixes, not the full keyspace. Regional replicas hold the full dataset; edge nodes hold only subscribed prefixes.

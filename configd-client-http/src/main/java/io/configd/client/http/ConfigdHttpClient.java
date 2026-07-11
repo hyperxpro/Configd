@@ -20,14 +20,14 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The HTTP control-plane reference client (§04/§05): unary {@link #get}/{@link #put}/{@link #delete} of a
- * config entry, plus the ADMIN-gated {@link #transferLeadership} control op (the 5th route). Every call routes
- * through the {@link LeaderRouter} (leader-follow + bounded backoff-retry, indeterminate-write handling,
- * optional replay-guard stamping). Distinct from — and independent of — the edge streaming plane
- * ({@code ConfigdEdgeClient}); a pure-HTTP user needs only this module + core.
+ * The HTTP control-plane reference client: unary {@link #get}/{@link #put}/{@link #delete} of a config entry,
+ * plus the ADMIN-gated {@link #transferLeadership} control op. Every call routes through the {@link LeaderRouter}
+ * (leader-follow + bounded backoff-retry, indeterminate-write handling, optional replay-guard stamping).
+ * Distinct from -- and independent of -- the edge streaming plane ({@code ConfigdEdgeClient}); a pure-HTTP user
+ * needs only this module plus core.
  *
  * <p>Async by default (each op returns a {@link CompletableFuture}); a blocking facade ({@link #blocking()})
- * serves the reference / conformance driver. The typed §07 reactions surface as the exception hierarchy
+ * serves the reference / conformance driver. Server reactions surface as a typed exception hierarchy
  * ({@code ForbiddenException} / {@code BadRequestException} / {@code AuthFailedException} /
  * {@code IndeterminateException} / {@code UnavailableException}); a {@code 404} is a definite result (an empty
  * {@link GetResult}), never an exception.
@@ -50,50 +50,46 @@ public final class ConfigdHttpClient implements AutoCloseable {
         return new Builder();
     }
 
-    // -----------------------------------------------------------------------
     // async surface
-    // -----------------------------------------------------------------------
 
-    /** Reads {@code key} (§04 D3). A {@code 404} yields an empty {@link GetResult} (definite absent, not an error). */
+    /** Reads {@code key}. A {@code 404} yields an empty {@link GetResult} (definite absent, not an error). */
     public CompletableFuture<GetResult> get(String key, GetOptions options) {
         return CompletableFuture.supplyAsync(() -> doGet(key, options), executor);
     }
 
-    /** Writes {@code value} to {@code key} (§04 D4). Idempotent LWW; safe to retry (the router does, to-definite). */
+    /** Writes {@code value} to {@code key}. Idempotent last-write-wins; safe to retry (the router does, to-definite). */
     public CompletableFuture<WriteOutcome> put(String key, byte[] value, WriteOptions options) {
         byte[] copy = value.clone();
         return CompletableFuture.supplyAsync(() -> doWrite("PUT", key, copy, options), executor);
     }
 
-    /** Deletes {@code key} (§04 D5). Idempotent tombstone; a {@code 200 seq} even for an already-absent key. */
+    /** Deletes {@code key}. Idempotent tombstone; a {@code 200} with a seq even for an already-absent key. */
     public CompletableFuture<WriteOutcome> delete(String key, WriteOptions options) {
         return CompletableFuture.supplyAsync(() -> doWrite("DELETE", key, null, options), executor);
     }
 
     /**
-     * Requests that group {@code groupId}'s Raft leadership move to node {@code targetNodeId} (the 5th route,
-     * §04 D2-2a; ADMIN-gated). Completes when the transfer is <b>initiated</b> (a {@code 200} — asynchronous;
-     * confirm the move via a follow-up leader read), or fails ({@code 409} precondition / {@code 400} /
-     * {@code 503} unconfirmed-timeout → {@code UnavailableException} / {@code 403} without ADMIN).
+     * Requests that group {@code groupId}'s Raft leadership move to node {@code targetNodeId} (ADMIN-gated).
+     * Completes when the transfer is <b>initiated</b> (a {@code 200} -- asynchronous; confirm the move via a
+     * follow-up leader read), or fails ({@code 409} precondition / {@code 400} / {@code 503} unconfirmed-timeout
+     * as {@code UnavailableException} / {@code 403} without ADMIN).
      */
     public CompletableFuture<Void> transferLeadership(int groupId, int targetNodeId) {
         return CompletableFuture.supplyAsync(() -> {
             String path = "/v1/admin/groups/" + groupId + "/transfer-leadership?target=" + targetNodeId;
-            router.execute(new LeaderRouter.Request("POST", path, null, true, false)); // 200 = initiated (async)
+            router.execute(new LeaderRouter.Request("POST", path, null, true, false));
             return null;
         }, executor);
     }
 
-    // -----------------------------------------------------------------------
     // blocking facade
-    // -----------------------------------------------------------------------
 
     /** A blocking view of the same operations (for the reference / conformance driver). */
     public Blocking blocking() {
         return new Blocking();
     }
 
-    /** Blocking wrappers; each throws the typed §07 exception directly (no {@code CompletionException} wrap). */
+    /** Blocking wrappers; each throws the typed exception directly (no {@code CompletionException} wrap). */
     public final class Blocking {
         public GetResult get(String key, GetOptions options) {
             return doGet(key, options);
@@ -113,10 +109,8 @@ public final class ConfigdHttpClient implements AutoCloseable {
         }
     }
 
-    // -----------------------------------------------------------------------
-
     private GetResult doGet(String key, GetOptions options) {
-        PathGrammar.validateCanonical(key); // §01 A3: reject a non-canonical/illegal key client-side, before the wire
+        PathGrammar.validateCanonical(key); // reject a non-canonical/illegal key client-side, before it reaches the wire
         String path = "/v1/config/" + encodeKeyPath(key) + readQuery(options);
         HttpResponse<byte[]> resp = router.execute(new LeaderRouter.Request("GET", path, null, false, false));
         if (resp.statusCode() == 404) {
@@ -129,21 +123,21 @@ public final class ConfigdHttpClient implements AutoCloseable {
     }
 
     private WriteOutcome doWrite(String method, String key, byte[] body, WriteOptions options) {
-        PathGrammar.validateCanonical(key); // §01 A3: reject a non-canonical/illegal key client-side, before the wire
+        PathGrammar.validateCanonical(key); // reject a non-canonical/illegal key client-side, before it reaches the wire
         String path = "/v1/config/" + encodeKeyPath(key) + scopeQuery(options.scope());
         HttpResponse<byte[]> resp = router.execute(new LeaderRouter.Request(method, path, body, true, true));
         String text = new String(resp.body(), StandardCharsets.UTF_8);
         Matcher m = COMMITTED.matcher(text.trim());
         if (!m.matches()) {
-            // A 200 whose body is not "Committed: seq=<N>" is a contract violation (§04 D4-2).
+            // A 200 whose body is not "Committed: seq=<N>" is a contract violation.
             throw new ProtocolViolationException(
                     "write returned 200 but the body was not 'Committed: seq=<N>' (§04 D4-2)");
         }
         try {
             return new WriteOutcome(Long.parseLong(m.group(1)));
         } catch (NumberFormatException overflow) {
-            // The regex guarantees digits, but an out-of-range seq overflows a long — a hostile/broken server.
-            // Surface it as a typed protocol violation, never a raw NumberFormatException (§04 D4-2 / §07).
+            // The regex guarantees digits, but an out-of-range seq overflows a long: a hostile or broken server.
+            // Surface it as a typed protocol violation, never a raw NumberFormatException.
             throw new ProtocolViolationException(
                     "write returned 200 but the committed seq '" + m.group(1) + "' is not a valid long (§04 D4-2)");
         }
@@ -159,7 +153,7 @@ public final class ConfigdHttpClient implements AutoCloseable {
         }
     }
 
-    /** The read query: scope (omitted when GLOBAL) + the EXACT {@code consistency=linearizable} literal (D3-4). */
+    /** The read query: scope (omitted when GLOBAL) plus the exact {@code consistency=linearizable} literal. */
     private static String readQuery(GetOptions options) {
         StringBuilder q = new StringBuilder();
         if (options.scope() != Scope.GLOBAL) {
@@ -169,7 +163,7 @@ public final class ConfigdHttpClient implements AutoCloseable {
             if (q.length() > 0) {
                 q.append('&');
             }
-            q.append("consistency=linearizable"); // EXACTLY this literal, nowhere else (the loose-substring trap)
+            q.append("consistency=linearizable"); // exactly this literal, nowhere else -- the loose-substring trap
         }
         return q.length() == 0 ? "" : "?" + q;
     }
@@ -180,7 +174,7 @@ public final class ConfigdHttpClient implements AutoCloseable {
 
     /**
      * Percent-encodes a config key for the URI path, preserving {@code '/'} (a key's slashes are literal path
-     * segments — the server takes the whole remainder after {@code /v1/config/} as the key, URL-decoded).
+     * segments -- the server takes the whole remainder after {@code /v1/config/} as the key, URL-decoded).
      * Unreserved characters (RFC 3986) pass through; everything else is UTF-8 %XX-encoded.
      */
     private static String encodeKeyPath(String key) {
@@ -206,9 +200,7 @@ public final class ConfigdHttpClient implements AutoCloseable {
         }
     }
 
-    // -----------------------------------------------------------------------
-
-    /** Builds a {@link ConfigdHttpClient} (endpoints REQUIRED; TLS required for {@code https} unless plaintext). */
+    /** Builds a {@link ConfigdHttpClient} (endpoints required; TLS required for {@code https} unless plaintext). */
     public static final class Builder {
         private NodeEndpoints endpoints;
         private CredentialSource credentialSource;
@@ -243,7 +235,7 @@ public final class ConfigdHttpClient implements AutoCloseable {
             return this;
         }
 
-        /** Enable the optional replay guard (§04 D11-3): stamp each mutation with a fresh timestamp+nonce. */
+        /** Enable the optional replay guard: stamp each mutation with a fresh timestamp and nonce. */
         public Builder replayGuard(boolean enabled) {
             this.replayGuard = enabled;
             return this;
@@ -264,7 +256,7 @@ public final class ConfigdHttpClient implements AutoCloseable {
             return this;
         }
 
-        /** Use a caller-supplied executor for the async surface (not owned — not shut down on close). */
+        /** Use a caller-supplied executor for the async surface (not owned -- not shut down on close). */
         public Builder executor(ExecutorService executor) {
             this.executor = executor;
             return this;
@@ -285,7 +277,7 @@ public final class ConfigdHttpClient implements AutoCloseable {
                     .connectTimeout(connectTimeout);
             if (tls != null) {
                 hb.sslContext(tls.sslContext());
-                hb.sslParameters(tls.httpsParameters()); // TLSv1.3 + HTTPS endpoint identification (F9)
+                hb.sslParameters(tls.httpsParameters()); // TLSv1.3 + HTTPS endpoint identification
             }
             boolean ownsExecutor = executor == null;
             ExecutorService exec = ownsExecutor

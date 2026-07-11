@@ -19,10 +19,10 @@ package io.configd.raft;
  *   <li>{@code RWAL} = 0x5257414C - a single WAL entry payload ({@code raft-log})</li>
  *   <li>{@code RWLF} = 0x52574C46 - the WAL container file header (mirrors {@code WalContainer})</li>
  *   <li>{@code RAUD} = 0x52415544 - the chain-bound audit record header</li>
- *   <li>{@code RANC} = 0x52414E43 - the per-shard anchor file (later gate)</li>
- *   <li>{@code RNAN} = 0x524E414E - the node anchor file (later gate)</li>
- *   <li>{@code RKYR} = 0x524B5952 - the keyring file (later gate)</li>
- *   <li>{@code RTOP} = 0x52544F50 - the topology descriptor (later gate)</li>
+ *   <li>{@code RANC} = 0x52414E43 - the per-shard anchor file</li>
+ *   <li>{@code RNAN} = 0x524E414E - the node anchor file</li>
+ *   <li>{@code RKYR} = 0x524B5952 - the keyring file</li>
+ *   <li>{@code RTOP} = 0x52544F50 - the topology descriptor</li>
  * </ul>
  * <p>
  * <b>Reserved-value discipline (frozen).</b> Every magic is non-zero (a zero-filled
@@ -37,9 +37,9 @@ final class RaftArtifactMagic {
     /**
      * {@code raft.persistent_state} - durable (term, votedFor). ASCII "RFST".
      * <p>
-     * RETIRED-RESERVED: in the frozen format the persistent Raft state merges into
-     * the per-shard anchor (a later gate), so this artifact ceases to exist as a
-     * standalone file. The value is kept and NEVER reused, so no future magic can
+     * RETIRED-RESERVED: in the frozen format the persistent Raft state lives in
+     * the per-shard anchor, so this artifact does not exist as a standalone file. The
+     * value is kept and NEVER reused, so no future magic can
      * collide with a pre-freeze {@code raft.persistent_state} envelope.
      */
     static final int STATE_MAGIC = 0x5246_5354;
@@ -61,16 +61,16 @@ final class RaftArtifactMagic {
     /** The chain-bound audit record header (inside a {@code security-audit.wal} frame). ASCII "RAUD". */
     static final int AUDIT_MAGIC = 0x5241_5544;
 
-    /** The per-shard anchor file (container header + slot envelopes). ASCII "RANC". Later gate. */
+    /** The per-shard anchor file (container header + slot envelopes). ASCII "RANC". */
     static final int ANCHOR_MAGIC = 0x5241_4E43;
 
-    /** The node anchor file (container header + slot envelopes). ASCII "RNAN". Later gate. */
+    /** The node anchor file (container header + slot envelopes). ASCII "RNAN". */
     static final int NODE_ANCHOR_MAGIC = 0x524E_414E;
 
-    /** The keyring file (container header + slot envelopes). ASCII "RKYR". Later gate. */
+    /** The keyring file (container header + slot envelopes). ASCII "RKYR". */
     static final int KEYRING_MAGIC = 0x524B_5952;
 
-    /** The topology descriptor envelope (replaces the plain shard-count marker). ASCII "RTOP". Later gate. */
+    /** The topology descriptor envelope (replaces the plain shard-count marker). ASCII "RTOP". */
     static final int TOPO_MAGIC = 0x5254_4F50;
 
     private RaftArtifactMagic() {

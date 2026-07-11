@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# =============================================================================
-# rr-002-blackhole-drill.sh — RR-002 (P0) live black-hole drill
-# -----------------------------------------------------------------------------
-# Authored by the consensus-correctness-engineer (audit-session-2) as the LIVE
-# discriminating test for RR-002: a timeout-less, on-tick-thread connect/TLS
-# handshake to a black-holed peer freezes the whole node.
+# rr-002-blackhole-drill.sh — live black-hole drill
+#
+# The LIVE discriminating test for a timeout-less, on-tick-thread connect/TLS
+# handshake to a black-holed peer freezing the whole node.
 #
 # WHAT IT PROVES (discriminating):
 #   - 3-node localhost cluster comes up; a leader commit-confirms writes.
@@ -28,7 +26,6 @@
 #
 # Requires: passwordless sudo (iptables); a built shaded jar; curl.
 # Budget ~90s.
-# =============================================================================
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -48,7 +45,7 @@ fail()  { echo "DRILL FAIL: $*" >&2; exit 1; }
 pass()  { echo "  PASS: $*"; }
 info()  { echo "  ..   $*"; }
 
-# ---- teardown: ALWAYS remove iptables rules + kill tracked PIDs --------------
+# teardown: ALWAYS remove iptables rules + kill tracked PIDs
 cleanup() {
   local rc=$?
   if [ -n "$DROP_PORT" ]; then
@@ -77,12 +74,12 @@ api() { echo "127.0.0.1:$((API_BASE + $1))"; }
 pre_drop=$(sudo iptables -S INPUT 2>/dev/null | grep -c -- "-j DROP")
 info "iptables DROP rules present before drill: $pre_drop (informational)"
 
-# ---- launch 3 nodes ---------------------------------------------------------
+# launch 3 nodes
 echo "[setup] launching 3-node cluster under $BASE (jar: $JAR)"
 for k in 1 2 3; do
   peers=$(echo "1 2 3" | tr ' ' '\n' | grep -v "^$k$" | paste -sd,)
   dd="$BASE/n$k"; mkdir -p "$dd"
-  # Dev RR-002 drill: co-located key on a single-host test box. Opt out of the D-1 fail-closed
+  # Dev drill: co-located key on a single-host test box. Opt out of the fail-closed
   # guard (prod mounts the key separately — see deploy/compose + ADR-0043).
   CONFIGD_ALLOW_COLOCATED_SIGNING_KEY=true \
   java -Xmx256m --enable-preview -jar "$JAR" \
@@ -107,7 +104,7 @@ done
 [ "$ready" -eq 1 ] || fail "not all 3 nodes became ready within ${ELECT_BUDGET_S}s"
 pass "all 3 nodes ready"
 
-# identify leader: node that COMMIT-CONFIRMS a probe PUT with 200 (RR-004/ADR-0033)
+# identify leader: node that COMMIT-CONFIRMS a probe PUT with 200 (ADR-0033)
 find_leader() {
   for k in 1 2 3; do
     code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 -X PUT -d probe \
@@ -127,7 +124,7 @@ KEEP=""
 for k in 1 2 3; do [ "$k" != "$LEADER" ] && [ "$k" != "$VICTIM" ] && { KEEP="$k"; break; }; done
 info "victim follower: node $VICTIM (raft port $DROP_PORT); surviving follower: node $KEEP"
 
-# ---- op probes: each echoes "<ok|FAIL|soft> <latency_ms> <detail>" -----------
+# op probes: each echoes "<ok|FAIL|soft> <latency_ms> <detail>"
 # Each probe enforces OP_DEADLINE_S via curl --max-time; latency is measured with
 # %{time_total}. A timeout or non-2xx is a FAIL. The round's key/value are passed
 # in explicitly (NOT via a shared counter — command substitution runs probes in a
@@ -173,7 +170,7 @@ nextkey
 b=$(probe_put "drill/k$SEQ" "v$SEQ"); echo "    $b"
 case "$b" in ok*) pass "leader commits before fault" ;; *) fail "leader not committing even before fault: $b" ;; esac
 
-# ---- ARM THE BLACK-HOLE -----------------------------------------------------
+# arm the black-hole
 echo "[fault] DROP inbound SYNs to follower node $VICTIM raft port $DROP_PORT for ${DROP_WINDOW_S}s"
 sudo iptables -A INPUT -p tcp --dport "$DROP_PORT" -j DROP \
   || fail "could not add iptables DROP rule"
@@ -186,7 +183,7 @@ pass "DROP rule armed ($armed) on port $DROP_PORT"
 # the fault bite even if a connection was already cached, we DROP the port (new
 # SYNs after the existing socket eventually fails will black-hole).
 
-# ---- MEASURE THROUGHOUT THE WINDOW ------------------------------------------
+# measure throughout the window
 echo "[measure] probing leader every ~1s for ${DROP_WINDOW_S}s (per-op deadline ${OP_DEADLINE_S}s)"
 printf '    %-6s %-10s %-26s %-22s %-22s %-14s\n' "t(s)" "PUT" "put_detail" "get_detail" "lin_detail" "health"
 start=$(date +%s)
@@ -213,13 +210,13 @@ while :; do
 done
 echo "[measure] window complete: $total_rounds rounds, $fail_rounds with a PUT/HEALTH failure (first at t=${first_fail_t:-none}s); linearizable-ok rounds: $LIN_OK"
 
-# ---- DISARM (also handled by trap, but do it explicitly + verify) -----------
+# disarm (also handled by trap, but do it explicitly + verify)
 while sudo iptables -D INPUT -p tcp --dport "$DROP_PORT" -j DROP 2>/dev/null; do :; done
 after=$(sudo iptables -S INPUT | grep -c -- "--dport $DROP_PORT -j DROP")
 [ "$after" = "0" ] || fail "DROP rule still present after disarm ($after) — box not clean"
 pass "DROP rule removed; 0 remain on port $DROP_PORT"
 
-# ---- VERDICT ----------------------------------------------------------------
+# verdict
 # POST-FIX success = every round committed under deadline (fail_rounds == 0) and
 #   at least one linearizable read succeeded (read path also unblocked).
 # PRE-FIX is EXPECTED to stall: fail_rounds > 0. In prefix mode we treat a stall

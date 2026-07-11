@@ -14,18 +14,18 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 /**
- * The four auth modes as the client presents them (§03 AU2-4 / AU4), and the proactive-refresh timers.
+ * The four auth modes as the client presents them, and the proactive-refresh timers.
  *
  * <ul>
  *   <li><b>mTLS</b>: the client certificate authenticates at the TLS handshake — <b>no</b> {@code AUTH}
- *       frame, byte-identical to a pre-auth-arc client (§03 AU3-2). A cert cannot refresh in-band, so a
- *       lead-time <b>reconnect</b> is armed before the certificate's {@code notAfter} (§03 AU5-6).</li>
+ *       frame is sent. A cert cannot refresh in-band, so a lead-time <b>reconnect</b> is armed before the
+ *       certificate's {@code notAfter}.</li>
  *   <li><b>token / basic</b>: send <b>exactly one</b> pre-auth {@code AUTH} frame (0x04) as the first routed
- *       frame (§03 AU4-4); there is no AUTH-OK on the wire, so success is optimistic-present (a rejection
+ *       frame; there is no AUTH-OK on the wire, so success is optimistic-present (a rejection
  *       surfaces asynchronously as a framed {@code ERROR_CLOSE(AUTH_FAIL)}). A proactive {@code REFRESH_AUTH}
  *       is scheduled in the lead-time window {@code W = clamp(0.20·lifetime, 30 s, 5 m)} before expiry,
- *       carrying a freshly-minted credential that renews the <b>same</b> identity (§03 AU4-6 / AU5-6).</li>
- *   <li><b>no-auth</b>: present nothing, but stay ready to (§03 AU4-3).</li>
+ *       carrying a freshly-minted credential that renews the <b>same</b> identity.</li>
+ *   <li><b>no-auth</b>: present nothing, but stay ready.</li>
  * </ul>
  *
  * <p>A driver <b>MUST NOT</b> hot-loop {@code AUTH} on one connection: this class sends the single pre-auth
@@ -33,12 +33,12 @@ import java.util.concurrent.TimeUnit;
  */
 public final class AuthLifecycle {
 
-    /** Token refresh lead-time bounds (§03 AU5-6): W = clamp(0.20·lifetime, 30 s, 5 m). */
+    /** Token refresh lead-time bounds: W = clamp(0.20·lifetime, 30 s, 5 m). */
     private static final long TOKEN_LEAD_MIN_MS = 30_000L;
     private static final long TOKEN_LEAD_MAX_MS = 300_000L;
     private static final double TOKEN_LEAD_FRACTION = 0.20;
 
-    /** Certificate reconnect lead-time bounds (§03 AU5-6): clamp(0.10·lifetime, 5 m, 1 h). */
+    /** Certificate reconnect lead-time bounds: clamp(0.10·lifetime, 5 m, 1 h). */
     private static final long CERT_LEAD_MIN_MS = 300_000L;
     private static final long CERT_LEAD_MAX_MS = 3_600_000L;
     private static final double CERT_LEAD_FRACTION = 0.10;
@@ -82,7 +82,7 @@ public final class AuthLifecycle {
             case TOKEN -> {
                 CredentialSource.Provided provided = credentialSource.provide();
                 conn.send(new EdgeFrame.Auth(provided.credential()), EdgeFrameCodec.EDGE_WIRE_VERSION_V4);
-                conn.markAuthenticated(); // optimistic-present: the wire carries no AUTH-OK (§03 AU4-4)
+                conn.markAuthenticated(); // optimistic-present: the wire carries no AUTH-OK
                 scheduleTokenRefresh(provided.expiresAt());
             }
         }
@@ -90,7 +90,7 @@ public final class AuthLifecycle {
 
     /**
      * Sends a {@code REFRESH_AUTH} now with a freshly-minted credential (token/basic only) and re-arms the
-     * lead-time timer from the new expiry. A refresh renews the same identity (§03 AU4-6). A no-op off the
+     * lead-time timer from the new expiry. A refresh renews the same identity. A no-op off the
      * token path.
      *
      * @throws IOException if the frame cannot be written
@@ -116,8 +116,6 @@ public final class AuthLifecycle {
             scheduled = null;
         }
     }
-
-    // -----------------------------------------------------------------------
 
     private void scheduleTokenRefresh(Optional<Instant> expiresAt) {
         cancel();

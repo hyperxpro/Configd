@@ -20,13 +20,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * ATTACK 3 - keyTerm-wired key selection is fail-closed. A real GCM segment written under keyring term
- * T is taken and its authenticated {@code keyTerm} field is rewritten (with the CRC repaired, so this
- * defeats the corruption check and tests the AUTHENTICATION, not merely the CRC):
+ * KeyTerm-wired key selection is fail-closed. A real GCM segment written under keyring term T is
+ * taken and its authenticated {@code keyTerm} field is rewritten (with the CRC repaired, so this
+ * defeats the corruption check and tests the authentication, not merely the CRC):
  * <ul>
- *   <li>rolled to another PRESENT term ⇒ the DEK selected differs AND the GCM AAD (which binds keyTerm)
- *       no longer matches ⇒ the tag fails ⇒ REFUSE;</li>
- *   <li>rolled to a term ABSENT from the keyring ⇒ {@code resolveDek} fails closed (unknown term).</li>
+ *   <li>rolled to another present term: the DEK selected differs and the GCM AAD (which binds
+ *       keyTerm) no longer matches, so the tag fails and the record is refused;</li>
+ *   <li>rolled to a term absent from the keyring: {@code resolveDek} fails closed (unknown term).</li>
  * </ul>
  * Built over a real two-term keyring so this is the end-to-end selection path, not a codec unit.
  */
@@ -92,7 +92,7 @@ class KeyringKeyTermSelectionTest {
         assertArrayEquals(plain, env.unwrap(WAL_MAGIC, SCOPE, rec), "a genuine record still decrypts");
     }
 
-    // ---- HMAC-posture variants (encryption OFF, auth ON) ------------------------------------
+    // HMAC-posture variants (encryption off, auth on).
 
     /** A two-term keyring HMAC envelope, activeTerm 2. */
     private static IntegrityEnvelope twoTermHmacEnv(CrashModelAnchorIO.Disk disk) {

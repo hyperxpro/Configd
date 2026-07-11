@@ -40,7 +40,7 @@ class EdgeFrameCodecPropertyTest {
 
     private static final byte V2 = EdgeFrameCodec.EDGE_WIRE_VERSION_V2;
 
-    // ---- round-trip ---------------------------------------------------------
+    // round-trip
 
     @Property(tries = 500)
     void roundTripPreservesEveryFrame(@ForAll("frames") EdgeFrame frame) {
@@ -77,7 +77,7 @@ class EdgeFrameCodecPropertyTest {
         assertEquals(wire.length, EdgeFrameCodec.peekLength(header));
     }
 
-    // ---- truncation at every byte boundary ---------------------------------
+    // truncation at every byte boundary
 
     @Property(tries = 400)
     void truncationAtAnyBoundaryIsRejectedCleanly(
@@ -96,7 +96,7 @@ class EdgeFrameCodecPropertyTest {
                 "truncated frame must be rejected as a CodecException");
     }
 
-    // ---- single-bit corruption -> CRC error, not misparse ------------------
+    // single-bit corruption -> CRC error, not misparse
 
     @Property(tries = 500)
     void singleBitFlipIsCaughtByCrcNotMisparsed(
@@ -147,7 +147,7 @@ class EdgeFrameCodecPropertyTest {
                 "a stale-CRC body flip must read as FRAME_CORRUPT (CRC verified first)");
     }
 
-    // ---- length-cap violations rejected BEFORE allocation ------------------
+    // length-cap violations rejected BEFORE allocation
 
     @Property(tries = 200)
     void oversizeLengthPrefixIsRejectedByPeekBeforeAllocation(
@@ -242,7 +242,7 @@ class EdgeFrameCodecPropertyTest {
         assertThrows(IllegalArgumentException.class, () -> FrameType.fromCode(99));
     }
 
-    // ---- Watch frames (0x02) -----------------------------------------------
+    // Watch frames (0x02)
 
     /** Every watch frame round-trips byte-for-byte through a 0x02 encode/decode. */
     @Property(tries = 500)
@@ -340,7 +340,7 @@ class EdgeFrameCodecPropertyTest {
                 "a watch type on a 0x01-stamped frame must read as FRAME_CORRUPT");
     }
 
-    // ---- arbitraries --------------------------------------------------------
+    // arbitraries
 
     @Provide
     Arbitrary<EdgeFrame> frames() {
@@ -413,7 +413,7 @@ class EdgeFrameCodecPropertyTest {
                 .as(EdgeFrame.ErrorClose::new);
     }
 
-    // ---- watch arbitraries --------------------------------------------------
+    // watch arbitraries
 
     @Provide
     Arbitrary<EdgeFrame> watchFrames() {
@@ -559,7 +559,7 @@ class EdgeFrameCodecPropertyTest {
             return switch (k) {
                 case 0 -> new ConfigDelta(f, to, m); // unsigned legacy
                 case 1 -> new ConfigDelta(f, to, m, sig(16)); // signed legacy (epoch 0)
-                default -> new ConfigDelta(f, to, m, sig(64), 42L, nonce()); // F-0052 signed
+                default -> new ConfigDelta(f, to, m, sig(64), 42L, nonce()); // signed with epoch + nonce
             };
         });
     }

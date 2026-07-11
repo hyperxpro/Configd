@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the trusted Porcupine checker binary (ADR-0032). Installs a user-local
+# Build the trusted Porcupine checker binary. Installs a user-local
 # Go toolchain if none is on PATH (no sudo), then builds the ~120-line Go main
 # that calls anishathalye/porcupine into configd-linz/bin/porcupine-check.
 #
@@ -8,12 +8,11 @@
 # reproducible checker. After running, export PORCUPINE_BIN to the printed path.
 set -euo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # configd-linz/
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GO_DIR="$HERE/src/main/go/porcupine-check"
 BIN_DIR="$HERE/bin"
 mkdir -p "$BIN_DIR"
 
-# Resolve a Go toolchain: PATH first, then a user-local install at ~/sdk/go.
 if command -v go >/dev/null 2>&1; then
   GO=go
 elif [ -x "$HOME/sdk/go/bin/go" ]; then

@@ -11,21 +11,20 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * Hosts several {@link WatchSession}s on ONE shared edge connection (§06 W6-4 / W8-6a) — the multiplex that
- * makes per-connection watch fan-out real. Only <b>from-now</b> watches may share (a cursored watch is refused
- * at creation, W8-6a: a shared drain has a single position, so honouring an independent resume is impossible —
- * F10-1b). It demultiplexes each inbound frame to the owning watch by {@code watch_id}, and — the point of the
- * whole exercise — terminates a per-watch reject on ONLY that watch, leaving the connection and its sibling
- * watches streaming.
+ * Hosts several {@link WatchSession}s on ONE shared edge connection — the multiplex that makes per-connection
+ * watch fan-out real. Only <b>from-now</b> watches may share (a cursored watch is refused at creation: a
+ * shared drain has a single position, so honouring an independent resume is impossible). It demultiplexes
+ * each inbound frame to the owning watch by {@code watch_id}, and — the point of the whole exercise —
+ * terminates a per-watch reject on ONLY that watch, leaving the connection and its sibling watches streaming.
  *
  * <p>Installed as the shared {@link EdgeSession}'s inbound handler + post-auth hook: {@link #onConnected} (re)creates
- * every hosted watch with a fresh {@code watch_id} (F10-1a); a transparent reconnect re-creates them all.
+ * every hosted watch with a fresh {@code watch_id}; a transparent reconnect re-creates them all.
  */
 public final class WatchMultiplexHandler implements InboundFrameHandler {
 
     private final ConcurrentHashMap<Long, WatchSession> byWatchId = new ConcurrentHashMap<>();
     private final List<WatchSession> all = new CopyOnWriteArrayList<>();
-    /** One watch_id sequence for the whole connection, so every hosted watch's id is unique here (W2-8). */
+    /** One watch_id sequence for the whole connection, so every hosted watch's id is unique here. */
     private final java.util.concurrent.atomic.AtomicLong watchIdSeq = new java.util.concurrent.atomic.AtomicLong(1);
     private volatile EdgeConnection connection;
 
@@ -113,9 +112,9 @@ public final class WatchMultiplexHandler implements InboundFrameHandler {
 
     @Override
     public boolean wantsMoreFrames() {
-        // The shared reader parks when ANY hosted watch has fallen behind (connection-level backpressure —
-        // per-watch flow isolation is v2, W8-6). CURSOR_ACK stays a connection scalar; the server ignores a
-        // regressing ack, so each watch acking its own max is safe.
+        // The shared reader parks when ANY hosted watch has fallen behind — connection-level backpressure
+        // only; there is no per-watch flow isolation. CURSOR_ACK stays a connection scalar; the server
+        // ignores a regressing ack, so each watch acking its own max is safe.
         for (WatchSession w : all) {
             if (!w.wantsMoreFrames()) {
                 return false;
@@ -138,7 +137,7 @@ public final class WatchMultiplexHandler implements InboundFrameHandler {
     private void terminateOne(WatchSession watch, ConfigdException error) {
         byWatchId.values().remove(watch);
         if (error instanceof GapUnrecoverableException || error instanceof StaleTopologyException) {
-            // Per-watch re-bootstrap on the SAME connection; the siblings never notice (W6-4).
+            // Per-watch re-bootstrap on the SAME connection; the siblings never notice.
             EdgeConnection c = connection;
             if (c != null && !watch.isClosed()) {
                 watch.reBootstrapOnSameConnection(c); // re-registers its fresh watch_id via the shareOn sink

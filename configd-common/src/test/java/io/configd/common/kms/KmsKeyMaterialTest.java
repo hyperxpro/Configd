@@ -30,8 +30,6 @@ class KmsKeyMaterialTest {
         return new KeyId("local", "test-ref", 1);
     }
 
-    // ---- RootKey: destroy actually zeroes, unlike SecretKeySpec ----
-
     @Test
     void destroyZeroesBackingMaterialAndIsIdempotent() {
         byte[] captured = new byte[32];
@@ -100,16 +98,14 @@ class KmsKeyMaterialTest {
         assertFalse(s.contains("1, 2, 3"), "must not render key bytes (array form)");
     }
 
-    // ---- WrappedKey: defensive copies, value equality, redacted toString ----
-
     @Test
     void wrappedKeyDefensiveCopiesInAndOut() {
         byte[] ct = {1, 2, 3, 4};
         WrappedKey w = new WrappedKey(keyId(), ct, Map.of("node", "1"));
-        ct[0] = 99;                                    // mutate caller's array
+        ct[0] = 99;
         assertArrayEquals(new byte[]{1, 2, 3, 4}, w.ciphertext(), "copy-in isolates from caller");
         byte[] out = w.ciphertext();
-        out[0] = 42;                                   // mutate returned array
+        out[0] = 42;
         assertArrayEquals(new byte[]{1, 2, 3, 4}, w.ciphertext(), "copy-out isolates internal state");
         assertNotSame(w.ciphertext(), w.ciphertext());
     }
@@ -124,8 +120,6 @@ class KmsKeyMaterialTest {
         assertTrue(s.contains("ciphertextLen=3"));
         assertFalse(s.contains("[1, 2, 3]"), "must not render ciphertext bytes");
     }
-
-    // ---- KeyId ----
 
     @Test
     void keyIdToStringIsLoggableIdentity() {

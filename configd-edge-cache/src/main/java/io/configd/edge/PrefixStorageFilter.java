@@ -33,8 +33,8 @@ import java.util.Objects;
  * <h2>Why a separate stateless helper</h2>
  * The filtered delta must be applied identically to BOTH the {@link EdgeConfigClient}'s
  * internal store AND the monitor-wired read store the {@link EdgeClientCore} keeps in
- * lockstep (so they stay byte-identical and the INV-M1 seam stays live). A single pure
- * function computes the filtered delta once; both stores receive the same result.
+ * lockstep (so they stay byte-identical and the monotonic-read seam stays live). A single
+ * pure function computes the filtered delta once; both stores receive the same result.
  *
  * <p>This class is stateless and thread-safe.
  */

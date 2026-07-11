@@ -70,10 +70,9 @@ public final class SegmentKeyManager implements AtRestKeys {
             "configd/raft-at-rest-encryption/dek/v1".getBytes(StandardCharsets.UTF_8);
 
     /**
-     * HKDF info string for the term-versioned HMAC integrity key {@code K_integrity[term]}. Bumped to
-     * {@code v3} (from the pre-keyring {@code v2}) because its derivation SOURCE changed: it is now
-     * HKDF of the keyring's per-term random root, not of the signing key (frozen-format §A2.3). The
-     * {@code v3} tag domain-separates the two constructions.
+     * HKDF info string for the term-versioned HMAC integrity key {@code K_integrity[term]}, derived
+     * from the keyring's per-term random root rather than the signing key; the {@code v3} tag
+     * domain-separates this construction from the DEK derivation.
      */
     static final byte[] INTEGRITY_INFO =
             "configd/raft-at-rest-integrity/v3".getBytes(StandardCharsets.UTF_8);

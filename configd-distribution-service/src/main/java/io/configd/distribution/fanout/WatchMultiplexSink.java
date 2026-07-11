@@ -33,7 +33,7 @@ import java.util.List;
  *       frames are mapped per the translation table below.</li>
  * </ul>
  *
- * <h2>Translation table (W5-*)</h2>
+ * <h2>Translation table</h2>
  * <pre>
  *   SUBSCRIBE_OK(latestSeq, mode)      -&gt; Coordinator.onShardCreated(gid, latestSeq, mode)
  *                                         (collected for the ONE coalesced WATCH_CREATED the driver
@@ -41,20 +41,21 @@ import java.util.List;
  *                                         build the N-ShardMode vector)
  *   NOTIFY([CommitNotification])       -&gt; per live watch, per notification: filter target; if any
  *                                         change matches, WATCH_EVENT(watchId, gid, seq, commitTs, changes)
- *                                         (one event per shard-commit, W5-6; never split/coalesce)
+ *                                         (one event per shard-commit; never split/coalesce)
  *   HEARTBEAT(latestSeq, serverNow)    -&gt; Coordinator.onIdleProgress(serverNow) (the driver emits ONE
  *                                         coalesced N-component WATCH_PROGRESS per live watch; each
- *                                         component is that shard's drained cursor, the W5-7 clamp)
+ *                                         component is that shard's drained cursor, clamped so it
+ *                                         never advertises past what was actually drained)
  *   SNAPSHOT_{BEGIN,CHUNK,END}         -&gt; WATCH_SNAPSHOT_{BEGIN,CHUNK,END}(snapshotOwner, gid, ...)
  *                                         (this shard's catch-up maps to the FIXED drain-owning
- *                                         watch - captured once, not per-frame, W5-5/F2; the snapshot
+ *                                         watch - captured once, not per-frame; the snapshot
  *                                         BYTES are pre-filtered to that watch's target by
- *                                         FilteringReplaySource, W5-10/W7-4; v1 boundary)
+ *                                         FilteringReplaySource; shared-drain boundary)
  *   ERROR_CLOSE(DEMOTED_TO_CATCHUP)    -&gt; passthrough (the connection-level demotion notice the
- *                                         core offers; W8-6 - a driver MUST tolerate it)
+ *                                         core offers; a driver MUST tolerate it)
  *   close(code, msg)                   -&gt; per live watch: WATCH_CANCELED(watchId, code, -, msg)
  *                                         (surfaces a connection-level terminal, incl.
- *                                         GAP_UNRECOVERABLE, as a per-watch terminal, W5-9/W6-4),
+ *                                         GAP_UNRECOVERABLE, as a per-watch terminal),
  *                                         then delegate.close
  * </pre>
  * The per-watch terminals that originate in the <b>router</b> - {@code NOT_AUTHORIZED} rejects,
@@ -62,14 +63,14 @@ import java.util.List;
  * here; the driver emits them directly via {@link #offerWatchFrame(EdgeFrame)} (which bypasses
  * translation).
  *
- * <h2>v1 boundary (W8-6 shared drain)</h2>
+ * <h2>Shared-drain boundary</h2>
  * All watches on a connection share the per-shard core drains, <b>one</b> cursor per shard, and
  * <b>one</b> connection-level backpressure fate. The drains start at the <b>first</b> watch's resume
  * cursor (demuxed per shard); a watch that needs to resume from an independent position MUST use a
  * separate connection. Backpressure is per-connection ({@code CURSOR_ACK} is a connection-level
  * scalar broadcast to every shard core), so a single slow/greedy shard substream can demote every
  * sibling - the head-of-line blocking inherent to one shared mTLS transport. Per-watch/per-shard
- * flow-control / fairness is the named v2 extension W10-8.
+ * flow-control and fairness do not exist yet.
  *
  * <h2>Threading</h2>
  * {@code watchConnection} is set by the reader thread (the first {@code WATCH_CREATE} decides
@@ -123,7 +124,7 @@ final class WatchMultiplexSink implements TransportSink {
      * frame from this shard is tagged with. Captured ONCE when the drain starts, NOT re-evaluated
      * per frame: a snapshot transfer pauses across ticks on backpressure, and if the owner cancels
      * mid-transfer, a per-frame re-pick would flip to a sibling that was acked {@code TAIL} -
-     * mis-attributing the snapshot to a watch promised none (W2-8 / W5-5). Tagging the fixed owner
+     * mis-attributing the snapshot to a watch promised none. Tagging the fixed owner
      * means a snapshot to a since-canceled owner is simply discarded by the client (its watch is
      * gone), never mis-delivered to a live sibling.
      */
@@ -139,9 +140,7 @@ final class WatchMultiplexSink implements TransportSink {
         this.coordinator = coordinator;
     }
 
-    // -----------------------------------------------------------------------
-    // Router-facing controls (driver, session thread - except setWatchConnection)
-    // -----------------------------------------------------------------------
+    // Router-facing controls (driver, session thread - except setWatchConnection).
 
     /** Flips this connection to watch translation (reader thread, on the first WATCH_CREATE). */
     void setWatchConnection(boolean watch) {
@@ -172,9 +171,7 @@ final class WatchMultiplexSink implements TransportSink {
         return delegate.offer(frame);
     }
 
-    // -----------------------------------------------------------------------
-    // TransportSink - the core's outbound boundary
-    // -----------------------------------------------------------------------
+    // TransportSink - the core's outbound boundary.
 
     @Override
     public boolean offer(EdgeFrame frame) {
@@ -191,8 +188,8 @@ final class WatchMultiplexSink implements TransportSink {
         }
         closed = true;
         if (watchConnection) {
-            // Surface a connection-level terminal (e.g. GAP_UNRECOVERABLE, W6-4; SERVER_SHUTDOWN)
-            // as a per-watch terminal for every live watch (W5-9) before the connection dies.
+            // Surface a connection-level terminal (e.g. GAP_UNRECOVERABLE, SERVER_SHUTDOWN)
+            // as a per-watch terminal for every live watch before the connection dies.
             for (WatchRegistry.WatchEntry e : registry.liveEntries()) {
                 delegate.offer(new EdgeFrame.WatchCanceled(e.watchId(), code, null, message));
             }
@@ -200,9 +197,7 @@ final class WatchMultiplexSink implements TransportSink {
         delegate.close(code, message);
     }
 
-    // -----------------------------------------------------------------------
-    // Translation (session thread)
-    // -----------------------------------------------------------------------
+    // Translation (session thread).
 
     private boolean translate(EdgeFrame frame) {
         return switch (frame) {
@@ -217,7 +212,7 @@ final class WatchMultiplexSink implements TransportSink {
                     snapshotOwnerWatchId, gid, se.snapshotSeq()));
             // The only ErrorClose the core OFFERS is the non-fatal DEMOTED_TO_CATCHUP notice
             // (terminal closes go via close()). Forward it verbatim - a driver MUST tolerate
-            // the connection-level demotion (W8-6); the WATCH_SNAPSHOT_* catch-up follows.
+            // the connection-level demotion; the WATCH_SNAPSHOT_* catch-up follows.
             case EdgeFrame.ErrorClose ec -> delegate.offer(ec);
             // Defensive: any other frame (none expected from the core on a watch connection)
             // forwards verbatim rather than being dropped.
@@ -236,11 +231,11 @@ final class WatchMultiplexSink implements TransportSink {
 
     private boolean translateNotify(EdgeFrame.Notify n) {
         // Fan this shard's NOTIFY out to each live watch, filtered by its target. One WATCH_EVENT per
-        // (matching) shard-commit (W5-6) - never split, never coalesced - tagged with this shard's gid.
+        // (matching) shard-commit - never split, never coalesced - tagged with this shard's gid.
         // A watch whose target has no key on this shard matches nothing here (a KEY on another shard),
         // so per-shard cores need no per-watch coverage subsetting for delivery. A refused delegate.offer
-        // is the W8-6 shared-fate backpressure: return false so the core demotes (clears in-flight,
-        // snapshots); the undelivered tail is re-driven and the driver dedups by S (W6-1). Iterate
+        // is the shared-fate backpressure: return false so the core demotes (clears in-flight,
+        // snapshots); the undelivered tail is re-driven and the driver dedups by seq. Iterate
         // watches outer / notifications inner so each (watch_id, gid) substream stays contiguous and
         // ascending in S.
         for (WatchRegistry.WatchEntry entry : registry.liveEntries()) {
@@ -253,7 +248,7 @@ final class WatchMultiplexSink implements TransportSink {
                 EdgeFrame.WatchEvent event = new EdgeFrame.WatchEvent(
                         entry.watchId(), gid, cn.seq(), cn.commitTimestampMillis(), changes);
                 if (!delegate.offer(event)) {
-                    return false; // would block - core demotes (W8-6); remaining events via snapshot resync
+                    return false; // would block - core demotes; remaining events via snapshot resync
                 }
             }
         }
@@ -261,7 +256,7 @@ final class WatchMultiplexSink implements TransportSink {
     }
 
     /**
-     * The per-watch routing filter (W5-6): the matching changes of one shard-commit for one
+     * The per-watch routing filter: the matching changes of one shard-commit for one
      * target. Distinct from authorization (the gate already authorized the whole target) -
      * this is pure routing over the already-verified, server-authoritative stream.
      */

@@ -6,15 +6,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The propagation backlog - NOW GREEN under the stream driver. With
- * {@link StreamDriver#NONE} this test was the executable backlog (no fan-out service
- * existed, so nothing was ever delivered and it FAILED). It is re-enabled <em>verbatim</em>
- * with the real {@link C1StreamDriver} (the handoff spec's consumer loop driving the production
+ * The propagation backlog test, driven by the real {@link C1StreamDriver} (the handoff
+ * spec's consumer loop driving the production
  * {@link io.configd.distribution.fanout.FanOutSessionCore}): over a no-edge-fault schedule a
- * healthy edge data plane now (1) delivers every published commit notification within the
- * bound (the delivery invariant) and (2) converges every live edge to the CP leader's
- * authoritative store (contract section 1 / section 4). The captured pre-implementation failure is
- * in {@code docs/session-3/captures/phase-v-backlog-failures.txt}; the now-green capture is
+ * healthy edge data plane (1) delivers every published commit notification within the bound
+ * (the delivery invariant) and (2) converges every live edge to the CP leader's authoritative
+ * store. With {@link StreamDriver#NONE} nothing is ever delivered, since no fan-out service
+ * exists to drive it; the captured before/after runs are
+ * {@code docs/session-3/captures/phase-v-backlog-failures.txt} and
  * {@code docs/session-3/captures/c1-backlog-green.txt}.
  *
  * @see C1StreamDriver
@@ -30,7 +29,7 @@ class EdgePropagationBacklogTest {
     /**
      * Over a no-edge-fault schedule, a healthy edge data plane must (1) deliver every
      * published commit notification within the bound and (2) converge every live
-     * edge to the CP leader's authoritative store. With the stream driver both now hold.
+     * edge to the CP leader's authoritative store. With the real stream driver, both hold.
      */
     @Test
     void noFaultScheduleDeliversAndConverges() {

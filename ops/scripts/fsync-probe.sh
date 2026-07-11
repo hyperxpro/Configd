@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fsync-probe.sh - verify the WAL device's fsync method + latency on TARGET hardware (D8).
+# fsync-probe.sh - verify the WAL device's fsync method + latency on target hardware.
 #
 # Configd acknowledges a write only after a durable majority fsync, so the WAL device MUST
 # actually flush to durable media on fsync/fdatasync (no lying write cache). Run this on the

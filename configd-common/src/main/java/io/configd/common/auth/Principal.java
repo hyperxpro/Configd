@@ -17,7 +17,7 @@ import java.util.Set;
  * @param id         the stable subject identifier (mTLS Subject DN, bearer principal, OIDC {@code iss#sub})
  * @param roles      the Configd roles the authorization engine keys on - already mapped from the external
  *                   identity by the authenticator (the authz engine never sees an OIDC claim or LDAP group)
- * @param attributes identity claims for audit / future ABAC (never consulted by role-based v1 authz)
+ * @param attributes identity claims for audit / future ABAC (not consulted by today's role-based authz)
  * @param provenance the {@link Authenticator#type()} that minted this principal ({@code "mtls"}, {@code
  *                   "bearer"}, {@code "basic"}, {@code "oidc"}, ...) - recorded on audit lines
  */

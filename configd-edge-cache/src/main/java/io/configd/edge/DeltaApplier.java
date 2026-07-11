@@ -91,7 +91,7 @@ public final class DeltaApplier {
     private boolean gapDetected;
 
     /**
-     * True when the server is filtering this session server-side (ADR-0045). In filtered mode
+     * True when the server is filtering this session server-side. In filtered mode
      * the delivered version chain is intentionally non-contiguous - dropped non-matching deltas
      * bumped the global version - so gap detection relaxes to forward-only (a jump is expected;
      * only a regression below the applied version is a genuine gap), and the store apply bridges
@@ -186,11 +186,11 @@ public final class DeltaApplier {
      *       {@code commitTimestampMillis}.</li>
      * </ul>
      * <p>
-     * The one-arg {@code offer(ConfigDelta)} overload and its {@code NO_COMMIT_TIMESTAMP}
-     * local-clock fallback are DELETED -- they re-created the idle-time-proxy staleness
-     * ("staleness = time-since-last-apply") for any caller that took the convenient path.
-     * The commit timestamp is mandatory and validated; a caller without a leader timestamp
-     * passes its own clock's now EXPLICITLY, stating the meaning at the call site.
+     * There is deliberately no convenience overload that defaults the timestamp from a local
+     * clock: that would re-create idle-time-proxy staleness ("staleness = time-since-last-apply")
+     * for any caller that took the easy path. The commit timestamp is mandatory and validated;
+     * a caller without a leader timestamp passes its own clock's now explicitly, stating the
+     * meaning at the call site.
      *
      * @param delta                 the delta to apply (non-null)
      * @param commitTimestampMillis the leader commit timestamp (the covered-frontier clock;
@@ -227,9 +227,9 @@ public final class DeltaApplier {
                 return ApplyResult.UNSIGNED_REJECTED;
             }
             // Defense-in-depth: the leader always signs with epoch > 0 (the position + epoch +
-            // nonce payload, ADR-0045). A signature carried on an epoch-0 delta is not a shape
-            // production emits; reject it rather than fall back to the legacy batch-only
-            // verification form, which would strip the position binding.
+            // nonce payload). A signature carried on an epoch-0 delta is not a shape production
+            // emits; reject it rather than fall back to the legacy batch-only verification form,
+            // which would strip the position binding.
             if (delta.epoch() == 0L) {
                 LOG.warning("Rejecting signed delta [" + delta.fromVersion()
                         + " -> " + delta.toVersion() + "]: a signature requires epoch > 0");
@@ -311,7 +311,7 @@ public final class DeltaApplier {
     }
 
     /**
-     * Selects the server-side-filtered apply mode (ADR-0045): forward-only gap detection and a
+     * Selects the server-side-filtered apply mode: forward-only gap detection and a
      * version-bridged store apply. Set from the SUBSCRIBE_OK {@code filtered} confirm; the
      * default is the classic strict-contiguity mode.
      *

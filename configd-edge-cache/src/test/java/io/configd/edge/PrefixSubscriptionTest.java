@@ -20,10 +20,6 @@ class PrefixSubscriptionTest {
         subs = new PrefixSubscription();
     }
 
-    // -----------------------------------------------------------------------
-    // Subscribe / Unsubscribe
-    // -----------------------------------------------------------------------
-
     @Nested
     class SubscribeUnsubscribe {
 
@@ -56,10 +52,6 @@ class PrefixSubscriptionTest {
             assertTrue(subs.subscribe("app."));
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Prefix matching
-    // -----------------------------------------------------------------------
 
     @Nested
     class PrefixMatching {
@@ -104,10 +96,6 @@ class PrefixSubscriptionTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Matching prefixes
-    // -----------------------------------------------------------------------
-
     @Nested
     class MatchingPrefixes {
 
@@ -134,10 +122,6 @@ class PrefixSubscriptionTest {
             assertTrue(matching.isEmpty());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Prefixes snapshot
-    // -----------------------------------------------------------------------
 
     @Nested
     class PrefixesSnapshot {
@@ -170,10 +154,6 @@ class PrefixSubscriptionTest {
             assertTrue(subs.prefixes().isEmpty());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Validation
-    // -----------------------------------------------------------------------
 
     @Nested
     class Validation {

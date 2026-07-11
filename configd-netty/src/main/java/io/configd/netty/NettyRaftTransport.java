@@ -98,7 +98,7 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
 
     /**
      * Per-channel pinned peer {@link NodeId}, resolved from the peer's certificate on handshake
-     * completion (WH-08/09). Present only on server-accepted connections under an enforced
+     * completion. Present only on server-accepted connections under an enforced
      * {@link PeerIdentityPolicy}; {@code channelRead0} binds each frame's {@code senderId} to it.
      */
     static final AttributeKey<NodeId> PEER_IDENTITY = AttributeKey.valueOf("configd.raft.peerIdentity");
@@ -110,7 +110,7 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
     private final Consumer<InboundMessage> inboundHandler; // nullable
     private final ConnectionManager connectionManager;
 
-    /** Cert-identity &harr; NodeId binding policy (WH-08/09). Default {@link PeerIdentityPolicy#unenforced()}. */
+    /** Cert-identity &harr; NodeId binding policy. Default {@link PeerIdentityPolicy#unenforced()}. */
     private final PeerIdentityPolicy peerIdentityPolicy;
     /** Security-event sink (peer-identity rejections). Default {@link RaftTransportMetrics#NOOP}. */
     private final RaftTransportMetrics transportMetrics;
@@ -155,16 +155,16 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
                               Map<NodeId, InetSocketAddress> peerAddresses,
                               TlsManager tlsManager,
                               Consumer<InboundMessage> inboundHandler) {
-        // Legacy 5-arg constructor: peer-identity binding unenforced, no metrics sink. Byte- and
-        // behaviour-identical to the pre-WH-08/09 transport (the enforcement path is dormant until an
-        // allow-list policy is supplied via the fuller constructor).
+        // This constructor leaves peer-identity binding unenforced with no metrics sink; the
+        // enforcement path stays dormant until an allow-list policy is supplied via the fuller
+        // constructor below.
         this(self, bindAddress, peerAddresses, tlsManager, inboundHandler,
                 PeerIdentityPolicy.unenforced(), RaftTransportMetrics.NOOP);
     }
 
     /**
      * Creates a Netty consensus transport with an explicit peer-identity binding policy and metrics
-     * sink (WH-08/09). When {@code peerIdentityPolicy} is {@linkplain PeerIdentityPolicy#enforced()
+     * sink. When {@code peerIdentityPolicy} is {@linkplain PeerIdentityPolicy#enforced()
      * enforced}, an accepted peer's TLS cert identity is verified against the allow-list on handshake
      * completion and each frame's {@code senderId} must match the connection's resolved {@link NodeId};
      * otherwise the transport keeps its CA-chain-only behavior (with a one-time warning when TLS is on).
@@ -263,7 +263,7 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
 
     /**
      * Emits a loud one-time warning when the transport runs mTLS but no peer-identity allow-list is
-     * configured (WH-08/09 enforce-when-configured, warn-when-not). In this posture a cert-valid peer
+     * configured (enforce when configured, warn when not). In this posture a cert-valid peer
      * can still forge another node's {@code senderId}; only the CA-chain is checked. No warning for
      * plaintext (test/single-node) or when a policy is enforced.
      */
@@ -362,8 +362,6 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
         }
     }
 
-    // Shared inbound dispatch: a handler throw does NOT close the channel (framing layer intact).
-
     private void dispatch(InboundMessage msg) {
         try {
             if (inboundHandler != null) {
@@ -461,10 +459,10 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
 
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, InboundMessage msg) {
-            // Layer 2 (WH-08/09): the self-declared senderId prefix must equal the connection's
-            // authenticated cert identity (pinned on handshake). A cert-valid peer forging another
-            // node's id is dropped (desync-equivalent) and counted. Only active when an allow-list is
-            // enforced; the JDK transport applies the identical check in handleInboundConnection.
+            // Layer 2: the self-declared senderId prefix must equal the connection's authenticated
+            // cert identity (pinned on handshake). A cert-valid peer forging another node's id is
+            // dropped (desync-equivalent) and counted. Only active when an allow-list is enforced;
+            // the JDK transport applies the identical check in handleInboundConnection.
             if (peerIdentityPolicy.enforced()) {
                 NodeId pinned = ctx.channel().attr(PEER_IDENTITY).get();
                 if (pinned == null || !pinned.equals(msg.from())) {
@@ -485,12 +483,12 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
                 return;
             }
             if (evt instanceof SslHandshakeCompletionEvent handshake) {
-                // Layer 1 (WH-08/09): on a successful mTLS handshake under an enforced allow-list,
-                // resolve the peer's certificate identity and pin the NodeId it is authorized to
-                // present. A cert whose identity is not in the allow-list (e.g. a plain client cert
-                // with no node marker) cannot open a peer connection - drop (counted). Unenforced or
-                // plaintext leaves no pinned attribute and the read path unchanged (legacy behaviour).
-                // A FAILED handshake needs no action here: the SslHandler closes the channel itself.
+                // Layer 1: on a successful mTLS handshake under an enforced allow-list, resolve the
+                // peer's certificate identity and pin the NodeId it is authorized to present. A cert
+                // whose identity is not in the allow-list (e.g. a plain client cert with no node
+                // marker) cannot open a peer connection - drop (counted). Unenforced or plaintext
+                // leaves no pinned attribute and the read path unchanged. A FAILED handshake needs no
+                // action here: the SslHandler closes the channel itself.
                 if (handshake.isSuccess() && peerIdentityPolicy.enforced()) {
                     NodeId pinned = resolvePinnedIdentity(ctx);
                     if (pinned == null) {
@@ -506,8 +504,8 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
 
         /**
          * Resolves the peer's authorized {@link NodeId} from its verified certificate, per the policy's
-         * marker mode. RDN mode (default) reads the Subject-DN marker - the same call as before, so an
-         * RDN deployment is byte-identical. SAN-URI mode reads the peer cert's SAN URI entries.
+         * marker mode. RDN mode (default) reads the Subject-DN marker, keeping an RDN deployment
+         * byte-identical. SAN-URI mode reads the peer cert's SAN URI entries.
          */
         private NodeId resolvePinnedIdentity(ChannelHandlerContext ctx) {
             if (peerIdentityPolicy.usesSanUriMarker()) {
@@ -799,10 +797,10 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
         private final class PeerHandler extends SimpleChannelInboundHandler<InboundMessage> {
             @Override
             protected void channelRead0(ChannelHandlerContext ctx, InboundMessage msg) {
-                // Layer 2 reverse-path binding (WH-08/09): a peer may reply on this connection WE dialed.
-                // The far end is the target we connected to (hostname-verified on connect), so any frame
-                // whose senderId differs from `target` is a forged-id injection - drop + count. Only
-                // active when an allow-list is enforced; mirrors the JDK outbound-reverse reader.
+                // Layer 2 reverse-path binding: a peer may reply on this connection WE dialed. The far
+                // end is the target we connected to (hostname-verified on connect), so any frame whose
+                // senderId differs from `target` is a forged-id injection - drop + count. Only active
+                // when an allow-list is enforced; mirrors the JDK outbound-reverse reader.
                 if (peerIdentityPolicy.enforced() && !target.equals(msg.from())) {
                     transportMetrics.onPeerIdentityRejected();
                     ctx.close();

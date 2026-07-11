@@ -14,9 +14,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * read is served from an applied state that is behind the committed write - a phantom-stale /
  * phantom-absent linearizable read.
  *
- * <p>Discovered by the E1 faulted-linearizability matrix (seeds 20018 / 24017, N=3, adversarial
- * combination faults): a linearizable GET returned 404/absent for a committed-present key. The fix
- * gates {@link RaftNode#readIndex()} on the same {@code noopCommittedInCurrentTerm} signal that
+ * <p>A linearizable GET could return 404/absent for a committed-present key. The fix gates
+ * {@link RaftNode#readIndex()} on the same {@code noopCommittedInCurrentTerm} signal that
  * {@code proposeConfigChange} already required ("Must commit no-op first").
  */
 final class ReadIndexNoOpBeforeServeTest {
@@ -37,9 +36,9 @@ final class ReadIndexNoOpBeforeServeTest {
         }
         assertEquals(RaftRole.LEADER, n1.role(), "n1 should have become leader");
 
-        // THE GATE: a just-elected leader must refuse a linearizable read (readIndex() == -1, which
+        // The gate: a just-elected leader must refuse a linearizable read (readIndex() == -1, which
         // the server maps to 503 + X-Leader-Hint so the client retries) until its current-term no-op
-        // commits. Before the fix this returned a valid but stale-low read id.
+        // commits.
         assertEquals(-1L, n1.readIndex(),
                 "a fresh leader must not serve a linearizable read before its term no-op commits");
 
@@ -54,8 +53,8 @@ final class ReadIndexNoOpBeforeServeTest {
     @Test
     void singleNodeLeaderServesReadsImmediately() {
         // N=1: becomeLeader commits the no-op synchronously (self is a quorum), so the gate is
-        // already satisfied the moment the node is leader - the fix must not regress single-node
-        // read availability.
+        // already satisfied the moment the node is leader; single-node read availability must not
+        // regress.
         RoutingCluster c = new RoutingCluster(1);
         RaftNode n1 = c.node(c.first());
         for (int i = 0; i < 301; i++) {

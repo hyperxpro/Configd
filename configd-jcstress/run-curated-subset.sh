@@ -1,39 +1,35 @@
 #!/usr/bin/env bash
-# =============================================================================
-# run-curated-subset.sh — B6 / RR-011 curated jcstress smoke for gate-2.
-# -----------------------------------------------------------------------------
-# Runs the CURATED, deterministic subset of @JCStressTest classes in jcstress
-# "sanity" mode (1 normal + 1 stress fork, 1 iteration each) — a fast smoke that
-# proves the race detector runs end-to-end and surfaces NO forbidden outcome on
-# the real structures. The full, longer-confidence run is the operator's
-# `-m default/stress` pass recorded in docs/session-2/jcstress-results.md.
+# A fast curated jcstress smoke.
 #
-# WHY A CURATED SUBSET (not all tests):
-#   * The harness self-test (HarnessSelfTest.KnownRacyCounter) is INTENTIONALLY
-#     forbidden-hitting — it must NOT be in a gate batch.
+# Runs the curated, deterministic subset of @JCStressTest classes in jcstress
+# "sanity" mode (1 normal + 1 stress fork, 1 iteration each) -- a fast smoke that
+# proves the race detector runs end-to-end and surfaces no forbidden outcome on
+# the real structures. The full, longer-confidence run is the operator's
+# `-m default/stress` pass.
+#
+# Why a curated subset (not all tests):
+#   * The harness self-test (HarnessSelfTest.KnownRacyCounter) is intentionally
+#     forbidden-hitting -- it must NOT run in a gate batch.
 #   * The 3-actor FanOutBuffer test (TwoReadersOneWriter) needs 3 hardware
 #     threads; on the 2-vCPU gate host jcstress cannot schedule 3 actors and the
 #     test does not converge in bounded time. The 2-actor single-reader variants
-#     cover the same RR-066 torn-read invariant deterministically.
+#     cover the same torn-read invariant deterministically.
 #
-# The subset is the 6 RR-002 transport interleavings (the explicit must-cover
-# list) plus the decisive read-path races: FanOutBuffer wrap-around + lapped
-# eviction (RR-066), VersionedConfigStore torn-version + CF-31 aliased array
-# (RR-029), HamtMap consistent-version structural sharing (RR-029), the
-# Phase 0 R-01' owner-thread-guard publication (no false negative once a node is
-# in service), the Phase 0-B H-3 monitor-view publication (an immutable
-# snapshot published via a single volatile ref is never observed torn), and the
-# Phase 0-B Stage 2 M2b H-4 rehoming no-double-ownership proof
-# (RehomingDoubleOwnershipTest: the volatile owner field + the detach->adopt
-# barrier never let two owners both own the group; and a re-bind opens no false
-# negative). The UnboundGuardIsInertAndRaces, PerFieldPublishCanTear, and
-# RehomingDoubleOwnershipTest.BrokenHandoffDoubleOwnership companions are
-# INTENTIONALLY forbidden/tear-hitting (like HarnessSelfTest.KnownRacyCounter)
-# and excluded here.
+# The subset is the 6 transport interleavings (the explicit must-cover list) plus
+# the decisive read-path races: FanOutBuffer wrap-around + lapped eviction,
+# VersionedConfigStore torn-version + aliased array, HamtMap consistent-version
+# structural sharing, the owner-thread-guard publication (no false negative once a
+# node is in service), the monitor-view publication (an immutable snapshot
+# published via a single volatile ref is never observed torn), and the rehoming
+# no-double-ownership proof (RehomingDoubleOwnershipTest: the volatile owner field
+# plus the detach->adopt barrier never let two owners both own the group, and a
+# re-bind opens no false negative). The UnboundGuardIsInertAndRaces,
+# PerFieldPublishCanTear, and RehomingDoubleOwnershipTest.BrokenHandoffDoubleOwnership
+# companions are intentionally forbidden/tear-hitting (like
+# HarnessSelfTest.KnownRacyCounter) and excluded here.
 #
 # Exit 0 iff every selected test ran and reported zero FAILED/forbidden results.
 # Usage: run-curated-subset.sh [results-dir]
-# =============================================================================
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -67,12 +63,10 @@ io.configd.jcstress.RaftOwnerThreadGuardTest.OwnerGuardNoFalseNegativeInService
 io.configd.jcstress.RaftMonitorViewPublicationTest.PublishedSnapshotNeverTears
 EOF
 
-# The M2b H-4 rehoming no-double-ownership proofs run at -m quick, NOT sanity. The double-ownership
-# race is RARE (~0.05-1% even with millions of samples); sanity mode (~56 samples) false-passes even
-# the BROKEN control ~20% of runs (verified — see captures/jcstress/control-sanity-flaky.txt), so a
-# sanity clean-pass cannot catch a double-ownership regression. -m quick reliably FAILS the broken
-# control, so the clean pass here carries real weight. (The closure evidence is the operator-grade
-# capture in docs/phase0-B-stage2-m2b/captures/jcstress/.)
+# The rehoming no-double-ownership proofs run at -m quick, NOT sanity. The double-ownership race is
+# rare (~0.05-1% even with millions of samples); sanity mode (~56 samples) false-passes even the
+# broken control ~20% of runs, so a sanity clean-pass cannot catch a double-ownership regression.
+# -m quick reliably FAILS the broken control, so the clean pass here carries real weight.
 read -r -d '' REHOMING_TESTS <<'EOF' || true
 io.configd.jcstress.RehomingDoubleOwnershipTest.CleanHandoffNoDoubleOwnership
 io.configd.jcstress.RehomingDoubleOwnershipTest.PostAdoptGuardNoFalseNegative

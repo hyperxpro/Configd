@@ -28,19 +28,19 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 /**
- * The N-way fan-out merge proof. Drives the REAL production helper
+ * The N-way fan-out merge proof. Drives the real production helper
  * {@link ConfigdServer#registerShardedFanOut} - one {@link FanOutBuffer} + {@link Compactor} per shard,
- * each fed by ITS group's commit listener - and discriminates the four G1 obligations:
+ * each fed by its group's commit listener - and checks four properties:
  *
  * <ul>
  *   <li><b>N=1 byte-identity foundation</b> - a single shard builds exactly one buffer + compactor for
- *       the primary group, and the listener publishes the same per-commit notification as the prior
+ *       the primary group, and the listener publishes the same per-commit notification as the
  *       single-buffer wiring.</li>
- *   <li><b>Per-shard isolation (S2/S4)</b> - a committed write to shard k lands in shard k's buffer
- *       ONLY; a sibling shard's buffer never sees it.</li>
+ *   <li><b>Per-shard isolation</b> - a committed write to shard k lands in shard k's buffer only; a
+ *       sibling shard's buffer never sees it.</li>
  *   <li><b>Per-shard monotonicity through the merge</b> - each shard's buffer yields a strictly
  *       ascending, contiguous, per-shard seq run (no lost/dup/reordered-within-shard), and the seqs are
- *       INDEPENDENT per shard (no fabricated cross-shard global order - ADR-D-A/D-C).</li>
+ *       independent per shard: there is no fabricated cross-shard global order.</li>
  *   <li><b>Thread-safety</b> - N threads (one per group, the owner-thread model) publishing concurrently
  *       to their own buffers cause no corruption (single-writer per buffer holds under real
  *       concurrency).</li>
@@ -77,8 +77,6 @@ class ShardedFanOutTest {
         return ((Result.Ok) r).notifications();
     }
 
-    // ---- N=1 byte-identity foundation ------------------------------------------------------
-
     @Test
     void n1BuildsExactlyOnePrimaryBufferAndCompactorAndPublishesEachCommit() {
         List<ConfigdServer.RaftGroupRuntime> rts = runtimes(1);
@@ -101,8 +99,6 @@ class ShardedFanOutTest {
         assertEquals(2, fan.compactors().get(0).snapshotCount());
     }
 
-    // ---- Per-shard isolation (S2/S4) -------------------------------------------------------
-
     @Test
     void perShardCommitsLandInTheirOwnBufferOnly() {
         int n = 4;
@@ -111,7 +107,6 @@ class ShardedFanOutTest {
                 ConfigdServer.registerShardedFanOut(rts, Clock.system(), droppedCounter(), CAP);
         assertEquals(n, fan.buffers().size());
 
-        // Each shard commits a key unique to that shard.
         for (int gid = 0; gid < n; gid++) {
             rts.get(gid).stateMachine().apply(1, 1, CommandCodec.encodePut("k" + gid, bytes("v" + gid)));
         }
@@ -123,8 +118,6 @@ class ShardedFanOutTest {
             assertEquals("k" + gid, key, "shard " + gid + " buffer must hold ONLY its own key (no leak)");
         }
     }
-
-    // ---- Per-shard monotonicity + no fabricated global order --------------------------------
 
     @Test
     void perShardSequenceIsMonotonicAndIndependentAcrossShards() {
@@ -151,16 +144,14 @@ class ShardedFanOutTest {
             }
         }
 
-        // No fabricated cross-shard global order: every shard's sequence INDEPENDENTLY starts at 1 and
-        // runs 1..M - i.e. seq=1 exists in all N buffers simultaneously. A global merge sequence would
-        // have made these disjoint. This pins the ADR-D-A/D-C "no cross-shard total order" decision.
+        // No fabricated cross-shard global order: every shard's sequence independently starts at 1 and
+        // runs 1..M, i.e. seq=1 exists in all N buffers simultaneously. A global merge sequence would
+        // have made these disjoint.
         for (int gid = 0; gid < n; gid++) {
             assertEquals(1L, drain(fan.buffers().get(gid)).get(0).seq(),
                     "shard " + gid + " sequence is independent (per-shard), not a global counter");
         }
     }
-
-    // ---- Per-shard replay floor is per-shard ----------------------------------------------
 
     @Test
     void perShardReplaySourceFloorIsThatShardsVersion() {
@@ -183,8 +174,6 @@ class ShardedFanOutTest {
         }
     }
 
-    // ---- Thread-safety: concurrent per-shard publish (the owner-thread model) ---------------
-
     @Test
     void concurrentPerShardPublishHasNoCorruption() throws Exception {
         int n = 8;
@@ -200,11 +189,12 @@ class ShardedFanOutTest {
         List<Thread> threads = new ArrayList<>(n);
         for (int gid = 0; gid < n; gid++) {
             final int g = gid;
-            // ONE thread per group = the owner-thread model: each state machine (and thus its buffer) is
-            // driven by exactly one thread, so the property under test is the genuine single-writer-PER-
-            // BUFFER design under real cross-buffer concurrency. (The assertOwnerThread tripwire itself is
-            // inert here - these SMs use the NOOP invariant checker - so this proves no-corruption, not
-            // the tripwire; the tripwire's non-vacuity is proven at N>1 in the G2/G3 live sims.)
+            // One thread per group is the owner-thread model: each state machine (and thus its buffer)
+            // is driven by exactly one thread, so the property under test is the genuine
+            // single-writer-per-buffer design under real cross-buffer concurrency. The assertOwnerThread
+            // tripwire itself is inert here (these state machines use the NOOP invariant checker), so
+            // this test proves no-corruption, not the tripwire; the tripwire's non-vacuity is proven
+            // elsewhere with live multi-owner simulations.
             Thread t = new Thread(() -> {
                 try {
                     start.await();
@@ -239,8 +229,6 @@ class ShardedFanOutTest {
             }
         }
     }
-
-    // ---- Shared dropped counter aggregates across shards (drop-amplification observability) --
 
     @Test
     void sharedDroppedCounterAggregatesAcrossShards() {

@@ -70,14 +70,14 @@ class PerShardMetricsTest {
             assertNotNull(snap.metrics().get("raft.shard.last_applied." + gid));
             assertNotNull(snap.metrics().get("raft.shard.apply_lag." + gid));
             assertNotNull(snap.metrics().get("raft.shard.current_term." + gid));
-            // The Gate 2 wedge/saturation gauges render for every shard from the first scrape (each is 0
-            // on a healthy single-node leader - no replication lag, no codec rejects, no reassembly refusal).
+            // The wedge and saturation gauges render for every shard from the first scrape (each is 0 on a
+            // healthy single-node leader: no replication lag, no codec rejects, no reassembly refusal).
             assertNotNull(snap.metrics().get("raft.shard.replication_lag_max." + gid),
                     "replication_lag_max series missing for shard " + gid);
             assertNotNull(snap.metrics().get("raft.shard.append_send_rejected." + gid));
             assertNotNull(snap.metrics().get("raft.shard.snapshot_chunk_send_rejected." + gid));
             assertNotNull(snap.metrics().get("raft.shard.snapshot_reassembly_refused." + gid));
-            // Each group is its own single-node LEADER => leader gauge == 1, term > 0.
+            // Each group is its own single-node LEADER, so the leader gauge is 1 and term is greater than 0.
             assertEquals(1L, snap.metrics().get("raft.shard.leader." + gid).value(),
                     "shard " + gid + " must report itself LEADER");
             assertTrue(snap.metrics().get("raft.shard.current_term." + gid).value() > 0,
@@ -124,9 +124,9 @@ class PerShardMetricsTest {
 
     @Test
     void transportSaturationGaugesRenderAtZeroAndMoveWithTheEndpointCounters() {
-        // A4/A5: the outbound-drop and inbound-refuse counters live on the transport endpoint and were
-        // never exported. registerTransportSaturationGauges pull-gauges them; they must render at 0 on the
-        // first scrape and reflect the endpoint's counters as they advance.
+        // The outbound-drop and inbound-refuse counters live on the transport endpoint;
+        // registerTransportSaturationGauges pull-gauges them, so they must render at 0 on the first scrape
+        // and reflect the endpoint's counters as they advance.
         MetricsRegistry registry = new MetricsRegistry();
         MutableEndpoint endpoint = new MutableEndpoint();
         ConfigdServer.registerTransportSaturationGauges(registry, endpoint);
@@ -145,8 +145,6 @@ class PerShardMetricsTest {
                         .get("configd.raft.transport.inbound_connections_refused").value(),
                 "the inbound_connections_refused gauge must track the endpoint's refusal counter");
     }
-
-    // ---- helpers ----------------------------------------------------------------------------
 
     /** A {@link io.configd.transport.RaftTransportEndpoint} whose saturation counters are settable, so the
      *  pull gauges can be driven off a known value without standing up a real socket transport. */

@@ -10,12 +10,12 @@ import java.util.Map;
 
 /**
  * Continuous, cross-node safety-invariant checker for the deterministic
- * simulation (adversarial-sim-design section 3, group B). One instance is bound to a
+ * simulation. One instance is bound to a
  * {@link ConsistencyPropertyTests.ClusterHarness} and {@link #checkAll()} is
  * called <em>after every tick</em>; any violated predicate throws
  * {@link SafetyViolation}, which fails the seed with full replay context.
  * <p>
- * Two complementary seams cover the charter invariant list:
+ * Two complementary seams cover the invariant list:
  * <ul>
  *   <li><b>In-node, per-event</b> - {@link RaftNode.InvariantChecker} wired via the
  *       7-arg ctor by {@link ConsistencyPropertyTests.ClusterHarness}; supplies
@@ -33,8 +33,7 @@ import java.util.Map;
  * <b>Safety vs liveness.</b> Everything here is a <em>safety</em> property: a
  * violation is a real bug and FAILS the seed. Liveness goals (a leader is elected,
  * a proposal commits) are tracked separately by {@link Activity} and a stall is
- * <em>recorded, never failed</em> (charter: liveness findings are registered, not
- * hidden).
+ * <em>recorded, never failed</em> - liveness findings are registered, not hidden.
  * <p>
  * Not thread-safe; the simulation is single-threaded.
  */

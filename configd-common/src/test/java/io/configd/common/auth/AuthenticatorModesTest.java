@@ -13,8 +13,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** The built-in authenticator modes (no-auth, bearer, basic) and the PBKDF2 password store. */
 class AuthenticatorModesTest {
 
-    // ---- No-Auth ---------------------------------------------------------------------------------
-
     @Test
     void noAuthAcceptsEveryoneAsAnonymous() {
         NoAuthAuthenticator none = new NoAuthAuthenticator();
@@ -24,8 +22,6 @@ class AuthenticatorModesTest {
         assertEquals(NoAuthAuthenticator.ANONYMOUS_ID, p.id());
         assertEquals("none", p.provenance());
     }
-
-    // ---- Bearer (static shared secret, constant-time) --------------------------------------------
 
     @Test
     void bearerAcceptsMatchAndHardRejectsMismatch() {
@@ -43,8 +39,6 @@ class AuthenticatorModesTest {
                 bearer.authenticate(new Credential.BearerToken("wrong")));
         assertEquals(DenyReason.INVALID_CREDENTIAL, d.reason());
     }
-
-    // ---- Basic (PBKDF2 hashed store, constant-time) ----------------------------------------------
 
     @Test
     void basicVerifiesHashedPasswordAndAssignsRoles() {

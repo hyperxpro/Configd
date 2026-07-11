@@ -18,10 +18,11 @@ CONSTANTS
     MaxTerm,        \* Maximum term to explore (bound for model checking)
     MaxLogLen,      \* Maximum log length to explore
     Values,         \* Set of possible config values
-    ACK_ON_APPEND   \* RR-004 defect switch (BOOLEAN): FALSE = ADR-0033 fixed model
-                    \* (ack only at commit); TRUE = reproduce the ack≠commit
-                    \* counterexample (ack on local append). The default cfg sets FALSE;
-                    \* the AckOnAppend smoke cfg sets TRUE and TLC catches the violation.
+    ACK_ON_APPEND   \* Defect-reproduction switch (BOOLEAN): FALSE runs the fixed model
+                    \* (ack only at commit); TRUE reproduces the counterexample where a
+                    \* write is acked on local append, before commit. The default cfg
+                    \* sets FALSE; the AckOnAppend smoke cfg sets TRUE and TLC catches
+                    \* the violation.
 
 VARIABLES
     currentTerm,    \* currentTerm[n]: current term of node n
@@ -45,11 +46,11 @@ VARIABLES
                     \* entry in its current term (prerequisite for config changes)
     \* Edge propagation tracking
     edgeVersion,    \* edgeVersion[e]: last applied version at edge node e
-    \* Client acknowledgement tracking (RR-004 / ADR-0033)
+    \* Client acknowledgement tracking
     acked,          \* acked: set of <<index, term>> positions the system has
-                    \* acknowledged to a client with a commit sequence. ADR-0033:
-                    \* an ack is returned ONLY after the entry at that position is
-                    \* quorum-committed AND applied — never on leader-local append.
+                    \* acknowledged to a client with a commit sequence. An ack is
+                    \* returned ONLY after the entry at that position is
+                    \* quorum-committed AND applied -- never on leader-local append.
     messages        \* Set of in-flight messages
 
 vars == <<currentTerm, votedFor, log, commitIndex, state,
@@ -88,16 +89,16 @@ IsQuorumOf(Q, cfg) ==
 QuorumsOf(cfg) ==
     {Q \in SUBSET (cfg.old \cup cfg.new) : IsQuorumOf(Q, cfg)}
 
-\* Legacy quorum (over all Nodes) — kept for invariants that reference it
+\* Legacy quorum (over all Nodes) -- kept for invariants that reference it
 Quorum == {Q \in SUBSET Nodes : Cardinality(Q) * 2 > Cardinality(Nodes)}
 
 \* ---- Log Entry Types ----
 \*
 \* Each log entry is a record [term, value, type] where type is one of:
-\*   "data"   — normal client data
-\*   "noop"   — leader no-op (committed to establish commit point in new term)
-\*   "joint"  — C_old,new joint configuration entry
-\*   "final"  — C_new final configuration entry (completes reconfiguration)
+\*   "data"   -- normal client data
+\*   "noop"   -- leader no-op (committed to establish commit point in new term)
+\*   "joint"  -- C_old,new joint configuration entry
+\*   "final"  -- C_new final configuration entry (completes reconfiguration)
 \*
 \* For "joint" and "final" entries, 'value' encodes the configuration:
 \*   [old |-> <set>, new |-> <set>] for "joint"
@@ -154,12 +155,12 @@ TypeOK ==
 
 \* ---- Safety Invariants ----
 
-\* INV-1: Election Safety — at most one leader per term
+\* INV-1: Election Safety -- at most one leader per term
 ElectionSafety ==
     \A t \in 0..MaxTerm:
         Cardinality({n \in Nodes : state[n] = "leader" /\ currentTerm[n] = t}) <= 1
 
-\* INV-2: Leader Completeness — committed entries present in all future leaders
+\* INV-2: Leader Completeness -- committed entries present in all future leaders
 \* NOTE: This is a state-level approximation of the true Leader Completeness
 \* property. It checks that for any two leaders visible in the CURRENT state
 \* where one has a higher term, the higher-term leader's log contains all
@@ -175,37 +176,28 @@ LeaderCompleteness ==
                     (state[m] = "leader" /\ currentTerm[m] > currentTerm[n]) =>
                         (Len(log[m]) >= i /\ log[m][i] = log[n][i])
 
-\* INV-3: Log Matching — same index+term => same entry and all preceding
+\* INV-3: Log Matching -- same index+term => same entry and all preceding
 LogMatching ==
     \A n, m \in Nodes:
         \A i \in 1..Min(Len(log[n]), Len(log[m])):
             (log[n][i].term = log[m][i].term) =>
                 \A j \in 1..i: log[n][j] = log[m][j]
 
-\* INV-4: State Machine Safety — no two nodes apply different values at same index
+\* INV-4: State Machine Safety -- no two nodes apply different values at same index
 StateMachineSafety ==
     \A n, m \in Nodes:
         \A i \in 1..Min(commitIndex[n], commitIndex[m]):
             log[n][i] = log[m][i]
 
-\* INV-5: Version Monotonicity — edge nodes are never ahead of committed state.
+\* INV-5: Version Monotonicity -- edge nodes are never ahead of committed state.
 \* An edge at version V implies all entries 1..V are committed. This catches
 \* bugs where EdgeApply could advance past the commit index.
 VersionMonotonicity ==
     \A e \in Nodes: edgeVersion[e] <= commitIndex[e]
 
-\* INV-6: No Stale Overwrite — REMOVED (F-V2-01).
-\* This invariant was byte-for-byte identical to StateMachineSafety (INV-4).
-\* It has been replaced by VersionMonotonicity (INV-5, strengthened) and
-\* LeaderCompleteness (INV-2, now checked) which provide actual coverage.
-\*
-\* Original formula (identical to StateMachineSafety):
-\*   \A n, m \in Nodes:
-\*       \A i \in 1..Min(commitIndex[n], commitIndex[m]): log[n][i] = log[m][i]
-
 \* ---- Reconfiguration Safety Invariants ----
 
-\* INV-7: ReconfigSafety — during joint consensus, commitment requires
+\* INV-7: ReconfigSafety -- during joint consensus, commitment requires
 \* agreement from majorities of BOTH the old and new configurations.
 \* Specifically: any committed entry at index i on any node n was replicated
 \* to a set of nodes that forms a quorum under the configuration active
@@ -217,7 +209,7 @@ VersionMonotonicity ==
 \* using QuorumsOf(config[n]) instead of the static Quorum.
 \*
 \* As an invariant, we verify the consequence: no two committed entries
-\* at the same index can differ, even across configuration changes — which
+\* at the same index can differ, even across configuration changes -- which
 \* is StateMachineSafety above. Additionally, we verify that if any node
 \* is in a joint configuration, then the joint config entry exists in its
 \* log and the corresponding C_old,new entry is uncommitted or the C_new
@@ -231,7 +223,7 @@ ReconfigSafety ==
                 /\ log[n][i].value.old = config[n].old
                 /\ log[n][i].value.new = config[n].new
 
-\* INV-8: SingleServerInvariant — at most one configuration change is
+\* INV-8: SingleServerInvariant -- at most one configuration change is
 \* in-flight (uncommitted) at any time. The Raft dissertation (Section 4.3)
 \* requires this to avoid unbounded complexity. A leader must not propose
 \* a new config change while a previous one is uncommitted.
@@ -246,7 +238,7 @@ SingleServerInvariant ==
                 /\ log[n][i].type \in {"joint", "final"}
                 /\ log[n][i].term = currentTerm[n]}) <= 1
 
-\* INV-9: NoOpBeforeReconfig — a leader must commit a no-op entry in its
+\* INV-9: NoOpBeforeReconfig -- a leader must commit a no-op entry in its
 \* own term before proposing any configuration change. This ensures the
 \* leader knows its commit index is current (Raft dissertation, Section 8).
 \* We check: if there is a joint config entry at term t in the log of
@@ -259,15 +251,15 @@ NoOpBeforeReconfig ==
                     /\ log[n][j].term = log[n][i].term
                     /\ log[n][j].type = "noop"
 
-\* INV-ACK: AckImpliesCommitted (RR-004 / ADR-0033) — every acknowledged client write
-\* is committed and durable. For every <<idx, term>> the system has acked, SOME node
-\* has that exact entry (same index AND term) within its committed prefix
-\* (idx <= commitIndex). The commit-confirmed ClientAck only acks committed slots, so
-\* this holds in the fixed model. The pre-fix ClientAckOnAppend acks merely-appended
-\* slots; a slot appended on a leader that then loses an election can be truncated and
-\* replaced (a different term, or shorter log), so no node ends up with that committed
-\* <<idx, term>> — an acknowledged write that vanished on failover, exactly the RR-004
-\* defect. TLC reports the counterexample when ACK_ON_APPEND = TRUE.
+\* INV-ACK: AckImpliesCommitted -- every acknowledged client write is committed and
+\* durable. For every <<idx, term>> the system has acked, SOME node has that exact
+\* entry (same index AND term) within its committed prefix (idx <= commitIndex). The
+\* commit-confirmed ClientAck only acks committed slots, so this holds in the fixed
+\* model. The pre-fix ClientAckOnAppend acks merely-appended slots; a slot appended on
+\* a leader that then loses an election can be truncated and replaced (a different
+\* term, or shorter log), so no node ends up with that committed <<idx, term>> -- an
+\* acknowledged write that vanished on failover. TLC reports the counterexample when
+\* ACK_ON_APPEND = TRUE.
 AckImpliesCommitted ==
     \A pair \in acked:
         \E n \in Nodes:
@@ -282,13 +274,12 @@ AckImpliesCommitted ==
 \* once ANY node has committed index i, edge e eventually applies it.
 \* Uses leads-to (~>) to avoid variable-dependent bounds in temporal context.
 \*
-\* VERIFICATION NOTE (F-V2-02): TLC finds a spurious liveness violation at
-\* model bounds (MaxTerm=3 exhausted, all nodes voted for themselves in
-\* distinct candidacies, no further leader election possible). This is a
-\* well-known bounded model checking limitation — the Raft protocol
-\* guarantees liveness only under eventual message delivery and unbounded
-\* terms. Safety properties (all passing) are the critical verification
-\* target. Liveness should be verified structurally or with Apalache.
+\* VERIFICATION NOTE: TLC finds a spurious liveness violation at model bounds
+\* (MaxTerm=3 exhausted, all nodes voted for themselves in distinct candidacies, no
+\* further leader election possible). This is a well-known bounded model checking
+\* limitation -- the Raft protocol guarantees liveness only under eventual message
+\* delivery and unbounded terms. Safety properties (all passing) are the critical
+\* verification target. Liveness should be verified structurally or with Apalache.
 EdgePropagationLiveness ==
     \A e \in Nodes:
         \A i \in 1..MaxLogLen:
@@ -518,21 +509,22 @@ EdgeApply(e) ==
                     nextIndex, matchIndex, config, leaderHasCommittedNoOp, acked,
                     messages>>
 
-\* ---- Client Acknowledgement (RR-004 / ADR-0033) ----
+\* ---- Client Acknowledgement ----
 \*
 \* The system acknowledges a client write at position <<idx, term>> with a commit
-\* sequence. ADR-0033 fixes the ack≠commit defect: an ack is returned ONLY after the
-\* entry is quorum-committed (idx <= commitIndex[n]) AND applied on the acking leader,
-\* and only for the entry that actually occupies that slot (log[n][idx].term = term).
-\* We model "applied" by the leader's commitIndex (apply tracks commit in this abstract
-\* model; the runtime read-freshness twin enforces apply >= readIdx separately).
+\* sequence. The fix for the ack-before-commit defect: an ack is returned ONLY after
+\* the entry is quorum-committed (idx <= commitIndex[n]) AND applied on the acking
+\* leader, and only for the entry that actually occupies that slot
+\* (log[n][idx].term = term). We model "applied" by the leader's commitIndex (apply
+\* tracks commit in this abstract model; the runtime read-freshness twin enforces
+\* apply >= readIdx separately).
 \*
-\* The PRE-FIX defect (the thing RR-004 fixed) was acking on leader-LOCAL APPEND, before
-\* commit: that is the action `ClientAckOnAppend` below, gated by the model constant
-\* ACK_ON_APPEND. With ACK_ON_APPEND = FALSE (the fixed model) only the commit-confirmed
-\* ack is enabled and AckImpliesCommitted holds. Flip ACK_ON_APPEND = TRUE to reproduce
-\* the seeded counterexample (TLC catches the ack-on-append defect — the spec-level
-\* test-the-tester for ADR-0033). See ConsensusSpec.cfg / the AckOnAppend smoke cfg.
+\* The PRE-FIX defect was acking on leader-LOCAL APPEND, before commit: that is the
+\* action `ClientAckOnAppend` below, gated by the model constant ACK_ON_APPEND. With
+\* ACK_ON_APPEND = FALSE (the fixed model) only the commit-confirmed ack is enabled and
+\* AckImpliesCommitted holds. Flip ACK_ON_APPEND = TRUE to reproduce the seeded
+\* counterexample (TLC catches the ack-on-append defect -- the spec-level
+\* test-the-tester for the fix). See ConsensusSpec.cfg / the AckOnAppend smoke cfg.
 ClientAck(n) ==
     /\ state[n] = "leader"
     \* State-space bound: one acked position is enough to exercise AckImpliesCommitted
@@ -547,9 +539,9 @@ ClientAck(n) ==
                     nextIndex, matchIndex, config, leaderHasCommittedNoOp,
                     edgeVersion, messages>>
 
-\* PRE-FIX DEFECT MODEL (RR-004): ack on leader-local append, BEFORE commit. Enabled
-\* only when ACK_ON_APPEND = TRUE. This is the ack≠commit bug — the leader acks a slot
-\* it has merely appended (idx <= Len(log[n])) but not yet committed (idx may be >
+\* PRE-FIX DEFECT MODEL: ack on leader-local append, BEFORE commit. Enabled only when
+\* ACK_ON_APPEND = TRUE. This is the ack-before-commit bug -- the leader acks a slot it
+\* has merely appended (idx <= Len(log[n])) but not yet committed (idx may be >
 \* commitIndex[n]); a later election can truncate that slot, leaving an acked-but-lost
 \* write. AckImpliesCommitted catches it.
 ClientAckOnAppend(n) ==

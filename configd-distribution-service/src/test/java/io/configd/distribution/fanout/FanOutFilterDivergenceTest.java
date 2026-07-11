@@ -23,10 +23,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 /**
- * The flag-OFF byte-identity proof (ADR-0045 test (b)): with server-side filtering off, a
- * prefix session's emitted frame stream is identical to the classic full-chain path, and the
- * genuine-eviction gap path is unchanged (server-side gap detection is preserved). The flag is
- * the only switch: the SAME subscribe under flag-ON diverges (it filters).
+ * The flag-OFF byte-identity proof: with server-side filtering off, the emitted frame
+ * stream of a prefix session is identical to the classic full-chain path, and the
+ * genuine-eviction gap path is unchanged, since server-side gap detection is preserved.
+ * The flag is the only switch: the same subscribe under flag-ON diverges, since it filters.
  */
 class FanOutFilterDivergenceTest {
 
@@ -58,8 +58,8 @@ class FanOutFilterDivergenceTest {
 
     @Test
     void flagOffIsByteIdenticalToClassicFullChain() {
-        FanOutConfig flagOff = FanOutConfig.defaults(); // serverSidePrefixFilter == false
-        // A prefix subscribe that opted in, but the deployment posture is OFF -> classic path.
+        FanOutConfig flagOff = FanOutConfig.defaults(); // serverSidePrefixFilter is false
+        // A prefix subscribe that opted in, but the deployment posture is off, so the classic path.
         List<EdgeFrame> prefixFlagOff = drain(flagOff,
                 new EdgeFrame.Subscribe(false, List.of("svc/"), 0L, -1L, "edge-1", true));
         // The classic full-store baseline over the identical input.
@@ -97,8 +97,9 @@ class FanOutFilterDivergenceTest {
 
     @Test
     void genuineEvictionStillDemotesUnderFiltering() {
-        // The handleGap path is untouched by filtering: a cursor whose successor was evicted still
-        // demotes to a snapshot (server-side gap detection preserved). A tiny ring + a stale cursor.
+        // The handleGap path is untouched by filtering: a cursor whose successor was
+        // evicted still demotes to a snapshot, since server-side gap detection is
+        // preserved. A tiny ring and a stale cursor.
         FakeClock clock = new FakeClock(1_000L);
         RecordingTransportSink sink = new RecordingTransportSink();
         FanOutConfig cfg = FanOutConfig.defaults().withServerSidePrefixFilter(true, Set.of("secure/"));
@@ -110,8 +111,9 @@ class FanOutFilterDivergenceTest {
             buffer.publish(put(i, "svc/k" + i));
         }
         s.onSubscribe(new EdgeFrame.Subscribe(false, List.of("svc/"), 1L, -1L, "edge-1", true));
-        // decideMode sees the readSince(1) GAP and chooses SNAPSHOT_FIRST (re-bootstrap), exactly
-        // as it would on the classic path - filtering does not mask a genuine fall-behind.
+        // decideMode sees the readSince(1) GAP and chooses SNAPSHOT_FIRST (re-bootstrap),
+        // exactly as it would on the classic path - filtering does not mask a genuine
+        // fall-behind.
         assertEquals(EdgeFrame.Mode.SNAPSHOT_FIRST,
                 sink.sentOfType(EdgeFrame.SubscribeOk.class).get(0).mode());
     }

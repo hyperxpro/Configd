@@ -45,38 +45,31 @@
 
     <profiles>
         <!--
-          B3 / RR-087 (distribution-service control-plane mutation, charter
-          §4.1). Activated with the parent `-Pmutation`. This module is mixed:
-          a live CONTROL PLANE (the commit-notification boundary that landed in
-          S2 §4.6 / ADR-0034 — the surface Session 3 consumes — plus the active
-          watch/dissemination path) and SHELFWARE (the RR-001 edge-data-plane
-          fan-out/gossip machinery, blocked on the implement-or-descope ADR).
+          Activated with the parent -Pmutation flag. This module mixes a live control
+          plane, the commit-notification boundary plus the active watch and
+          dissemination path, with shelfware: edge-data-plane fan-out and gossip
+          machinery that is blocked on a future implement-or-descope decision.
 
-          We hold the CONTROL PLANE to mutationThreshold 65 and EXCLUDE the
-          shelfware explicitly (listed, never silently omitted — the RR-012 /
-          RR-085 lesson). RR-088 tracks raising the shelfware once RR-001 is
-          resolved; until then a 65 bar over dead-pending code would be noise.
+          The control plane is held to mutationThreshold 65. The shelfware is excluded
+          explicitly and listed here, never silently omitted, so an exclusion can never
+          quietly mask a real coverage gap.
 
-          CONTROL-PLANE targetClasses (held to 65):
+          Control-plane targetClasses (held to 65):
             CommitNotification, CommitNotificationSource, FanOutBuffer,
-            FanOutMetrics, ReplaySource, SnapshotReplaySource  (§4.6/ADR-0034
-                commit-notification boundary — the just-landed control plane);
+            FanOutMetrics, ReplaySource, SnapshotReplaySource (the commit-notification
+                boundary, the control plane consumed downstream);
             WatchService, WatchCoalescer, WatchEvent, SubscriptionManager,
-            PlumtreeNode, RolloutController                    (active watch /
-                dissemination / rollout control plane);
-            io.configd.distribution.wire.*                     (C1 / gate-3: the
-                edge protocol model + EdgeFrameCodec + EdgeSnapshotCodec);
-            io.configd.distribution.fanout.*                   (C1 / gate-3: the
-                FanOutSessionCore + config/sink/metrics/demotion seams).
+            PlumtreeNode, RolloutController (the active watch, dissemination, and
+                rollout control plane);
+            io.configd.distribution.wire.* (the edge protocol model plus
+                EdgeFrameCodec and EdgeSnapshotCodec);
+            io.configd.distribution.fanout.* (FanOutSessionCore plus its config,
+                sink, metrics, and demotion seams).
 
-          EXCLUDED shelfware (RR-088 / RR-001 — no consumer-facing wire path
-          exists yet; tracked, not held to a bar here):
-            HyParViewOverlay   — gossip membership overlay; failure-repair
-                                 machinery untested, pending the edge data plane.
-          (C4 closed the other two RR-088 rows by DELETION: CatchUpService —
-           superseded by FanOutSessionCore + ReplaySource, zero consumers (C3
-           note §8); SlowConsumerPolicy — superseded by SlowConsumerGovernor,
-           the fanout.* implement-half, held to the 65 bar above.)
+          Excluded shelfware (no consumer-facing wire path exists yet, so it is
+          tracked here but not held to a bar):
+            HyParViewOverlay - gossip membership overlay; failure-repair machinery
+                               untested, pending the edge data plane.
         -->
         <profile>
             <id>mutation</id>

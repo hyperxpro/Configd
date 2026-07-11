@@ -18,23 +18,22 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * RED-TEAM - independent adversarial PoC battery for the coalesced
- * heartbeat codec. Complements the author's {@code CoalescedHeartbeatCodecTest} /
- * {@code RaftTransportAdapterCoalescedInboundTest} / {@code FrameCodecEpochReservationTest} by closing
- * the gaps they did not cover:
+ * Adversarial PoC battery for the coalesced heartbeat codec, closing gaps not covered by
+ * {@code CoalescedHeartbeatCodecTest}, {@code RaftTransportAdapterCoalescedInboundTest}, and
+ * {@code FrameCodecEpochReservationTest}:
  * <ul>
- *   <li>full <b>end-to-end wire</b> round-trip of the NEW coalesced type through {@link FrameCodec}
+ *   <li>full <b>end-to-end wire</b> round-trip of the coalesced type through {@link FrameCodec}
  *       (encode-to-bytes -> CRC/epoch -> decode), proving the 8-byte reserved epoch does not shift the
- *       coalesced payload boundary (hunting target #4 - desync);</li>
- *   <li><b>type confusion both directions</b> (#5): a coalesced frame must fail-closed in the generic
+ *       coalesced payload boundary;</li>
+ *   <li><b>type confusion both directions</b>: a coalesced frame must fail-closed in the generic
  *       {@link RaftMessageCodec#decode}, and a non-coalesced payload must fail-closed in
  *       {@link RaftMessageCodec#decodeCoalescedHeartbeat};</li>
- *   <li>the <b>{@code MAX_COALESCED_GROUPS} boundary</b> (#1/#2): exactly-1024 accepted; one byte short
+ *   <li>the <b>{@code MAX_COALESCED_GROUPS} boundary</b>: exactly-1024 accepted; one byte short
  *       rejected with {@link IllegalArgumentException}, never {@link java.nio.BufferUnderflowException};</li>
- *   <li><b>sign safety</b> (#3): negative groupId / leaderId decode without crashing;</li>
- *   <li>the <b>int-overflow count</b> (#1): a count whose {@code count*40} overflows 32-bit is rejected.</li>
+ *   <li><b>sign safety</b>: negative groupId / leaderId decode without crashing;</li>
+ *   <li>the <b>int-overflow count</b>: a count whose {@code count*40} overflows 32-bit is rejected.</li>
  * </ul>
- * Result: every attack is DEFENDED (each PoC asserts a clean reject or a faithful round-trip).
+ * Every attack is defended: each PoC asserts a clean reject or a faithful round-trip.
  */
 class RedTeamCoalescedWirePoCTest {
 
@@ -50,7 +49,7 @@ class RedTeamCoalescedWirePoCTest {
         return new FrameCodec.Frame(MessageType.RAFT_COALESCED_HEARTBEAT, 0, 0L, payload);
     }
 
-    // ---- #4: end-to-end wire round-trip of the coalesced type (the epoch must not desync it) ----
+    // End-to-end wire round-trip of the coalesced type: the epoch must not desync it.
 
     @Test
     void coalescedSurvivesFullFrameCodecWireRoundTrip() {
@@ -80,7 +79,7 @@ class RedTeamCoalescedWirePoCTest {
         }
     }
 
-    // ---- #5: type confusion, both directions, must fail closed ----
+    // Type confusion, both directions, must fail closed.
 
     @Test
     void genericDecodeRejectsCoalescedFrame() {
@@ -103,7 +102,7 @@ class RedTeamCoalescedWirePoCTest {
                 () -> RaftMessageCodec.decodeCoalescedHeartbeat(requestVote));
     }
 
-    // ---- #1/#2: MAX_COALESCED_GROUPS boundary - exactly-max accepted, one byte short = clean IAE ----
+    // MAX_COALESCED_GROUPS boundary: exactly-max accepted, one byte short must be a clean IAE.
 
     @Test
     void exactlyMaxGroupsAccepted_oneByteShortRejectedCleanly() {
@@ -124,7 +123,7 @@ class RedTeamCoalescedWirePoCTest {
                 () -> RaftMessageCodec.decodeCoalescedHeartbeat(coalescedFrame(truncated)));
     }
 
-    // ---- #3: sign safety - negative groupId / leaderId decode without crashing ----
+    // Sign safety: negative groupId / leaderId decode without crashing.
 
     @Test
     void negativeGroupIdAndLeaderIdDecodeWithoutCrash() {
@@ -143,7 +142,7 @@ class RedTeamCoalescedWirePoCTest {
         assertEquals(Integer.MIN_VALUE, out.get(-1).leaderId().id());
     }
 
-    // ---- #1: integer-overflow count (count*40 wraps 32-bit) must be rejected ----
+    // Integer-overflow count (count*40 wraps 32-bit) must be rejected.
 
     @Test
     void overflowingCountRejected() {

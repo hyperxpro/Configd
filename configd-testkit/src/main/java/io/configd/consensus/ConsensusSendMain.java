@@ -15,14 +15,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
 /**
- * Consensus brief-confirm (surface 4) - the <b>sender</b>. Opens ONE peer link (synchronous
+ * Consensus brief-confirm - the <b>sender</b>. Opens one peer link (synchronous
  * connect) with the forced transport tier ({@link NettyTransport#select()} honouring
  * {@code -Dconfigd.netty.transport}) and sends Raft frames through the <b>production</b>
- * {@link NettyConsensusFrameEncoder} (the in-pipeline ~0-B/op event-loop encoder). The
- * receiver is the byte-draining {@link io.configd.jdkvsnetty.ConsensusDrainServerMain} (untraced and
- * identical across tiers), so straceing THIS sender is a clean io_uring-vs-epoll comparison at a
+ * {@link NettyConsensusFrameEncoder} (the in-pipeline near-zero-allocation event-loop encoder).
+ * The receiver is the byte-draining {@link io.configd.jdkvsnetty.ConsensusDrainServerMain} (untraced
+ * and identical across tiers), so straceing this sender is a clean io_uring-vs-epoll comparison at a
  * single connection - the consensus wire's actual connection scale (N-1 peers), where io_uring is
- * expected to show little (the charter's confirm-don't-over-invest surface).
+ * expected to show little benefit.
  *
  * <pre>
  *   java --enable-preview -Dconfigd.netty.transport=io_uring -cp benchmarks.jar \
@@ -72,7 +72,8 @@ public final class ConsensusSendMain {
             long t0 = System.nanoTime();
             for (long i = 0; i < count; i++) {
                 // writeAndFlush from this thread hands the encode+write+flush to the event loop;
-                // one flush per frame ~ one socket write - the un-coalesced single-link send pattern.
+                // one flush per frame is roughly one socket write - the un-coalesced single-link
+                // send pattern.
                 ch.writeAndFlush(frame, ch.voidPromise());
                 if (intervalNanos > 0) {
                     long wait = (t0 + (i + 1) * intervalNanos) - System.nanoTime();

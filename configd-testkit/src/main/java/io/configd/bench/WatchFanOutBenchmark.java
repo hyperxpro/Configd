@@ -110,17 +110,12 @@ public class WatchFanOutBenchmark {
     }
 
     /**
-     * Setup variant with prefix-filtered watchers: half watch "db.",
-     * half watch "cache.".
+     * Documents the prefix-filtered scenario: {@link #setUp} registers every watcher on the
+     * "" (match-all) prefix, so this variant still measures the worst case (every watcher
+     * matches) rather than an actual half-db/half-cache split.
      */
     @Setup(Level.Trial)
     public void setUpPrefixWatchers() {
-        // Already set up in setUp() - this method exists for the
-        // prefixFilteredDispatch benchmark's documentation.
-        // The watchers watch "" (all), so prefix filtering is tested
-        // by using a key that doesn't match all watchers in the
-        // filtered variant. In this benchmark, all watchers use ""
-        // so we measure worst-case (all match).
     }
 
     /**

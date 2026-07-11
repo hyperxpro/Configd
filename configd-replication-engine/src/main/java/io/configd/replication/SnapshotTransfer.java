@@ -174,10 +174,6 @@ public final class SnapshotTransfer {
     public SnapshotTransfer() {
     }
 
-    // ========================================================================
-    // Sender side
-    // ========================================================================
-
     /**
      * Starts a new snapshot send operation.
      *
@@ -227,10 +223,6 @@ public final class SnapshotTransfer {
         return new SnapshotChunk(offset, chunkData, done, state.lastIncludedIndex, state.lastIncludedTerm);
     }
 
-    // ========================================================================
-    // Receiver side
-    // ========================================================================
-
     /**
      * Starts a new snapshot receive operation.
      *
@@ -267,7 +259,6 @@ public final class SnapshotTransfer {
         Objects.requireNonNull(state, "state");
         Objects.requireNonNull(data, "data");
 
-        // Reject if already complete or if offset doesn't match expected
         if (state.complete) {
             return false;
         }

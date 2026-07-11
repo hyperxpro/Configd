@@ -20,9 +20,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Boundary / decision-edge tests for {@link FanOutSessionCore} that pin the exact thresholds
- * the broader unit + property tests don't isolate: the SNAPSHOT_FIRST backlog boundary, the
- * byte-cap batch split, the ack-release boundary, and the slow-consumer warn threshold.
+ * Boundary and decision-edge tests for {@link FanOutSessionCore} that pin the exact
+ * thresholds the broader unit and property tests do not isolate: the SNAPSHOT_FIRST
+ * backlog boundary, the byte-cap batch split, the ack-release boundary, and the
+ * slow-consumer warn threshold.
  */
 class FanOutSessionCoreBoundaryTest {
 
@@ -49,12 +50,13 @@ class FanOutSessionCoreBoundaryTest {
     }
 
     /**
-     * The fresh-subscriber rule: a cursor-0 subscriber gets SNAPSHOT_FIRST whenever ANY data
-     * exists, and TAIL only on a truly empty ring. Rationale: tail-replaying history to a
-     * cache-less subscriber is rejected as a replay by any restarted edge's epoch floor
-     * (wedging recovery behind the prod ack-lag threshold), and a post-restart ring does not
-     * retain genesis. The old backlog boundary (TAIL at backlog == queueFrames) is gone BY
-     * DESIGN - this pin is the regression tripwire for it.
+     * The fresh-subscriber rule: a cursor-0 subscriber gets SNAPSHOT_FIRST whenever any
+     * data exists, and TAIL only on a truly empty ring. Rationale: tail-replaying history
+     * to a cache-less subscriber is rejected as a replay by the epoch floor of any
+     * restarted edge, wedging recovery behind the production ack-lag threshold, and a
+     * post-restart ring does not retain genesis. The old backlog boundary, TAIL when
+     * backlog equals queueFrames, is gone by design; this pin is the regression tripwire
+     * for it.
      */
     @Test
     void freshBacklogBoundaryAtQueueFramesDecidesMode() {
@@ -88,9 +90,10 @@ class FanOutSessionCoreBoundaryTest {
     /** A NOTIFY batch is split when the next notification would EXCEED batchMaxBytes. */
     @Test
     void batchByteCapSplitsAtTheExactByteBoundary() {
-        // Each put has a ~1000-byte value; with batchMaxBytes small, batches split by bytes.
+        // Each put has a value of about 1000 bytes; with batchMaxBytes small, batches
+        // split by bytes.
         FanOutBuffer buf = new FanOutBuffer(64);
-        // batchMaxBytes chosen so ~2 notifications fit per frame.
+        // batchMaxBytes chosen so about 2 notifications fit per frame.
         FanOutConfig cfg = new FanOutConfig(64, 80, 64, 2200, 8_192L, 250L, 5L, 1_048_576);
         FanOutSessionCore s = session(buf, replayAt(4), cfg);
         s.onSubscribe(sub(0)); // on the empty buffer: TAIL
@@ -118,7 +121,7 @@ class FanOutSessionCoreBoundaryTest {
         assertEquals(5, expect);
     }
 
-    /** onCursorAck releases frames with maxSeq <= ack and keeps frames strictly above it. */
+    /** onCursorAck releases frames with maxSeq at or below ack and keeps frames strictly above it. */
     @Test
     void cursorAckReleaseIsInclusiveAtTheBoundary() {
         FanOutBuffer buf = new FanOutBuffer(64);
@@ -140,13 +143,13 @@ class FanOutSessionCoreBoundaryTest {
     @Test
     void slowConsumerWarnFiresAtThresholdExactlyOnce() {
         FanOutBuffer buf = new FanOutBuffer(64);
-        // queueFrames 5, warn 80% -> threshold 4 frames; batchMax 1.
+        // queueFrames 5, warn percentage 80, giving threshold 4 frames; batchMax 1.
         FanOutConfig cfg = new FanOutConfig(5, 80, 1, 262_144, 8_192L, 250L, 5L, 1_048_576);
         CountingMetrics metrics = new CountingMetrics();
         FanOutSessionCore s = new FanOutSessionCore(buf, replayAt(4), sink, cfg, metrics, clock);
         s.onSubscribe(sub(0)); // on the empty buffer: TAIL
         for (long i = 1; i <= 4; i++) buf.publish(put(i, 1));
-        s.tick(clock.now()); // streams 4 frames -> hits threshold 4 -> one warning
+        s.tick(clock.now()); // streams 4 frames, hitting threshold 4, producing one warning
         assertEquals(1, metrics.warnings, "warn fires once at the threshold");
         // Ack down then back up: warning re-arms and fires again.
         s.onCursorAck(4);

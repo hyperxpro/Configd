@@ -9,12 +9,12 @@ import io.configd.distribution.wire.ErrorCode;
  * enforcement, or a {@code REFRESH_AUTH} presented an unacceptable/over-cap fresh credential. Always a framed
  * {@code ERROR_CLOSE}, always connection-fatal.
  *
- * <p><b>§07 reaction:</b> the credential <b>was</b> valid and the <b>session</b> expired — this is a
+ * <p><b>Reaction:</b> the credential <b>was</b> valid and the <b>session</b> expired — this is a
  * <b>reconnect + re-authenticate</b> signal, distinct from {@link AuthFailedException} ("never valid") and
  * from a permanent {@link ForbiddenException}. A token client presents a fresh credential in a new
  * {@code AUTH} on a new connection; a certificate client reconnects with its rotated certificate (a cert
  * cannot refresh in-band). A driver <b>SHOULD</b> refresh proactively (a lead-time {@code REFRESH_AUTH})
- * before expiry to avoid it entirely (§03 AU5-6).
+ * before expiry to avoid it entirely.
  */
 public final class CredentialExpiredException extends ConfigdException {
 

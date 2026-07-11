@@ -141,8 +141,8 @@ public final class AuditLog {
     /**
      * Creates a KEYLESS audit log (plain SHA-256 chain) with the default record
      * cap. Evidence against careless edits only - see the class javadoc; use the
-     * {@link #AuditLog(Storage, Clock, SecretKey)} keyed ctor for the threat-model
-     * (A2) tamper-evidence bar.
+     * {@link #AuditLog(Storage, Clock, SecretKey)} keyed ctor for tamper-evidence
+     * against an attacker with file-write access.
      *
      * @param storage durable, append+CRC storage (non-null)
      * @param clock   time source (non-null)
@@ -294,8 +294,8 @@ public final class AuditLog {
 
     /**
      * Re-reads and decodes the persisted audit records (in append order), independent of this
-     * instance's in-memory chain. Used by the node-anchor boot cross-check (§A1.6) to confirm the
-     * replayed chain still reaches the anchored head {@code (auditRecordCount, auditHeadHash)}: if the
+     * instance's in-memory chain. Used by the node-anchor boot cross-check to confirm the replayed
+     * chain still reaches the anchored head {@code (auditRecordCount, auditHeadHash)}: if the
      * anchored head's {@code recordHash} is absent from the persisted records, the on-disk log was
      * truncated below the last anchored head - a detected tamper the caller REFUSEs.
      *

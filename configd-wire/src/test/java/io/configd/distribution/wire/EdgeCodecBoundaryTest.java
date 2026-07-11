@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class EdgeCodecBoundaryTest {
 
-    // ---- EdgeFrameCodec exact bounds ---------------------------------------
+    // EdgeFrameCodec exact bounds
 
     @Test
     void minimumFrameLengthIsHeaderPlusTrailer() {
@@ -102,7 +102,7 @@ class EdgeCodecBoundaryTest {
                 "the signed notification (with signature+nonce) must be larger than the unsigned one");
     }
 
-    // ---- EdgeSnapshotCodec exact bounds ------------------------------------
+    // EdgeSnapshotCodec exact bounds
 
     @Test
     void chunkBoundaryProducesExactChunkCount() {

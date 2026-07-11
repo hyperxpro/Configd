@@ -15,9 +15,9 @@ import java.util.Map;
  * A {@link KmsProvider} that uses HashiCorp Vault's Transit engine as a SEAL CUSTODIAN for one per-node
  * keyring-custody secret. Vault holds the KEK; this provider seals ({@code wrap}) and unseals
  * ({@code unwrap}) a single 32-byte secret and never asks Vault to touch a config record - the missing
- * per-record method is the whole point (R1). At boot the core calls {@link #unwrap} once, caches the secret,
- * and drops this provider (R2); if Vault is unreachable it throws {@link KmsUnavailableException} and the node
- * FAILS CLOSED (R3) - never a fallback.
+ * per-record method is the whole point. At boot the core calls {@link #unwrap} once, caches the secret,
+ * and drops this provider; if Vault is unreachable it throws {@link KmsUnavailableException} and the node
+ * FAILS CLOSED - never a fallback.
  *
  * <h2>Provision / unseal / rotate</h2>
  * <ul>
@@ -33,7 +33,7 @@ import java.util.Map;
  * <h2>Auth</h2>
  * AppRole is the portable default (RoleID + SecretID); a raw token is dev-only. Kubernetes / TLS-cert / JWT
  * auth are extension points (present the platform identity to the matching Vault auth mount). Login happens
- * once per backend call and the token is dropped with the provider (R2), so no renewal daemon exists.
+ * once per backend call and the token is dropped with the provider, so no renewal daemon exists.
  */
 public final class VaultTransitKmsProvider implements KmsProvider {
 

@@ -1,53 +1,103 @@
 # Configd
 
-A strongly-consistent, sharded, mTLS-securable configuration store. Writes go through sharded Raft for durability and horizontal scale; committed changes fan out to a region-local fleet of edge readers that serve reads from an in-process, lock-free cache in microseconds.
+A strongly-consistent, sharded configuration store. Writes go through Raft, so they are durable and
+linearizable. Committed changes fan out to a region-local fleet of edge readers that serve reads from
+an in-process, lock-free cache in microseconds.
 
-The split is the point: consensus gives you linearizable, durable writes, and the edge gives you fast local reads without paying a consensus round trip on the read path.
+The split is the whole idea: consensus gives you durable, linearizable writes, and the edge gives you
+fast local reads without paying a consensus round trip on every read.
 
-## What v1 is
+## What it does
 
-- **Durable, linearizable writes** through Raft, with strong reads available via ReadIndex and bounded-staleness reads at the edge by default. Snapshots stream to lagging followers in chunks, so total state is not capped by the wire frame size.
-- **Tamper- and rollback-evident on disk.** Every persistent format carries a version marker and, in an authenticated posture, an integrity envelope; the WAL binds a per-record hash chain, and a dual-slot, monotonic durability anchor (folding in the Raft vote state) makes truncation or rollback of committed data fail closed at recovery rather than silently accepted. In a real multi-node cluster a peer-quorum witness closes the within-term vote-rollback (split-brain) case. The threat model is a filesystem-write adversary without the key; the honest residuals (freshness/anchor-rollback within a term, and the N>=5 fast-vote window) are documented in [the frozen-format design](docs/design/frozen-format-v1-2026-07-03.md).
-- **Sharded for horizontal scale.** A single region-local group is the default (N=1); sharding is wired and proven, and scale is near-linear across machines. Per-group leadership can be moved with an ADMIN-gated transfer route.
-- **A full pluggable authentication system** (No-Auth, HTTP Basic, Bearer, mTLS, and OIDC/JWT) shared by the admin API and the edge plane through one authenticator chain, with a per-key authorization model (roles, policies, deny-precedence), credential expiry/revocation on the edge, and a keyed-HMAC audit log. Raft peer membership (node-join) is mTLS-only, matched against a per-node allow-list.
-- **At-rest integrity by default, encryption available.** By default, values are stored in plaintext and integrity-checked (tamper detection); node-local AES-256-GCM encryption at rest can be enabled with a flag, backed by a pluggable KMS-provider SPI. At-rest integrity keys are term-versioned in both postures and rooted in a persisted, dual-slot keyring, so key rotation is non-destructive by construction (old-term data still reads); the keyless posture is byte-for-byte identical to pre-freeze. Enabling encryption is a one-way door — read [the deployer must-knows](docs/operations/deployer-must-know.md) first. With encryption off, do not put secrets in Configd (see the limitations below).
-- **Secure by configuration, not by default.** TLS and mTLS, authentication, the audit log, encryption at rest, and replay protection are off until you turn them on (the server warns loudly while they are off). One control is on unconditionally: the default bind is loopback, and binding a non-loopback interface with auth off is refused unless explicitly overridden. See the [operator runsheet](docs/operations/operator-runsheet.md).
-- **Fails closed under load and faults.** Write-admission control (429 + `Retry-After`) is on by default under a conservative inflight-proposal cap; readiness is shard-aware (a node that has lost quorum on any hosted shard reports not-ready) and a node drains before shutting down on `SIGTERM`.
+- **Durable, linearizable writes** through Raft. Strong reads go through ReadIndex; edge reads are
+  bounded-staleness by default. Snapshots stream to lagging followers in chunks, so total state is not
+  capped by the wire frame size.
+- **Sharded for horizontal scale.** The default is a single region-local Raft group; sharding is wired
+  and scales near-linearly across machines. A decentralized balancer keeps one leader per box, and an
+  ADMIN-gated route moves a group's leadership by hand.
+- **Tamper- and rollback-evident on disk.** Every persistent format carries a version marker; in an
+  authenticated posture it also carries an integrity envelope, the WAL binds a per-record hash chain,
+  and a dual-slot monotonic durability anchor makes truncation or rollback of committed data fail
+  closed at recovery rather than being silently accepted. In a real multi-node cluster a peer-quorum
+  witness closes the within-term vote-rollback (split-brain) case. The threat model is a
+  filesystem-write adversary who does not hold the key.
+- **A pluggable authentication system** — No-Auth, HTTP Basic, Bearer, mTLS, and OIDC/JWT — shared by
+  the admin API and the edge plane through one authenticator chain. Authorization is per-key (roles,
+  policies, deny-precedence), the edge honors credential expiry and revocation, and the audit log is a
+  keyed-HMAC chain. Raft node membership is mTLS-only against a per-node allow-list.
+- **At-rest integrity by default; encryption optional.** Values are stored in plaintext and
+  integrity-checked (tamper detection) unless you turn on node-local AES-256-GCM encryption, which is
+  backed by a pluggable KMS provider (a local key derived from the signing key, or external Vault
+  Transit). At-rest keys are versioned per Raft term and rooted in a persisted dual-slot keyring, so
+  rotation is non-destructive: old-term data still reads. With encryption off, the keyless posture is
+  byte-for-byte identical to a build that never had the feature.
+- **Secure by configuration, not by default.** TLS and mTLS, authentication, the audit log, encryption
+  at rest, and replay protection are all off until you turn them on, and the server warns loudly while
+  they are off. One control is unconditional: the default bind is loopback, and binding a non-loopback
+  interface with auth off is refused unless you explicitly override it.
+- **Fails closed under load and faults.** Write admission (429 + `Retry-After`) is on by default under
+  a conservative in-flight-proposal cap; readiness is shard-aware (a node that has lost quorum on any
+  shard it hosts reports not-ready), and a node drains before it shuts down on `SIGTERM`.
 
-## What v1 proved on real hardware
+## Limitations worth knowing up front
 
-- **Durability under fault.** Disaster-recovery drills failed over in about 372 ms with zero committed-write loss across three fault modes (recovery time 4.2 to 5.9 s), and a 6-hour soak ran leak- and OOM-clean.
-- **Linearizability under fault.** A real Jepsen-grade adversarial matrix — `kill -9`+restart, network partitions (single- and multi-node, quorum-breaking), `SIGSTOP`/`SIGCONT` pauses, packet loss, clock skew, and overlapping combinations — runs on 3- and 5-node clusters across encryption / auth / clock-skew / multi-shard postures, every recorded history checked by the trusted Porcupine checker. It did its job: it **found a real linearizability bug** (a fresh leader could serve a phantom-absent linearizable read; a missing ReadIndex no-op gate, Raft §6.4), which was **fixed in the same arc**, after which the full matrix re-ran every-history-linearizable (`docs/measurement/e1-faulted-linz-2026-07-10/`). Endurance (a ≥72 h soak) is still pending. Edge staleness bounds held with wide margin (p99 of 13 to 24 ms against a 500 ms bound).
-- **Horizontal scale.** Near-linear at about 2.45x across three machines (656, then 1075, then 1607 committed writes per second). A single group's write knee is about 800 writes/s, and a single box plateaus near 1100.
-- **Encryption cost.** Enabling encryption at rest cost about 2.5% of the write knee and 1.5% at p50; the overhead is tail-weighted (p99 roughly doubles).
-- **Honest residuals.** Soak is proven to 6 hours, not 24. Measurement is single-region by design. Leadership auto-balance is built and E2E-tested but the 2.45x number predates it (measured under manual one-leader-per-box placement), so sustained multi-machine scale under the balancer is not yet number-captured.
+These are deliberate, not surprises. The full list is in
+[`docs/operations/known-limitations.md`](docs/operations/known-limitations.md).
 
-The full evidence lives in [`docs/archive/`](docs/archive/): the [go/no-go review](docs/archive/readiness/v1-go-no-go-2026-07-01.md), the audited [readiness register](docs/archive/readiness/production-readiness-register.md), and the two paid [EC2 measurement runs](docs/archive/measurement/). The release-commit measurements (faulted linearizability, staleness bounds, encryption overhead) are in [`docs/measurement/`](docs/measurement/).
+- **Encryption at rest is off by default and a one-way door.** With it off, every value is plaintext,
+  including `secure/` keys — the `secure/` prefix buys read *freshness* (always linearizable, never
+  served stale), not confidentiality. Keep real secrets in a dedicated secret manager. Once you write
+  the first encrypted record, encryption cannot be turned back off and the binary cannot roll back to a
+  version that predates it.
+- **Key rotation is non-destructive but offline.** Term and signing-key rotation are crash-atomic and
+  keep old data readable, but there is no online admin trigger yet — rotation is a maintenance action on
+  a stopped node. The audit-log HMAC chain is the one at-rest key that is not term-versioned, so its
+  metadata is integrity-protected but not encrypted.
+- **Watches order per shard, never globally.** The watch protocol is served server-side and consumed by
+  the bundled Java reference client (with a conformance suite); drivers in other languages build from
+  the protocol spec. Events are ordered within a key and within a shard, but there is no cross-shard
+  global order — that is out of scope by design, because there is no global clock to take a cut against.
+- **Measurement is single-region.** Reads are region-local; the system is not designed for cross-region
+  or WAN operation. Endurance is verified to hours, not weeks. Measured numbers and their exact
+  conditions live in [`docs/measurement/`](docs/measurement/) and [`docs/archive/`](docs/archive/).
 
-## Where to go
+## Build and run
+
+Configd targets **Java 25** and builds with the bundled Maven wrapper:
+
+```bash
+./mvnw clean install      # compile every module and run the test suite
+```
+
+It ships a control-plane server (`io.configd.server.ConfigdServer`) and a standalone edge reader
+(`io.configd.edge.node.EdgeNodeMain`). The quickest way to bring up a small mTLS cluster is the Compose
+topology under [`deploy/compose/`](deploy/compose/). To launch a single node directly:
+
+```bash
+java --enable-preview -XX:+UseZGC -XX:MaxRAMPercentage=50.0 \
+     -cp "configd-server/target/*:configd-server/target/libs/*" \
+     io.configd.server.ConfigdServer \
+     --node-id 1 --data-dir /var/lib/configd \
+     --bind-port 9090 --api-port 8080 --edge-port 7070
+```
+
+The config API is under `/v1/config`, liveness and readiness are at `/health/live` and `/health/ready`,
+and Prometheus metrics are at `/metrics`. Turn on security before production — see the
+[operator runsheet](docs/operations/operator-runsheet.md) and
+[deployer must-knows](docs/operations/deployer-must-know.md). Full instructions are in the
+[Getting Started guide](docs/wiki/Getting-Started.md).
+
+## Documentation
 
 | You want to | Start here |
 |---|---|
-| Understand the whole system | [`docs/architecture/`](docs/architecture/) |
-| Write a client driver | [`docs/rfc/driver-protocol/`](docs/rfc/driver-protocol/) - a self-contained, implementable protocol spec |
-| Deploy or operate a cluster | [`docs/operations/`](docs/operations/) - runsheet, deployer must-knows, runbooks |
-| Know the honest edges | [`docs/operations/known-limitations.md`](docs/operations/known-limitations.md) |
+| Get a feel for the system | [Architecture overview](docs/wiki/Architecture-Overview.md) |
+| Understand it in depth | [`docs/architecture/`](docs/architecture/) |
+| Build and run it | [Getting Started](docs/wiki/Getting-Started.md) |
+| Write a client driver | [`docs/rfc/driver-protocol/`](docs/rfc/driver-protocol/) — a self-contained, implementable spec |
+| Deploy or operate a cluster | [`docs/operations/`](docs/operations/) and the incident runbooks in [`ops/runbooks/`](ops/runbooks/) |
+| Know the honest edges | [Known limitations](docs/operations/known-limitations.md) |
 | Understand a design decision | [`docs/adr/`](docs/adr/) |
-| See what is coming in v2 | [`docs/v2-backlog.md`](docs/v2-backlog.md) |
+| See the measurement evidence | [`docs/measurement/`](docs/measurement/) and [`docs/archive/`](docs/archive/) |
 
 A fuller map is in [`docs/README.md`](docs/README.md).
-
-## Honest scope: v1 vs v2
-
-v1 is deliberately scoped. These are known and understood, not surprises:
-
-- **Encryption at rest is off by default and a one-way door.** With it off, values — including `secure/` keys — are plaintext (the `secure/` prefix is a read-freshness class, not confidentiality); keep secrets in a dedicated secret manager. Once enabled, it cannot be disabled and the binary cannot roll back to a pre-encryption version. The default `local` key provider derives its root from the cluster signing key (confidentiality fate-shares with it); an external **Vault Transit** KMS provider also ships for off-host custody, and other cloud KMS/HSM backends can be added behind the same SPI.
-- **Key rotation is non-destructive but offline in v1.** The term-rotation and signing-key-rotation mechanisms are built, crash-atomic, and tested, but no online/admin trigger ships yet — a rotation is an out-of-band maintenance action on a stopped node. The security-audit HMAC chain is the one at-rest key not term-versioned (it derives from the signing key), so a *signing-key* rotation leaves pre-rotation audit records readable but no longer tamper-verifiable across the boundary; term rotation is unaffected. Both are documented residuals, not data-loss defects.
-- **Watches ship server-side plus a Java reference client.** The watch protocol is implemented for N≥1 (multi-shard watches are served by a server-side aggregating endpoint); a conforming Java reference client and a conformance suite ship, and drivers in other languages are buildable from the RFC. Ordering is per-shard, never global — a globally-ordered cross-shard watch is out of scope by design.
-- **Horizontal scale is leadership auto-balanced.** Multi-machine scale needs one leader per box; a built-in decentralized balancer (on by default) maintains that placement, plus an ADMIN transfer route for manual moves. The measured 2.45x was captured under manual placement, so the balancer is built and E2E-tested but not yet load-measured at scale; transfer-on-graceful-shutdown remains a v2 item.
-
-See [`docs/v2-backlog.md`](docs/v2-backlog.md) for the rest.
-
-## Build
-
-Requires JDK 25. Build and test with `mvn clean install`.

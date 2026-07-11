@@ -11,13 +11,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Per-seed re-run and diagnosis for the inflight-window-leak stall class.
  * <p>
- * The S2 10k adversarial sweep recorded 7 liveness stalls (no leader ever elected):
+ * A 10k-seed adversarial sweep recorded 7 liveness stalls (no leader ever elected):
  * seeds 452, 869, 4740, 5100, 5159, 5500, 8319 - characterized as expected
  * never-healed-schedule artifacts (a sustained drop window and/or partitions never healed
  * before end-of-run, so the cluster correctly makes no progress; 0 safety violations).
  * The per-peer inflight-window leak was a candidate root-cause component for this
- * family. This test re-runs all 7 seeds against the inflight-window-leak-fixed kernel and gives each its
- * own diagnosis ("no remaining-stalls blob").
+ * family. This test re-runs all 7 seeds against the inflight-window-leak-fixed kernel and
+ * gives each its own diagnosis.
  * <p>
  * The discriminating question for each seed: is the stall a never-healed-schedule artifact
  * (the network is still faulted at end-of-run - benign, no recovery was ever possible) or a
@@ -73,7 +73,7 @@ class Rr095StallSeedDiagnosisTest {
 
             // (2) The stall is explained by a never-healed network - NOT a recoverable stuck
             //     state. This is the load-bearing diagnosis: a healed network with no leader
-            //     would be a genuine liveness defect owed its own row.
+            //     would be a genuine liveness defect requiring its own investigation.
             assertTrue(networkUnhealedAtEnd,
                     "seed " + seed + " stalls with a HEALED network (dropRate=" + endDropRate
                             + ", partitions=" + endPartitions + ") — that would be a real"

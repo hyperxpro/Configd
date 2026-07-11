@@ -14,11 +14,11 @@ import static org.junit.jupiter.api.Assertions.*;
  * {@code propose} and {@code transferLeadership} - the validation and
  * precondition guards a single-node leader exercises synchronously.
  * <p>
- * These guards (null/empty/oversized/RCFG-magic
- * command rejection, NOT_LEADER / TRANSFER_IN_PROGRESS / OVERLOADED outcomes,
- * and the transfer self/non-voter/pending-reconfig preconditions) had
- * untested removed-conditional and boundary guards. Each test pins one guard's
- * observable outcome. Single-node and deterministic; no sleeps.
+ * These guards (null/empty/oversized/RCFG-magic command rejection, NOT_LEADER /
+ * TRANSFER_IN_PROGRESS / OVERLOADED outcomes, and the transfer
+ * self/non-voter/pending-reconfig preconditions) had untested boundaries. Each
+ * test pins one guard's observable outcome. Single-node and deterministic; no
+ * sleeps.
  */
 class RaftNodeApiUnitTest {
 
@@ -63,8 +63,7 @@ class RaftNodeApiUnitTest {
     @Test
     void rejectsOversizedCommand() {
         RaftNode node = singleNodeLeader();
-        // Just over the 1 MiB wire-encodable limit. Kills the L354 boundary
-        // (command.length > MAX_COMMAND_LEN): exactly MAX is allowed, MAX+1 rejected.
+        // Just over the 1 MiB wire-encodable limit: exactly MAX is allowed, MAX+1 rejected.
         byte[] tooBig = new byte[1 * 1024 * 1024 + 1];
         assertThrows(IllegalArgumentException.class, () -> node.propose(tooBig));
         // Exactly at the limit is accepted (the boundary's lower side).
@@ -76,8 +75,7 @@ class RaftNodeApiUnitTest {
     @Test
     void rejectsConfigChangeMagicFromClient() {
         RaftNode node = singleNodeLeader();
-        // A client command must not begin with the RCFG magic. Kills the
-        // isConfigChangeEntry guard in propose (L360).
+        // A client command must not begin with the RCFG magic.
         byte[] rcfg = new byte[]{0x52, 0x43, 0x46, 0x47, 1, 2, 3};
         assertThrows(IllegalArgumentException.class, () -> node.propose(rcfg));
     }
@@ -85,7 +83,7 @@ class RaftNodeApiUnitTest {
     @Test
     void nonLeaderProposeReturnsNotLeader() {
         RaftNode node = follower();
-        // Kills propose L364 (role != LEADER guard): a follower must report NOT_LEADER.
+        // A follower must report NOT_LEADER.
         assertEquals(ProposalResult.NOT_LEADER, node.propose(new byte[]{1}).result());
     }
 
@@ -96,7 +94,7 @@ class RaftNodeApiUnitTest {
         ProposeOutcome outcome = node.propose(new byte[]{1, 2, 3});
         assertEquals(ProposalResult.ACCEPTED, outcome.result());
         // The new entry's index is lastIndex+1, and on the single-node path it
-        // commits inline. Kills the `newIndex = lastIndex + 1` arithmetic.
+        // commits inline.
         assertTrue(node.log().commitIndex() > before);
         assertEquals(node.log().lastIndex(), node.log().commitIndex());
     }
@@ -106,22 +104,21 @@ class RaftNodeApiUnitTest {
     @Test
     void transferRejectedWhenNotLeader() {
         RaftNode node = follower();
-        // Kills transferLeadership L396 (role != LEADER).
+        // A non-leader must refuse a transfer request.
         assertFalse(node.transferLeadership(N2));
     }
 
     @Test
     void transferToSelfRejected() {
         RaftNode node = singleNodeLeader();
-        // Kills transferLeadership L399 EQUAL_ELSE (nodeId().equals(target)).
+        // Transferring to self must be rejected.
         assertFalse(node.transferLeadership(N1));
     }
 
     @Test
     void transferToNonVoterRejected() {
         RaftNode node = singleNodeLeader(); // voters = {1}
-        // N2 is not a voter in this single-node config. Kills transferLeadership
-        // L402 (isVoter(target) guard).
+        // N2 is not a voter in this single-node config.
         assertFalse(node.transferLeadership(N2));
     }
 }

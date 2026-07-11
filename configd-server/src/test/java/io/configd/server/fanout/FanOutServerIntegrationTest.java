@@ -35,7 +35,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * End-to-end integration test for the live {@link FanOutServer} over plaintext loopback: a real
  * single-node {@link ConfigdServer} (empty peers -> self-elects), a raw {@link EdgeProtocolClient}
  * speaking protocol v1, and committed writes driven through the real HTTP API. Verifies the full
- * C1 server path: SUBSCRIBE->SUBSCRIBE_OK, verbatim NOTIFY of committed deltas, CURSOR_ACK
+ * server path: SUBSCRIBE->SUBSCRIBE_OK, verbatim NOTIFY of committed deltas, CURSOR_ACK
  * flow-control, demotion->SNAPSHOT recovery when the edge stops acking, idle HEARTBEAT cadence,
  * and that the {@code edge_fanout_*} metrics actually move.
  *
@@ -79,14 +79,14 @@ class FanOutServerIntegrationTest {
         HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
 
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(edgePort, 15_000)) {
-            // --- SUBSCRIBE -> SUBSCRIBE_OK ---
+            // SUBSCRIBE -> SUBSCRIBE_OK.
             edge.subscribeFullStore("edge-1", 0L);
             EdgeFrame.SubscribeOk ok = (EdgeFrame.SubscribeOk) readUntil(edge, EdgeFrame.SubscribeOk.class);
             assertNotNull(ok, "must receive SUBSCRIBE_OK");
             // Fresh store, empty backlog -> TAIL.
             assertEquals(EdgeFrame.Mode.TAIL, ok.mode());
 
-            // --- drive committed writes -> receive verbatim NOTIFY ---
+            // Drive committed writes -> receive verbatim NOTIFY.
             long seq1 = putCommitted(http, base, "svc/a", "v-a");
             long lastSeq = collectNotifiedSeqUpTo(edge, seq1);
             assertEquals(seq1, lastSeq, "the committed seq must be delivered as a NOTIFY");
@@ -98,12 +98,12 @@ class FanOutServerIntegrationTest {
             assertEquals(seq2, lastSeq2);
             edge.cursorAck(lastSeq2);
 
-            // --- HEARTBEAT cadence when idle (no writes) ---
+            // HEARTBEAT cadence when idle (no writes).
             EdgeFrame.Heartbeat hb = (EdgeFrame.Heartbeat) readUntil(edge, EdgeFrame.Heartbeat.class);
             assertNotNull(hb, "must observe a HEARTBEAT when the stream is idle");
             assertTrue(hb.serverNowMillis() > 0);
 
-            // --- STOP acking + flood writes -> DEMOTED_TO_CATCHUP then SNAPSHOT then resumed NOTIFY ---
+            // Stop acking + flood writes -> DEMOTED_TO_CATCHUP then SNAPSHOT then resumed NOTIFY.
             long floodTarget = lastSeq2;
             for (int i = 0; i < 400; i++) {
                 floodTarget = putCommitted(http, base, "flood/" + i, "x" + i);
@@ -149,13 +149,13 @@ class FanOutServerIntegrationTest {
             assertTrue(resumedSeq >= end.snapshotSeq() + 1, "tail resumes after the snapshot");
         }
 
-        // --- metrics moved ---
+        // Metrics moved.
         String metrics = scrapeMetrics(http, base);
         assertMetricPresentAndMoved(metrics, "edge_fanout_notify_batches_total");
         assertMetricPresentAndMoved(metrics, "edge_fanout_heartbeats_total");
         assertTrue(metrics.contains("edge_fanout_connected_subscribers"),
                 "connected-subscribers gauge must be exported");
-        // A demotion counter for SOME reason moved.
+        // Some demotion counter must have moved; which exact one doesn't matter here.
         assertTrue(metrics.lines().anyMatch(l ->
                         l.startsWith("edge_fanout_demotions_") && l.endsWith(" 0") == false
                                 && l.contains("_total")),
@@ -203,10 +203,6 @@ class FanOutServerIntegrationTest {
                     "a non-SUBSCRIBE first frame must close the connection");
         }
     }
-
-    // -----------------------------------------------------------------------
-    // helpers (deadline-polling; no sleep-as-sync)
-    // -----------------------------------------------------------------------
 
     /** Reads frames until one of {@code type} arrives or the deadline elapses; returns it or fails. */
     private static EdgeFrame readUntil(EdgeProtocolClient edge, Class<? extends EdgeFrame> type) throws IOException {

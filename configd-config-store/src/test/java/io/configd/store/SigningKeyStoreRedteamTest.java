@@ -20,11 +20,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Independent red-team pass over {@link SigningKeyStore}'s strict magic/version load and its durable
  * write.
  *
- * <p>The builder covered bad magic and a wrong version. This pass adds the reserved-illegal version 0
- * (§0.2), and — the part the builder did not exercise — that TORN / TRUNCATED key files are refused,
- * never partially loaded into a usable-looking key: a sub-header stub, a header-only stub, a
- * mid-DER truncation, and a zero-length-DER file must all fail the load. It also confirms a torn
- * scratch {@code .tmp} left by a crashed generation is never adopted as the key.
+ * <p>Covers the reserved-illegal version 0, and confirms that TORN / TRUNCATED key files are
+ * refused, never partially loaded into a usable-looking key: a sub-header stub, a header-only
+ * stub, a mid-DER truncation, and a zero-length-DER file must all fail the load. It also confirms
+ * a torn scratch {@code .tmp} left by a crashed generation is never adopted as the key.
  */
 class SigningKeyStoreRedteamTest {
 

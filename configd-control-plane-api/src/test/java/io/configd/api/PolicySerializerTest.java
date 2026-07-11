@@ -40,7 +40,7 @@ class PolicySerializerTest {
         return rules.get(0);
     }
 
-    // ---------------- round-trip / accept ----------------
+    // round-trip / accept
 
     @Test
     void emptySubtreeIsEmptyPolicy() {
@@ -136,12 +136,12 @@ class PolicySerializerTest {
         assertTrue(p.roles().get("empty").rules().isEmpty());
     }
 
-    // ---------------- _acl/format version sentinel (absent ⇒ v1; unsupported ⇒ fail closed) ------------
+    // _acl/format version sentinel (absent ⇒ v1; unsupported ⇒ fail closed)
 
     @Test
     void absentFormatKeyIsVersionOneAndByteIdentical() {
-        // No _acl/format key: the historical, byte-identical path. A policy parses exactly as before - this
-        // is why every existing deployment is unaffected by the sentinel.
+        // No _acl/format key defaults to version 1, so a deployment that predates the sentinel is
+        // unaffected by it.
         ConfigPolicy p = PolicySerializer.parse(subtree("_acl/roles/reader", "allow READ app."));
         assertEquals("app.", onlyRule(p, "reader").prefix());
     }
@@ -198,7 +198,7 @@ class PolicySerializerTest {
                 "_acl/roles/reader", "allow READ app.")));
     }
 
-    // ---------------- reject matrix (fail-closed: any malformed input -> PolicyParseException) ----------------
+    // reject matrix (fail-closed: any malformed input -> PolicyParseException)
 
     @Test
     void rejectUnknownAclKeyShape() {

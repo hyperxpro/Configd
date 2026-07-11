@@ -13,14 +13,15 @@
     <artifactId>configd-linz</artifactId>
 
     <description>
-        A3 linearizability + fault-injection harness (R-04). Drives a REAL
+        Linearizability and fault-injection harness. Drives a REAL
         separate-JVM Configd cluster (the shaded configd-server jar) over the
         REAL TcpRaftTransport, under OS-level faults (iptables / tc / kill -9),
         records a checker-neutral op-history, and verifies it with a TRUSTED
         third-party checker (Porcupine). This deliberately does NOT use the
-        in-process SimulatedNetwork — that is the path that hid R-01. The harness
-        treats the server as a black box (HTTP + process control), so it depends
-        on no other io.configd module at compile time.
+        in-process SimulatedNetwork, which has previously hidden real bugs that
+        the real transport surfaces. The harness treats the server as a black
+        box (HTTP + process control), so it depends on no other io.configd
+        module at compile time.
     </description>
 
     <dependencies>

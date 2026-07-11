@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * WH-10: a frame that framed + CRC-verified cleanly but cannot be turned into an actionable
+ * A frame that framed and CRC-verified cleanly but cannot be turned into an actionable
  * {@code RaftMessage} - a dormant/undecodable {@link MessageType} with no consensus codec, or a
  * structurally-malformed payload - must be dropped (not dispatched) and COUNTED, with the WARN log
  * rate-limited so an authenticated-but-hostile peer cannot flood the log one line per frame. The metric
@@ -31,7 +31,7 @@ class RaftTransportAdapterDecodeDropTest {
         void inject(NodeId from, FrameCodec.Frame frame) { handler.onMessage(from, frame); }
     }
 
-    /** A counting sink for the WH-10 decode-drop metric. */
+    /** A counting sink for the decode-drop metric. */
     private static RaftTransportMetrics countingDrops(AtomicInteger drops) {
         return new RaftTransportMetrics() {
             @Override public void onInboundFrameDropped() { drops.incrementAndGet(); }

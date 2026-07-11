@@ -48,40 +48,38 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The flagship §4 END-TO-END proof: the Group-C <b>reference driver client</b> (built independently from the
- * RFC) driven against a <b>REAL multi-node {@link ConfigdServer} cluster across a REAL leader failover</b> —
- * not a mock. This is the Postgres-bar culmination: it proves both reference-client planes survive a genuine
- * consensus leadership change on a real cluster over real localhost sockets — the HTTP control plane
- * transparently follows the new leader, and the edge data plane's own node dying forces the client to rotate
- * to a survivor and RESUME its subscription from its cursor with no committed data lost, no edge event gapped,
- * and no duplicate.
+ * An end-to-end proof: the <b>reference driver client</b> (built independently from the RFC) driven against a
+ * <b>REAL multi-node {@link ConfigdServer} cluster across a REAL leader failover</b> -- not a mock. It proves
+ * both reference-client planes survive a genuine consensus leadership change on a real cluster over real
+ * localhost sockets -- the HTTP control plane transparently follows the new leader, and the edge data plane's
+ * own node dying forces the client to rotate to a survivor and RESUME its subscription from its cursor with no
+ * committed data lost, no edge event gapped, and no duplicate.
  *
  * <h2>The cluster</h2>
  * Three real {@link ConfigdServer} nodes over loopback: each with an HTTP control-plane endpoint (ephemeral
  * {@code --api-port 0}), an edge fan-out endpoint (ephemeral {@code --edge-port 0}), and the Netty Raft
  * consensus transport wired between all three ({@code --peer-addresses}). A single Raft group (the default
  * {@code shardCount=1}) is replicated across the three nodes; one shared cluster signing key lives OUTSIDE
- * every node's data dir (the D-1 co-location guard). Everything is deadline-polled — no sleep-as-sync; the
- * per-method {@link Timeout} is pure hang detection on the throttled 2-vCPU box, and the election budget uses
- * the ratio proven stable by the server-side failover/auto-balance E2Es so scheduling jitter cannot
- * manufacture a spurious election.
+ * every node's data dir. Everything is deadline-polled -- no sleep-as-sync; the per-method {@link Timeout} is
+ * pure hang detection on the throttled 2-vCPU box, and the election budget uses a heartbeat/election ratio
+ * already proven stable under load, so scheduling jitter cannot manufacture a spurious election.
  *
  * <h2>The proof (deadline-polled every phase)</h2>
  * <ol>
  *   <li><b>Elect + write + converge.</b> Boot the cluster, elect a stable leader; the reference
- *       {@link ConfigdHttpClient} (pointed at ALL THREE endpoints via a {@link NodeEndpoints#ofMap id→URI
+ *       {@link ConfigdHttpClient} (pointed at ALL THREE endpoints via a {@link NodeEndpoints#ofMap id-to-URI
  *       map}, so its {@code LeaderRouter} can follow {@code X-Leader-Hint}s and rotate) commits a batch and
  *       reads it back. Then WAIT until every node has applied the batch (so the survivor the edge later
- *       reconnects to already holds the subscription's resume cursor — a deterministic {@code TAIL} resume,
+ *       reconnects to already holds the subscription's resume cursor -- a deterministic {@code TAIL} resume,
  *       not a re-hydrate).</li>
  *   <li><b>Edge subscribe ON THE NODE TO BE KILLED.</b> The reference {@link ConfigdEdgeClient} is configured
  *       with ALL THREE edge endpoints, <b>leader first</b>, so its full-store subscription's connection lands
  *       on the leader; it hydrates the pre-failover state (via the snapshot, not as change events) and records
  *       its resume cursor. A pre-kill assertion confirms the connection was stable on the leader (zero
  *       reconnects).</li>
- *   <li><b>KILL the leader.</b> {@code shutdown()} the leader — the crash equivalent (edge + HTTP + Raft
+ *   <li><b>KILL the leader.</b> {@code shutdown()} the leader -- the crash equivalent (edge + HTTP + Raft
  *       transport all close). This forces BOTH a control-plane re-election AND the edge connection to drop.</li>
- *   <li><b>HTTP leader-follow.</b> A put issued after the kill transparently succeeds on the NEW leader — the
+ *   <li><b>HTTP leader-follow.</b> A put issued after the kill transparently succeeds on the NEW leader -- the
  *       client rode the real election window: rotated off the connect-refused dead endpoint, followed the REAL
  *       {@code X-Leader-Hint} / rotated on a hintless-503.</li>
  *   <li><b>EDGE FAILOVER-RESUME (the literal proof).</b> The killed edge connection's {@code SERVER_SHUTDOWN}
@@ -90,18 +88,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       ({@code onConnected} sends the SUBSCRIBE with {@code resume=cursor}; a plain drop does NOT force a
  *       re-bootstrap). The survivor honours the cursor as a {@code TAIL} resume (it holds the cursor's seq from
  *       the pre-kill convergence), so the post-failover write is delivered <b>exactly once</b> as a change
- *       event — no gap, no duplicate — the cursor advances monotonically, continuing the per-shard sequence,
+ *       event -- no gap, no duplicate -- the cursor advances monotonically, continuing the per-shard sequence,
  *       and NO already-hydrated key is re-delivered.</li>
  *   <li><b>No committed data lost.</b> Every pre-failover key is still readable through the reference client.</li>
  * </ol>
  *
  * <p><b>Why the SUBSCRIBE plane, not the 0x02 WATCH plane.</b> Against a real {@code ConfigdServer} booted
- * with authentication OFF, the fan-out driver fails every {@code WATCH_CREATE} CLOSED (no principal model ⇒
- * {@code watchAuthorizer == null}) while it ADMITS the legacy full-store {@code SUBSCRIBE} — so the genuine
- * client-node-dies → rotate-to-survivor → resume-from-cursor failover is exercised here on the SUBSCRIBE
- * plane. The 0x02 WATCH plane (whose authorization needs a privileged {@code _acl/} bootstrap) is covered by
- * {@code RealServerWatchTest} against a permissive in-process {@code FanOutServer}. The resume mechanics are
- * identical (persisted cursor, re-subscribe on reconnect, {@code TAIL} vs re-bootstrap decided by the server).
+ * with authentication OFF, the fan-out driver fails every {@code WATCH_CREATE} CLOSED (no principal model, so
+ * {@code watchAuthorizer == null}) while it ADMITS the legacy full-store {@code SUBSCRIBE} -- so the genuine
+ * client-node-dies -> rotate-to-survivor -> resume-from-cursor failover is exercised here on the
+ * SUBSCRIBE plane. The 0x02 WATCH plane (whose authorization needs a privileged {@code _acl/} bootstrap) is
+ * covered by {@code RealServerWatchTest} against a permissive in-process {@code FanOutServer}. The resume
+ * mechanics are identical (persisted cursor, re-subscribe on reconnect, {@code TAIL} vs re-bootstrap decided
+ * by the server).
  */
 @Timeout(240) // hang detection on the throttled 2-vCPU box; every phase bounds itself with an explicit deadline
 class RealClusterFailoverIT {
@@ -109,8 +108,8 @@ class RealClusterFailoverIT {
     private static final int NODES = 3;
     private static final int GROUP = 0; // the default single Raft group (shardCount=1), replicated across all 3
 
-    // 2-vCPU election budget: heartbeat 100ms << election 1500-3000ms (ratio ~15-30), the range the server-side
-    // failover/auto-balance E2Es proved stable, so jitter cannot manufacture a spurious election or shed.
+    // 2-vCPU election budget: heartbeat 100ms << election 1500-3000ms (ratio ~15-30), a range already proven
+    // stable, so jitter cannot manufacture a spurious election or shed.
     private static final long STABILIZE_MS = 60_000; // all-three converge on one leader from a cold boot
     private static final long CONVERGE_MS = 30_000;  // all three nodes apply the pre-failover batch
     private static final long FAILOVER_MS = 60_000;  // survivors re-elect after the leader is killed
@@ -165,11 +164,9 @@ class RealClusterFailoverIT {
 
     @Test
     void referenceClientFollowsARealLeaderFailoverWithNoDataLossAndEdgeResume(@TempDir Path root) throws Exception {
-        // ---- boot a real 3-node cluster (HTTP + edge + Raft) ----
         ConfigdServer[] servers = bootCluster(root);
         NodeEndpoints endpoints = httpEndpoints(servers);
 
-        // --- 1) elect a stable leader; the reference HTTP client commits + reads back a batch ---
         int leader0 = awaitStableLeaderExcluding(servers, -1, STABILIZE_MS);
         assertTrue(leader0 >= 0, "the 3-node cluster must elect a single stable leader on the real Netty wire");
 
@@ -182,12 +179,12 @@ class RealClusterFailoverIT {
             // GET is a stale read that may land on a follower, so reading cfg/k4 the instant its commit returns
             // races that follower's apply; and the survivor the edge later reconnects to must already hold the
             // subscription's resume cursor so the server TAIL-resumes it (recover-from-cursor) rather than
-            // re-hydrating — the deterministic exactly-once path. Converge once, then both are safe.
+            // re-hydrating -- the deterministic exactly-once path. Converge once, then both are safe.
             assertTrue(awaitConvergence(servers, GROUP, CONVERGE_MS),
                     "all three nodes must apply the pre-failover batch before the read-back + the edge subscribe: "
                             + appliedSnapshot(servers));
             // A default GET is an eventually-consistent local read (served off whatever node round-robin lands
-            // on, not routed to the leader) and a 404 is terminal — not retried — and the store's read-serving
+            // on, not routed to the leader) and a 404 is terminal -- not retried -- and the store's read-serving
             // state can briefly lag the raft-applied index that awaitConvergence observes. So poll each key to a
             // deadline rather than a single get (the same read-after-write handling as the post-failover POST_KEY).
             for (int k = 0; k < KEY_COUNT; k++) {
@@ -198,8 +195,8 @@ class RealClusterFailoverIT {
                 }), "pre-failover key " + key(k) + " must be readable with its committed value");
             }
 
-            // --- 2) the reference edge client subscribes with ALL THREE endpoints, LEADER FIRST, so its
-            //        connection lands on the node we will kill (forcing a genuine cross-endpoint failover) ---
+            // The reference edge client subscribes with all three endpoints, leader first, so its connection
+            // lands on the node we will kill -- forcing a genuine cross-endpoint failover.
             try (ConfigdEdgeClient edge =
                          ConfigdEdgeClient.open(edgeConfig(edgeEndpointsLeaderFirst(servers, leader0)))) {
                 Subscription sub = edge.subscribeFullStore(SubscribeOptions.defaults());
@@ -208,7 +205,7 @@ class RealClusterFailoverIT {
                 sub.awaitHydrated(Duration.ofMillis(HYDRATE_MS));
 
                 // Hydrated on the LEADER: the pre-failover keys arrived via the hydrate SNAPSHOT (a bulk state
-                // load), NOT as change events — so the change stream is empty until a post-hydrate delta.
+                // load), NOT as change events -- so the change stream is empty until a post-hydrate delta.
                 for (int k = 0; k < KEY_COUNT; k++) {
                     final int kk = k;
                     assertTrue(await(HYDRATE_MS, () -> sub.view().get(key(kk))
@@ -221,15 +218,15 @@ class RealClusterFailoverIT {
                         "the subscription connected to the leader and stayed stable (no pre-kill reconnect)");
                 long cursorBefore = sub.cursor();
 
-                // --- 3) KILL the leader (crash equivalent: shutdown closes edge + HTTP + Raft transport). This
-                //        drops the edge connection AND forces a control-plane re-election. ---
+                // KILL the leader (crash equivalent: shutdown closes edge + HTTP + Raft transport). This drops
+                // the edge connection AND forces a control-plane re-election.
                 servers[leader0].shutdown();
                 running.remove(servers[leader0]);
                 System.out.println("[GC-FAILOVER] killed leader node " + leader0
                         + " (edge subscription's own node); cursor at kill=" + cursorBefore);
 
-                // --- 4) HTTP LEADER-FOLLOW: a put issued AFTER the kill transparently succeeds on the NEW
-                //        leader — the client rode the election window, following the real X-Leader-Hint. ---
+                // HTTP LEADER-FOLLOW: a put issued AFTER the kill transparently succeeds on the NEW leader --
+                // the client rode the election window, following the real X-Leader-Hint.
                 WriteOutcome postPut = http.blocking()
                         .put(POST_KEY, POST_VALUE.getBytes(UTF_8), WriteOptions.defaults());
                 assertTrue(postPut.seq() > 0,
@@ -241,10 +238,9 @@ class RealClusterFailoverIT {
                 System.out.println("[GC-FAILOVER] HTTP leader-followed: post write committed at seq "
                         + postPut.seq() + "; new leader is node " + leader1);
 
-                // --- 5) EDGE FAILOVER-RESUME: the killed edge connection reconnects (cross-endpoint) to a
-                //        survivor and resumes FROM ITS CURSOR — the post-failover write is delivered EXACTLY
-                //        ONCE (no gap, no duplicate), the cursor advances, and nothing already hydrated is
-                //        re-delivered. ---
+                // EDGE FAILOVER-RESUME: the killed edge connection reconnects (cross-endpoint) to a survivor
+                // and resumes FROM ITS CURSOR -- the post-failover write is delivered EXACTLY ONCE (no gap, no
+                // duplicate), the cursor advances, and nothing already hydrated is re-delivered.
                 assertTrue(await(DELIVER_MS, () -> edge.reconnectCount() >= 1),
                         "the edge subscription's node was killed — it must reconnect (rotate) to a survivor");
                 assertTrue(await(DELIVER_MS, () -> sub.view().get(POST_KEY)
@@ -266,7 +262,6 @@ class RealClusterFailoverIT {
                         + ", post write delivered exactly once");
             }
 
-            // --- 6) NO DATA LOSS: every pre-failover key is still readable through the reference client ---
             for (int k = 0; k < KEY_COUNT; k++) {
                 GetResult read = http.blocking().get(key(k), GetOptions.defaults());
                 assertTrue(read.found(), "post-failover: pre-failover key " + key(k) + " must survive (no data loss)");
@@ -274,7 +269,7 @@ class RealClusterFailoverIT {
                         "post-failover: key " + key(k) + " must retain its committed value");
             }
             // The post-failover HTTP read-back is also eventually-consistent: a default GET round-robins onto a
-            // survivor that may be a few ms behind on APPLY, and a 404 is terminal (not retried) — the same
+            // survivor that may be a few ms behind on APPLY, and a 404 is terminal (not retried) -- the same
             // read-after-write class the pre-failover convergence guards. Poll to a deadline, not a single get.
             assertTrue(await(DELIVER_MS, () -> {
                 GetResult post = http.blocking().get(POST_KEY, GetOptions.defaults());
@@ -286,13 +281,9 @@ class RealClusterFailoverIT {
                 + " pre-failover keys intact");
     }
 
-    // =======================================================================
-    // cluster boot (mirrors the server-side loopback cluster harnesses)
-    // =======================================================================
-
     private ConfigdServer[] bootCluster(Path root) throws Exception {
-        // ONE shared cluster signing key, OUTSIDE every node's data dir (D-1 co-location guard) and pre-created
-        // so the concurrent boots never race to mint it.
+        // One shared cluster signing key, kept outside every node's data dir and pre-created up front, so the
+        // concurrent boots never race to mint it.
         Path signingKey = root.resolve("secrets").resolve("signing-key.bin");
         Files.createDirectories(signingKey.getParent());
         SigningKeyStore.loadOrCreate(signingKey);
@@ -332,8 +323,8 @@ class RealClusterFailoverIT {
         });
     }
 
-    /** A full {@code NodeId → HTTP base URI} map for all three nodes, so the client's LeaderRouter can follow
-     *  {@code X-Leader-Hint}s (a bare NodeId is resolved ONLY through this operator map — anti-SSRF). */
+    /** A full {@code NodeId to HTTP base URI} map for all three nodes, so the client's LeaderRouter can follow
+     *  {@code X-Leader-Hint}s (a bare NodeId is resolved ONLY through this operator map -- anti-SSRF). */
     private static NodeEndpoints httpEndpoints(ConfigdServer[] servers) {
         Map<Integer, URI> byId = new LinkedHashMap<>();
         for (int i = 0; i < servers.length; i++) {
@@ -354,10 +345,6 @@ class RealClusterFailoverIT {
         }
         return addrs;
     }
-
-    // =======================================================================
-    // reference clients
-    // =======================================================================
 
     /** The reference HTTP client with a generous retry budget so a post-kill write rides the whole election. */
     private static ConfigdHttpClient httpClient(NodeEndpoints endpoints) {
@@ -404,9 +391,8 @@ class RealClusterFailoverIT {
         };
     }
 
-    // =======================================================================
-    // leadership + replication observation (deadline-polled; monitorView = off-owner read seam)
-    // =======================================================================
+    // Leadership and replication observation, deadline-polled: monitorView() is the safe way to read Raft
+    // state from off the owner thread, which is what these polling helpers rely on.
 
     /** The sole node reporting LEADER for {@code GROUP} (excluding {@code excluded}), or -1 (none / split). */
     private static int singleLeader(ConfigdServer[] servers, int excluded) {
@@ -418,7 +404,7 @@ class RealClusterFailoverIT {
             RaftNode node = servers[i].driver().getGroup(GROUP);
             if (node != null && node.monitorView().role() == RaftRole.LEADER) {
                 if (leader >= 0) {
-                    return -1; // two leaders observed (transient) — not settled
+                    return -1; // two leaders observed (transient) -- not settled
                 }
                 leader = i;
             }
@@ -478,10 +464,6 @@ class RealClusterFailoverIT {
         }
         return sb.append(']').toString();
     }
-
-    // =======================================================================
-    // small helpers
-    // =======================================================================
 
     private static final String POST_KEY = "cfg/post";
     private static final String POST_VALUE = "after-failover";

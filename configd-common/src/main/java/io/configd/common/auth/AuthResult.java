@@ -26,9 +26,9 @@ public sealed interface AuthResult
      * The credential verified to a {@link Principal}. {@code credentialExpiresAtMillis} is the
      * authority-issued absolute expiry of the credential (epoch millis, e.g. a JWT {@code exp} claim), or
      * {@link #NO_EXPIRY} when the credential carries none. It exists so a long-lived authenticated
-     * connection can be closed when the presented credential actually expires (the Gate-5 expiry model),
-     * rather than only at a server-computed session cap; it is redaction-safe (a timestamp, never the
-     * credential). The single-argument constructor preserves the pre-expiry behaviour ({@link #NO_EXPIRY}).
+     * connection can be closed when the presented credential actually expires, rather than only at a
+     * server-computed session cap; it is redaction-safe (a timestamp, never the credential). The
+     * single-argument constructor defaults to {@link #NO_EXPIRY}.
      */
     record Authenticated(Principal principal, long credentialExpiresAtMillis) implements AuthResult {
         public Authenticated {

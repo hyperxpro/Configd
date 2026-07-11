@@ -131,10 +131,6 @@ class PoisonPillRebootstrapTest {
         assertEquals(1, core.cursor());
     }
 
-    // -----------------------------------------------------------------------
-    // The ladder: bounded retries -> quarantine + forced re-bootstrap
-    // -----------------------------------------------------------------------
-
     @Nested
     class BoundedRetryLadder {
 
@@ -212,10 +208,6 @@ class PoisonPillRebootstrapTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Recovery: the forced snapshot covers the poison seq
-    // -----------------------------------------------------------------------
-
     @Nested
     class SnapshotRebootstrapRecovery {
 
@@ -245,10 +237,6 @@ class PoisonPillRebootstrapTest {
             assertArrayEquals(bytes("v6"), core.get("k").value());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Terminal fail-loud (the pinned cases)
-    // -----------------------------------------------------------------------
 
     @Nested
     class TerminalFailLoud {
@@ -327,10 +315,6 @@ class PoisonPillRebootstrapTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Non-poison boundaries (scope edges)
-    // -----------------------------------------------------------------------
-
     @Nested
     class ScopeBoundaries {
 
@@ -352,7 +336,7 @@ class PoisonPillRebootstrapTest {
 
         @Test
         void snapshotFailureOutsideAForcedRebootstrapGetsTheBoundedRetryLadder() {
-            // A corrupt snapshot OUTSIDE a poison quarantine is C1's self-healing transfer
+            // A corrupt snapshot OUTSIDE a poison quarantine is self-healing transfer
             // territory: bounded retry (resubscribe), not instant death.
             applySeqOne();
             injector.poisonSnapshots = true;
@@ -379,10 +363,6 @@ class PoisonPillRebootstrapTest {
             assertTrue(e.getMessage().contains("edge.poisonpill.maxRetries"), e.getMessage());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Direct policy-ladder edges (single-writer unit matrix; no core in the loop)
-    // -----------------------------------------------------------------------
 
     @Nested
     class PolicyLadderEdges {

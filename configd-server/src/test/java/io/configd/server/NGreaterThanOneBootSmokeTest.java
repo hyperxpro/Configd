@@ -22,11 +22,10 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The SWITCH-FLIP smoke. Proves that, with the boot guard removed, the REAL
- * {@link ConfigdServer#start} BOOTS at {@code N>1} and runs a sharded write end-to-end on the live server.
- * Before G4 this throw-on-boot was the project's deliberate safety scaffold; this test is the proof the
- * flip works at the server level (the per-shard write/read SEMANTICS are additionally proven on the real
- * bring-up path by {@code MultiShardIntegratedSweepTest} + {@code MultiGroupBringupTest}).
+ * Proves that, with the boot guard removed, the REAL {@link ConfigdServer#start} BOOTS at
+ * {@code N>1} and runs a sharded write end-to-end on the live server (the per-shard write/read
+ * SEMANTICS are additionally proven on the real bring-up path by {@code MultiShardIntegratedSweepTest}
+ * + {@code MultiGroupBringupTest}).
  *
  * <p>Single-node groups ({@code --peers ""}) so each shard self-elects without a quorum; the running tick
  * loop commits proposals. The smoke asserts: the server boots with N registered groups, each self-elects
@@ -72,7 +71,7 @@ class NGreaterThanOneBootSmokeTest {
                 "--api-port", "0"
         });
 
-        ConfigdServer server = ConfigdServer.start(config); // <-- BEFORE G4 this threw IllegalStateException
+        ConfigdServer server = ConfigdServer.start(config); // must not throw: N>1 boot is supported
         try {
             MultiRaftDriver driver = server.driver();
             RaftNode g0 = driver.getGroup(0);
@@ -107,12 +106,12 @@ class NGreaterThanOneBootSmokeTest {
     @Timeout(90)
     void edgeEndpointAtNGreaterThanOneNowBootsServingMultiShardWatches(@TempDir Path dataDir)
             throws Exception {
-        // The guard flip: N>1 + --edge-port now BOOTS. The fan-out coordinator serves the multi-shard
-        // WATCH plane (one core per shard, (gid,S)-tagged cursor vector). The co-resident legacy whole-
-        // store SUBSCRIBE plane is still primary-shard-only at N>1, so it is refused PER CONNECTION at
-        // runtime (BAD_SUBSCRIBE) unless -Dconfigd.edge.allowPartialShardView - that runtime refusal is
-        // proven at the driver by FanOutConnectionDriver's tests, not here. This smoke proves only that
-        // boot no longer throws and the edge endpoint is bound at N>1.
+        // At N>1 with --edge-port set, the server boots and the fan-out coordinator serves the
+        // multi-shard WATCH plane (one core per shard, a (gid,S)-tagged cursor vector). The co-resident
+        // legacy whole-store SUBSCRIBE plane is still primary-shard-only at N>1, so it is refused PER
+        // CONNECTION at runtime (BAD_SUBSCRIBE) unless -Dconfigd.edge.allowPartialShardView - that
+        // runtime refusal is proven at the driver by FanOutConnectionDriver's tests, not here. This
+        // smoke proves only that boot succeeds and the edge endpoint is bound at N>1.
         System.setProperty(SHARD_PROP, "2");
         System.setProperty(POOL_PROP, "2");
         ServerConfig config = ServerConfig.parse(new String[]{
@@ -120,9 +119,9 @@ class NGreaterThanOneBootSmokeTest {
                 "--data-dir", dataDir.toString(),
                 "--peers", "",
                 "--api-port", "0",
-                "--edge-port", "0"   // edge enabled + N>1: BOOTS now (multi-shard WATCH supported)
+                "--edge-port", "0"   // edge enabled + N>1: boots (multi-shard WATCH supported)
         });
-        ConfigdServer server = ConfigdServer.start(config); // <-- before the guard flip this threw
+        ConfigdServer server = ConfigdServer.start(config); // must not throw: N>1 + edge boot is supported
         try {
             assertNotNull(server.fanOutServer(),
                     "the edge endpoint must be bound at N>1 (the boot guard is gone)");
@@ -131,9 +130,9 @@ class NGreaterThanOneBootSmokeTest {
         } finally {
             server.shutdown();
         }
-        // A SUPPORTED N>1+edge boot now persists the fixed-at-deploy topology descriptor (it is a real
-        // deploy, not a refused boot) - the inverse of the pre-flip assertion. Gate 2b: the plaintext
-        // raft-shard-count.meta was replaced by the authenticated topology-descriptor.dat.
+        // A supported N>1+edge boot persists the fixed-at-deploy topology descriptor (it is a real
+        // deploy, not a refused boot): the authenticated topology-descriptor.dat, not the plaintext
+        // raft-shard-count.meta.
         assertTrue(java.nio.file.Files.exists(dataDir.resolve("topology-descriptor.dat")),
                 "a booted N>1+edge deploy must persist the fixed-at-deploy topology descriptor");
     }

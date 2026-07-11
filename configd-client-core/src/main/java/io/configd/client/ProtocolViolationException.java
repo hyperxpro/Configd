@@ -5,12 +5,12 @@ import io.configd.distribution.wire.ErrorCode;
 /**
  * A framing / protocol-state failure: {@link ErrorCode#PROTOCOL_VIOLATION} (10),
  * {@link ErrorCode#BAD_WIRE_VERSION} (1), {@link ErrorCode#FRAME_TOO_LARGE} (2), or
- * {@link ErrorCode#FRAME_CORRUPT} (3) — and the HTTP {@code 400}/{@code 405} class (Gate 4).
+ * {@link ErrorCode#FRAME_CORRUPT} (3) — and the HTTP {@code 400}/{@code 405} class.
  *
- * <p><b>§07 reaction:</b> a bug in the client's own frame sequence, version pin, or a corrupted stream —
+ * <p><b>Reaction:</b> a bug in the client's own frame sequence, version pin, or a corrupted stream —
  * <b>do not retry unchanged</b>. {@code FRAME_CORRUPT} (3) alone tolerates a single reconnect (transient
  * corruption); a persistent one is a codec bug. The others are producer bugs a conforming driver never
- * elicits (§07 E3-1 / E7).
+ * elicits.
  */
 public final class ProtocolViolationException extends ConfigdException {
 

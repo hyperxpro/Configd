@@ -98,16 +98,14 @@ class SimulatedClockTest {
         void incrementsSubMillisecondPrecision() {
             SimulatedClock clock = new SimulatedClock(1000L);
             clock.advanceNanos(500_000);
-            // 500,000 nanos is less than 1ms, so ms unchanged
             assertEquals(1000L, clock.currentTimeMillis());
-            // nanoTime = 1000 * 1_000_000 + 500_000
             assertEquals(1000L * 1_000_000L + 500_000L, clock.nanoTime());
         }
 
         @Test
         void rollsOverToMillisecondsAtExactBoundary() {
             SimulatedClock clock = new SimulatedClock(1000L);
-            clock.advanceNanos(1_000_000); // exactly 1ms
+            clock.advanceNanos(1_000_000);
             assertEquals(1001L, clock.currentTimeMillis());
             // nanoOffset should be 0 after rollover
             assertEquals(1001L * 1_000_000L, clock.nanoTime());
@@ -116,7 +114,7 @@ class SimulatedClockTest {
         @Test
         void rollsOverWithRemainder() {
             SimulatedClock clock = new SimulatedClock(1000L);
-            clock.advanceNanos(1_500_000); // 1ms + 500,000 nanos
+            clock.advanceNanos(1_500_000);
             assertEquals(1001L, clock.currentTimeMillis());
             assertEquals(1001L * 1_000_000L + 500_000L, clock.nanoTime());
         }
@@ -145,7 +143,6 @@ class SimulatedClockTest {
             clock.advanceNanos(400_000);
             clock.advanceNanos(400_000);
             clock.advanceNanos(400_000);
-            // Total: 1,200,000 nanos = 1ms + 200,000 nanos
             assertEquals(1001L, clock.currentTimeMillis());
             assertEquals(1001L * 1_000_000L + 200_000L, clock.nanoTime());
         }
@@ -153,7 +150,7 @@ class SimulatedClockTest {
         @Test
         void largeNanoAdvanceRollsOverMultipleMilliseconds() {
             SimulatedClock clock = new SimulatedClock(1000L);
-            clock.advanceNanos(3_500_000); // 3ms + 500,000 nanos
+            clock.advanceNanos(3_500_000);
             assertEquals(1003L, clock.currentTimeMillis());
             assertEquals(1003L * 1_000_000L + 500_000L, clock.nanoTime());
         }

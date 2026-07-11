@@ -28,10 +28,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class MultiRaftDriverTest {
 
-    // ========================================================================
-    // Test infrastructure
-    // ========================================================================
-
     static final class TestTransport implements RaftTransport {
         private final List<SentMessage> messages = new ArrayList<>();
 
@@ -108,7 +104,7 @@ class MultiRaftDriverTest {
             RaftNode node = new RaftNode(config, new RaftLog(storage), new TestTransport(),
                     new TestStateMachine(), new java.util.Random(42), storage);
             for (int i = 0; i < 400; i++) {
-                node.tick(); // self-elect (no peers)
+                node.tick();
             }
             assertEquals(RaftRole.LEADER, node.role());
             driver.addGroup(7, node);
@@ -126,10 +122,6 @@ class MultiRaftDriverTest {
                     "driver.maybeCompact must fan out and compact the over-threshold group (RR-005)");
         }
     }
-
-    // ========================================================================
-    // Group management tests
-    // ========================================================================
 
     @Nested
     class GroupManagement {
@@ -202,39 +194,31 @@ class MultiRaftDriverTest {
         }
     }
 
-    // ========================================================================
-    // Tick propagation tests
-    // ========================================================================
-
     @Nested
     class TickPropagation {
 
         @Test
         void tickAdvancesAllGroups() {
-            // Single-node clusters become leader on first election timeout
             RaftNode node1 = createSingleNodeRaft(LOCAL);
             RaftNode node2 = createSingleNodeRaft(LOCAL);
 
             driver.addGroup(1, node1);
             driver.addGroup(2, node2);
 
-            // Both start as FOLLOWER
             assertEquals(RaftRole.FOLLOWER, node1.role());
             assertEquals(RaftRole.FOLLOWER, node2.role());
 
-            // Tick enough to trigger election timeout (max 300 ticks)
+            // 301 ticks clears the 300-tick max election timeout.
             for (int i = 0; i < 301; i++) {
                 driver.tick();
             }
 
-            // Single-node clusters should become leader
             assertEquals(RaftRole.LEADER, node1.role());
             assertEquals(RaftRole.LEADER, node2.role());
         }
 
         @Test
         void tickOnEmptyDriverDoesNotFail() {
-            // Should be a no-op, not throw
             assertDoesNotThrow(() -> driver.tick());
         }
 
@@ -248,20 +232,14 @@ class MultiRaftDriverTest {
 
             driver.removeGroup(1);
 
-            // Tick should only advance group 2
             for (int i = 0; i < 301; i++) {
                 driver.tick();
             }
 
-            // node1 was not ticked after removal - still FOLLOWER
             assertEquals(RaftRole.FOLLOWER, node1.role());
             assertEquals(RaftRole.LEADER, node2.role());
         }
     }
-
-    // ========================================================================
-    // Message routing tests
-    // ========================================================================
 
     @Nested
     class MessageRouting {
@@ -271,19 +249,16 @@ class MultiRaftDriverTest {
             RaftNode node = createRaftWithPeers(LOCAL, Set.of(NodeId.of(2)));
             driver.addGroup(1, node);
 
-            // Send a valid AppendEntries from a "leader" with higher term
             AppendEntriesRequest req = new AppendEntriesRequest(
                     5, NodeId.of(2), 0, 0, List.of(), 0);
 
             driver.routeMessage(1, req);
 
-            // The node should have processed it (leader ID set)
             assertEquals(NodeId.of(2), node.leaderId());
         }
 
         @Test
         void routeMessageToNonexistentGroupIsDropped() {
-            // Should not throw - silently dropped
             AppendEntriesRequest req = new AppendEntriesRequest(
                     1, NodeId.of(2), 0, 0, List.of(), 0);
 
@@ -298,20 +273,14 @@ class MultiRaftDriverTest {
             driver.addGroup(1, node1);
             driver.addGroup(2, node2);
 
-            // Route a message only to group 1
             AppendEntriesRequest req = new AppendEntriesRequest(
                     5, NodeId.of(2), 0, 0, List.of(), 0);
             driver.routeMessage(1, req);
 
-            // Only group 1's node should see it
             assertEquals(NodeId.of(2), node1.leaderId());
             assertNull(node2.leaderId());
         }
     }
-
-    // ========================================================================
-    // Propose tests
-    // ========================================================================
 
     @Nested
     class Propose {
@@ -321,7 +290,6 @@ class MultiRaftDriverTest {
             RaftNode node = createSingleNodeRaft(LOCAL);
             driver.addGroup(1, node);
 
-            // Make it a leader (single-node cluster)
             for (int i = 0; i < 301; i++) {
                 driver.tick();
             }
@@ -336,7 +304,6 @@ class MultiRaftDriverTest {
             RaftNode node = createRaftWithPeers(LOCAL, Set.of(NodeId.of(2)));
             driver.addGroup(1, node);
 
-            // Node is a follower (multi-node cluster, no election triggered)
             assertEquals(RaftRole.FOLLOWER, node.role());
 
             ProposalResult result = driver.propose(1, "test-command".getBytes()).result();
@@ -349,10 +316,6 @@ class MultiRaftDriverTest {
             assertEquals(ProposalResult.NOT_LEADER, result);
         }
     }
-
-    // ========================================================================
-    // Constructor and accessor tests
-    // ========================================================================
 
     @Nested
     class ConstructorAndAccessors {

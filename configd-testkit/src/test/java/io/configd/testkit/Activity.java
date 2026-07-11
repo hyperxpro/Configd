@@ -1,27 +1,26 @@
 package io.configd.testkit;
 
 /**
- * Per-seed activity accumulator - vacuity defence against empty test runs.
+ * Per-seed activity accumulator - a vacuity defence against empty test runs.
  * <p>
- * Previously, the old {@code SeedSweepTest} contained three bare {@code return}
- * statements (no-leader, no-commit, no-failover) that passed green having
- * asserted nothing. A "20,000 green tests" count therefore proved nothing about
- * how often the safety property was actually exercised.
+ * A bare pass/fail per seed would be vacuous if a seed could silently skip the actual
+ * assertion (no-leader, no-commit, no-failover) and still report green: a large green-test
+ * count would prove nothing about how often the safety property was actually exercised.
  * <p>
- * The fix distinguishes two outcome kinds per seed:
+ * This object distinguishes two outcome kinds per seed:
  * <ul>
  *   <li><b>Safety</b> - invariants that must ALWAYS hold. A breach FAILS the seed
  *       (handled by {@link SimInvariants}).</li>
  *   <li><b>Liveness</b> - goals a given seed may legitimately not reach within its
  *       tick budget (a leader is elected, a value commits, a failover completes).
- *       A miss is a <em>recorded liveness stall</em>, NOT a pass and NOT a failure
- *       (charter: liveness findings are registered, not hidden).</li>
+ *       A miss is a <em>recorded liveness stall</em>, NOT a pass and NOT a failure -
+ *       liveness findings are registered, not hidden.</li>
  * </ul>
  * A seed counts as a <em>real assertion</em> of the property only when it reached
  * the assertion (its activity predicate held). This object records which liveness
  * goals were reached so the sweep can (a) skip-but-record seeds that stalled and
- * (b) report the honest "how many seeds actually checked the property" number that
- * replaces the inflated execution count.
+ * (b) report the honest "how many seeds actually checked the property" number rather
+ * than an inflated execution count.
  * <p>
  * Not thread-safe; one instance per seed, mutated on the single sim thread.
  */

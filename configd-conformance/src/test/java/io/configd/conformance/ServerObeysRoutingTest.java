@@ -31,16 +31,16 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Runner II — SERVER-OBEYS, §05 routing: drives raw HTTP against a live {@link HttpApiServer} + real
- * {@link AdminApiHandler} (real routes, auth, ACL, and the {@code NotLeader}→{@code 503}+{@code X-Leader-Hint}
- * emission) — a raw client, not {@link io.configd.client.http.ConfigdHttpClient}, so the exact status and
+ * Runner II -- SERVER-OBEYS, §05 routing: drives raw HTTP against a live {@link HttpApiServer} + real
+ * {@link AdminApiHandler} (real routes, auth, ACL, and the {@code NotLeader}-to-{@code 503}+{@code X-Leader-Hint}
+ * emission) -- a raw client, not {@link io.configd.client.http.ConfigdHttpClient}, so the exact status and
  * headers are observable. It proves the two server-side §05 guarantees a driver relies on:
  *
  * <ul>
- *   <li><b>R3-2</b> — there is NO topology / shard-map / membership discovery endpoint; a driver cannot learn
+ *   <li><b>R3-2</b> -- there is NO topology / shard-map / membership discovery endpoint; a driver cannot learn
  *       the cluster map, {@code N}, or peer endpoints from the wire (they are operator config). Every
  *       discovery-shaped path is a {@code 404}.</li>
- *   <li><b>R8-4</b> — the {@code X-Leader-Hint} is <b>authorization-gated</b>: {@code checkAuth} precedes every
+ *   <li><b>R8-4</b> -- the {@code X-Leader-Hint} is <b>authorization-gated</b>: {@code checkAuth} precedes every
  *       hint site, so an unauthenticated caller gets {@code 401} and an unauthorized caller {@code 403} with
  *       <b>no</b> hint. An attacker does not learn a leader {@code NodeId} from a hint; only a principal already
  *       authorized for the key sees one.</li>
@@ -67,7 +67,7 @@ class ServerObeysRoutingTest {
         acl.grant("app/", "reader", Set.of(AclService.Permission.READ)); // authenticated but NOT permitted to write
 
         // A proposer that always returns NotLeader, so an AUTHORIZED write reaches the redirect path and the
-        // server emits 503 + X-Leader-Hint: 2 — the positive control that proves the hint IS emitted, but only
+        // server emits 503 + X-Leader-Hint: 2 -- the positive control that proves the hint IS emitted, but only
         // after auth. The hint value is filled by the ConfigWriteService's own (keyed) LeaderHintSupplier.
         ConfigWriteService writeService = new ConfigWriteService(
                 (scope, keys, command) -> new ConfigWriteService.ProposeCommitResult.NotLeader(),
@@ -105,13 +105,13 @@ class ServerObeysRoutingTest {
     @Tag("clause:R8-4")
     void theLeaderHintIsAuthorizationGatedNoAnonymousTopologyDisclosure() throws Exception {
         // Positive control: an AUTHORIZED writer's write reaches the NotLeader redirect and DOES receive the
-        // hint — a bare numeric NodeId (R2-2), disclosed only to a principal already authorized for the key.
+        // hint -- a bare numeric NodeId (R2-2), disclosed only to a principal already authorized for the key.
         HttpResponse<String> authorized = put("/v1/config/app/x", "writer-tok", "v");
         assertEquals(503, authorized.statusCode(), "an authorized NotLeader write is a 503");
         assertEquals(Optional.of("2"), authorized.headers().firstValue("X-Leader-Hint"),
                 "the hint is a bare numeric NodeId, emitted for the authorized principal");
 
-        // Unauthenticated: 401 BEFORE any hint — checkAuth precedes every hint site, so the attacker never
+        // Unauthenticated: 401 BEFORE any hint -- checkAuth precedes every hint site, so the attacker never
         // reaches the redirect and learns no leader NodeId.
         HttpResponse<String> anonymous = put("/v1/config/app/x", null, "v");
         assertEquals(401, anonymous.statusCode(), "no credential ⇒ 401");
@@ -129,9 +129,9 @@ class ServerObeysRoutingTest {
     @Test
     @Tag("clause:R3-2")
     void thereIsNoTopologyOrMembershipDiscoveryEndpoint() throws Exception {
-        // R3-2: v1 exposes no /shards, /topology, /members, /peers, or membership endpoint — a driver CANNOT
-        // discover the cluster map, N, or peer endpoints from the wire; it MUST be configured with the
-        // NodeId→api-endpoint map. Every discovery-shaped path is a 404 (routed with a valid credential so the
+        // R3-2: the server exposes no /shards, /topology, /members, /peers, or membership endpoint -- a driver
+        // CANNOT discover the cluster map, N, or peer endpoints from the wire; it MUST be configured with the
+        // NodeId-to-api-endpoint map. Every discovery-shaped path is a 404 (routed with a valid credential so the
         // 404 is the routing verdict, not an auth artifact).
         for (String path : new String[]{"/shards", "/topology", "/members", "/peers", "/v1/shards",
                 "/v1/topology", "/v1/members"}) {
@@ -142,8 +142,6 @@ class ServerObeysRoutingTest {
         assertEquals(404, get("/v1/admin/groups/0/members", "writer-tok").statusCode(),
                 "the admin-groups namespace exposes no membership sub-resource");
     }
-
-    // -----------------------------------------------------------------------
 
     private HttpResponse<String> put(String path, String token, String body) throws Exception {
         HttpRequest.Builder b = HttpRequest.newBuilder(base.resolve(path))

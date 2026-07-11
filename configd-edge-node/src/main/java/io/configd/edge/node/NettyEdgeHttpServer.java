@@ -44,7 +44,7 @@ import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
  * Production Netty edge read-serving HTTP/1.1 server — the Netty adapter over the
  * transport-agnostic {@link EdgeReadHandler}. Serves byte-identical responses to the JDK
  * {@link EdgeHttpServer} on the canonical request paths by construction (both delegate to the same
- * logic; routing is exact-match), at 8.7x less server-side allocation.
+ * logic; routing is exact-match), at much less server-side allocation.
  *
  * <p><b>Transport.</b> Tier selected at startup by {@link NettyTransport} (io_uring then Epoll then
  * NIO, runtime-detected; CI exercises the fallback). {@code MultiThreadIoEventLoopGroup} +
@@ -54,13 +54,13 @@ import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
  *
  * <p><b>Allocation discipline (hot path).</b> The handler IS the {@link EdgeReadHandler.Sink} (no
  * per-request sink object), allocates exactly the one {@link HttpHeaders} the response needs (handed
- * INTO the response), one pooled body {@link ByteBuf}, and one response object — matching the
- * prototype. The slowloris deadline is enforced by a single self-rescheduling watcher keyed off a
- * {@code deadlineNanos} timestamp, so a completed request costs only one {@code long} write (NOT a
- * per-request {@code schedule()} — an earlier naive rearm cost ~104 B/req and was eliminated).
+ * INTO the response), one pooled body {@link ByteBuf}, and one response object. The slowloris
+ * deadline is enforced by a single self-rescheduling watcher keyed off a {@code deadlineNanos}
+ * timestamp, so a completed request costs only one {@code long} write, not a per-request
+ * {@code schedule()} call (which would add its own per-request allocation).
  *
- * <p><b>Hardening the head-to-head prototype lacked</b> (a public read port is hostile):
- * bounded {@code HttpServerCodec} (oversize line/header: 400 + close); a request-size ceiling
+ * <p><b>Hardening a public read port needs</b> (it is exposed to hostile traffic): bounded
+ * {@code HttpServerCodec} (oversize line/header: 400 + close); a request-size ceiling
  * (oversize body: 413 + close); a request-completion deadline (slowloris incl. the dribble
  * variant); {@link IdleStateHandler} idle reaping; and a leak-free {@code ByteBuf} lifecycle.
  */

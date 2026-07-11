@@ -12,19 +12,18 @@ import java.util.random.RandomGeneratorFactory;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Sustained mini-Jepsen against the FULLY-FIXED system (charter section 6 step
- * 5). A long-horizon randomized MIXED-fault run on the 5-node control plane: random partitions,
- * heals, packet loss, latency spikes, and continuous writes, with the consistency-contract SAFETY
- * oracle asserted EVERY tick (single-leader-per-term + no divergent commit + no committed-entry
- * loss). After the storm a final heal must converge the whole cluster - proving the mixed-fault
- * history left the cluster recoverable, not wedged.
+ * Sustained mini-Jepsen: a long-horizon randomized mixed-fault run on the 5-node control
+ * plane - random partitions, heals, packet loss, latency spikes, and continuous writes -
+ * with the safety oracle asserted EVERY tick (single-leader-per-term + no divergent commit +
+ * no committed-entry loss). After the storm a final heal must converge the whole cluster -
+ * proving the mixed-fault history left the cluster recoverable, not wedged.
  *
- * <p>This complements the existing adversarial sweeps re-run against the fixed system: the 10k
- * control-plane {@code SeedSweepTest} (build-and-test job) and the 10k integrated edge
- * {@code EdgeIntegratedNightlySweepTest} (nightly sweep) - both 0 safety violations post-fix. It is
- * NIGHTLY, not in the CI gate: default a small horizon/seed count; the nightly run overrides
- * {@code -Dconfigd.minijepsen.seeds} / {@code -Dconfigd.minijepsen.horizon} for a sustained sweep.
- * fault-matrix section E.
+ * <p>This complements the existing adversarial sweeps: the 10k control-plane
+ * {@code SeedSweepTest} (build-and-test job) and the 10k integrated edge
+ * {@code EdgeIntegratedNightlySweepTest} (nightly sweep) - both see 0 safety violations. It is
+ * NIGHTLY, not in the CI gate: it defaults to a small horizon/seed count; the nightly run
+ * overrides {@code -Dconfigd.minijepsen.seeds} / {@code -Dconfigd.minijepsen.horizon} for a
+ * sustained sweep.
  */
 class MiniJepsenSweepTest {
 
@@ -46,7 +45,7 @@ class MiniJepsenSweepTest {
             assertTrue(elect > 0, ctx + ": no initial leader");
 
             // The sustained mixed-fault storm: every few ticks, roll a random fault and (when a
-            // leader exists) propose a write. Safety is asserted on every step inside stepChecked.
+            // leader exists) propose a write. Safety is asserted on every step below.
             for (int t = 0; t < HORIZON; t++) {
                 c.step();
                 c.assertSafety(ctx);

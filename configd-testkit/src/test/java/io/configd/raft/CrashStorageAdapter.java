@@ -10,9 +10,8 @@ import java.util.List;
  * {@code io.configd.raft}, consumed here via the consensus-core <b>test-jar</b>) to
  * the {@link AdversarialSim.CrashStorageHandle} seam used by the adversarial
  * simulation. This class lives in {@code io.configd.raft} precisely so it can see
- * the package-private {@code CrashStorage} without that class being made public - 
- * the lead's "do not duplicate the class" constraint with zero edits to the fixture's
- * file.
+ * the package-private {@code CrashStorage} without that class being made public and
+ * without duplicating it, with zero edits to the fixture's file.
  * <p>
  * {@link #create()} is the single factory the testkit calls; if the test-jar is
  * absent the {@link NoClassDefFoundError} surfaces at construction (a clear wiring
@@ -46,7 +45,7 @@ public final class CrashStorageAdapter implements CrashStorageHandle {
         return delegate.recoveredView();
     }
 
-    // ---- Storage delegation ----
+    // Storage delegation.
 
     @Override
     public void put(String key, byte[] value) {

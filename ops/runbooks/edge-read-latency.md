@@ -5,7 +5,7 @@
 **Severity:** page (p99), warn (p999)
 
 Edge reads are served from a per-node in-process HAMT snapshot — an
-O(log₃₂ N) lookup with no remote IO (S5 p99 = 1.6 µs, ~600× headroom). If
+O(log₃₂ N) lookup with no remote IO (measured p99 = 1.6 µs, ~600× headroom). If
 this alert fires, the local read path has regressed badly; the usual cause
 is a JVM pause, not the lookup itself.
 
@@ -25,7 +25,7 @@ stalling, not Configd logic.
 
 1. **JVM / GC pause** — `Configd Runtime` dashboard, **"GC time fraction"**
    (`rate(jvm_gc_collection_millis[5m])`) and **"Heap used vs max"**. ZGC
-   STW pauses should be sub-millisecond (S5 max 0.045 ms); a spike here is
+   STW pauses should be sub-millisecond (measured max 0.045 ms); a spike here is
    the prime suspect. Confirm on the pod:
    ```sh
    kubectl -n configd exec <edge> -- sh -c 'pid=$(pgrep -f configd); jcmd $pid GC.heap_info'
@@ -88,5 +88,5 @@ injector exists).
 
 ## Related
 
-- `docs/decisions/adr-0041-zgc-collector.md` — the GC strategy this SLO leans on.
+- `docs/adr/adr-0041-gc-collector.md` — the GC strategy this SLO leans on.
 - [resource-leak.md](resource-leak.md), [propagation-delay.md](propagation-delay.md)

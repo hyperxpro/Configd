@@ -175,7 +175,7 @@ class RaftMessageCodecTest {
         @Test
         void midStreamChunkRoundTrip() {
             // An intermediate chunk of a chunked transfer: nonzero offset, not the final chunk, and
-            // no cluster config (config rides only the final chunk).
+            // no cluster config (config rides only on the final chunk).
             byte[] data = {5, 6, 7, 8};
             var req = new InstallSnapshotRequest(8L, NodeId.of(1), 100L, 7L, 4096, data, false);
             FrameCodec.Frame frame = RaftMessageCodec.encode(req, GROUP_ID);
@@ -254,9 +254,9 @@ class RaftMessageCodecTest {
     }
 
     /**
-     * Codec-strictness batch (Gate 2 Workstream D): WH-05 (negative InstallSnapshot offset) and WH-06
-     * (strict-end trailing-byte rejection on the request-side fixed-shape decoders). Every check rejects
-     * only a malformed frame; the round-trip tests above prove well-formed frames are unaffected.
+     * Codec-strictness checks: negative InstallSnapshot offsets, and strict-end trailing-byte
+     * rejection on the request-side fixed-shape decoders. Every check rejects only a malformed
+     * frame; the round-trip tests above prove well-formed frames are unaffected.
      */
     @Nested
     class CodecStrictness {
@@ -269,7 +269,7 @@ class RaftMessageCodecTest {
 
         @Test
         void appendEntriesRejectsTrailingBytes() {
-            // WH-06: a fixed-shape AppendEntries carries no padding past its declared entries.
+            // A fixed-shape AppendEntries carries no padding past its declared entries.
             var entries = List.of(new LogEntry(11L, 5L, new byte[]{1, 2, 3}));
             var req = new AppendEntriesRequest(5L, NodeId.of(2), 10L, 4L, entries, 9L);
             FrameCodec.Frame good = RaftMessageCodec.encode(req, GROUP_ID);
@@ -290,7 +290,7 @@ class RaftMessageCodecTest {
 
         @Test
         void installSnapshotRejectsTrailingBytesAfterConfig() {
-            // WH-06: trailing bytes past the optional configData blob are rejected.
+            // Trailing bytes past the optional configData blob are rejected.
             byte[] data = {1, 2, 3};
             byte[] config = {9, 8, 7};
             var req = new InstallSnapshotRequest(8L, NodeId.of(1), 100L, 7L, 0, data, true, config);
@@ -313,7 +313,7 @@ class RaftMessageCodecTest {
 
         @Test
         void installSnapshotRejectsNegativeOffset() {
-            // WH-05: a negative chunk offset is rejected at decode (symmetry with the response's
+            // A negative chunk offset is rejected at decode (symmetry with the response's
             // nextExpectedOffset check). Build a raw payload with offset = -1, dataLen = 0.
             ByteBuffer p = ByteBuffer.allocate(4 + 8 + 8 + 4 + 1 + 4);
             p.putInt(NodeId.of(1).id());
@@ -330,7 +330,7 @@ class RaftMessageCodecTest {
 
         @Test
         void installSnapshotResponseStillToleratesAbsentTrailingOffset() {
-            // Negative control for WH-06: the response's nextExpectedOffset is a DELIBERATE optional
+            // Negative control: the response's nextExpectedOffset is a DELIBERATE optional
             // trailing field and must NOT be made strict-end. A 13-byte legacy response still decodes.
             ByteBuffer legacy = ByteBuffer.allocate(1 + 4 + 8);
             legacy.put((byte) 1);
@@ -341,8 +341,6 @@ class RaftMessageCodecTest {
             var result = (InstallSnapshotResponse) RaftMessageCodec.decode(frame);
             assertEquals(0, result.nextExpectedOffset());
         }
-
-        // ---- C2 (WH-06 completeness): strict-end on the remaining fixed-size decoders ----
 
         @Test
         void appendEntriesResponseRejectsTrailingBytes() {
@@ -409,9 +407,9 @@ class RaftMessageCodecTest {
 
         @Test
         void witnessRejectsTrailingBytes() {
-            // WH-06 (Gate-7 round-2): the witness body is exactly WITNESS_BODY_LEN; a trailing byte is
-            // rejected, matching every other fixed-shape Raft decoder. decodeWitness needs the
-            // authenticated sender, so it is exercised directly rather than via decode().
+            // The witness body is exactly WITNESS_BODY_LEN; a trailing byte is rejected, matching
+            // every other fixed-shape Raft decoder. decodeWitness needs the authenticated sender,
+            // so it is exercised directly rather than via decode().
             var from = NodeId.of(2);
             var msg = new io.configd.raft.WitnessMessage(from, 11L, 9L, 3, 4L, true);
             FrameCodec.Frame good = RaftMessageCodec.encode(msg, GROUP_ID);

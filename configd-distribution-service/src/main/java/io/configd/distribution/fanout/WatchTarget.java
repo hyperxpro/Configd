@@ -5,8 +5,8 @@ import io.configd.distribution.wire.EdgeFrame;
 import java.util.Objects;
 
 /**
- * The target of a watch (W2-2): the {@code (scope, kind, path)} a watch subscribes to, plus
- * the {@code full_chain_verify} delivery-mode flag (W8-4). A small, dependency-free value
+ * The target of a watch: the {@code (scope, kind, path)} a watch subscribes to, plus
+ * the {@code full_chain_verify} delivery-mode flag. A small, dependency-free value
  * type - it deliberately carries the scope as a raw {@code int} (not a {@code ConfigScope})
  * so the fan-out plane stays decoupled from the config-store / api scope enum and so it can
  * be passed verbatim to the {@link WatchAuthorizer} SPI.
@@ -15,13 +15,13 @@ import java.util.Objects;
  * them <b>distinct</b> (section 7 vs section 5 of the RFC):
  * <ul>
  *   <li><b>Authorization</b> (the gate) consumes the whole target via {@link WatchAuthorizer}
- *       - authorize all of it or reject (W7-2). The {@code full_chain_verify}/FULL flag
- *       routes the adapter to the root effective target (W7-3).</li>
- *   <li><b>Routing</b> (the per-watch filter, W5-6) consumes {@link #matches(String)} - a
+ *       - authorize all of it or reject. The {@code full_chain_verify}/FULL flag
+ *       routes the adapter to the root effective target.</li>
+ *   <li><b>Routing</b> (the per-watch filter) consumes {@link #matches(String)} - a
  *       literal key match (KEY exact, PREFIX {@code startsWith}, FULL all), the same literal
  *       model as the ACL {@code PolicyRule}. Filtering NEVER authorizes; the gate already
  *       authorized the whole target (so a FULL / {@code full_chain_verify} watch matches all
- *       keys precisely because it was gated by a root-scope grant, W7-2).</li>
+ *       keys precisely because it was gated by a root-scope grant).</li>
  * </ul>
  *
  * @param scope           the {@code ConfigScope} ordinal as a raw {@code int} (0=GLOBAL,
@@ -29,8 +29,8 @@ import java.util.Objects;
  * @param targetKind      {@link EdgeFrame#WATCH_TARGET_KEY} / {@link EdgeFrame#WATCH_TARGET_PREFIX}
  *                        / {@link EdgeFrame#WATCH_TARGET_FULL}
  * @param path            the canonical path (empty for FULL); the literal match prefix/key
- * @param fullChainVerify the untrusted-edge verbatim mode flag (W8-4); requires root scope
- *                        (W7-3) and in v1 is served as a FULL key stream
+ * @param fullChainVerify the untrusted-edge verbatim mode flag; requires root scope
+ *                        and is currently served as a FULL key stream
  */
 public record WatchTarget(int scope, int targetKind, String path, boolean fullChainVerify) {
 
@@ -55,8 +55,8 @@ public record WatchTarget(int scope, int targetKind, String path, boolean fullCh
     }
 
     /**
-     * True iff this target matches <b>every</b> key - FULL or {@code full_chain_verify} (W8-4) -
-     * so a catch-up snapshot needs <b>no</b> filtering (it was gated by a root-scope grant, W7-3).
+     * True iff this target matches <b>every</b> key - FULL or {@code full_chain_verify} -
+     * so a catch-up snapshot needs <b>no</b> filtering (it was gated by a root-scope grant).
      * Mirrors the {@link #matches(String)} short-circuit; lets {@link FilteringReplaySource} skip
      * the snapshot rebuild for a whole-store-authorized watch.
      */
@@ -65,7 +65,7 @@ public record WatchTarget(int scope, int targetKind, String path, boolean fullCh
     }
 
     /**
-     * The per-watch routing filter (W5-6) - true iff a mutation on {@code key} belongs to
+     * The per-watch routing filter - true iff a mutation on {@code key} belongs to
      * this target. This is <b>routing, not authorization</b> (the gate already authorized
      * the whole target):
      * <ul>

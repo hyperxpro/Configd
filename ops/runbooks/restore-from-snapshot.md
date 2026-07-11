@@ -218,8 +218,8 @@ The runbook is **complete** when all of the following hold:
   state machine, observable via a follow-up read).
 - Edge propagation has returned to baseline: `max(edge_staleness_ms)` is
   back under the 500 ms `ConfigdEdgeStalenessWarn` boundary on the
-  `Configd Data Plane` dashboard (S6/D-2: `edge_staleness_ms` is the real
-  served signal; the old `configd_propagation_delay_seconds` was a ghost).
+  `Configd Data Plane` dashboard (`edge_staleness_ms` is the real served
+  signal; the old `configd_propagation_delay_seconds` was never emitted).
 
 - The conformance check below has passed:
 
@@ -283,10 +283,10 @@ the disaster-recovery PIR requirement). Required fields:
 - [snapshot-install.md](snapshot-install.md) — peer-symptom runbook
 - [runbook-conformance-template.md](runbook-conformance-template.md)
 - `spec/SnapshotInstallSpec.tla` — formal model of snapshot install
-- `docs/decisions/adr-0028-snapshot-on-disk-format.md` — snapshot
+- `docs/adr/adr-0028-snapshot-on-disk-format.md` — snapshot
   on-disk / on-wire format (TLV trailer, signing-epoch, envelope
   bounds); `SnapshotConsistency` invariant background
-- `docs/decisions/adr-0027-sign-or-fail-close.md` — signing chain that
+- `docs/adr/adr-0027-sign-or-fail-close.md` — signing chain that
   Step 2 verification depends on
 
 ## Validation (drill / conformance)

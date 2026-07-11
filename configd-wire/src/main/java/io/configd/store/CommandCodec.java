@@ -51,10 +51,6 @@ public final class CommandCodec {
         // utility class - no instances
     }
 
-    // -----------------------------------------------------------------------
-    // Encoding
-    // -----------------------------------------------------------------------
-
     /**
      * Encodes a PUT command.
      *
@@ -126,10 +122,6 @@ public final class CommandCodec {
         return buf.array();
     }
 
-    // -----------------------------------------------------------------------
-    // Decoding
-    // -----------------------------------------------------------------------
-
     /**
      * Thrown by {@link #decode} for any grammatically-malformed command: an unknown type
      * discriminant, a truncated / over-declared length field, or trailing bytes after a
@@ -194,10 +186,6 @@ public final class CommandCodec {
         return decoded;
     }
 
-    // -----------------------------------------------------------------------
-    // DecodedCommand sealed hierarchy
-    // -----------------------------------------------------------------------
-
     /**
      * A decoded Raft log command. Sealed to the four permitted variants.
      */
@@ -249,10 +237,6 @@ public final class CommandCodec {
             static final Noop INSTANCE = new Noop();
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Internal helpers
-    // -----------------------------------------------------------------------
 
     /**
      * Encodes a single mutation (PUT or DELETE) without the BATCH wrapper.

@@ -29,15 +29,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * One full-store or prefix subscription over one {@link EdgeConnection} — the Gate-2 read/hydrate surface. It
- * maintains a verified {@link LocalConfigView} by applying the hydration snapshot and the signed delta chain
- * (via {@link SignedChainVerifier} / {@link SnapshotReassembler}), drives {@code CURSOR_ACK} flow-control, and
+ * One full-store or prefix subscription over one {@link EdgeConnection}. It maintains a verified
+ * {@link LocalConfigView} by applying the hydration snapshot and the signed delta chain (via
+ * {@link SignedChainVerifier} / {@link SnapshotReassembler}), drives {@code CURSOR_ACK} flow-control, and
  * exposes the change stream two ways:
  *
  * <ul>
  *   <li><b>Reactive</b> — a single-subscriber {@link Flow.Publisher Flow.Publisher&lt;ConfigChange&gt;} whose
  *       {@code request(n)} demand gates the {@code CURSOR_ACK} cadence: a subscriber that stops requesting stops
- *       the client acking, so the server demotes it (§06 F10-3). No subscriber ⇒ the client drains and acks
+ *       the client acking, so the server demotes it. No subscriber ⇒ the client drains and acks
  *       promptly (a good transport citizen) and the {@link #view()} stays current.</li>
  *   <li><b>Blocking</b> — {@link #view()} for point reads and {@link #awaitHydrated(Duration)} for the
  *       reference / conformance driver.</li>
@@ -48,7 +48,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * reconnects and re-{@code SUBSCRIBE}s from scratch). Reconnect/resume are driven by {@link ConfigdEdgeClient}:
  * {@link #onConnected(EdgeConnection)} (re)sends the {@code SUBSCRIBE} at the persisted cursor.
  *
- * <p><b>Server-side filtered ({@code 0x03}) sessions (ADR-0045).</b> When the {@code SUBSCRIBE_OK} confirms
+ * <p><b>Server-side filtered ({@code 0x03}) sessions.</b> When the {@code SUBSCRIBE_OK} confirms
  * filtering, the delivered chain is intentionally non-contiguous (the server drops whole out-of-prefix signed
  * deltas), so gap detection relaxes to <b>forward-only</b>: a delta whose {@code fromVersion} jumps <i>ahead</i>
  * of the applied version is the expected shape and is applied, and the cursor tracks a dense covered-S advanced
@@ -75,7 +75,7 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
     private volatile long latestServerSeq;      // server frontier, from SUBSCRIBE_OK/HEARTBEAT (staleness)
     private volatile boolean forceRebootstrap;  // re-SUBSCRIBE at 0 after a gap / truncated snapshot
     private volatile boolean snapshotExpected;  // a snapshot flow is coming (SNAPSHOT_FIRST or DEMOTED_TO_CATCHUP)
-    private volatile boolean filtered;          // 0x03 server-side-filtered session (ADR-0045): forward-only gap
+    private volatile boolean filtered;          // 0x03 server-side-filtered session: forward-only gap
 
     private final CompletableFuture<Long> hydrated = new CompletableFuture<>();
     private final AtomicBoolean closed = new AtomicBoolean(false);
@@ -115,10 +115,6 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
                                LocalConfigView view, CursorStore cursorStore) {
         return new Subscription(options, fullStore, prefixes, verifier, reassembler, view, cursorStore);
     }
-
-    // -----------------------------------------------------------------------
-    // public read surface
-    // -----------------------------------------------------------------------
 
     /** The verified, materialized local store. */
     public LocalConfigView view() {
@@ -164,10 +160,6 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
             }
         }
     }
-
-    // -----------------------------------------------------------------------
-    // reactive publisher (single subscriber)
-    // -----------------------------------------------------------------------
 
     @Override
     public void subscribe(Flow.Subscriber<? super ConfigChange> sub) {
@@ -219,10 +211,6 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
         }
     }
 
-    // -----------------------------------------------------------------------
-    // connection lifecycle (driven by ConfigdEdgeClient)
-    // -----------------------------------------------------------------------
-
     /** (Re)sends the {@code SUBSCRIBE} on a freshly authenticated connection, at the persisted resume cursor. */
     public void onConnected(EdgeConnection conn) {
         this.connection = conn;
@@ -249,10 +237,6 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
         failSubscriber(error);
     }
 
-    // -----------------------------------------------------------------------
-    // inbound frame handling (reader thread)
-    // -----------------------------------------------------------------------
-
     @Override
     public void onFrame(EdgeFrame frame) {
         try {
@@ -263,8 +247,8 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
                 case EdgeFrame.SnapshotChunk chunk -> reassembler.chunk(chunk);
                 case EdgeFrame.SnapshotEnd end -> handleSnapshotEnd(end);
                 default -> {
-                    // A watch frame (0x0A+) on a legacy subscribe connection is unexpected; ignore benignly
-                    // (Gate 3 handles the 0x02 plane). Other business frames are handled above.
+                    // A watch frame (0x0A+) on a legacy subscribe connection is unexpected; ignore benignly —
+                    // the watch plane handles the 0x02 wire separately. Other business frames are handled above.
                 }
             }
         } catch (ConfigdException fatal) {
@@ -276,7 +260,7 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
     public void onHeartbeat(EdgeFrame.Heartbeat heartbeat) {
         this.latestServerSeq = heartbeat.latestSeq();
         // On a filtered (0x03) session HEARTBEAT.latestSeq is the DRAINED-THROUGH covered-S — everything
-        // matching this edge's prefixes through it has been delivered or filtered (ADR-0045 carve-out 2), not
+        // matching this edge's prefixes through it has been delivered or filtered, not
         // the raw buffer tip. Advance the dense covered/resume cursor MONOTONICALLY so a reconnect resumes near
         // head (the forward-only apply bridges the view when the next in-prefix delta lands) and the ack
         // watermark climbs past the filtered-out skips, so a correctly-filtered narrow edge is not demoted for
@@ -321,11 +305,9 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
         }
     }
 
-    // -----------------------------------------------------------------------
-
     private void handleSubscribeOk(EdgeFrame.SubscribeOk ok) {
         this.latestServerSeq = ok.latestSeq();
-        // ADR-0045: the server's confirm selects the filtered-stream apply mode — a dense covered-S resume
+        // The server's confirm selects the filtered-stream apply mode — a dense covered-S resume
         // cursor and forward-only gap detection. A 0x01/0x02 SUBSCRIBE_OK always decodes filtered=false, and a
         // 0x03 edge talking to a filter-OFF server also gets filtered=false, so both stay on the strict classic
         // path. Gate every filtered behaviour on this bit (not on the negotiated wire version) so the byte-for-
@@ -368,12 +350,12 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
 
             long currentVersion = view.currentVersion();
             if (delta.toVersion() <= currentVersion) {
-                continue; // stale / re-delivered — idempotent, cursor unchanged (INV-M1)
+                continue; // stale / re-delivered — idempotent, cursor unchanged
             }
             // Gap detection. The classic (0x01/0x02) chain is contiguous, so any fromVersion other than the
             // applied version is a gap. On a server-side-filtered (0x03) session the delivered chain is
             // intentionally non-contiguous — the server drops whole out-of-prefix signed deltas and advances a
-            // dense covered-S cursor (ADR-0045 carve-out 2) — so a FORWARD jump (fromVersion > applied) is the
+            // dense covered-S cursor — so a FORWARD jump (fromVersion > applied) is the
             // expected shape of an interleaved out-of-prefix commit and must be APPLIED, not re-bootstrapped;
             // only a REGRESSION below the applied version is a genuine gap. The forward jump applies cleanly
             // because LocalConfigView.applyDelta stamps the store to delta.toVersion() regardless of fromVersion

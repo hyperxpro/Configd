@@ -32,8 +32,7 @@ public final class HeartbeatCoalescer {
      * {@link LinkedHashMap} so the drain replays heartbeats in record order (= the leader's {@code peersOf}
      * broadcast order). This preserves the per-tick send payloads and the heartbeat send order; note it is
      * NOT byte-identical to the un-coalesced path on a tick that mixes a buffered heartbeat with an
-     * immediately-sent entry-carrying AppendEntries (the heartbeat now drains after it), so the sim
-     * seed-sweep is a re-established baseline - green on the new trajectory.
+     * immediately-sent entry-carrying AppendEntries (the heartbeat now drains after it).
      */
     private final Map<NodeId, Map<Integer, AppendEntriesRequest>> pending = new LinkedHashMap<>();
 

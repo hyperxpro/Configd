@@ -13,24 +13,24 @@
     <artifactId>configd-edge-node</artifactId>
 
     <!--
-      C2 (Session 3): the separately runnable edge node process (RR-001).
+      The separately runnable edge node process.
       Internal runtime deps: JDK sockets + TlsManager (configd-transport),
       EdgeClientCore + edge cache (configd-edge-cache), the edge wire protocol
       (configd-distribution-service), Ed25519 verification (configd-config-store,
       via edge-cache), metrics/invariants (configd-observability).
 
-      Netty transport (ADR-0043, supersedes ADR-0037): M1 migrated the edge-read HTTP
-      surface (EdgeHttpServer) to Netty 4.2. The Netty selector + the HTTP-transport
-      dependency closure now live in the shared configd-netty platform module (DR-N6,
-      added in M2 so configd-server reuses the same selector); this module depends on it
-      and gets the io_uring→Epoll→NIO transport + HTTP codec transitively — no direct
+      NettyEdgeHttpServer serves the edge-read HTTP surface on Netty 4.2; EdgeHttpServer
+      remains as the JDK equivalence reference (see its class doc). The Netty selector and
+      the HTTP-transport dependency closure live in the shared configd-netty platform
+      module, shared with configd-server's own selector; this module depends on it and
+      gets the io_uring→Epoll→NIO transport + HTTP codec transitively — no direct
       io.netty declarations here. Native binaries are linux-x86_64; non-Linux / sandboxed
       runs fall through to NIO at runtime (netty42-api.md §1).
     -->
     <dependencies>
         <dependency><groupId>io.configd</groupId><artifactId>configd-common</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-transport</artifactId><version>${project.version}</version></dependency>
-        <!-- Netty 4.2 platform: transport selector + full HTTP-transport dep closure (ADR-0043, DR-N6). -->
+        <!-- Netty 4.2 platform: transport selector + full HTTP-transport dep closure. -->
         <dependency><groupId>io.configd</groupId><artifactId>configd-netty</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-config-store</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-edge-cache</artifactId><version>${project.version}</version></dependency>
@@ -109,33 +109,34 @@
 
     <profiles>
         <!--
-          C2 day-one mutation profile (charter §4.1; RR-085 lesson: explicit
-          targetClasses, never blanket globs). Activated with the parent -Pmutation.
+          Mutation profile: explicit targetClasses only, never a blanket glob (a glob would
+          sweep in the live-IO classes below, and per-mutant forking of those is unstable).
+          Activated with the parent -Pmutation.
 
           targetClasses (held to 65):
             EdgeNodeConfig  — CLI parsing/validation (pure decision logic);
-            EdgeReadHandler — the read-serving decision surface (ADR-0043 DR-N2): cursor-behind
+            EdgeReadHandler — the read-serving decision surface: cursor-behind
                               refusal, strong-read fail-close, stale header, not-subscribed,
-                              health gating, the /metrics Bearer gate (the CT-03/05/12/37 clauses).
+                              health gating, the /metrics Bearer gate.
                               The transport-agnostic logic both HTTP adapters delegate to;
-            EdgeHttpServer  — the (now thin) JDK adapter: routing dispatch + the JdkSink;
-            EdgeNodeMetrics — series registration + delta-pump + the CT-04
+            EdgeHttpServer  — the thin JDK adapter: routing dispatch + the JdkSink;
+            EdgeNodeMetrics — series registration + delta-pump + the
                               STALE-transition counter and the DISCONNECTED
                               re-bootstrap trigger seam.
 
           NettyEdgeHttpServer / NettyTransport are EXCLUDED for the same reason as EdgeStreamClient:
           pure transport-IO orchestration (event loops, native transport selection, socket framing)
-          whose per-mutant run needs a live server/port — the per-mutant-fork instability RR-085/092
-          forbid. Their decision content lives in EdgeReadHandler (covered above); their IO + the
+          whose per-mutant run needs a live server/port, which destabilizes per-mutant
+          forking. Their decision content lives in EdgeReadHandler (covered above); their IO + the
           slowloris/size hardening are pinned by NettyEdgeHttpServerTest + NettyEdgeHttpServerHardeningTest.
 
           EXCLUDED (justified, pure-IO wiring — each would need a live socket /
           TLS handshake / multi-thread process per mutant, which is exactly the
-          per-mutant-fork instability RR-085/RR-092 forbid):
+          instability that destabilizes per-mutant forking):
             EdgeStreamClient — connect/mTLS/reconnect virtual-thread shell; its
                                logic is the EdgeClientCore directives (already
-                               mutation-tested in configd-edge-cache — C3 added the
-                               PoisonPillPolicy ladder there too); the C3 additions here
+                               mutation-tested in configd-edge-cache, including the
+                               PoisonPillPolicy ladder there too); the additions here
                                (requestRebootstrap teardown, terminal-action invoke,
                                poison resume-cursor derivation) are pure IO orchestration
                                pinned by the process-level EdgeReBootstrapOnDisconnectTest

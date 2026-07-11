@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * Charter hard-rule 5 for the BEST-NETTY side: the pooled-{@code ByteBuf} encoders
+ * For the BEST-NETTY side: the pooled-{@code ByteBuf} encoders
  * ({@link NettyWireEncoders}) must produce <b>byte-identical</b> output to the production
  * {@link FrameCodec}/{@link EdgeFrameCodec} (and therefore to the best-JDK {@link H2HCodecs}).
  * A Netty pipeline that is faster but emits different wire bytes is disqualified.

@@ -23,7 +23,7 @@ class SlowConsumerQuarantineTransitionTest {
     private static final String EDGE = "CN=edge-2,O=configd";
     private static final long T0 = 1_700_000_000_000L;
 
-    /** demoteLimit=3, gapDemoteLimit=5, demoteWindowMs=60_000 (test-scaled gap backstop). */
+    /** demoteLimit is 3, gapDemoteLimit is 5, demoteWindowMs is 60_000 (test-scaled gap backstop). */
     private static SlowConsumerPolicyConfig config() {
         return new SlowConsumerPolicyConfig(
                 10_000L, 3, 5, 60_000L, 60_000L, 3, 3_600_000L, 3_600_000L, 4_096);
@@ -87,13 +87,13 @@ class SlowConsumerQuarantineTransitionTest {
 
     @Test
     void gapDemotionsAreWeightedSeparatelyAndDoNotTripTheDistressLimit() {
-        // Screen C4-2/C4-3: a healthy edge flapping on a lossy network (GAP demotions)
-        // must not be quarantined at the distress limit.
+        // A healthy edge flapping on a lossy network (GAP demotions) must not be
+        // quarantined at the distress limit.
         RecordingPolicyProbe probe = new RecordingPolicyProbe();
         SlowConsumerGovernor governor =
                 new SlowConsumerGovernor(config(), probe, probe::onTransition);
 
-        for (int i = 0; i < 4; i++) { // 4 GAPs > demoteLimit (3), < gapDemoteLimit (5)
+        for (int i = 0; i < 4; i++) { // 4 gaps: more than demoteLimit (3), fewer than gapDemoteLimit (5)
             assertEquals(ConsumerState.CATCHUP,
                     governor.onDemotion(EDGE, gap(50 + i, 40), T0 + i * 1_000L));
         }
@@ -128,7 +128,7 @@ class SlowConsumerQuarantineTransitionTest {
         SlowConsumerGovernor governor =
                 new SlowConsumerGovernor(config(), probe, probe::onTransition);
 
-        // 2 distress + 2 gap: neither ladder at its limit - no quarantine.
+        // Two distress plus two gap: neither ladder is at its limit, so no quarantine.
         governor.onDemotion(EDGE, distress(10, 5), T0);
         governor.onDemotion(EDGE, gap(11, 5), T0 + 1_000);
         governor.onDemotion(EDGE, distress(12, 5), T0 + 2_000);
@@ -137,7 +137,7 @@ class SlowConsumerQuarantineTransitionTest {
                 "2 distress + 2 gap must not trip either separately-counted limit");
         assertEquals(ConsumerState.CATCHUP, governor.state(EDGE));
 
-        // The 3rd DISTRESS trips its ladder regardless of the gap count.
+        // The third distress demotion trips its ladder regardless of the gap count.
         assertEquals(ConsumerState.QUARANTINED,
                 governor.onDemotion(EDGE, distress(14, 5), T0 + 4_000));
         SlowConsumerGovernor.TransitionEvent event = probe.lastTransition();
@@ -167,8 +167,8 @@ class SlowConsumerQuarantineTransitionTest {
 
     @Test
     void theDemoteWindowIsInclusiveAtItsExactEdge() {
-        // "within demoteWindowMs" is INCLUSIVE: a demotion exactly demoteWindowMs old
-        // still counts (the window prunes strictly-older entries only).
+        // Within demoteWindowMs is inclusive: a demotion exactly demoteWindowMs old still
+        // counts, since the window prunes strictly-older entries only.
         RecordingPolicyProbe probe = new RecordingPolicyProbe();
         SlowConsumerGovernor governor =
                 new SlowConsumerGovernor(config(), probe, probe::onTransition);

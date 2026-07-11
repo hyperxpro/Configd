@@ -70,7 +70,7 @@ class LeaderBalancePlannerTest {
 
     @Test
     void optimalUneven_belowThreshold_noAction() {
-        // G=5, M=3, optimal {2,2,1}: spread 1 < threshold 2 -> nothing to do (the >=2 rule).
+        // G=5, M=3, optimal {2,2,1}: spread 1 < threshold 2, so nothing to do (the >=2 rule).
         int[] led = {0, 0, 1, 1, 2};
         for (int self = 0; self < 3; self++) {
             LeaderView.Snapshot snap = snapshot(NodeId.of(self), 3, led);
@@ -138,7 +138,7 @@ class LeaderBalancePlannerTest {
 
     @Test
     void singleShard_isInert() {
-        // N=1: exactly one group. Max spread is 1 (one node leads it, rest lead 0) < threshold -> no action.
+        // N=1: exactly one group. Max spread is 1 (one node leads it, rest lead 0) < threshold, so no action.
         LeaderView.Snapshot snap = snapshot(NodeId.of(0), 4, new int[]{0});
         LeaderBalancePlanner.Plan plan = LeaderBalancePlanner.plan(snap, CLEAR, 2, new Random(1));
         assertEquals(1, plan.leaderSpread());
@@ -163,7 +163,7 @@ class LeaderBalancePlannerTest {
         boolean saw2 = false;
         boolean saw3 = false;
         // One Random instance across draws (as the loop reuses one across cadences), so the PRNG stream
-        // advances - not 50 fresh Random(seed)s, whose FIRST nextInt is correlated across small seeds.
+        // advances - not 50 fresh Random(seed)s, whose first nextInt is correlated across small seeds.
         Random jitter = new Random(1);
         for (int i = 0; i < 50; i++) {
             LeaderBalancePlanner.Plan plan = LeaderBalancePlanner.plan(snap, CLEAR, 2, jitter);
@@ -179,13 +179,13 @@ class LeaderBalancePlannerTest {
 
     @Test
     void safety_shedNeverWorsensSpread() {
-        // A max->min move with spread>=2 makes source max-1 and target min+1, so max-1 >= min+1: applying
+        // A max-to-min move with spread>=2 makes source max-1 and target min+1, so max-1 >= min+1: applying
         // the planned move can only shrink or hold the spread, never grow it.
         int[] led = {0, 0, 0, 0, 1, 1};
         LeaderView.Snapshot snap = snapshot(NodeId.of(0), 4, led);
         LeaderBalancePlanner.Plan plan = LeaderBalancePlanner.plan(snap, CLEAR, 2, new Random(3));
         assertNotNull(plan.move());
-        // pre spread = 4 - 0 = 4; after moving one of node 0's groups to a 0-node: {3,2,1,0} -> spread 3.
+        // pre spread = 4 - 0 = 4; after moving one of node 0's groups to a 0-node: {3,2,1,0}, spread 3.
         assertEquals(4, plan.leaderSpread());
     }
 }

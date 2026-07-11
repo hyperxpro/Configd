@@ -1,13 +1,24 @@
 # ADR-0013: Lightweight Session Management (Non-Consensus Heartbeats)
 
 ## Status
-Accepted
+Not implemented as specified
+
+> **Note (2026-07-11):** This session/ephemeral-key/lease mechanism is not implemented in
+> the codebase. There is no session table, no session token, no consensus `ExpireSession`
+> entry, and no ephemeral-key state machine anywhere in the code - the system has no
+> lease-expiry or ephemeral-key concept at all; every write is a normal, permanent config
+> mutation. What exists instead is per-connection SUBSCRIBE state (`FanOutSessionCore` on
+> the server; `EdgeSession` / `WatchSession` on the client) that tracks a subscriber's
+> delivery cursor and handles reconnect/resume by sequence number (ADR-0018,
+> `docs/rfc/driver-protocol/02-watches.md`) - connection bookkeeping, not a lease that
+> expires and deletes data. This ADR documents an aspirational design that was not carried
+> forward into implementation.
 
 ## Context
-The system must support 10K-1M connected edge nodes with session semantics (ephemeral keys, connection-aware liveness). ZooKeeper's session management creates session objects, ephemeral nodes, and watches on the leader - at 10K+ clients this consumes several GB of leader memory. Critically, ZooKeeper session creation and expiration are consensus operations that saturate the write pipeline during reconnection storms (the gap analysis). Twitter's 2018 incident demonstrated that hundreds of thousands of clients reconnecting after a partition caused session storms that prevented normal request serving for extended periods. The system targets 10K/s sustained write throughput - session management overhead must not compete with config writes for consensus bandwidth.
+The system must support 10K-1M connected edge nodes with session semantics (ephemeral keys, connection-aware liveness). ZooKeeper's session management creates session objects, ephemeral nodes, and watches on the leader - at 10K+ clients this consumes several GB of leader memory. Critically, ZooKeeper session creation and expiration are consensus operations that saturate the write pipeline during reconnection storms. Twitter's 2018 incident demonstrated that hundreds of thousands of clients reconnecting after a partition caused session storms that prevented normal request serving for extended periods. The system targets 10K/s sustained write throughput - session management overhead must not compete with config writes for consensus bandwidth.
 
 ## Decision
-We adopt the **Chubby KeepAlive piggybacking pattern**: session heartbeats do NOT go through Raft consensus. Session lifecycle is split into local and consensus-required operations:
+We adopt the **Chubby KeepAlive piggybacking pattern**: session heartbeats do not go through Raft consensus. Session lifecycle is split into local and consensus-required operations:
 
 ### Session Creation (Local Only)
 1. Client connects to any server (typically the nearest distribution node).
@@ -64,7 +75,7 @@ After a distribution node failure, clients reconnect to a different node. If ses
 
 ## Rejected Alternatives
 - **ZooKeeper-style consensus heartbeats:** 2,000-20,000 heartbeats/s through consensus at 10K-100K clients. Consumes 20-200% of the 10K/s write budget. Reconnection storms saturate consensus pipeline, blocking config writes. Twitter 2018 session storm incident demonstrates this failure mode at scale.
-- **Gossip-based session TTL (Consul model):** Session expiration is eventually consistent - gossip convergence at 5,000 nodes takes 10-30 seconds (the gap analysis). Ephemeral key deletion can lag by 10-30 seconds after actual client failure, violating the bounded staleness contract (< 500ms p99). Too loose for ephemeral key semantics.
+- **Gossip-based session TTL (Consul model):** Session expiration is eventually consistent - gossip convergence at 5,000 nodes takes 10-30 seconds. Ephemeral key deletion can lag by 10-30 seconds after actual client failure, violating the bounded staleness contract (< 500ms p99). Too loose for ephemeral key semantics.
 - **Lease-based sessions (etcd model):** Leases are consensus objects with periodic renewal through Raft. etcd issue #9360 documents mass lease expiration bugs with keys persisting with negative TTLs. etcd issue #15247 shows stuck fsync causing old leader to continue revoking leases after demotion. Shared leases (multiple keys per lease) create the multi-object-lease bug class where one lease expiration cascades across unrelated keys (Kubernetes issue #110210).
 - **Stateless sessions (no server-side state):** Cannot support ephemeral keys or session-scoped watches. Clients would need to re-register all subscriptions on every reconnection, creating thundering herd effects.
 

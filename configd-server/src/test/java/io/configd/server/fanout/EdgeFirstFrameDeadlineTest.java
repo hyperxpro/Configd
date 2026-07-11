@@ -27,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * WH-11 slow-loris: the pre-SUBSCRIBE first-frame deadline on the edge fan-out endpoint. A peer
+ * Slow-loris: the pre-SUBSCRIBE first-frame deadline on the edge fan-out endpoint. A peer
  * that completes admission (post-mTLS, or plaintext here) then sends nothing parks a session slot
  * + FD + cumulator until the OS reaps it. The fix reaps such a connection after a bounded window
  * ({@link FanOutServer#FIRST_FRAME_DEADLINE_PROP}); a peer that DOES send its first routed frame
@@ -153,8 +153,8 @@ class EdgeFirstFrameDeadlineTest {
     }
 
     /**
-     * C3 slow-loris (JDK path): a peer that dribbles &ge;1 byte per window. Each byte arrives well
-     * inside a per-read timeout - so the pre-C3 per-read {@code soTimeout} would keep RESETTING and
+     * Slow-loris (JDK path): a peer that dribbles &ge;1 byte per window. Each byte arrives well
+     * inside a per-read timeout - so a per-read {@code soTimeout} alone would keep RESETTING and
      * never fire - but the whole first frame takes far longer than the ABSOLUTE deadline to arrive.
      * Only the absolute first-frame budget reaps this. (The Netty path already used a one-shot
      * absolute scheduled reap, so this evasion never applied there.)

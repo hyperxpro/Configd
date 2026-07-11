@@ -24,21 +24,21 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * The client-side TLS setup for the edge plane — the one place the §06 F9 recipe lives. It builds a
+ * The client-side TLS setup for the edge plane — the one place the TLS recipe lives. It builds a
  * TLSv1.3-only {@link SSLContext} (the two AEAD suites) from PKCS12 key/trust material and creates a client
  * {@link SSLSocket} that verifies the <b>server</b> endpoint: an unconnected socket → a bounded connect by
  * <b>hostname</b> → the TLSv1.3 profile → {@code setEndpointIdentificationAlgorithm("HTTPS")} with the host
- * supplied as an SNI name so the server certificate's SAN must cover the host it connected to (F9-4) →
+ * supplied as an SNI name so the server certificate's SAN must cover the host it connected to →
  * a bounded handshake. A trusted CA alone is insufficient without endpoint identification, so it is always on.
  *
- * <p>Two postures: {@link #mutualTls} (a client certificate — the mTLS edge authentication, §03 AU3-2) and
+ * <p>Two postures: {@link #mutualTls} (a client certificate — the mTLS edge authentication) and
  * {@link #trustOnly} (verify the server only — a certificate-less token/basic client authenticates with an
  * {@code AUTH} frame instead). Either way the server is always verified. This client never downgrades to
- * plaintext (§06 F9-1); a plaintext connection is a separate, test-only path outside this class.
+ * plaintext; a plaintext connection is a separate, test-only path outside this class.
  */
 public final class ClientTls {
 
-    /** The frozen TLSv1.3 profile (§06 F9-2), matching the server's {@code TlsConfig}. */
+    /** The frozen TLSv1.3 profile, matching the server's {@code TlsConfig}. */
     private static final String[] PROTOCOLS = {"TLSv1.3"};
     private static final String[] CIPHERS = {"TLS_AES_256_GCM_SHA384", "TLS_AES_128_GCM_SHA256"};
 
@@ -52,8 +52,7 @@ public final class ClientTls {
 
     /**
      * An mTLS client: presents a client certificate from {@code keyStorePath} and verifies the server against
-     * {@code trustStorePath}. The client leaf's {@code notAfter} is captured for the cert lead-time reconnect
-     * (§03 AU5-6).
+     * {@code trustStorePath}. The client leaf's {@code notAfter} is captured for the cert lead-time reconnect.
      */
     public static ClientTls mutualTls(Path keyStorePath, char[] keyStorePassword,
                                       Path trustStorePath, char[] trustStorePassword)
@@ -93,7 +92,7 @@ public final class ClientTls {
         boolean handshook = false;
         try {
             // Connect by hostname (not a pre-resolved address) so the HTTPS endpoint check has a name to
-            // match against the server certificate's SAN (F9-4).
+            // match against the server certificate's SAN.
             socket.connect(new InetSocketAddress(host, port), connectTimeoutMs);
             socket.setEnabledProtocols(PROTOCOLS);
             socket.setEnabledCipherSuites(CIPHERS);
@@ -105,7 +104,7 @@ public final class ClientTls {
             }
             socket.setSSLParameters(params);
             // Bound the handshake so a slow-loris server that never completes it times out rather than
-            // parking this reader (§06 F9). No application bytes are read before startHandshake returns, so
+            // parking this reader. No application bytes are read before startHandshake returns, so
             // there is nothing pre-handshake to interpret as a frame (the libpq CVE-2021-23214/23222 lesson).
             socket.setSoTimeout(handshakeTimeoutMs);
             socket.startHandshake();
@@ -122,14 +121,14 @@ public final class ClientTls {
      * The underlying {@link SSLContext} for a transport that manages its own sockets — notably the HTTP plane's
      * JDK {@code HttpClient}, which takes an {@code SSLContext} + {@link SSLParameters} rather than an
      * {@code SSLSocket}. The context carries the same trust material (and, for an mTLS client, the client
-     * key manager) as {@link #connect}; pair it with {@link #httpsParameters()} to keep the F9 profile.
+     * key manager) as {@link #connect}; pair it with {@link #httpsParameters()} to keep the same TLS profile.
      */
     public SSLContext sslContext() {
         return context;
     }
 
     /**
-     * The frozen F9 TLS parameters for the HTTP plane: TLSv1.3 only, with {@code HTTPS} endpoint identification
+     * The frozen TLS parameters for the HTTP plane: TLSv1.3 only, with {@code HTTPS} endpoint identification
      * (hostname/SAN verification against the request host). A fresh instance per call — {@link SSLParameters} is
      * mutable and must not be shared. The JDK {@code HttpClient} derives SNI from the request URI host, so
      * server names are not set here (unlike {@link #connect}, which owns the socket and sets SNI explicitly).

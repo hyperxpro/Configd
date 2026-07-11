@@ -22,15 +22,15 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
- * Edge-read HTTP head-to-head (surface 2) - the <b>server side</b>, isolating the contested
- * SERVER-SIDE per-request allocation that the JMH benchmark could not measure (its {@code -prof gc} was
+ * Edge-read HTTP head-to-head - the <b>server side</b>, isolating the contested server-side
+ * per-request allocation that the JMH benchmark could not measure (its {@code -prof gc} was
  * JVM-wide = client + server, an upper bound only).
  *
  * <h2>How server-side allocation is isolated (the apples-to-apples fix)</h2>
  * <ol>
- *   <li>The load client runs in a <b>separate JVM</b> ({@link EdgeReadLoadClientMain}), so ALL
+ *   <li>The load client runs in a <b>separate JVM</b> ({@link EdgeReadLoadClientMain}), so all
  *       client allocation (the JDK {@code HttpClient}, which the baseline run flagged as plausibly the
- *       larger half of the ~36 KB floor) is excluded <em>by construction</em>.</li>
+ *       larger half of the roughly 36 KB floor) is excluded <em>by construction</em>.</li>
  *   <li>This server JVM self-measures {@code com.sun.management.ThreadMXBean
  *       .getTotalThreadAllocatedBytes()} - the exact (not sampled) sum of heap bytes allocated
  *       across all threads, including terminated ones and the carrier threads that back virtual
@@ -40,9 +40,9 @@ import java.util.List;
  *       counter at START and STOP. An {@code IDLE <ms>} command measures the background-thread
  *       allocation floor (GC/JIT housekeeping) so the reader sees the noise vs the signal.</li>
  * </ol>
- * The SAME harness drives both servers - the production JDK {@link EdgeHttpServer} (the best-JDK
+ * The same harness drives both servers - the production JDK {@link EdgeHttpServer} (the best-JDK
  * HTTP form: its per-request shell - {@code HttpExchange}, header maps, streams - is irreducible
- * in place, per the baseline measurement; there is no into-buffer lever as the codecs had) and the
+ * in place, per the baseline measurement; there is no into-buffer lever the codecs had) and the
  * {@link NettyEdgeReadServer} (the strongest-Netty form). Only the transport shell differs, so
  * the B/request delta is the transport-attributable allocation - the number the edge-read
  * verdict turns on.
@@ -64,7 +64,7 @@ public final class EdgeReadAllocServerMain {
     }
 
     public static void main(String[] args) throws Exception {
-        String which = args[0];                 // "jdk" | "netty"
+        String which = args[0];                 // "jdk" | "netty" | "netty-prod"
         int httpPort = Integer.parseInt(args[1]);
         int controlPort = Integer.parseInt(args[2]);
         int keyCount = Integer.parseInt(args[3]);
@@ -77,7 +77,7 @@ public final class EdgeReadAllocServerMain {
         }
         threadBean.setThreadAllocatedMemoryEnabled(true);
 
-        // ---- build the edge core with keyCount keys (mirrors EdgeHttpAllocBenchmark) ----
+        // Builds the edge core with keyCount keys (mirrors EdgeHttpAllocBenchmark).
         Clock clock = new FixedClock();
         MetricsRegistry registry = new MetricsRegistry();
         InvariantMonitor monitor = new InvariantMonitor(registry, false);
@@ -99,13 +99,12 @@ public final class EdgeReadAllocServerMain {
                     new CommitNotification(seq, 1_000_000L, delta))));
         }
 
-        // ---- start the chosen server ----
         Runnable stopper;
         int boundPort;
         boolean epoll = false;
         String tier = "-";
         if ("netty".equals(which)) {
-            // The head-to-head PROTOTYPE (read-only shell) - the original 1,716 B/req measurement.
+            // The head-to-head prototype: a minimal read-only shell, not the production pipeline.
             NettyEdgeReadServer server =
                     new NettyEdgeReadServer(httpPort, core, StrongReadKeyClass.DEFAULT, metrics);
             server.start();
@@ -114,8 +113,8 @@ public final class EdgeReadAllocServerMain {
             tier = epoll ? "epoll" : "nio";
             stopper = server::stop;
         } else if ("netty-prod".equals(which)) {
-            // The PRODUCTION Netty edge server: shared EdgeReadHandler + 3-tier selector
-            // + hardening. This proves the 1,716 B/req win HOLDS on this production pipeline.
+            // The production Netty edge server: shared EdgeReadHandler, 3-tier transport
+            // selector, and hardening -- exercises the same read path as the prototype above.
             NettyEdgeHttpServer server = new NettyEdgeHttpServer(httpPort, core,
                     StrongReadKeyClass.DEFAULT, new PrometheusExporter(registry), metrics);
             server.start();
@@ -135,7 +134,7 @@ public final class EdgeReadAllocServerMain {
                 + " epoll=" + epoll + " tier=" + tier);
         System.out.flush();
 
-        // ---- control loop: delimit measurement windows from the out-of-JVM client ----
+        // Control loop: delimits measurement windows for the out-of-JVM client.
         try (ServerSocket control = new ServerSocket(controlPort);
              Socket conn = control.accept();
              BufferedReader in = new BufferedReader(

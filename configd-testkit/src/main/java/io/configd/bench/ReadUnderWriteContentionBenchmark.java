@@ -35,7 +35,7 @@ import java.util.concurrent.TimeUnit;
  *
  * <p><b>Coordinated omission:</b> SampleTime times each reader invocation's own
  * service time with no externally-imposed arrival schedule, so CO is
- * structurally absent (methodology section 3a). The number reported here is the
+ * structurally absent. The number reported here is the
  * read service time <i>with a concurrent writer present</i> - the "loaded"
  * companion to {@code LocalConfigStoreReadBenchmark}'s unloaded read.
  *
@@ -119,7 +119,7 @@ public class ReadUnderWriteContentionBenchmark {
         satisfiableCursor = new VersionCursor(size, 0L);
     }
 
-    // ---- with-writer group: READER_THREADS readers + 1 writer --------------
+    // With-writer group: READER_THREADS readers + 1 writer.
 
     @Benchmark
     @Group("readWhileWriting")
@@ -140,7 +140,7 @@ public class ReadUnderWriteContentionBenchmark {
         store.loadSnapshot((store.currentVersion() == size) ? snapB : snapA);
     }
 
-    // ---- baseline group: same READER_THREADS readers, NO writer ------------
+    // Baseline group: same READER_THREADS readers, no writer.
 
     @Benchmark
     @Group("readOnly")

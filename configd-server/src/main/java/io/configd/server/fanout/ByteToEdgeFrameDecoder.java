@@ -13,15 +13,15 @@ import java.util.List;
 /**
  * Inbound: accumulates the length-prefixed edge wire and emits one {@link EdgeFrame} per complete
  * frame, preserving the JDK reader's {@code peekLength} discipline - <b>the declared length is
- * bounds-checked BEFORE the frame buffer is allocated</b> ({@link EdgeFrameCodec#peekLength}), so an
+ * bounds-checked before the frame buffer is allocated</b> ({@link EdgeFrameCodec#peekLength}), so an
  * adversary cannot induce a giant allocation by lying in the 4-byte prefix. A bad length or a
  * structural decode failure throws {@link EdgeFrameCodec.CodecException}, which the pipeline's
  * {@code exceptionCaught} maps to a teardown with the frame's {@link io.configd.distribution.wire.ErrorCode}
  * - identical to the JDK server's {@code readFrame} -> {@code close(e.code(), ...)} path.
  *
  * <p><b>Per-connection inbound version pin.</b> This decoder is per-channel
- * (stateful), so it tracks the connection's negotiated wire version: the FIRST frame is decoded
- * accepting {@code 0x01}, {@code 0x02}, or {@code 0x03} (CRC-validated), then the connection is PINNED
+ * (stateful), so it tracks the connection's negotiated wire version: the first frame is decoded
+ * accepting {@code 0x01}, {@code 0x02}, or {@code 0x03} (CRC-validated), then the connection is pinned
  * to that frame's stamped version; every subsequent frame is decoded under the pin, so a
  * version-mismatched frame mid-connection (a frame stamped with any other accepted version) fails
  * closed with {@link io.configd.distribution.wire.ErrorCode#BAD_WIRE_VERSION}. A legacy
@@ -42,9 +42,9 @@ final class ByteToEdgeFrameDecoder extends ByteToMessageDecoder {
     static final AttributeKey<AuthState> AUTH_STATE = AttributeKey.valueOf("configd.edge.authState");
 
     /**
-     * The connection's negotiated inbound wire version, or {@code 0} until the first BUSINESS frame
+     * The connection's negotiated inbound wire version, or {@code 0} until the first business frame
      * establishes it (a successfully-decoded 0x01/0x02/0x03 frame; a 0x04 auth-phase frame is version-pin
-     * EXEMPT and never sets this). Per-channel state (the decoder is not sharable).
+     * exempt and never sets this). Per-channel state (the decoder is not sharable).
      */
     private byte negotiatedVersion;
 
@@ -73,13 +73,13 @@ final class ByteToEdgeFrameDecoder extends ByteToMessageDecoder {
         if (in.readableBytes() < 4) {
             return; // need the 4-byte length prefix first
         }
-        // Peek the length without consuming, then bounds-check BEFORE allocating the frame buffer.
+        // Peek the length without consuming, then bounds-check before allocating the frame buffer.
         byte[] header4 = new byte[4];
         in.getBytes(in.readerIndex(), header4);
         int total = EdgeFrameCodec.peekLength(header4); // throws CodecException if out of range
-        // Minimal-allocation-until-authenticated: while UNAUTHENTICATED on a token-auth connection, a
+        // Minimal-allocation-until-authenticated: while unauthenticated on a token-auth connection, a
         // hostile peer cannot induce even a mid-size allocation before proving identity - the declared
-        // length is capped at the small pre-auth ceiling, checked here BEFORE the frame buffer is sized.
+        // length is capped at the small pre-auth ceiling, checked here before the frame buffer is sized.
         if (authGated && total > preAuthMaxFrame) {
             AuthState state = ctx.channel().attr(AUTH_STATE).get();
             if (state == null || !state.isAuthenticated()) {
@@ -93,17 +93,17 @@ final class ByteToEdgeFrameDecoder extends ByteToMessageDecoder {
         byte[] frameBytes = new byte[total];
         in.readBytes(frameBytes);
         if (EdgeFrameCodec.peekVersion(frameBytes) == EdgeFrameCodec.EDGE_WIRE_VERSION_V4) {
-            // Auth-phase frame (AU3-3): version-pin EXEMPT. Decode under 0x04 (only AUTH/REFRESH_AUTH are
-            // legal there) and NEVER read or set the business-version pin, so it may interleave on a
+            // Auth-phase frame: version-pin exempt. Decode under 0x04 (only AUTH/REFRESH_AUTH are
+            // legal there) and never read or set the business-version pin, so it may interleave on a
             // connection pinned to any business version. A bit-flipped version byte still fails the CRC
             // (checked first inside decode) -> FRAME_CORRUPT.
             out.add(EdgeFrameCodec.decode(frameBytes, EdgeFrameCodec.EDGE_WIRE_VERSION_V4));
         } else if (negotiatedVersion == 0) {
-            // First business frame: accept 0x01/0x02/0x03 (CRC-validated), then PIN to its stamped version.
+            // First business frame: accept 0x01/0x02/0x03 (CRC-validated), then pin to its stamped version.
             out.add(EdgeFrameCodec.decode(frameBytes));
             negotiatedVersion = EdgeFrameCodec.peekVersion(frameBytes); // known 0x01/0x02/0x03 post-decode
         } else {
-            // Pinned: a business frame stamped with the OTHER accepted version -> BAD_WIRE_VERSION.
+            // Pinned: a business frame stamped with the other accepted version -> BAD_WIRE_VERSION.
             out.add(EdgeFrameCodec.decode(frameBytes, negotiatedVersion));
         }
     }

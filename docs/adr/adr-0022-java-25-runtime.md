@@ -5,7 +5,7 @@ Accepted (2026-04-11)
 
 ## Context
 
-The original spec (PROMPT.md Section 3) and ADR-0009 specify "Java 21+ LTS" as the runtime. The implementation uses Java 25 (Amazon Corretto 25.0.2), which is a non-LTS release.
+The original spec called for Java 21+ LTS as the runtime (see ADR-0009). The implementation uses Java 25 (Amazon Corretto 25.0.2), which is a non-LTS release.
 
 ## Decision
 

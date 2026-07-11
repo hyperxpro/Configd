@@ -17,12 +17,10 @@ import java.security.spec.X509EncodedKeySpec;
 import java.util.UUID;
 
 /**
- * Persistent Ed25519 signing key store.
- * <p>
- * Previously, {@code ConfigdServer} generated a fresh Ed25519 keypair on every boot, which meant
- * the "signing chain" claim was falsified the moment the leader restarted: edges had no way to
- * associate signatures across restarts, and there was no key rotation mechanism. This class
- * provides a persistent, stable keypair loadable from a file supplied by the operator.
+ * Persistent Ed25519 signing key store: loads a stable keypair from an operator-supplied file so
+ * edges can verify signatures across leader restarts, and a key can be rotated deliberately. A
+ * keypair generated fresh on every boot would break signature continuity for edges and rule out
+ * rotation entirely.
  * <p>
  * <b>File format</b> (v1):
  * <pre>
@@ -195,7 +193,7 @@ public final class SigningKeyStore {
         restrictToOwner(path);
     }
 
-    /** Utility: format a UUID without dashes - unused currently but handy. */
+    /** Formats a UUID without dashes; no in-repo caller yet. */
     public static String format(UUID id) {
         return id.toString().replace("-", "");
     }

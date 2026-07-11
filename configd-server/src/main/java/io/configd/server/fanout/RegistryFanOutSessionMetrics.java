@@ -39,7 +39,6 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics {
 
-    // --- Counters (eagerly registered) ---
     private final MetricsRegistry.Counter heartbeats;
     private final MetricsRegistry.Counter slowConsumerWarnings;
     private final MetricsRegistry.Counter notifyBatches;        // count of NOTIFY frames
@@ -55,20 +54,17 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
     private final MetricsRegistry.Counter subscribeSnapshotFirst;
     private final MetricsRegistry.Counter revocationFailOpenAdmits;
 
-    // --- Server-side prefix-filtering counters (ADR-0045) ---
     private final MetricsRegistry.Counter filteredDeltas;
     private final MetricsRegistry.Counter deliveredDeltas;
     private final MetricsRegistry.Counter cursorAdvances;
     private final MetricsRegistry.Counter filteredSessions;
 
-    // --- Slow-consumer policy counters (SlowConsumerGovernor) ---
     private final MetricsRegistry.Counter slowTransitions;
     private final MetricsRegistry.Counter quarantines;
     private final MetricsRegistry.Counter unhealthy;
     private final MetricsRegistry.Counter reconnectsRefused;
     private final MetricsRegistry.Counter readmissions;
 
-    // --- Gauge backing state (process-level aggregates) ---
     private final AtomicLong queueDepth = new AtomicLong(0);
     private final AtomicInteger connectedSubscribers = new AtomicInteger(0);
     private final AtomicLong subscribeHorizonDistance = new AtomicLong(0);
@@ -137,12 +133,12 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
         // Admission-bound refusals (edge.fanout.transport.maxSessions).
         this.sessionsRefused = registry.counter("edge.fanout.sessions_refused");
 
-        // WH-11 pre-SUBSCRIBE first-frame-deadline reaps: an admitted (post-mTLS) connection that
+        // Pre-SUBSCRIBE first-frame-deadline reaps: an admitted (post-mTLS) connection that
         // did not send its first routed control frame (SUBSCRIBE / WATCH_CREATE) within the
         // first-frame window, closed as a slow-loris.
         this.firstFrameTimeouts = registry.counter("edge.fanout.first_frame_timeouts");
 
-        // Revocation fail-open admits (Gate 5): under LAX with the responder unreachable, an edge client
+        // Revocation fail-open admits: under LAX with the responder unreachable, an edge client
         // cert is ADMITTED (fail-open) rather than rejected. A degraded-revocation posture must be
         // alertable - a rising rate means the cluster is admitting certs it could not check for revocation.
         this.revocationFailOpenAdmits = registry.counter("edge.fanout.revocation_fail_open_admits");
@@ -152,7 +148,7 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
         this.subscribeTail = registry.counter("edge.fanout.subscribe.tail");
         this.subscribeSnapshotFirst = registry.counter("edge.fanout.subscribe.snapshot_first");
 
-        // Server-side prefix-filtering series (ADR-0045). deltas dropped vs delivered gives the
+        // Server-side prefix-filtering series. Deltas dropped vs delivered gives the
         // measured egress reduction; cursor advances count the coalesced covered-S heartbeats;
         // filtered sessions is the cumulative count of subscribers that opted into filtering.
         this.filteredDeltas = registry.counter("edge.fanout.filtered_deltas");
@@ -173,7 +169,7 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
         registry.gauge("edge.fanout.consumer_state.unhealthy", consumersUnhealthy::get);
     }
 
-    // --- Session lifecycle hooks the FanOutServer drives directly (not via the session) ---
+    // Session lifecycle hooks the FanOutServer drives directly, not through the session interface.
 
     /** A subscriber connected (FanOutServer drives this on accept+subscribe). */
     public void onSubscriberConnected() {
@@ -187,7 +183,7 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
 
     /**
      * An admitted (post-mTLS) connection was reaped for missing the pre-SUBSCRIBE first-frame
-     * deadline (WH-11 slow-loris). Driven by the transport (both FanOutServer and NettyFanOutServer),
+     * deadline (a slow-loris). Driven by the transport (both FanOutServer and NettyFanOutServer),
      * not the session core, so it lives here alongside {@link #onSessionRefused()}.
      */
     public void onFirstFrameTimeout() {
@@ -211,8 +207,6 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
     public int connectedSubscribers() {
         return connectedSubscribers.get();
     }
-
-    // --- FanOutSessionMetrics ---
 
     @Override
     public void onNotifyBatch(int n, int bytes) {
@@ -239,7 +233,7 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
     @Override
     public void onSnapshotTransfer() {
         // Snapshot transfers are observable via the demotion that precedes them; a dedicated
-        // counter is registered for symmetry with the design table.
+        // counter is registered anyway for symmetry with the other event counters.
         snapshotTransfers.increment();
     }
 
@@ -258,8 +252,6 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
         (snapshotFirst ? subscribeSnapshotFirst : subscribeTail).increment();
         subscribeHorizonDistance.set(horizonDistance);
     }
-
-    // --- Server-side prefix filtering (ADR-0045) ---
 
     @Override
     public void onFilteredDeltas(int n) {
@@ -282,8 +274,6 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
             filteredSessions.increment();
         }
     }
-
-    // --- Slow-consumer policy (SlowConsumerGovernor) ---
 
     @Override
     public void onSlowTransition() {

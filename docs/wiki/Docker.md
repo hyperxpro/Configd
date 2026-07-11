@@ -8,9 +8,9 @@ Configd ships two Dockerfiles under `docker/`, plus a ready-to-run Compose topol
 | `docker/Dockerfile.build` | CI/CD -- build and run the full test suite in a hermetic container | `eclipse-temurin:25-jdk-noble` |
 | `docker/Dockerfile.runtime` | Minimal runtime image that runs the control-plane server | builds on `eclipse-temurin:25-jdk-noble`, runs on `eclipse-temurin:25-jre-noble` |
 
-Both build with Maven and Java 25. Configd is no longer library-only: the runtime image runs a real
-control-plane server (`io.configd.server.ConfigdServer`), and the edge reader
-(`io.configd.edge.node.EdgeNodeMain`) is packaged alongside it.
+Both build with Maven and Java 25. The runtime image runs a real control-plane server
+(`io.configd.server.ConfigdServer`), with the edge reader (`io.configd.edge.node.EdgeNodeMain`)
+packaged alongside it.
 
 ## Build image
 

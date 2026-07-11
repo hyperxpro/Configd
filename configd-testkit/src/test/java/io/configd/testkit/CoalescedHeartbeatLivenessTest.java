@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       least one spurious election. If these did NOT churn, the proof above would be vacuous.</li>
  * </ul>
  */
-@Timeout(300) // CI hygiene on the 2-vCPU box: fail loudly rather than hang the nightly (diff-review NIT-1)
+@Timeout(300) // CI hygiene on the 2-vCPU box: fail loudly rather than hang the nightly
 class CoalescedHeartbeatLivenessTest {
 
     private static final int NODES = 5;
@@ -33,9 +33,7 @@ class CoalescedHeartbeatLivenessTest {
     private static final ConsistencyPropertyTests.ClusterHarness.HeartbeatFault DELAY =
             ConsistencyPropertyTests.ClusterHarness.HeartbeatFault.DELAY;
 
-    // ------------------------------------------------------------------------
     // THE PROOF - no spurious election under sustained load (coalescing active)
-    // ------------------------------------------------------------------------
 
     @Test
     void noSpuriousElectionUnderSustainedLoad() {
@@ -102,9 +100,7 @@ class CoalescedHeartbeatLivenessTest {
                 "vacuity: only " + reached + "/" + seeds + " seeds reached the idle assertion");
     }
 
-    // ------------------------------------------------------------------------
     // TEST-THE-TESTER - a broken drain MUST churn (else the proof is vacuous)
-    // ------------------------------------------------------------------------
 
     @Test
     void droppedCoalescedHeartbeat_preventsStableLeadership() {
@@ -152,7 +148,7 @@ class CoalescedHeartbeatLivenessTest {
                 c.tick(); // idle - only the (now delayed) heartbeats matter
                 // Detect destabilization either way: a follower winning a fresh election (maxTerm rises)
                 // OR the leader losing quorum and stepping down at the SAME term (CheckQuorum - invisible
-                // to maxTerm alone, so we also check leadership; red-team B / diff-review MED-1).
+                // to maxTerm alone, so we also check leadership directly).
                 if (maxTerm(c) > term0 || c.node(leaderNode).role() != RaftRole.LEADER) {
                     churned = true;
                     break;
@@ -170,7 +166,7 @@ class CoalescedHeartbeatLivenessTest {
 
     @Test
     void noSpuriousElectionUnderLowLoad() {
-        // The blind spot between idle and saturating load (red-team C1): one write every ~80 ticks is too
+        // The blind spot between idle and saturating load: one write every ~80 ticks is too
         // sparse for the entry-carrying appends to substitute for heartbeats (heartbeat interval is 50
         // ticks), so this is the regime where a delayed/dropped coalesced heartbeat bites hardest. With the
         // real drain, the leader stays stable here too.
@@ -204,7 +200,7 @@ class CoalescedHeartbeatLivenessTest {
 
     @Test
     void singlePeerStarvation_doesNotCauseSpuriousElection_preVoteShield() {
-        // The partial-aggregate failure (red-team D): a coalescer bug that drops only ONE peer's slot.
+        // The partial-aggregate failure: a coalescer bug that drops only ONE peer's slot.
         // That follower times out and churns PreVotes - but the other followers still hear the leader and
         // reject the PreVotes (the PreVote shield), so NO spurious election occurs and the leader (which
         // keeps a quorum: only one of five peers is starved) stays leader. This proves S3's property holds
@@ -242,9 +238,7 @@ class CoalescedHeartbeatLivenessTest {
                         + starved + "/" + reached + "; otherwise this test is vacuous.");
     }
 
-    // ------------------------------------------------------------------------
     // helpers
-    // ------------------------------------------------------------------------
 
     /** Drive until one node is leader for 120 consecutive ticks (stable); return it, or -1 within budget. */
     private static int electStableLeader(ConsistencyPropertyTests.ClusterHarness c, int maxTicks) {

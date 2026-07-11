@@ -4,35 +4,34 @@ import java.util.Optional;
 import java.util.function.Function;
 
 /**
- * Maps an HTTP status (+ the disambiguating headers) to the §07 driver reaction — the machine-readable decision
- * a driver MUST branch on, <b>never</b> the body (which is plaintext under a misleading {@code application/json},
- * may echo attacker-influenced input, and is unescaped — §04 D2-5a / §07 E6). Pure and side-effect-free so
- * every status reaction is unit-testable in isolation; the {@link LeaderRouter} enacts the decision (backoff,
- * follow, re-stamp, throw).
+ * Maps an HTTP status (plus the disambiguating headers) to the driver reaction -- the machine-readable decision
+ * a driver must branch on, <b>never</b> the body (which is plaintext under a misleading {@code application/json},
+ * may echo attacker-influenced input, and is unescaped). Pure and side-effect-free so every status reaction is
+ * unit-testable in isolation; the {@link LeaderRouter} enacts the decision (backoff, follow, re-stamp, throw).
  */
 final class HttpStatusClassifier {
 
-    /** The §07 reaction classes for a unary HTTP response. */
+    /** The reaction classes for a unary HTTP response. */
     enum Decision {
-        /** 2xx — the response is the answer (read value / write commit). */
+        /** 2xx -- the response is the answer (read value / write commit). */
         SUCCESS,
-        /** 404 — a definite "absent", not a routing failure (§04 D3-3, §05 R6-1). */
+        /** 404 -- a definite "absent", not a routing failure. */
         NOT_FOUND,
-        /** 503 + {@code X-Leader-Hint} — progress toward the hinted leader (follow-once, §05 R4-3). */
+        /** 503 with {@code X-Leader-Hint} -- progress toward the hinted leader (follow-once). */
         FOLLOW_HINT,
-        /** 503 without a hint / a read transient — back off + retry the same endpoint (§05 R4-2). */
+        /** 503 without a hint, or a read transient -- back off and retry the same endpoint. */
         RETRY_SAME,
-        /** 429 — honor {@code Retry-After}, then retry (§04 D4-6, §05 R6-1). */
+        /** 429 -- honor {@code Retry-After}, then retry. */
         RETRY_AFTER,
-        /** 504 / a mutation timeout / other mutation 5xx — indeterminate, retry-to-definite, NO RMW (§04 D4-8). */
+        /** 504, a mutation timeout, or other mutation 5xx -- indeterminate, retry-to-definite, no read-modify-write. */
         INDETERMINATE,
-        /** 409, or a 401 under an enabled replay guard — retry with a FRESH timestamp+nonce (§05 R6-4). */
+        /** 409, or a 401 under an enabled replay guard -- retry with a fresh timestamp and nonce. */
         FRESH_STAMP,
-        /** 401 without the replay guard — (re)authenticate; do not hot-loop the same credential (§07 E2-1). */
+        /** 401 without the replay guard -- (re)authenticate; do not hot-loop the same credential. */
         REAUTH,
-        /** 403 — permanently forbidden for this principal (§07 E2-1). */
+        /** 403 -- permanently forbidden for this principal. */
         FORBIDDEN,
-        /** 400 / 405 — permanent request error, fix the request (§07 E2-1). */
+        /** 400 / 405 -- permanent request error, fix the request. */
         BAD_REQUEST
     }
 
@@ -47,11 +46,11 @@ final class HttpStatusClassifier {
      * @param status         the HTTP status
      * @param header         a case-insensitive single-value header lookup
      * @param isMutation     whether the request was a PUT/DELETE/transfer (governs the "other 5xx" bucket and,
-     *                       with {@code replayEnabled}, the {@code 401} branch — replay headers ride only mutations)
-     * @param configMutation whether it was a config PUT/DELETE specifically — a {@code 409} there is a replayed
+     *                       with {@code replayEnabled}, the {@code 401} branch -- replay headers ride only mutations)
+     * @param configMutation whether it was a config PUT/DELETE specifically -- a {@code 409} there is a replayed
      *                       nonce (retry with a fresh stamp); a {@code 409} on the leadership-transfer route is a
-     *                       <b>precondition</b> failure (terminal), NOT a replay (§04 D2-2a) — distinguished here,
-     *                       never by the body (§07 E6)
+     *                       <b>precondition</b> failure (terminal), not a replay -- distinguished here, never by
+     *                       the body
      * @param replayEnabled  whether the client is populating replay headers
      */
     static Decision classify(int status, Function<String, Optional<String>> header,
@@ -70,7 +69,7 @@ final class HttpStatusClassifier {
             case 504 -> Decision.INDETERMINATE;
             default -> {
                 if (status >= 500) {
-                    // Other 5xx: indeterminate for a mutation (may have committed, §04 D4-8), a re-read for a GET.
+                    // Other 5xx: indeterminate for a mutation (it may have committed), a re-read for a GET.
                     yield isMutation ? Decision.INDETERMINATE : Decision.RETRY_SAME;
                 }
                 // Any other 4xx: permanent request error.

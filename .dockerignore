@@ -1,4 +1,4 @@
-# C6 (session-3): the docker/ Dockerfiles use the repo root as build context with
+# The docker/ Dockerfiles use the repo root as build context with
 # COPY . . — without this file the context uploads ~1.1GB including .git, every
 # module's target/, and the E2E secrets (private keys). Keep the context to sources.
 .git

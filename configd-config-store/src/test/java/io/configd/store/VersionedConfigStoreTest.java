@@ -30,10 +30,6 @@ class VersionedConfigStoreTest {
         return s.getBytes(StandardCharsets.UTF_8);
     }
 
-    // -----------------------------------------------------------------------
-    // Single-writer correctness
-    // -----------------------------------------------------------------------
-
     @Nested
     class SingleWriter {
 
@@ -150,10 +146,6 @@ class VersionedConfigStoreTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Batch apply
-    // -----------------------------------------------------------------------
-
     @Nested
     class BatchApply {
 
@@ -196,10 +188,6 @@ class VersionedConfigStoreTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Snapshot isolation
-    // -----------------------------------------------------------------------
-
     @Nested
     class SnapshotIsolation {
 
@@ -211,11 +199,9 @@ class VersionedConfigStoreTest {
             store.put("key", bytes("v2"), 2);
             ConfigSnapshot snap2 = store.snapshot();
 
-            // snap1 still sees v1
             assertArrayEquals(bytes("v1"), snap1.get("key"));
             assertEquals(1, snap1.version());
 
-            // snap2 sees v2
             assertArrayEquals(bytes("v2"), snap2.get("key"));
             assertEquals(2, snap2.version());
         }
@@ -229,10 +215,6 @@ class VersionedConfigStoreTest {
             assertFalse(store.get("key", 6).found()); // store at v5, requesting v6
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Prefix scan
-    // -----------------------------------------------------------------------
 
     @Nested
     class PrefixScan {
@@ -275,10 +257,6 @@ class VersionedConfigStoreTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Concurrent read/write
-    // -----------------------------------------------------------------------
-
     @Nested
     class ConcurrentAccess {
 
@@ -290,7 +268,6 @@ class VersionedConfigStoreTest {
             ConcurrentHashMap<String, Throwable> errors = new ConcurrentHashMap<>();
             CountDownLatch startLatch = new CountDownLatch(1);
 
-            // Writer thread
             Thread writer = Thread.ofPlatform().start(() -> {
                 try {
                     startLatch.await();
@@ -304,26 +281,21 @@ class VersionedConfigStoreTest {
                 }
             });
 
-            // Reader threads
             Thread[] readers = new Thread[readerCount];
             for (int r = 0; r < readerCount; r++) {
                 readers[r] = Thread.ofPlatform().start(() -> {
                     try {
                         startLatch.await();
                         while (!writerDone.get()) {
-                            // Read a consistent snapshot
                             long version = store.currentVersion();
                             ConfigSnapshot snap = store.snapshot();
 
-                            // Version should be >= what we read a moment ago
-                            // (another write may have happened)
                             if (snap.version() < version) {
                                 // This can happen if currentVersion() and snapshot()
                                 // read different volatile values. That's fine - the
                                 // snapshot is self-consistent.
                             }
 
-                            // The snapshot must be internally consistent
                             snap.data().forEach((key, vv) -> {
                                 if (vv == null || vv.valueUnsafe() == null) {
                                     errors.put(Thread.currentThread().getName(),
@@ -350,10 +322,6 @@ class VersionedConfigStoreTest {
             assertEquals(writerIterations, store.currentVersion());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // DeltaComputer integration
-    // -----------------------------------------------------------------------
 
     @Nested
     class DeltaComputerIntegration {

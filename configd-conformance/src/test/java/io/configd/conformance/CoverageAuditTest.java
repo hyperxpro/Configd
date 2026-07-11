@@ -26,14 +26,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * The STRICT auditable-coverage gate + the frozen-contract coverage RECORD. It resolves EVERY one of the 244
- * catalog clauses ({@code catalog-clauses.txt}, transcribed from the requirements catalog — the single source)
+ * The STRICT auditable-coverage gate and the frozen-contract coverage RECORD. It resolves EVERY one of the 244
+ * catalog clauses ({@code catalog-clauses.txt}, transcribed from the requirements catalog -- the single source)
  * to either a covered conformance case (a test {@code @Tag("clause:<id>")}, discovered via the JUnit Platform
- * launcher — so "covered" means a real test asserts it, not an aspirational claim) OR an explicit
- * {@code SKIP:<reason>} ({@code coverage-skips.txt}). An UNMAPPED clause fails the build — no clause silently
- * drops (the review-readiness mandate). It then emits the per-clause breakdown to
- * {@code conformance-coverage.md} and asserts it matches the checked-in golden (the EdgeFrameGoldenBytes
- * regenerate-and-commit pattern), so the true tally is durably reviewable + diffable in the repo.
+ * launcher -- so "covered" means a real test asserts it, not an aspirational claim) OR an explicit
+ * {@code SKIP:<reason>} ({@code coverage-skips.txt}). An UNMAPPED clause fails the build -- no clause silently
+ * drops. It then emits the per-clause breakdown to {@code conformance-coverage.md} and asserts it matches the
+ * checked-in golden (the {@code EdgeFrameGoldenBytes} regenerate-and-commit pattern), so the true tally is
+ * durably reviewable and diffable in the repo.
  */
 class CoverageAuditTest {
 
@@ -58,7 +58,7 @@ class CoverageAuditTest {
         // 1) No stale skip / tag: every skipped or tagged clause must exist in the catalog.
         List<String> staleSkips = skips.keySet().stream().filter(id -> !catalogIds.contains(id)).sorted().toList();
         List<String> staleTags = covered.keySet().stream().filter(id -> !catalogIds.contains(id)).sorted().toList();
-        // 2) STRICT: every catalog clause is covered OR skipped — an unmapped clause fails.
+        // 2) STRICT: every catalog clause is covered OR skipped -- an unmapped clause fails.
         List<String> unmapped = catalogIds.stream()
                 .filter(id -> !covered.containsKey(id) && !skips.containsKey(id)).sorted().toList();
         // 3) A clause must not be BOTH covered and skipped (ambiguous accounting).
@@ -86,12 +86,10 @@ class CoverageAuditTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-
     /**
      * Discovers every conformance test's {@code clause:<id>} tags via the launcher (discovery only, no run).
      * Scopes to THIS module's own compiled test classes ({@code target/test-classes}), NOT the reused test-jar
-     * dependencies (edge/http/wire) on the classpath — so coverage is attributed only to conformance cases,
+     * dependencies (edge/http/wire) on the classpath -- so coverage is attributed only to conformance cases,
      * and a client-conforms case may live in a plane package (e.g. {@code io.configd.client.http}) to reach a
      * package-private mock, yet still be discovered.
      */

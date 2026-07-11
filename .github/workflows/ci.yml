@@ -204,8 +204,8 @@ jobs:
             timeout_fast: 30
             timeout_nightly: 45
           # Multi-shard client-facing WATCH seal: the aggregating fan-out/fan-in
-          # coordinator, the shard-complete _acl/ authz plane (the B6 regression), the
-          # guard-flip legacy-SUBSCRIBE split, and edge wire byte-stability. Same work
+          # coordinator, the shard-complete _acl/ authz plane, the guard-flip
+          # legacy-SUBSCRIBE split, and edge wire byte-stability. Same work
           # on every event (targeted, fast); no chain.
           - name: multi-shard-watch
             script: gates/gate-mswatch.sh
@@ -391,12 +391,11 @@ jobs:
 
   linearizability-under-fault:
     # Real faulted-linearizability MATRIX (run-matrix.sh via gate-2.sh linzgate): the
-    # unmodified server binary is driven through the ADVERSARIAL schedule - overlapping
+    # unmodified server binary is driven through an adversarial schedule - overlapping
     # combination nemeses (kill/isolate/SIGSTOP-pause/packet-loss) that break quorum in
     # bursts - on both 3- and 5-node clusters, and every recorded history must check as
-    # linearizable by the Porcupine checker. This is NOT the old 15-second sequential-
-    # single-fault smoke. The full adversarial matrix across encryption/auth/clock-skew
-    # postures is the E1 measurement run captured under docs/measurement/e1-faulted-linz-*;
+    # linearizable by the Porcupine checker. The full adversarial matrix across
+    # encryption/auth/clock-skew postures is captured under docs/measurement/e1-faulted-linz-*;
     # CI runs a bounded (seed count + duration) but genuinely adversarial subset. The fault
     # injector shells out to `sudo -n iptables`, so the runner needs passwordless sudo and
     # iptables, and the multi-node clusters want more than 2 vCPUs of headroom. GitHub-hosted

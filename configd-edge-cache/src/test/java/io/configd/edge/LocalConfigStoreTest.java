@@ -49,10 +49,6 @@ class LocalConfigStoreTest {
         return new ConfigSnapshot(data, version, version);
     }
 
-    // -----------------------------------------------------------------------
-    // Basic read/write
-    // -----------------------------------------------------------------------
-
     @Nested
     class BasicOperations {
 
@@ -119,10 +115,6 @@ class LocalConfigStoreTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Monotonic reads via VersionCursor
-    // -----------------------------------------------------------------------
-
     @Nested
     class MonotonicReads {
 
@@ -160,10 +152,6 @@ class LocalConfigStoreTest {
             assertTrue(result.found());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Staleness tracker
-    // -----------------------------------------------------------------------
 
     @Nested
     class StalenessTracking {
@@ -242,10 +230,6 @@ class LocalConfigStoreTest {
             assertEquals(250, tracker.stalenessMs());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Concurrent read/write correctness
-    // -----------------------------------------------------------------------
 
     @Nested
     class ConcurrentAccess {
@@ -331,10 +315,6 @@ class LocalConfigStoreTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Snapshot immutability
-    // -----------------------------------------------------------------------
-
     @Nested
     class SnapshotImmutability {
 
@@ -356,10 +336,6 @@ class LocalConfigStoreTest {
             assertEquals(2, store.currentVersion());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // VersionCursor edge cases
-    // -----------------------------------------------------------------------
 
     @Nested
     class VersionCursorEdgeCases {
@@ -385,10 +361,6 @@ class LocalConfigStoreTest {
                     () -> new VersionCursor(-1, 0));
         }
     }
-
-    // -----------------------------------------------------------------------
-    // InvariantMonitor wiring for INV-M1 monotonic_read
-    // -----------------------------------------------------------------------
 
     @Nested
     class MonotonicReadInvariant {

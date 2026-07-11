@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Reactor-side (unit) regression protection for the ADR-0045 server-side-filtered ({@code 0x03}) forward-only
+ * Reactor-side (unit) regression protection for the server-side-filtered ({@code 0x03}) forward-only
  * apply on the reference edge client. The live composition proof is
  * {@code EncryptedFilteredSignedEdgeSweepIT} — an {@code *IT} excluded from the Surefire reactor — so without
  * this {@code *Test} the forward-only logic in {@link Subscription} would carry NO CI regression net: a future
@@ -183,8 +183,6 @@ class EdgeFilteredForwardApplyTest {
             }
         }
     }
-
-    // -----------------------------------------------------------------------
 
     private static Flow.Subscriber<ConfigChange> recordingSubscriber(List<ConfigChange> sink) {
         return new Flow.Subscriber<>() {

@@ -3,6 +3,10 @@
 ## Status
 Accepted
 
+> **Note:** Near-duplicate of [adr-0011-fan-out-topology.md](adr-0011-fan-out-topology.md), which
+> restates the same Plumtree-over-HyParView decision and is the fuller version. Treat ADR-0011 as
+> the reference; this ADR is kept for the historical record.
+
 ## Context
 The system must propagate config changes from the control plane to 10K-1M edge nodes within 500ms p99 globally. The fan-out mechanism must handle slow consumers, network partitions, and node churn gracefully. Message complexity must scale sub-quadratically.
 

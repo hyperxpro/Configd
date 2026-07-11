@@ -25,10 +25,6 @@ class ConfigValidatorTest {
         return s.getBytes(StandardCharsets.UTF_8);
     }
 
-    // -----------------------------------------------------------------------
-    // No validators registered
-    // -----------------------------------------------------------------------
-
     @Nested
     class NoValidatorsRegistered {
 
@@ -39,10 +35,6 @@ class ConfigValidatorTest {
             assertInstanceOf(ConfigValidator.ValidationResult.Valid.class, result);
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Prefix matching
-    // -----------------------------------------------------------------------
 
     @Nested
     class PrefixMatching {
@@ -96,10 +88,6 @@ class ConfigValidatorTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Validator logic
-    // -----------------------------------------------------------------------
-
     @Nested
     class ValidatorLogic {
 
@@ -142,10 +130,6 @@ class ConfigValidatorTest {
             assertFalse(validator.validate("port.http", bytes("not-a-number")).isValid());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Registration management
-    // -----------------------------------------------------------------------
 
     @Nested
     class RegistrationManagement {
@@ -205,10 +189,6 @@ class ConfigValidatorTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Validate null checks
-    // -----------------------------------------------------------------------
-
     @Nested
     class NullChecks {
 
@@ -224,10 +204,6 @@ class ConfigValidatorTest {
                     () -> validator.validate("key", null));
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Batch validation (validateAll)
-    // -----------------------------------------------------------------------
 
     @Nested
     class BatchValidation {
@@ -293,10 +269,6 @@ class ConfigValidatorTest {
                     () -> validator.validateAll(null));
         }
     }
-
-    // -----------------------------------------------------------------------
-    // ValidationResult sealed interface
-    // -----------------------------------------------------------------------
 
     @Nested
     class ValidationResultTests {

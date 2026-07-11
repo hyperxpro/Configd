@@ -9,20 +9,20 @@ import io.configd.distribution.wire.EdgeFrameCodec;
  * the same code the server runs; this record adds the <b>client-side policy</b> bounds the state machine
  * layers on top: connection/handshake/idle deadlines and the cross-frame snapshot accumulation caps.
  *
- * <p>All values are configurable; the defaults are safe and track the RFC (§06 F2 / F10-1d / WH-13/15).
+ * <p>All values are configurable; the defaults are safe and track the RFC.
  *
  * @param maxFrameBytes         the per-frame ceiling; a declared length above it is a bounded reject before
  *                              any allocation ({@link EdgeFrameCodec#MAX_EDGE_FRAME_SIZE} = 2 MiB — the frozen
  *                              wire constant; a driver MAY lower it but never raise it above the codec cap)
  * @param connectTimeoutMs      the TCP connect timeout (a stalled connect must not hang)
  * @param handshakeTimeoutMs    the TLS handshake deadline (a slow-loris that never completes the handshake
- *                              times out rather than parking the reader — §06 F9)
+ *                              times out rather than parking the reader)
  * @param readIdleDeadlineMs    the HEARTBEAT-silence read-idle deadline once streaming: reconnect if no
- *                              server frame arrives within it (§06 F6-8 / F10-3). It is <b>not</b> armed
- *                              before the first business frame, since a fan-out subscriber is idle by design
- *                              until it subscribes
- * @param maxSnapshotTotalBytes the cross-frame snapshot accumulation ceiling (WH-13; Gate 2 SnapshotReassembler)
- * @param maxSnapshotChunks     the cross-frame snapshot chunk-count ceiling (WH-15; Gate 2 SnapshotReassembler)
+ *                              server frame arrives within it. It is <b>not</b> armed before the first
+ *                              business frame, since a fan-out subscriber is idle by design until it
+ *                              subscribes
+ * @param maxSnapshotTotalBytes the cross-frame snapshot accumulation ceiling (see {@code SnapshotReassembler})
+ * @param maxSnapshotChunks     the cross-frame snapshot chunk-count ceiling (see {@code SnapshotReassembler})
  */
 public record HostileServerLimits(
         int maxFrameBytes,

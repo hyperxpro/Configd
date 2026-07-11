@@ -19,17 +19,16 @@ import java.util.Objects;
  * gate, method validation, and metric side-effects. It is driven by both the JDK
  * {@link EdgeHttpServer} adapter and the Netty {@link NettyEdgeHttpServer} adapter so the two
  * transports serve <b>byte-identical</b> responses on the canonical request paths by construction
- * (routing is exact-match). The head-to-head prototype diverged: no health/metrics endpoints, no
- * 405, and it set the stale header only on hits.
+ * (routing is exact-match).
  *
  * <p><b>Allocation discipline.</b> The logic writes to a {@link Sink} rather than building a
- * response object + header map per request, so it adds <b>no</b> per-request allocation over the
- * prototype (1,716 B/req must hold). Header names and the constant strings are interned; the only
- * per-request strings are the cursor/version decimal renderings the prototype already paid.
+ * response object + header map per request, keeping per-request allocation to a minimum. Header
+ * names and the constant strings are interned; the only per-request strings are the cursor/version
+ * decimal renderings.
  *
- * <p>The control flow mirrors {@code EdgeHttpServer.ConfigReadHandler} exactly, including the
- * order of clauses (method, key, onRead, stale-header, strong-read, not-subscribed,
- * cursor-parse, store read, found/refused/miss) and which paths record the read-latency sample.
+ * <p>The order of clauses (method, key, onRead, stale-header, strong-read, not-subscribed,
+ * cursor-parse, store read, found/refused/miss) is a deliberate contract shared by both adapters,
+ * as is which paths record the read-latency sample.
  */
 public final class EdgeReadHandler {
 
@@ -104,8 +103,6 @@ public final class EdgeReadHandler {
             out.commit(404, CT_JSON, bytes("Not Found"));
         }
     }
-
-    // ---- GET /v1/config/{key} ----
 
     private void handleConfig(boolean get, String path, String cursorHeader, Sink out) {
         if (notGet(get, out)) return;
@@ -183,8 +180,6 @@ public final class EdgeReadHandler {
         }
     }
 
-    // ---- GET /metrics ----
-
     private void handleMetrics(String authHeader, Sink out) {
         if (metricsScrapeToken != null) {
             String presented = (authHeader != null && authHeader.startsWith("Bearer "))
@@ -200,8 +195,6 @@ public final class EdgeReadHandler {
         }
         out.commit(200, CT_PROM, bytes(exporter.export()));
     }
-
-    // ---- helpers ----
 
     private static boolean notGet(boolean get, Sink out) {
         if (get) return false;

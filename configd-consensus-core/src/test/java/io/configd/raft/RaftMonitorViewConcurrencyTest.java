@@ -24,10 +24,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Validates the monitoring-read hazard: concurrently reading monitoring state is safe and never blocks.
  *
- * <p>The A net deliberately does NOT cover the read-only monitoring accessors; this test closes them with
- * an owner-published immutable snapshot ({@link RaftNode#monitorView()}). This test is the macro
- * complement to the {@code configd-jcstress} {@code RaftMonitorViewPublicationTest} (which pins the
- * JMM no-tear primitive). It proves, against a REAL {@link RaftNode} bound to an owner executor:
+ * <p>The concurrency stress coverage deliberately does not cover the read-only monitoring accessors;
+ * this test closes that gap with an owner-published immutable snapshot ({@link RaftNode#monitorView()}).
+ * This test is the macro complement to the {@code configd-jcstress} {@code RaftMonitorViewPublicationTest}
+ * (which pins the JMM no-tear primitive). It proves, against a real {@link RaftNode} bound to an owner
+ * executor:
  *
  * <ol>
  *   <li><b>{@link #monitorViewIsCoherentAndNeverBlocksUnderConcurrentPublish()}</b> - while the owner
@@ -37,14 +38,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       across reads (term and commitIndex never go backwards). No tear, no partial structure, no
  *       block, no throw. Non-vacuous: commitIndex demonstrably advances and the reader observes many
  *       distinct snapshots while racing the publisher.</li>
- *   <li><b>{@link #h3AccessorsTripOffOwnerWhileMonitorViewAndSSetStaySafe()}</b> - the net extension:
- *       the five formerly-unguarded monitoring accessors (currentTerm/votedFor/log/transferTarget/
- *       clusterConfig) now TRIP {@code raft_owner_thread} when called off-owner, while the published
- *       {@code monitorView()} and the volatile S-set (role/leaderId/nodeId) stay safe. This is the
- *       former blind spot converted into net-covered surface.</li>
+ *   <li><b>{@link #h3AccessorsTripOffOwnerWhileMonitorViewAndSSetStaySafe()}</b> - the five
+ *       formerly-unguarded monitoring accessors (currentTerm/votedFor/log/transferTarget/
+ *       clusterConfig) now trip {@code raft_owner_thread} when called off-owner, while the published
+ *       {@code monitorView()} and the volatile S-set (role/leaderId/nodeId) stay safe.</li>
  * </ol>
  *
- * @see RaftNodeConcurrencyStressTest the A net this complements
+ * @see RaftNodeConcurrencyStressTest the concurrency stress coverage this complements
  */
 class RaftMonitorViewConcurrencyTest {
 
@@ -167,7 +167,7 @@ class RaftMonitorViewConcurrencyTest {
             ThrowingChecker checker = new ThrowingChecker();
             RaftNode node = newSingleNodeLeaderBoundTo(owner, checker);
 
-            // Net extension: the five formerly-unguarded monitoring accessors now trip off-owner (this thread != owner).
+            // The five formerly-unguarded monitoring accessors now trip off-owner (this thread != owner).
             assertTripsOffOwner(() -> node.currentTerm(), "currentTerm");
             assertTripsOffOwner(() -> node.votedFor(), "votedFor");
             assertTripsOffOwner(() -> node.log(), "log");

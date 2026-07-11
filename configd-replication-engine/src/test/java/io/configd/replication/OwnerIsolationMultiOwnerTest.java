@@ -115,7 +115,7 @@ class OwnerIsolationMultiOwnerTest {
         RaftNode node = new RaftNode(config, new RaftLog(storage), new NoopTransport(),
                 new NoopStateMachine(), new java.util.Random(42L + gid), storage, checker);
         pool.ownerExecutor(gid).submit(() -> {
-            node.bindOwnerThread();                        // H-6: bind first, on the group's owner
+            node.bindOwnerThread();                         // bind first, on the group's owner
             for (int i = 0; i < 400; i++) node.tick();      // self-elect (single-node), proven idiom
         }).get(10, TimeUnit.SECONDS);
         assertEquals(RaftRole.LEADER, node.role(), "group " + gid + " should self-elect to LEADER");
@@ -167,8 +167,8 @@ class OwnerIsolationMultiOwnerTest {
                     for (int i = 0; i < itersPer && failure.get() == null; i++) {
                         final int gid = gids[(pid + i) % gids.length];
                         final int owner = pool.ownerIndexOf(gid);
-                        // The correct R-01' path: tick THIS owner's groups + propose to THIS group,
-                        // all marshalled onto the group's owner. .get() surfaces any owner-thread
+                        // The correct path: tick THIS owner's groups + propose to THIS group, all
+                        // marshalled onto the group's owner. .get() surfaces any owner-thread
                         // throwable (tripwire or in-node invariant) to this producer thread.
                         pool.ownerExecutor(gid).submit(() -> {
                             driver.tickOwner(owner);

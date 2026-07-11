@@ -22,7 +22,7 @@ class QuarantineReBootstrapTest {
     private static final long T0 = 1_700_000_000_000L;
 
     private static SlowConsumerPolicyConfig config() {
-        return SlowConsumerPolicyConfig.defaults(); // quarantineCooldownMs = 60_000
+        return SlowConsumerPolicyConfig.defaults(); // quarantineCooldownMs is 60_000
     }
 
     private static SlowConsumerGovernor quarantined(RecordingPolicyProbe probe) {
@@ -41,7 +41,7 @@ class QuarantineReBootstrapTest {
     void subscribeDuringTheCooldownIsRefusedAndCounted() {
         RecordingPolicyProbe probe = new RecordingPolicyProbe();
         SlowConsumerGovernor governor = quarantined(probe);
-        long quarantinedAt = T0 + 2_000; // the 3rd demotion's timestamp
+        long quarantinedAt = T0 + 2_000; // the timestamp of the 3rd demotion
 
         Admission first = governor.admit(EDGE, quarantinedAt + 1_000);
         assertEquals(AdmissionDecision.REFUSE, first.decision());
@@ -138,7 +138,7 @@ class QuarantineReBootstrapTest {
         SlowConsumerGovernor governor =
                 new SlowConsumerGovernor(config(), probe, probe::onTransition);
         governor.onDemotion(EDGE,
-                new DemotionEvent(10, 5, DemotionEvent.REASON_ACK_LAG), T0); // -> CATCHUP
+                new DemotionEvent(10, 5, DemotionEvent.REASON_ACK_LAG), T0); // transitions to CATCHUP
         Admission admission = governor.admit(EDGE, T0 + 1_000);
         assertEquals(AdmissionDecision.ALLOW, admission.decision(),
                 "CATCHUP is not a refusal state — the reconnect resumes normally");
@@ -159,16 +159,16 @@ class QuarantineReBootstrapTest {
 
     @Test
     void aQuarantineClearsBothDemotionLaddersEvenInsideTheWindow() {
-        // The quarantine's clean slate must come from the CLEAR, not merely from the
-        // window pruning: with a cooldown SHORTER than the demote window, pre-quarantine
-        // demotions are still age-eligible after readmission - and must not re-trip.
+        // The clean slate at quarantine must come from the clear, not merely from window
+        // pruning: with a cooldown shorter than the demote window, pre-quarantine
+        // demotions are still age-eligible after readmission, and must not re-trip.
         RecordingPolicyProbe probe = new RecordingPolicyProbe();
         SlowConsumerPolicyConfig shortCooldown = new SlowConsumerPolicyConfig(
                 10_000L, 3, 3, 60_000L, 10_000L, 3, 3_600_000L, 3_600_000L, 4_096);
         SlowConsumerGovernor governor =
                 new SlowConsumerGovernor(shortCooldown, probe, probe::onTransition);
 
-        // 2 gap demotions (gapDemoteLimit 3 here) + 3 distress -> quarantine via distress.
+        // Two gap demotions (gapDemoteLimit 3 here) plus three distress demotions quarantine via distress.
         governor.onDemotion(EDGE, new DemotionEvent(1, 0, DemotionEvent.REASON_GAP), T0);
         governor.onDemotion(EDGE, new DemotionEvent(2, 0, DemotionEvent.REASON_GAP), T0 + 100);
         for (int i = 0; i < 3; i++) {

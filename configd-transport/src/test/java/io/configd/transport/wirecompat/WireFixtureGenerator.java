@@ -13,7 +13,7 @@ import java.util.Map;
  * Deterministic generator for the golden-bytes wire fixtures consumed by
  * {@code WireCompatGoldenBytesTest} and the {@code wire-compat} CI job.
  *
- * <p>Section 8.10 hard rule: the wire format is part of the public contract.
+ * <p>Hard rule: the wire format is part of the public contract.
  * Any change that alters the encoded byte stream MUST be accompanied by
  * either (a) no fixture diff (purely additive at the application layer)
  * or (b) a {@link FrameCodec#WIRE_VERSION} bump and regenerated fixtures

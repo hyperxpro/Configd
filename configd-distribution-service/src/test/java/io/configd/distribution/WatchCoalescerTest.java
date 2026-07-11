@@ -166,9 +166,9 @@ class WatchCoalescerTest {
             clock.advanceNanos(10_000_000L);
             coalescer.flush();
 
-            // Add new entry - timer starts fresh
+            // Adding after a flush restarts the coalescing window from zero.
             coalescer.add(List.of(new ConfigMutation.Put("b", VALUE)), 2);
-            assertFalse(coalescer.shouldFlush()); // Not enough time elapsed
+            assertFalse(coalescer.shouldFlush());
 
             clock.advanceNanos(10_000_000L);
             assertTrue(coalescer.shouldFlush());
@@ -194,7 +194,8 @@ class WatchCoalescerTest {
 
         @Test
         void batchedMutationsCountTowardMax() {
-            // maxBatch = 3, but a single add with 3 mutations should trigger
+            // A single add() carrying 3 mutations must also trip the maxBatch=3 flush,
+            // not just 3 separate add() calls.
             WatchCoalescer coalescer = new WatchCoalescer(clock, 10_000_000L, 3);
             coalescer.add(List.of(
                     new ConfigMutation.Put("a", VALUE),
@@ -231,10 +232,6 @@ class WatchCoalescerTest {
             assertFalse(coalescer.shouldFlush());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Test clock with nanoTime control
-    // -----------------------------------------------------------------------
 
     private static final class TestClock implements Clock {
         private long nanos = 1_000_000_000L; // 1 second

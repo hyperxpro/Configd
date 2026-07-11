@@ -21,9 +21,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * reaches it and it is backfilled to the committed prefix <em>within the same
  * term</em>.
  * <p>
- * This test isolates a follower, pins the window, heals, and asserts same-term
- * catch-up. Pre-fix it stays permanently behind (RED); post-fix the heartbeat
- * decay frees the window and it catches up (GREEN). Deterministic, no sleeps.
+ * This test isolates a follower, pins the window, heals it, and asserts same-term catch-up: the
+ * heartbeat decay frees the window so the healed follower backfills within the same term.
+ * Deterministic, no sleeps.
  */
 class Rr103InflightWindowRecoveryTest {
 
@@ -73,7 +73,8 @@ class Rr103InflightWindowRecoveryTest {
                 "non-vacuity: N3 fell behind while partitioned (commit "
                         + n3.log().commitIndex() + " < " + leaderHead + ")");
 
-        // Heal and measure the recovery bound. Without the fix, recoveryTicks stays -1 (never catches up).
+        // Heal, then measure the recovery bound: recoveryTicks stays -1 if the healed follower never
+        // catches up.
         cluster.heal(N3);
         int recoveryTicks = -1;
         for (int t = 1; t <= 2000; t++) {

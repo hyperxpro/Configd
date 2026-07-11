@@ -35,14 +35,11 @@ class VersionedConfigStorePropertyTest {
         for (int i = 1; i <= numWrites; i++) {
             store.put("key", ("val-" + i).getBytes(StandardCharsets.UTF_8), i);
         }
-        // Take a snapshot
         ConfigSnapshot snap = store.snapshot();
         long snapVersion = snap.version();
 
-        // Write more
         store.put("key", "after-snapshot".getBytes(StandardCharsets.UTF_8), numWrites + 1);
 
-        // Snapshot must be unchanged
         assertEquals(snapVersion, snap.version());
         VersionedValue vv = snap.data().get("key");
         assertNotNull(vv);

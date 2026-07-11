@@ -17,8 +17,8 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * Charter hard-rule 5: a faster encoder that changes the wire is disqualified. This test proves
- * the BEST-JDK single-pass into-buffer encoders ({@link H2HCodecs}) produce <b>byte-identical</b>
+ * A faster encoder that changes the wire is disqualified. This test proves
+ * the best-JDK single-pass into-buffer encoders ({@link H2HCodecs}) produce <b>byte-identical</b>
  * output to the production {@link FrameCodec} / {@link EdgeFrameCodec} across the benchmarked
  * payload/batch sizes, and that the bytes round-trip through the production decoder. The Netty
  * encoders are validated against the same expected bytes in their own test once wired.
@@ -28,7 +28,7 @@ class WireH2HCorrectnessTest {
     private static final int VALUE_BYTES = 64;
     private static final int ED25519_SIG_BYTES = 64;
 
-    // ---- consensus: [4B BE senderId] || FrameCodec frame ----
+    // Consensus wire format: [4B BE senderId] || FrameCodec frame.
 
     @Test
     void consensusSendWireInto_isByteIdenticalToEncodeWire() {
@@ -64,7 +64,7 @@ class WireH2HCorrectnessTest {
         return wire;
     }
 
-    // ---- fan-out: NOTIFY frame ----
+    // Fan-out NOTIFY frame.
 
     @Test
     void fanOutNotifyInto_isByteIdenticalToEdgeFrameCodec() {

@@ -125,7 +125,6 @@ class CommitOutcomeSeamTest {
      */
     @Test
     void pendingCallbackFiresOnceWhenApplyAdvances() {
-        // Build a 3-node cluster, elect node 1, propose, register BEFORE commit.
         RaftNodeTest.TestCluster cluster = new RaftNodeTest.TestCluster(3);
         cluster.electLeader(NodeId.of(1));
         RaftNode leader = cluster.nodes.get(NodeId.of(1));
@@ -140,7 +139,6 @@ class CommitOutcomeSeamTest {
         // Not yet committed in a 3-node cluster (needs a follower ack).
         assertNull(outcome.get(), "must stay pending until quorum-commit + apply");
 
-        // Replicate and commit.
         cluster.deliverAllMessages(10);
         cluster.tickLeaderHeartbeatAndDeliver();
         cluster.deliverAllMessages(10);
@@ -180,7 +178,6 @@ class CommitOutcomeSeamTest {
         leader.whenCommitOutcome(b.index(), b.term(), ob::set);
         leader.whenCommitOutcome(c.index(), c.term(), oc::set);
 
-        // Replicate + commit all three at once.
         cluster.deliverAllMessages(10);
         cluster.tickLeaderHeartbeatAndDeliver();
         cluster.deliverAllMessages(10);

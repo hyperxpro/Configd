@@ -1,23 +1,21 @@
 #!/usr/bin/env bash
-# =============================================================================
-# wsB-live-write.sh — Session 5 / Workstream B live-cluster write-path driver
-# -----------------------------------------------------------------------------
-# Launches a real 3-node localhost control-plane cluster (the same launch shape as
-# gates/smoke-multinode.sh — which we do NOT modify), resolves the leader, then runs
-# the OpenLoopWriteDriver phases against the leader's HTTP API:
+# wsB-live-write.sh — live-cluster write-path driver
 #
-#   PHASE 2  (low-rate)  : unloaded local write-commit latency (the local_commit_component)
-#   PHASE 3  (10k/s)     : sustained 10,000 writes/s for >=60s, CO-corrected latency-at-rate
-#   PHASE 4  (100k/s)    : burst/saturation characterization (where + how it sheds)
-#   CALIBRATE (F4)       : generator/server max sustainable commit rate (run FIRST)
+# Launches a real 3-node localhost control-plane cluster (the same launch
+# shape as gates/smoke-multinode.sh), resolves the leader, then runs the
+# OpenLoopWriteDriver phases against the leader's HTTP API:
+#
+#   PHASE 2   (low-rate)  : unloaded local write-commit latency (the local_commit_component)
+#   PHASE 3   (10k/s)     : sustained 10,000 writes/s for >=60s, CO-corrected latency-at-rate
+#   PHASE 4   (100k/s)    : burst/saturation characterization (where + how it sheds)
+#   CALIBRATE             : generator/server max sustainable commit rate (run FIRST)
 #
 # Each PUT blocks until quorum commit (ADR-0033), so a 200 == a real committed write.
-# This exercises the real HTTP -> propose -> quorum -> commit -> 200 path (methodology §1:
-# the §0.1 throughput target is a fully-local single-host mechanism).
+# This exercises the real HTTP -> propose -> quorum -> commit -> 200 path, not a
+# fully-local single-host mechanism.
 #
 # Usage:  perf/wsB-live-write.sh <calibrate|phase2|phase3|phase4|all> [outdir]
 # Requires a freshly-built shaded server jar + benchmarks.jar. Idempotent cleanup.
-# =============================================================================
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JAR="${CONFIGD_JAR:-$(ls "$ROOT"/configd-server/target/configd-server-*.jar 2>/dev/null | grep -v original- | head -1)}"
@@ -27,7 +25,7 @@ RAFT_BASE=9190
 API_BASE=8180
 PEERS_ADDR="1=127.0.0.1:9191,2=127.0.0.1:9192,3=127.0.0.1:9193"
 HEAP="${WSB_HEAP:--Xmx1g -Xms1g}"
-GCFLAGS="${WSB_GC:--XX:+UseZGC}"   # chosen collector (ADR-0041): ZGC
+GCFLAGS="${WSB_GC:--XX:+UseZGC}"
 MODE="${1:-all}"
 OUT="${2:-$ROOT/docs/session-5/captures}"
 PIDS=()
@@ -85,7 +83,7 @@ resolve_leader() {
 
 run_phases() {
   local L; L=$(resolve_leader) || fail "no leader"
-  # Full node-id -> API-URL map so the driver can FOLLOW the X-Leader-Hint under churn
+  # Full node-id -> API-URL map so the driver can follow the X-Leader-Hint under churn
   # (a real client behaviour; the driver counts + reports retargets).
   local NODEMAP="1=http://$(api 1),2=http://$(api 2),3=http://$(api 3)"
   echo "[wsB] initial leader = node $L; nodeMap=$NODEMAP"

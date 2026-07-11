@@ -1,4 +1,4 @@
-# C6 E2E edge-node image: a slim JRE layer over the HOST-BUILT shaded jar.
+# Edge-node image: a slim JRE layer over the host-built shaded jar.
 # See Dockerfile.server for the rationale (host builds, staged context, slim layer).
 FROM eclipse-temurin:25-jre-noble
 
@@ -12,7 +12,7 @@ ENTRYPOINT ["java", "--enable-preview", \
     "-XX:+ExitOnOutOfMemoryError", \
     "-jar", "/app/configd-edge-node.jar"]
 
-# Liveness only — readiness (/health/ready) is staleness-governed (503 at DEGRADED+)
+# Liveness only -- readiness (/health/ready) is staleness-governed (503 at DEGRADED+)
 # and is asserted by the scenario script, not by container health.
 HEALTHCHECK --interval=5s --timeout=3s --start-period=15s --retries=24 \
     CMD curl -fsS http://localhost:8080/health/live || exit 1

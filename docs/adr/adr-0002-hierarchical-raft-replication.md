@@ -3,6 +3,11 @@
 ## Status
 Accepted
 
+> **Note:** Superseded in substance by [adr-0030-quicksilver-shaped-topology.md](adr-0030-quicksilver-shaped-topology.md):
+> the write topology now in place is a single centralized region-local Raft root, not the global
+> multi-region hierarchy this ADR adopts. The reasoning below is kept as the historical record of
+> why hierarchical Raft was the original decision.
+
 ## Context
 The system must support global writes (< 150ms p99 cross-region), 10K/s sustained write throughput, and edge propagation to 10K-1M nodes. The replication topology must be explicitly chosen from: multi-Raft (range-partitioned), hierarchical Raft (regional groups + global coordinator), or leaderless (EPaxos-style).
 
@@ -13,7 +18,7 @@ We adopt **hierarchical Raft** with three layers:
 
 2. **Regional Raft Groups (3 voters within each region):** Handle region-scoped configuration keys. Commit latency: 2-5ms intra-region. Each region has its own independent Raft group.
 
-3. **Edge Fan-out (non-consensus):** Edge nodes NEVER participate in Raft consensus. They receive updates via Plumtree epidemic broadcast (ADR-0003) and serve reads from local immutable snapshots.
+3. **Edge Fan-out (non-consensus):** Edge nodes never participate in Raft consensus. They receive updates via Plumtree epidemic broadcast (ADR-0003) and serve reads from local immutable snapshots.
 
 Each config key has a declared **scope**: `GLOBAL`, `REGIONAL`, or `LOCAL`. Scope determines which Raft group handles writes.
 
@@ -37,7 +42,7 @@ EPaxos has no production deployment track record. Multiple published correctness
 
 ### Why hierarchical?
 The config keyspace naturally partitions by scope:
-- **Global config** (~1% of keys, ~10% of writes): Routing rules, global feature flags, security policies. These MUST be consistent globally. Cross-region Raft is acceptable because writes are infrequent relative to regional config.
+- **Global config** (~1% of keys, ~10% of writes): Routing rules, global feature flags, security policies. These must be consistent globally. Cross-region Raft is acceptable because writes are infrequent relative to regional config.
 - **Regional config** (~30% of keys, ~60% of writes): Region-specific settings, regional feature flags, capacity parameters. These need fast commits (2-5ms) and don't require global consensus.
 - **Local config** (~69% of keys, ~30% of writes): Per-node tuning, debug flags. Non-replicated, local-only.
 

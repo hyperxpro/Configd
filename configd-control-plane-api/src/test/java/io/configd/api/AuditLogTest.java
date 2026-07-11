@@ -21,14 +21,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Tamper-evident, append-only {@link AuditLog}.
  * <p>
- * Per the prime directive (section 2.1) a control is verified ONLY by a passing
- * negative test that performs the attack and asserts rejection. The
- * tamper-evidence tests below mutate / drop / reorder a persisted record and
+ * A control here is verified ONLY by a passing negative test that performs the attack and asserts
+ * rejection. The tamper-evidence tests below mutate / drop / reorder a persisted record and
  * assert that {@link AuditLog#verifyPersisted()} reports the break - and a
  * non-vacuity test asserts a clean chain verifies true.
  * <p>
- * The KEYED-vs-keyless distinction (the threat-model A2 bar) is covered by
- * {@code keyedChainDefeatsAttackerWhoRechainsTheWholeLogWithoutTheKey}: an
+ * The KEYED-vs-keyless distinction (tamper-evidence against an attacker with file-write access) is
+ * covered by {@code keyedChainDefeatsAttackerWhoRechainsTheWholeLogWithoutTheKey}: an
  * attacker who edits the file AND re-chains the whole log without {@code K_audit}
  * defeats a keyless SHA-256 chain but is rejected by the keyed HMAC chain - and
  * the test proves the keyless function would have passed the same bytes.
@@ -42,9 +41,7 @@ final class AuditLogTest {
         };
     }
 
-    // ------------------------------------------------------------------
     // (a) Completeness: each event produces exactly one correct record.
-    // ------------------------------------------------------------------
 
     @Test
     void everyEventProducesExactlyOneCorrectRecord() {
@@ -89,9 +86,7 @@ final class AuditLogTest {
         assertFalse(r.toString().contains("s3cr3t-token"));
     }
 
-    // ------------------------------------------------------------------
     // (b) Tamper-evidence: mutate / drop / reorder -> verify() is false.
-    // ------------------------------------------------------------------
 
     @Test
     void flippingAByteInAPersistedRecordIsDetected() {
@@ -213,9 +208,7 @@ final class AuditLogTest {
         assertEquals(1, r.brokenIndex(), "verify must pinpoint the version-tampered record");
     }
 
-    // ------------------------------------------------------------------
     // (c) Non-vacuity: a clean chain over many records verifies true.
-    // ------------------------------------------------------------------
 
     @Test
     void cleanChainVerifiesTrue() {
@@ -241,9 +234,7 @@ final class AuditLogTest {
                 "canonical bytes must differ when the actor differs");
     }
 
-    // ------------------------------------------------------------------
     // Bounding: the in-memory chain never exceeds the cap (anti-DoS).
-    // ------------------------------------------------------------------
 
     @Test
     void inMemoryChainIsBoundedByMaxRecords() {
@@ -263,13 +254,11 @@ final class AuditLogTest {
                 "the on-disk log must be bounded too");
     }
 
-    // ------------------------------------------------------------------
-    // (d) THE keyed-vs-keyless distinction. The A2 attacker
+    // The keyed-vs-keyless distinction. An attacker with file-write access
     // can EDIT the file AND re-chain the WHOLE persisted log. A keyless SHA-256
     // chain is defeated (they recompute every hash - no secret needed). A KEYED
     // HMAC chain is NOT: re-chaining without K_audit yields MACs the real key
     // rejects. This test performs the full re-chain attack and proves the gap.
-    // ------------------------------------------------------------------
 
     @Test
     void keyedChainDefeatsAttackerWhoRechainsTheWholeLogWithoutTheKey() {
@@ -286,7 +275,7 @@ final class AuditLogTest {
         keyed.record("writer", "PUT", "app/c", "committed seq=3");
         assertTrue(keyed.verifyPersisted().valid(), "precondition: the genuine keyed chain verifies");
 
-        // 2) The A2 attacker rewrites history: they change the middle record's
+        // 2) The attacker rewrites history: they change the middle record's
         //    outcome (hiding that a secret delete happened) and RE-CHAIN the whole
         //    log. They have no key, so they re-chain with plain SHA-256 (keyless) -
         //    the strongest a keyless attacker can do. Model this by replaying the
@@ -355,9 +344,7 @@ final class AuditLogTest {
                 material.getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256");
     }
 
-    // ------------------------------------------------------------------
     // A storage that lets a test tamper the persisted frames directly.
-    // ------------------------------------------------------------------
 
     private static final class TamperableStorage implements Storage {
         private final java.util.Map<String, java.util.List<byte[]>> logs = new java.util.HashMap<>();
@@ -395,7 +382,7 @@ final class AuditLogTest {
             l.set(i, l.get(j));
             l.set(j, tmp);
         }
-        /** A2 attacker: replace the ENTIRE persisted log with a re-chained one. */
+        /** Attacker seam: replace the ENTIRE persisted log with a re-chained one. */
         synchronized void replaceAllFrames(java.util.List<byte[]> frames) {
             java.util.List<byte[]> l = new java.util.ArrayList<>(frames.size());
             for (byte[] f : frames) l.add(f.clone());

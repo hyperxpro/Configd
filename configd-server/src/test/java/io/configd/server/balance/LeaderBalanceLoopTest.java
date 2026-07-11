@@ -34,7 +34,7 @@ class LeaderBalanceLoopTest {
     @Test
     void convergesFromAllOnOneNode_thenStops() {
         // G=8, M=4, every leader on node 0. Node 0 is the only max, so running just its loop converges the
-        // whole cluster to spread <= 1 and then STOPS (test-matrix item 1).
+        // whole cluster to spread <= 1 and then STOPS.
         FakeCluster cluster = new FakeCluster(4);
         cluster.placeAllOn(8, NodeId.of(0));
         MutableClock clock = new MutableClock();
@@ -63,7 +63,7 @@ class LeaderBalanceLoopTest {
     @Test
     void noThrashOnOptimalUneven() {
         // G=5, M=3, optimal {2,2,1}: spread 1 < threshold 2. Running every node's loop must move NOTHING
-        // (test-matrix item 2 - the >=2 threshold at work).
+        // (the >=2 threshold at work).
         FakeCluster cluster = new FakeCluster(3);
         cluster.place(0, NodeId.of(0));
         cluster.place(1, NodeId.of(0));
@@ -92,7 +92,7 @@ class LeaderBalanceLoopTest {
 
     @Test
     void atMostOneTransferPerCadence() {
-        // From a heavily skewed start a single cadence initiates at most one transfer (test-matrix item 6).
+        // From a heavily skewed start a single cadence initiates at most one transfer.
         FakeCluster cluster = new FakeCluster(4);
         cluster.placeAllOn(8, NodeId.of(0));
         MutableClock clock = new MutableClock();
@@ -108,7 +108,7 @@ class LeaderBalanceLoopTest {
     @Test
     void cooldownSuppressesTheNextCadence() {
         // instabilityWindow=0 isolates cooldown from term-churn. A transfer at t=0 must block the next
-        // cadence (inside the 60s cooldown) and unblock once it elapses (test-matrix item 7).
+        // cadence (inside the 60s cooldown) and unblock once it elapses.
         FakeCluster cluster = new FakeCluster(4);
         cluster.placeAllOn(8, NodeId.of(0));
         MutableClock clock = new MutableClock();
@@ -133,8 +133,8 @@ class LeaderBalanceLoopTest {
     @Test
     void electionStormBacksOff_thenResumes() {
         // A balanced seed, then a crash-takeover with continual term churn: while any group's term bumped
-        // within the window, the whole cycle backs off; once terms settle, transfers resume
-        // (test-matrix item 4). cooldown=0 isolates the churn gate.
+        // within the window, the whole cycle backs off; once terms settle, transfers resume.
+        // cooldown=0 isolates the churn gate.
         FakeCluster cluster = new FakeCluster(4);
         cluster.place(0, NodeId.of(0));
         cluster.place(4, NodeId.of(0));
@@ -175,8 +175,7 @@ class LeaderBalanceLoopTest {
     @Test
     void refusedTransferFoldsIntoCooldown() {
         // The primitive declines every transfer (e.g. a config change pending - the hard floor). The loop
-        // treats it as one attempt: the group is NOT moved, and cooldown suppresses an immediate retry
-        // (test-matrix item 5).
+        // treats it as one attempt: the group is NOT moved, and cooldown suppresses an immediate retry.
         FakeCluster cluster = new FakeCluster(4);
         cluster.placeAllOn(8, NodeId.of(0));
         cluster.refuse = true;
@@ -202,7 +201,7 @@ class LeaderBalanceLoopTest {
 
     @Test
     void dryRun_emitsWouldTransfer_butMovesNothing() {
-        // Observe-only: the would-be move is recorded, but no transfer is attempted (test-matrix item 11).
+        // Observe-only: the would-be move is recorded, but no transfer is attempted.
         FakeCluster cluster = new FakeCluster(4);
         cluster.placeAllOn(8, NodeId.of(0));
         MutableClock clock = new MutableClock();

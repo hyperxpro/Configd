@@ -16,7 +16,7 @@ import java.util.Objects;
  *                   server_now(last HEARTBEAT h where h.latestSeq == cursor) )
  *   staleness = wall_now - frontier
  * </pre>
- * State transitions (thresholds from the contract section 2 table):
+ * State transitions:
  * <pre>
  *   CURRENT --(&gt;500ms)--&gt; STALE --(&gt;5s)--&gt; DEGRADED --(&gt;30s)--&gt; DISCONNECTED
  * </pre>
@@ -52,7 +52,7 @@ import java.util.Objects;
  */
 public final class StalenessTracker {
 
-    /** Staleness state thresholds in milliseconds (contract section 2). */
+    /** Staleness state thresholds in milliseconds. */
     private static final long STALE_THRESHOLD_MS = 500;
     private static final long DEGRADED_THRESHOLD_MS = 5_000;
     private static final long DISCONNECTED_THRESHOLD_MS = 30_000;
@@ -64,8 +64,8 @@ public final class StalenessTracker {
     static final long SKEW_ALLOWANCE_MS = 50;
 
     /**
-     * Dedicated counter for implausible frontier samples. Named to match the contract
-     * metric series {@code edge_staleness_implausible_total}; the {@link MetricsRegistry}
+     * Dedicated counter for implausible frontier samples. Named to match the metric
+     * series {@code edge_staleness_implausible_total}; the {@link MetricsRegistry}
      * key is {@value} and the Prometheus exporter maps the dots to underscores and appends
      * {@code _total} for counters.
      */
@@ -99,7 +99,7 @@ public final class StalenessTracker {
     private volatile long lastVersion;
 
     /**
-     * Optional invariant monitor for INV-S1 staleness-bound violations. May be null - if
+     * Optional invariant monitor for staleness-bound violations. May be null - if
      * so, threshold violations are not reported through the monitor (the frontier
      * measurement itself is unaffected).
      */
@@ -112,7 +112,7 @@ public final class StalenessTracker {
      */
     private final MetricsRegistry.Counter implausibleCounter;
 
-    /** Most recently observed leader version, for the INV-S1 diagnostic message. */
+    /** Most recently observed leader version, for the staleness-bound diagnostic message. */
     private volatile long lastObservedRemoteVersion;
 
     /**
@@ -124,18 +124,20 @@ public final class StalenessTracker {
     }
 
     /**
-     * Creates a tracker with an {@link InvariantMonitor} wired in for INV-S1 checking. No
-     * implausibility counter (use the three-arg constructor for implausibility metric wiring).
+     * Creates a tracker with an {@link InvariantMonitor} wired in for staleness-bound
+     * checking. No implausibility counter (use the three-arg constructor for implausibility
+     * metric wiring).
      */
     public StalenessTracker(Clock clock, InvariantMonitor invariantMonitor) {
         this(clock, invariantMonitor, null);
     }
 
     /**
-     * Full constructor: clock, optional INV-S1 monitor, optional implausibility counter.
+     * Full constructor: clock, optional staleness-bound monitor, optional implausibility
+     * counter.
      *
      * @param clock              the wall clock for the staleness measurement (non-null)
-     * @param invariantMonitor   optional INV-S1 staleness-bound monitor (may be null)
+     * @param invariantMonitor   optional staleness-bound invariant monitor (may be null)
      * @param implausibleCounter optional implausible-frontier counter (may be null)
      */
     public StalenessTracker(Clock clock, InvariantMonitor invariantMonitor,
@@ -260,7 +262,8 @@ public final class StalenessTracker {
 
     /**
      * Reports the most recently observed leader version (independent of whether we have
-     * applied it). Used for the INV-S1 diagnostic message when {@link #isStale(long)} fires.
+     * applied it). Used for the staleness-bound diagnostic message when {@link #isStale(long)}
+     * fires.
      */
     public void observeRemoteVersion(long remoteVersion) {
         this.lastObservedRemoteVersion = remoteVersion;
@@ -268,7 +271,7 @@ public final class StalenessTracker {
 
     /**
      * Returns {@code true} if the current frontier staleness exceeds {@code thresholdMs}.
-     * Routes the decision through {@link InvariantMonitor} when one was supplied (INV-S1)
+     * Routes the decision through {@link InvariantMonitor} when one was supplied
      * so threshold violations increment
      * {@code configd.invariant.violation.staleness_bound}.
      *

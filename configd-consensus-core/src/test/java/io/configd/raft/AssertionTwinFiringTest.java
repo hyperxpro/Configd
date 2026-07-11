@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * <p>
  * The CI gate runs this class together with the config-store half
  * ({@code io.configd.store.AssertionTwinFiringTest}, which fires per_key_order and the
- * apply_owner_thread W-1 tripwire).
+ * apply_owner_thread tripwire).
  * <p>
  * Firing mechanism per twin (full table in {@code docs/session-2/assertion-verification.md}):
  * <ul>
@@ -158,8 +158,8 @@ class AssertionTwinFiringTest {
             // The single-node leader already committed its term no-op at index 1
             // (commitIndex==lastApplied==1). Append a further (uncommitted) entry at the
             // next index and set lastApplied past commitIndex, so triggerSnapshot would
-            // snapshot at an index ABOVE commitIndex - the INV-SI-1 violation. termAt at
-            // that index must be valid (entry present) for triggerSnapshot to proceed.
+            // snapshot at an index above commitIndex, which is the violation being forced.
+            // termAt at that index must be valid (entry present) for triggerSnapshot to proceed.
             long next = log.lastIndex() + 1;
             log.append(new LogEntry(next, term, new byte[]{9}));
             log.setLastApplied(next); // > commitIndex (still at the no-op index)

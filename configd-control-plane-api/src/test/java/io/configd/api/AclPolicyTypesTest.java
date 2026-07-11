@@ -23,10 +23,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class AclPolicyTypesTest {
 
-    // -----------------------------------------------------------------------
-    // PolicyRule
-    // -----------------------------------------------------------------------
-
     @Test
     void policyRuleNullChecks() {
         assertThrows(NullPointerException.class, () -> new PolicyRule(null, Set.of(READ), Set.of()));
@@ -71,10 +67,6 @@ class AclPolicyTypesTest {
                 "the empty prefix matches every key (mirrors the global \"\" grant)");
     }
 
-    // -----------------------------------------------------------------------
-    // Policy
-    // -----------------------------------------------------------------------
-
     @Test
     void policyNullChecks() {
         assertThrows(NullPointerException.class, () -> new Policy(null, List.of()));
@@ -101,10 +93,6 @@ class AclPolicyTypesTest {
         assertThrows(NullPointerException.class, () -> new Policy("p", withNull),
                 "List.copyOf rejects a null element");
     }
-
-    // -----------------------------------------------------------------------
-    // Role
-    // -----------------------------------------------------------------------
 
     @Test
     void roleNullChecks() {

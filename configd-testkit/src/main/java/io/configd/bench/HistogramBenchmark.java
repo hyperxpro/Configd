@@ -18,8 +18,8 @@ import java.util.concurrent.TimeUnit;
  *       implementation should be cheap here; the synchronized min/max CAS
  *       only pays cost on actual updates.</li>
  *   <li><b>recordContended</b> - many threads racing on the same
- *       histogram. Surfaces the synchronized-block scaling cliff that O5
- *       is meant to remove.</li>
+ *       histogram. Surfaces the synchronized-block scaling cliff a
+ *       lock-free histogram design would need to remove.</li>
  * </ul>
  *
  * <p>Run with {@code -prof gc} to verify the recording path is

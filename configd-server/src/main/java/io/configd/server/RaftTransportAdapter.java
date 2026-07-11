@@ -44,14 +44,14 @@ public final class RaftTransportAdapter implements RaftTransport {
 
     private final io.configd.transport.RaftTransport transport;
     private final int groupId;
-    /** Whether to enforce the in-body {@code leaderId}/{@code candidateId} binding (WH-08/09). */
+    /** Whether to enforce the in-body {@code leaderId}/{@code candidateId} binding. */
     private final boolean enforceIdentity;
     /** Security-event sink for in-body identity rejections and decode-drops. */
     private final RaftTransportMetrics transportMetrics;
     /** Throttle state for the in-body-rejection log (a dropped-frame path an authenticated peer could flood). */
     private final AtomicLong identityLogLastNanos = new AtomicLong(0L);
     private final AtomicLong identityLogSuppressed = new AtomicLong(0L);
-    /** Throttle state for the decode-drop log (WH-10): a dormant/undecodable type or a malformed payload. */
+    /** Throttle state for the decode-drop log: a dormant/undecodable type or a malformed payload. */
     private final AtomicLong decodeDropLogLastNanos = new AtomicLong(0L);
     private final AtomicLong decodeDropLogSuppressed = new AtomicLong(0L);
 
@@ -68,7 +68,7 @@ public final class RaftTransportAdapter implements RaftTransport {
     }
 
     /**
-     * Creates an adapter with an explicit in-body identity-binding gate (WH-08/09). When
+     * Creates an adapter with an explicit in-body identity-binding gate. When
      * {@code enforceIdentity} is true, a decoded {@link AppendEntriesRequest}/{@link
      * InstallSnapshotRequest}/{@link TimeoutNowRequest} {@code leaderId} or {@link RequestVoteRequest}
      * {@code candidateId} that differs from the transport-authenticated sender is dropped and counted
@@ -125,8 +125,8 @@ public final class RaftTransportAdapter implements RaftTransport {
     /**
      * Logs an in-body identity rejection (throttled). Unlike a senderId mismatch (which drops the
      * connection, so it is one line per drop), an in-body mismatch drops only the FRAME and keeps the
-     * connection, so an authenticated-but-misbehaving peer could otherwise flood the log (the WH-10
-     * anti-pattern). The metric is incremented on every rejection by the caller regardless of throttling.
+     * connection, so an authenticated-but-misbehaving peer could otherwise flood the log. The metric
+     * is incremented on every rejection by the caller regardless of throttling.
      */
     private void logInBodyRejectionThrottled(NodeId from, NodeId bodyId, MessageType type) {
         logThrottled(identityLogLastNanos, identityLogSuppressed, suppressed ->
@@ -136,7 +136,7 @@ public final class RaftTransportAdapter implements RaftTransport {
     }
 
     /**
-     * Logs an inbound frame dropped at the decode boundary (WH-10, throttled): a dormant/undecodable
+     * Logs an inbound frame dropped at the decode boundary (throttled): a dormant/undecodable
      * {@link MessageType} with no consensus codec ({@code PLUMTREE_*}/{@code HYPARVIEW_*}/{@code
      * HEARTBEAT}) or a structurally-malformed payload. The frame is discarded and the connection kept, so
      * a hostile peer could otherwise emit one log line per frame - the same unbounded-flood vector as the
@@ -212,10 +212,10 @@ public final class RaftTransportAdapter implements RaftTransport {
                         // routeMessage() inline, and a coalesced frame can carry groups with DIFFERENT
                         // owners at N>1 - running them all on this (inbound) thread would execute
                         // handleMessage off-owner and trip RaftNode.assertOwnerThread() / race the
-                        // non-synchronized node (ADR-0009).
+                        // non-synchronized node.
                         Map<Integer, AppendEntriesRequest> heartbeats =
                                 RaftMessageCodec.decodeCoalescedHeartbeat(frame);
-                        // Layer 2 in-body binding (WH-08/09) for the COALESCED path: a coalesced
+                        // Layer 2 in-body binding for the COALESCED path: a coalesced
                         // heartbeat bundles only the sending leader's own per-group heartbeats, so every
                         // entry's self-declared leaderId must equal the transport-authenticated sender.
                         // A cert-valid but Byzantine peer that forges another node's leaderId inside one
@@ -238,7 +238,7 @@ public final class RaftTransportAdapter implements RaftTransport {
                         }
                     } else {
                         RaftMessage raftMessage = RaftMessageCodec.decode(frame);
-                        // Layer 2 in-body binding (WH-08/09): a request's self-declared leaderId /
+                        // Layer 2 in-body binding: a request's self-declared leaderId /
                         // candidateId must equal the transport-authenticated sender. A cert-valid peer
                         // whose senderId matched its cert (so it reached here) but whose body claims a
                         // different node is dropped (frame not dispatched) and counted. Gated on the
@@ -254,12 +254,12 @@ public final class RaftTransportAdapter implements RaftTransport {
                         handler.accept(from, frame.groupId(), raftMessage);
                     }
                 } catch (Exception e) {
-                    // WH-10: a frame that framed + CRC-verified cleanly but could not be turned into an
+                    // A frame that framed and CRC-verified cleanly but could not be turned into an
                     // actionable RaftMessage - a dormant/undecodable type (PLUMTREE_*/HYPARVIEW_*/HEARTBEAT
                     // hit RaftMessageCodec.decode's default throw) or a structurally-malformed payload. The
                     // connection stays (this is one frame, not a stream desync), so an authenticated-but-
-                    // hostile peer could flood the log one line per frame. Count every drop; rate-limit the
-                    // WARN. Replaces the prior unbounded System.err.println (the WH-10 anti-pattern).
+                    // hostile peer could flood the log one line per frame. Count every drop; rate-limit
+                    // the WARN.
                     transportMetrics.onInboundFrameDropped();
                     logDecodeDropThrottled(from, frame.messageType(), e);
                 }

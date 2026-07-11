@@ -9,8 +9,8 @@ import java.util.Set;
  * posture. It is deliberately LOUD: its factory ({@link NoAuthAuthenticatorFactory}) emits a prominent
  * warning at boot so an operator can never enable it by accident and forget.
  *
- * <p>In the HTTP control plane the no-auth posture is realized as the pre-existing OPEN GATE (byte-identical
- * to the historical auth-disabled default), not by resolving every request through this authenticator; this
+ * <p>In the HTTP control plane the no-auth posture is realized by a separate open gate, byte-identical to
+ * the auth-disabled default, rather than by resolving every request through this authenticator; this
  * type gives the SPI a uniform representation of the mode and is what a {@code none} provider chain builds.
  */
 public final class NoAuthAuthenticator implements Authenticator {

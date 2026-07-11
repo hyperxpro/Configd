@@ -45,60 +45,53 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The §2.5 interaction fold that composes FOUR features over ONE live socket against a REAL encrypted
- * {@link ConfigdServer}: node-local <b>encryption at rest</b> × the server-side <b>prefix filter</b>
- * (wire {@code 0x03}, ADR-0045) × <b>signed-position verification</b> (the reference client's
- * {@code verifyWith(clusterKey)}) × the edge fan-out plane over a plaintext loopback socket. It closes
- * matrix cells 2 (encryption × multi-shard-style edge fan-out — here single-shard, filtered), 3
- * (encryption × server-side prefix filter), 4 (encryption × signed version position), 18 (a filtered
- * {@code 0x03} server serving a {@code 0x03} edge, live), and 19 (a {@code 0x03}-capable server serving
- * a {@code 0x01} edge, live). No existing test composed a REAL server's signed fan-out chain with the
- * reference client's {@code verifyWith}: every encrypted E2E uses {@code trustUnverified()}, and the one
- * signed-chain-verify test drives a hand-built {@code FanOutServer} at rest in plaintext. This is the
- * first proof that the reference client cryptographically verifies a genuine {@code ConfigdServer}'s
- * signed deltas while that server keeps the same values AES-GCM-scrambled on disk.
+ * Composes FOUR features over ONE live socket against a REAL encrypted {@link ConfigdServer}: node-local
+ * <b>encryption at rest</b>, the server-side <b>prefix filter</b> (wire {@code 0x03}), <b>signed-position
+ * verification</b> (the reference client's {@code verifyWith(clusterKey)}), and the edge fan-out plane over
+ * a plaintext loopback socket. This is the proof that the reference client cryptographically verifies a
+ * genuine {@code ConfigdServer}'s signed deltas while that server keeps the same values AES-GCM-scrambled
+ * on disk.
  *
  * <h2>The four legs (one boot, one encrypted node)</h2>
  * <ol>
- *   <li><b>Clean verified filtered tail</b> ({@code 0x03}, cells 3/4/18). Subscribe to the {@code app/}
- *       prefix with {@code withAcceptFiltered(true)} against the empty encrypted store, then commit
- *       in-prefix keys over HTTP. Each is delivered as a change event carrying a leader-signed position;
- *       the client applies it only because {@code verifyWith(clusterKey)} passed (a bad signature would
- *       tear the connection down fail-closed). Because the connection subscribes to an empty store it
- *       TAILs from cursor 0, so the deltas chain contiguously and are delivered as verified change
- *       events — not folded into an unsigned hydration snapshot.</li>
- *   <li><b>Out-of-prefix dropped on the live tail, in-prefix sentinel delivered live</b> (the {@code 0x03}
- *       filter, cell 3). An out-of-prefix key (also the at-rest canary) is committed, followed by an
- *       in-prefix sentinel. The change-event stream — which is <b>not</b> filtered on the client (only the
- *       materialized view is) — never carries the out-of-prefix key, proving the SERVER dropped the whole
- *       signed delta before it reached the wire (the {@code 0x03} confirm). The interleaved drop opens a
- *       forward jump in the delivered chain (the server's covered-S cursor advanced past the skipped
- *       position, ADR-0045 carve-out 2); the sentinel must arrive as exactly ONE live change event
- *       forward-applied over that jump, NOT re-hydrated by a re-bootstrap — the proof the reference client
- *       honours the filtered forward-only apply contract rather than misreading the jump as a gap and
+ *   <li><b>Clean verified filtered tail.</b> Subscribe to the {@code app/} prefix with
+ *       {@code withAcceptFiltered(true)} against the empty encrypted store, then commit in-prefix keys
+ *       over HTTP. Each is delivered as a change event carrying a leader-signed position; the client
+ *       applies it only because {@code verifyWith(clusterKey)} passed (a bad signature would tear the
+ *       connection down fail-closed). Because the connection subscribes to an empty store it TAILs from
+ *       cursor 0, so the deltas chain contiguously and are delivered as verified change events, not folded
+ *       into an unsigned hydration snapshot.</li>
+ *   <li><b>Out-of-prefix dropped on the live tail, in-prefix sentinel delivered live.</b> An out-of-prefix
+ *       key (also the at-rest canary) is committed, followed by an in-prefix sentinel. The change-event
+ *       stream, which is <b>not</b> filtered on the client (only the materialized view is), never carries
+ *       the out-of-prefix key, proving the SERVER dropped the whole signed delta before it reached the
+ *       wire. The interleaved drop opens a forward jump in the delivered chain (the server's covered-S
+ *       cursor advances past the skipped position); the sentinel must arrive as exactly ONE live change
+ *       event forward-applied over that jump, NOT re-hydrated by a re-bootstrap: the proof the reference
+ *       client honors the filtered forward-only apply contract rather than misreading the jump as a gap and
  *       re-bootstrapping on every interleaved out-of-prefix commit. Single-key commits keep this
  *       delta-granular filter key-granular.</li>
- *   <li><b>0x01 back-compat</b> (cell 19). A second reference client subscribes full-store with
+ *   <li><b>0x01 back-compat.</b> A second reference client subscribes full-store with
  *       {@code SubscribeOptions.defaults()} (wire {@code 0x01}) against the SAME encrypted server and
- *       hydrates the WHOLE store — including the out-of-prefix key the {@code 0x03} client never saw —
+ *       hydrates the WHOLE store, including the out-of-prefix key the {@code 0x03} client never saw,
  *       proving a filtered-capable server still serves an un-opted {@code 0x01} client correctly.</li>
- *   <li><b>Genuinely encrypted at rest</b> (cell 3). A walk of the node's data dir proves the committed
- *       canary — readable through the HTTP client — does NOT appear in cleartext on disk. Encryption is
- *       transparent to both the wire and the client API, yet the value is AES-GCM-scrambled at rest.</li>
+ *   <li><b>Genuinely encrypted at rest.</b> A walk of the node's data dir proves the committed canary,
+ *       readable through the HTTP client, does NOT appear in cleartext on disk. Encryption is transparent
+ *       to both the wire and the client API, yet the value is AES-GCM-scrambled at rest.</li>
  * </ol>
  *
  * <p><b>How the fan-out signing public key is obtained.</b> The cluster signs its fan-out deltas with the
- * keypair loaded from {@code --signing-key-file} ({@code ConfigdServer} → {@code new
+ * keypair loaded from {@code --signing-key-file} ({@code ConfigdServer} builds {@code new
  * ConfigSigner(SigningKeyStore.loadOrCreate(keyFile).keyPair())}). The test pre-creates that key file and
- * captures its PUBLIC key, which is exactly what the reference client passes to {@code verifyWith} — no
+ * captures its PUBLIC key, which is exactly what the reference client passes to {@code verifyWith}: no
  * out-of-band export needed.
  *
  * <p><b>Why the SUBSCRIBE plane.</b> Authentication is OFF, so the fan-out driver fails every
  * {@code WATCH_CREATE} closed (no principal model) while admitting the legacy prefix {@code SUBSCRIBE};
- * the filtered {@code 0x03} SUBSCRIBE is served, so the composition is exercised there exactly as the
- * sibling {@code RealClusterFailoverIT} drives the edge. Single-node ({@code --peers ""}) keeps this a
- * light compose check; synchronous group commit makes a just-committed write durably on disk for the
- * canary walk. Everything is deadline-polled; the per-method {@link Timeout} is hang detection only.
+ * the filtered {@code 0x03} SUBSCRIBE is served, so the composition is exercised there. Single-node
+ * ({@code --peers ""}) keeps this a light compose check; synchronous group commit makes a just-committed
+ * write durably on disk for the canary walk. Everything is deadline-polled; the per-method {@link Timeout}
+ * is hang detection only.
  */
 @Timeout(180)
 class EncryptedFilteredSignedEdgeSweepIT {
@@ -206,15 +199,16 @@ class EncryptedFilteredSignedEdgeSweepIT {
                 http.blocking().put(PREFIX + "tier", "gold".getBytes(UTF_8), WriteOptions.defaults());
                 assertTrue(await(DELIVER_MS, () -> viewHas(sub, PREFIX + "tier", "gold")),
                         "the in-prefix sentinel committed after the canary must reach the filtered view");
-                // The decisive live-tail-filter proof. `tier` was committed AFTER the interleaved out-of-prefix
-                // canary, so the server dropped the canary's whole signed delta and opened a FORWARD jump in the
-                // delivered chain (its covered-S cursor advanced past the skipped position, ADR-0045 carve-out
-                // 2). `tier` must therefore arrive as exactly ONE live CHANGE EVENT, forward-applied over that
-                // jump — NOT re-hydrated by a re-bootstrap. A client that misread the forward jump as a chain
-                // gap would re-SUBSCRIBE at 0 and re-hydrate `tier` through the prefix SNAPSHOT, which emits NO
-                // change event: this exact count is what fails if the re-bootstrap storm ever returns. It is what
-                // turns the leg from "tier eventually visible" (a snapshot re-hydrate also satisfies that) into
-                // "tier arrived live over the filtered tail".
+                // The decisive live-tail-filter proof. `tier` was committed after the interleaved out-of-prefix
+                // canary, so the server dropped the canary's whole signed delta and opened a forward jump in the
+                // delivered chain (its covered-S cursor advances past the skipped position -- a deliberate
+                // consequence of the filter, per ADR-0045 carve-out 2, not a bug). `tier` must therefore arrive
+                // as exactly one live change event, forward-applied over that jump, not re-hydrated by a
+                // re-bootstrap. A client that misread the forward jump as a chain gap would re-subscribe at 0
+                // and re-hydrate `tier` through the prefix snapshot, which emits no change event: this exact
+                // count is what fails if that re-bootstrap regression ever returns. It is what turns the leg
+                // from "tier eventually visible" (a snapshot re-hydrate also satisfies that) into "tier arrived
+                // live over the filtered tail".
                 assertTrue(await(DELIVER_MS, () -> count(changes, PREFIX + "tier") == 1),
                         "tier must arrive as exactly one live change event over the filtered tail (forward-applied "
                                 + "over the dropped out-of-prefix delta) — a re-bootstrap re-hydration would deliver "
@@ -231,7 +225,7 @@ class EncryptedFilteredSignedEdgeSweepIT {
                         + "server-side (never a change event, never in the view)");
             }
 
-            // The out-of-prefix canary IS committed and readable via HTTP — it was FILTERED from the edge,
+            // The out-of-prefix canary IS committed and readable via HTTP -- it was FILTERED from the edge,
             // not un-written. This makes the at-rest walk a true differential (readable via API, absent as
             // plaintext on disk).
             GetResult canaryRead = http.blocking().get(CANARY_KEY, GetOptions.defaults());
@@ -268,8 +262,8 @@ class EncryptedFilteredSignedEdgeSweepIT {
     // =======================================================================
 
     private ConfigdServer bootSingleNode(Path dataDir, Path signingKey) {
-        // Signing key OUTSIDE the data dir (the D-1 co-location guard REFUSES a key co-located with the
-        // encrypted artifacts it protects); already created + captured by the caller.
+        // Signing key kept outside the data dir: the boot guard refuses a key co-located with the encrypted
+        // artifacts it protects. Already created and captured by the caller.
         ServerConfig config = ServerConfig.parse(new String[]{
                 "--node-id", "0",
                 "--data-dir", dataDir.toString(),

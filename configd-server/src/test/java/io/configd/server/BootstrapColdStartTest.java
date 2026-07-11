@@ -13,18 +13,17 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * S6/WS-C - the bootstrap "cold start" proof: how does Configd form a cluster before any cluster
- * exists? The answer (like etcd / Consul) is a STATIC SEED: initial membership is supplied as config
- * (CLI {@code --peers} / the k8s bootstrap ConfigMap), there is no separate "join" vs "first
- * formation" mode, and a node begins consensus immediately. This test drives a TRUE zero-state
- * single-node cold start (empty data dir, empty peer set) and proves the cluster forms and self-
- * elects a leader purely from the live tick loop - i.e. cold start -> serving.
+ * The bootstrap "cold start" proof: how does Configd form a cluster before any cluster exists? The
+ * answer (like etcd / Consul) is a STATIC SEED: initial membership is supplied as config (CLI
+ * {@code --peers} / the k8s bootstrap ConfigMap), there is no separate "join" vs "first formation"
+ * mode, and a node begins consensus immediately. This test drives a TRUE zero-state single-node cold
+ * start (empty data dir, empty peer set) and proves the cluster forms and self-elects a leader purely
+ * from the live tick loop - i.e. cold start -> serving.
  *
- * <p>It doubles as the live-wiring guard for two S6/WS-A defects that a unit-level metric test cannot
- * cover: the tick-loop election counter actually advances on a real boot (D-4), and the live
- * {@code /metrics} exporter renders the SLO histogram {@code _bucket{le=...}} series the burn-rate
- * alerts query (D-3) - both asserted against {@link ConfigdServer#scrapeMetrics()} (the production
- * exporter).
+ * <p>It doubles as the live-wiring guard for two defects a unit-level metric test cannot cover: the
+ * tick-loop election counter actually advances on a real boot, and the live {@code /metrics} exporter
+ * renders the SLO histogram {@code _bucket{le=...}} series the burn-rate alerts query - both asserted
+ * against {@link ConfigdServer#scrapeMetrics()} (the production exporter).
  */
 class BootstrapColdStartTest {
 
@@ -63,8 +62,8 @@ class BootstrapColdStartTest {
                     "zero-state single node must self-elect a leader (cold start -> serving); "
                             + "raft_elections_total=" + elections);
 
-            // The live production exporter must carry the SLO histogram buckets the alerts query
-            // (D-3): without histogramSchedules the burn-rate alerts would read an empty series.
+            // The live production exporter must carry the SLO histogram buckets the alerts query:
+            // without histogramSchedules the burn-rate alerts would read an empty series.
             assertTrue(scrape.contains("configd_write_commit_seconds_bucket{le=\"0.150\"}"),
                     "live /metrics must render the SLO histogram buckets the burn-rate alerts query");
             assertTrue(scrape.contains("configd_raft_pending_apply_entries"),

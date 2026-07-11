@@ -49,9 +49,10 @@ class EdgeSnapshotCodecTest {
 
         byte[] body = EdgeSnapshotCodec.serialize(snap);
 
-        // The edge body shares the state machine's entry layout; the frozen state-machine snapshot
-        // additionally requires the canonical magic-TLV trailer (the trailer-less form is refused),
-        // so we append it to drive the shared layout through restoreSnapshot.
+        // The edge body shares the entry layout of the state machine; the frozen
+        // state-machine snapshot additionally requires the canonical magic-TLV trailer,
+        // and the trailer-less form is refused, so we append it to drive the shared
+        // layout through restoreSnapshot.
         VersionedConfigStore store = new VersionedConfigStore(CLOCK);
         ConfigStateMachine sm = new ConfigStateMachine(store, CLOCK);
         sm.restoreSnapshot(withStateMachineTrailer(body));
@@ -120,9 +121,9 @@ class EdgeSnapshotCodecTest {
 
     @Test
     void edgeSnapshotBodyIsCarrierVersioned() {
-        // The body carries no format version of its own: its leading u64 is the snapshot's DATA
-        // sequence (which snapshot), NOT a format version. It is versioned by the enclosing edge
-        // frame and decoded by the edge via deserialize (no trailer).
+        // The body carries no format version of its own: its leading u64 is the data
+        // sequence of the snapshot, which snapshot, not a format version. It is versioned
+        // by the enclosing edge frame and decoded by the edge via deserialize (no trailer).
         ConfigSnapshot snap = snapshot(123L, Map.of("k", new byte[]{1}));
         byte[] body = EdgeSnapshotCodec.serialize(snap);
         long leadU64 = java.nio.ByteBuffer.wrap(body).getLong();
@@ -132,16 +133,15 @@ class EdgeSnapshotCodecTest {
                 "the trailer-less body decodes via the edge consumer, preserving the data sequence");
     }
 
-    // ---- helpers ------------------------------------------------------------
-
     private static final int SNAPSHOT_TRAILER_MAGIC = 0xC0FD7A11;
 
     /**
-     * Appends the canonical magic-TLV trailer the frozen state-machine snapshot format requires
-     * ({@code [magic][len=8][signingEpoch=0]}). The EdgeSnapshotCodec body is trailer-less by design
-     * (the edge decodes it via {@link EdgeSnapshotCodec#deserialize}); the state machine's restore
-     * path demands the TLV trailer, so we add it to drive the shared entry layout through the
-     * state machine.
+     * Appends the canonical magic-TLV trailer the frozen state-machine snapshot format
+     * requires (magic, then length 8, then signingEpoch 0). The EdgeSnapshotCodec body is
+     * trailer-less by design, since the edge decodes it via
+     * {@link EdgeSnapshotCodec#deserialize}; the restore path of the state machine demands
+     * the TLV trailer, so we add it to drive the shared entry layout through the state
+     * machine.
      */
     private static byte[] withStateMachineTrailer(byte[] body) {
         java.nio.ByteBuffer b = java.nio.ByteBuffer.allocate(body.length + 4 + 4 + 8);
@@ -160,7 +160,7 @@ class EdgeSnapshotCodecTest {
         return new ConfigSnapshot(data, version, 0L);
     }
 
-    /** Key-sorted (key -> value-bytes-as-hex) view for byte-equality comparison. */
+    /** Key-sorted (key to value-bytes-as-hex) view for byte-equality comparison. */
     private static Map<String, String> sorted(ConfigSnapshot snap) {
         Map<String, String> out = new TreeMap<>();
         snap.data().forEach((k, vv) ->

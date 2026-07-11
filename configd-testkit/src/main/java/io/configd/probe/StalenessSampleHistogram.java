@@ -9,16 +9,15 @@ import java.nio.charset.StandardCharsets;
 /**
  * Reduces a stream of staleness samples (one integer-millisecond value per line on stdin)
  * into an HdrHistogram and prints the {@code p50 / p99 / p999 / p9999 / max} distribution plus
- * a machine-greppable {@code STALENESS-SAMPLE-HISTOGRAM:} line - the methodology section 4 reporting
- * form (HdrHistogram only; p50/p99/p999/p9999).
+ * a machine-greppable {@code STALENESS-SAMPLE-HISTOGRAM:} summary line.
  *
- * <p>This is the reducer for the LIVE Compose multi-edge run: a fixed-cadence
- * edge sampler ({@code docker exec ... curl /metrics | awk '$1=="edge_staleness_ms"'},
- * methodology section 3c) emits one {@code edge_staleness_ms} gauge read per edge per tick; this main
- * folds those samples into the cumulative distribution. The gauge is {@code wall_now - frontier}
- * (per the staleness-measure spec), i.e. exactly the staleness invariant, read at the edge's own wall clock
- * on a cadence independent of the data-plane - so a stalled propagation surfaces as a growing
- * sample, never a dropped one (the section 3c coordinated-omission discipline).
+ * <p>This is the reducer for a live Compose multi-edge run: a fixed-cadence
+ * edge sampler ({@code docker exec ... curl /metrics | awk '$1=="edge_staleness_ms"'})
+ * emits one {@code edge_staleness_ms} gauge read per edge per tick; this main
+ * folds those samples into the cumulative distribution. The gauge is
+ * {@code wall_now - frontier}, i.e. exactly the staleness invariant, read at the edge's
+ * own wall clock on a cadence independent of the data plane, so a stalled propagation
+ * surfaces as a growing sample, never a dropped one - this avoids coordinated omission.
  *
  * <p>An optional first argument is a {@code scope} label echoed on the summary line (e.g.
  * {@code edge1}, {@code all-edges}); a second optional argument is the sampling cadence in ms

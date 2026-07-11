@@ -28,7 +28,7 @@ class LocalKmsEncryptionIntegrationTest {
     private static final int SNAP_MAGIC = 0x5253_4E50; // "RSNP"
     private static final int SCOPE = 3;                // a per-shard scope (gid); same on wrap+read here
 
-    /** The cluster signing-key encoding - held OUTSIDE the data dir in production (D-1). */
+    /** The cluster signing-key encoding, held outside the data directory in production. */
     private static byte[] signingKey(byte fill) {
         byte[] k = new byte[64];
         Arrays.fill(k, fill);
@@ -49,7 +49,7 @@ class LocalKmsEncryptionIntegrationTest {
             plaintexts.add(("wal-command-" + i + "=secret-value-" + i).getBytes(StandardCharsets.UTF_8));
         }
 
-        // ---- boot #1: provision the root, persist its WrappedKey, encrypt + "persist" records ----
+        // boot #1: provision the root, persist its WrappedKey, encrypt and "persist" records
         WrappedKey persistedWrapped;
         List<byte[]> onDisk = new ArrayList<>();
         try (KmsProvider provider = new LocalDerivedKmsProvider(sk, salt(), "kid", 1)) {
@@ -69,7 +69,7 @@ class LocalKmsEncryptionIntegrationTest {
             assertFalse(latin1.contains("secret-value-"), "on-disk record leaked plaintext");
         }
 
-        // ---- boot #2 (RESTART): re-unseal the root from the SAME signing key + persisted WrappedKey ----
+        // boot #2 (RESTART): re-unseal the root from the SAME signing key and persisted WrappedKey
         try (KmsProvider provider2 = new LocalDerivedKmsProvider(sk, salt(), "kid", 1)) {
             SegmentKeyManager km2 = SegmentKeyManager.unsealFrom(provider2, persistedWrapped);
             IntegrityEnvelope env2 = IntegrityEnvelope.encrypting(km2);
@@ -111,7 +111,6 @@ class LocalKmsEncryptionIntegrationTest {
         }
         IntegrityEnvelope env = IntegrityEnvelope.encrypting(km);
 
-        // write under term 1
         byte[] oldPlain = "written-under-term-1".getBytes(StandardCharsets.UTF_8);
         oldTermRecord = env.wrap(WAL_MAGIC, SCOPE,oldPlain);
         assertEquals(1, keyTermOf(oldTermRecord));
@@ -121,7 +120,6 @@ class LocalKmsEncryptionIntegrationTest {
             km.rotateTo(p2.unwrap(p2.generateRootKey().wrapped()));
         }
 
-        // new writes use term 2
         byte[] newPlain = "written-under-term-2".getBytes(StandardCharsets.UTF_8);
         byte[] newTermRecord = env.wrap(WAL_MAGIC, SCOPE,newPlain);
         assertEquals(2, keyTermOf(newTermRecord));

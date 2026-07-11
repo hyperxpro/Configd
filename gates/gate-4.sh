@@ -1,58 +1,54 @@
 #!/usr/bin/env bash
-# =============================================================================
-# gate-4.sh — Configd Session-4 cumulative machine-verifiable gate
-# -----------------------------------------------------------------------------
-# Authored by the Session-4 lead. Cumulative with gates 1+2+3: a green gate-4
-# REQUIRES a green gate-3 (step a; gate-3 runs gate-2 which runs gate-1). Exits
-# non-zero on ANY failure; NO silent placeholders (the RR-012/RR-085 lesson,
-# inherited from the prior gates). A gate that is wired but never executed is
-# the phantom-CI failure mode — every step asserts a real BUILD SUCCESS.
+# gate-4.sh — cumulative machine-verifiable gate (durability, recovery & chaos)
 #
-# WHAT A GREEN GATE-4 PROVES (charter §7):
+# Cumulative with gates 1+2+3: a green gate-4 REQUIRES a green gate-3 (step a;
+# gate-3 runs gate-2 which runs gate-1). Exits non-zero on ANY failure; no
+# silent placeholders. A gate that is wired but never executed is the
+# phantom-CI failure mode — every step asserts a real BUILD SUCCESS.
+#
+# WHAT A GREEN GATE-4 PROVES:
 #   (a) gate3       gates 1+2+3 still green (cumulative; no regression of the
 #                   control plane or the edge data plane while chaos hardening
 #                   landed). In CI gate-3 runs as its own job, so the gate-4 job
 #                   sets GATE4_SKIP_GATE3=1 (coverage via the job dependency).
-#   (b) liveness    RR-103/RR-095 closure — the formerly-stalling seed
-#                   regression suite + first-class liveness:
-#                   Rr103InflightWindowRecoveryTest (the inflight-window leak
-#                   fix, recovery = 1 heartbeat), LivenessBoundedProgressSweepTest
-#                   (200 seeds, bounded post-heal progress, 0 violations),
-#                   Rr095StallSeedDiagnosisTest (all 7 stall seeds diagnosed as
-#                   never-healed artifacts). [EXP-001/EXP-002]
-#   (c) reconfig    D§2 reconfiguration-under-fault: ReconfigurationTest
-#                   (incl. JointConsensusEndToEnd — split-brain prevention
-#                   (M1) + mid-joint crash recovery (M2)). [EXP-004]
-#   (d) durability  B-rest consensus durability cells: RaftLogCompactionTriggerTest
-#                   (RR-005 compaction reachable, M-compact), SnapshotCrashRecoveryTest
-#                   (RR-003 durable-prefix + fsync-lie EXP-007), FileStorageTest
-#                   (RR-005 long-safe read), MultiRaftDriverTest (compaction fan-out),
-#                   StorageEnospcConsensusReactionTest (ENOSPC EXP-008),
-#                   ConfigdServerTest (RR-005 tick-loop wiring source-guard +
-#                   clean start). [EXP-005..008]
-#   (e) edgechaos   A3 owed edge-chaos legs: FanOutSessionCoreTest (prod-threshold
-#                   ack-lag A3-2 + wedged-transport A3-3), GovernorBoundedIdentityMapChurnTest
-#                   (governor churn A3-4), EdgeTransportMtlsTest (accept-then-blackhole
-#                   handshake-timeout A3-1, real socket). [EXP-005]
-#   (g) partition   Workstream C — PartitionMatrixTest (single-region/leader/
-#                   asymmetric/partial/gray partitions + clock-skew; continuous
-#                   safety oracles + recovery). Runs UNCONDITIONALLY in the CI
-#                   subset (main() → step_partition, no skip guard). [EXP-009]
-#   (h) overload    Workstream D — OverloadChaosTest (control-plane write-flood
-#                   backpressure + post-partition reconnect storm). Runs
-#                   UNCONDITIONALLY in the CI subset (main() → step_overload). [EXP-010]
+#   (b) liveness    the formerly-stalling seed regression suite + first-class
+#                   liveness: Rr103InflightWindowRecoveryTest (the
+#                   inflight-window leak fix, recovery = 1 heartbeat),
+#                   LivenessBoundedProgressSweepTest (200 seeds, bounded
+#                   post-heal progress, 0 violations), Rr095StallSeedDiagnosisTest
+#                   (all 7 stall seeds diagnosed as never-healed artifacts).
+#   (c) reconfig    reconfiguration-under-fault: ReconfigurationTest (incl.
+#                   JointConsensusEndToEnd — split-brain prevention + mid-joint
+#                   crash recovery).
+#   (d) durability  consensus durability cells: RaftLogCompactionTriggerTest
+#                   (compaction reachable), SnapshotCrashRecoveryTest
+#                   (durable-prefix + fsync-lie), FileStorageTest (long-safe
+#                   read), MultiRaftDriverTest (compaction fan-out),
+#                   StorageEnospcConsensusReactionTest (ENOSPC), ConfigdServerTest
+#                   (tick-loop wiring source-guard + clean start).
+#   (e) edgechaos   the owed edge-chaos legs: FanOutSessionCoreTest
+#                   (prod-threshold ack-lag + wedged-transport),
+#                   GovernorBoundedIdentityMapChurnTest (governor churn),
+#                   EdgeTransportMtlsTest (accept-then-blackhole
+#                   handshake-timeout, real socket).
+#   (g) partition   PartitionMatrixTest (single-region/leader/asymmetric/
+#                   partial/gray partitions + clock-skew; continuous safety
+#                   oracles + recovery). Runs UNCONDITIONALLY in the CI subset
+#                   (main() → step_partition, no skip guard).
+#   (h) overload    OverloadChaosTest (control-plane write-flood backpressure +
+#                   post-partition reconnect storm). Runs UNCONDITIONALLY in
+#                   the CI subset (main() → step_overload).
 #   (f) nightly     HEAVY/long integrated sweeps — NOT in the CI subset (run only
 #                   on the nightly path): EdgeIntegratedNightlySweepTest
 #                   (-Dconfigd.edge.nightly=true, 10k ticks), Rr095StallSeedsIntegratedRerunTest
-#                   (-Dconfigd.rr095.rerun=true), and workstream E's MiniJepsenSweepTest
+#                   (-Dconfigd.rr095.rerun=true), and MiniJepsenSweepTest
 #                   (sustained mixed-fault mini-Jepsen). The control-plane 10k
 #                   SeedSweepTest already runs in the build-and-test job; not
 #                   duplicated here.
 #
-# RR-106 (corrected 2026-06-14): this header previously claimed C (partition/WAN),
-# D (overload), and E (mini-Jepsen) were "NOT YET IN GATE-4". They have been wired
-# since S4 — C and D run in the CI subset (steps g/h above), E runs nightly (step f).
-# gate-4 covers all DONE workstreams (A, D§2, A3, B-rest, C, D, E).
+# gate-4 covers partition (C), overload (D), and mini-Jepsen (E) — the
+# partition/overload steps run in the CI subset (steps g/h above), mini-Jepsen
+# runs nightly (step f).
 #
 # Environment knobs (CI must not set the skips on the nightly full run):
 #   GATE4_SKIP_GATE3=1    skip step (a) — reported LOUDLY (CI runs gate-3 as its
@@ -61,7 +57,6 @@
 #                         sweeps; ~3-5 min). Default-skipped on push/PR; CI runs
 #                         it on the nightly schedule.
 #   GATE3_* / GATE2_* / GATE1_*   forwarded to the underlying gates.
-# =============================================================================
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -136,20 +131,21 @@ step_edgechaos() {
 }
 
 step_partition() {
-  # C — partition & WAN matrix (control plane), in-sim with continuous safety oracles +
+  # Partition & WAN matrix (control plane), in-sim with continuous safety oracles +
   # recovery measurement: single-region isolation, leader isolation, asymmetric, partial,
   # gray-failure, clock-skew. The Porcupine full-history linearizability check over a fault
   # history is gate-2's linzgate (CI, Go); the edge fan-out partition is gate-3's E2E phase 3 +
-  # EdgeReBootstrapOnDisconnectTest; the live iptables partition is gate-1's rr-002 drill.
+  # EdgeReBootstrapOnDisconnectTest; the live iptables partition is gate-1's rr-002-blackhole-drill.sh.
   run_tests partition configd-testkit "PartitionMatrixTest"
   echo "GATE-4 partition: OK (C — §12 isolation/leader/asymmetric/partial/gray/clock-skew; safety + recovery)"
 }
 
 step_overload() {
-  # D — overload under chaos (§11): control-plane write flood (OVERLOADED shed + bounded-plateau
+  # Overload under chaos: control-plane write flood (OVERLOADED shed + bounded-plateau
   # queue + recovery) and the post-partition reconnect storm (a fleet of edges all DISCONNECTED
   # then healed at once — all recover to CURRENT, none terminal). Fan-out admission/queue bounds
-  # are pinned by FanOutServerAdmissionBoundTest / DemotionNoticeBackpressureTest / the A3 legs.
+  # are pinned by FanOutServerAdmissionBoundTest / DemotionNoticeBackpressureTest / the edge-chaos
+  # legs above.
   run_tests overload configd-testkit "OverloadChaosTest"
   echo "GATE-4 overload: OK (D — write-flood backpressure + post-partition reconnect storm)"
 }
@@ -161,7 +157,7 @@ step_nightly() {
   fi
   run_tests nightly-edge configd-testkit "EdgeIntegratedNightlySweepTest" -Dconfigd.edge.nightly=true
   run_tests nightly-rr095 configd-testkit "Rr095StallSeedsIntegratedRerunTest" -Dconfigd.rr095.rerun=true
-  # E — sustained mini-Jepsen (mixed-fault, long horizon) against the fully-fixed system.
+  # Sustained mini-Jepsen (mixed-fault, long horizon) against the fully-fixed system.
   run_tests nightly-jepsen configd-testkit "MiniJepsenSweepTest" \
     -Dconfigd.minijepsen.seeds=16 -Dconfigd.minijepsen.horizon=20000
   echo "GATE-4 nightly: OK (integrated edge 10k sweep + RR-095 integrated rerun + mini-Jepsen, 0 safety violations)"

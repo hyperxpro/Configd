@@ -12,9 +12,9 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * The edge client-certificate validity gate: the two Gate-5 checks that apply to a verified EDGE client
+ * The edge client-certificate validity gate: the two checks that apply to a verified edge client
  * certificate, independent of whether token auth is also configured. Threaded into both fan-out transports
- * and applied at connection admission for every edge cert connection (the mTLS-only path AND the
+ * and applied at connection admission for every edge cert connection (the mTLS-only path and the
  * token-edge cert path):
  *
  * <ol>
@@ -22,8 +22,8 @@ import java.util.logging.Logger;
  *       posture to the chain. Default OFF is byte-identical to before (no lookup).</li>
  *   <li><b>Mid-connection {@code notAfter} enforcement</b> ({@link #certCloseDeadlineMillis}) - when
  *       enabled, the connection is armed to close at {@code notAfter + leeway} (a cert cannot refresh
- *       in-band, so the close is a reconnect signal). Default off returns {@link AuthState#NO_EXPIRY} -
- *       byte-identical to Gate 3, where the handshake validated {@code notAfter} once, at connect.</li>
+ *       in-band, so the close is a reconnect signal). Default off returns {@link AuthState#NO_EXPIRY}:
+ *       the handshake already validated {@code notAfter} once, at connect.</li>
  * </ol>
  *
  * <p><b>Interior exemption (structural).</b> This gate is only ever constructed for the edge fan-out
@@ -95,7 +95,7 @@ public final class EdgeCertGate {
         try {
             status = (checker != null) ? checker.check(leaf, chain) : RevocationStatus.UNKNOWN;
         } catch (RuntimeException e) {
-            // A checker MUST NOT throw for a routine unreachable; a defensive backstop treats a throw as
+            // A checker must not throw for a routine unreachable; a defensive backstop treats a throw as
             // UNKNOWN so a buggy checker never becomes a harder dependency than the configured mode.
             LOG.log(Level.WARNING, "edge revocation checker threw; treating as UNKNOWN", e);
             status = RevocationStatus.UNKNOWN;
@@ -127,7 +127,7 @@ public final class EdgeCertGate {
     /**
      * The wall-clock close deadline for an edge cert connection when {@code notAfter} enforcement is on:
      * {@code notAfter + leeway} for the leaf. Returns {@link AuthState#NO_EXPIRY} (no active expiry) when
-     * enforcement is off or the chain is empty - byte-identical to Gate 3.
+     * enforcement is off or the chain is empty.
      */
     long certCloseDeadlineMillis(List<X509Certificate> chain) {
         if (!enforceCertNotAfter || chain == null || chain.isEmpty()) {

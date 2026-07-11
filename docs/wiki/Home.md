@@ -17,17 +17,19 @@ wiki in [`../architecture/architecture.md`](../architecture/architecture.md).
 - [Docker](Docker.md) -- building and running with Docker and Compose
 - [Testing](Testing.md) -- unit tests, deterministic simulation, linearizability, and jcstress
 
-## What v1 is
+## What it is
 
 A single, region-local sharded-Raft cluster. It runs one Raft group by default (N=1); hash-within-
 scope sharding is wired and horizontal scale is proven (near-linear, about 2.45x across three
-machines), but leadership placement is operator-managed, so multi-shard (N>1) is a v2 operating
-mode. It is **not** a global, multi-region, hierarchical-Raft design -- that was considered and
-rejected (ADR-0030, ADR-0031) and never built.
+machines), with a decentralized balancer keeping one leader per box and an ADMIN-gated route to move
+a group's leadership by hand. It is **not** a global, multi-region, hierarchical-Raft design -- that
+was considered and rejected (ADR-0030, ADR-0031) and never built.
 
-At-rest protection is **integrity** (HMAC-SHA-256 tamper detection), **not encryption**; do not
-store secrets in Configd. See [`../operations/known-limitations.md`](../operations/known-limitations.md)
-for the honest edges and [`../v2-backlog.md`](../v2-backlog.md) for what comes next.
+At-rest protection is **integrity** by default (HMAC-SHA-256 tamper detection); node-local
+AES-256-GCM encryption is available as an opt-in, one-way door. With encryption off, values
+(including `secure/` keys) are plaintext -- do not store secrets in Configd unless you turn it on.
+See [`../operations/known-limitations.md`](../operations/known-limitations.md) for the honest
+edges.
 
 ## Modules
 

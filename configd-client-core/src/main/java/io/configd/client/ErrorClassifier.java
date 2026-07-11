@@ -4,12 +4,12 @@ import io.configd.distribution.wire.ErrorCode;
 
 /**
  * Maps a binary-edge terminal signal — an {@link ErrorCode} together with its {@link Carrier} frame — to the
- * normative §07 {@link Reaction}. This is the single place the client encodes the "each type IS its reaction"
- * rule (§07 E3-3): the code names the <b>reason</b>, the carrier names the <b>scope</b>, and several codes
+ * normative {@link Reaction}. This is the single place the client encodes the "each type IS its reaction"
+ * rule: the code names the <b>reason</b>, the carrier names the <b>scope</b>, and several codes
  * (4, 6, 7, 9, 11, 12) are scope-overloaded so a pure code-byte switch is insufficient.
  *
- * <p>The untrusted server diagnostic is sanitized (§06 F6-9 / §07 E6) before it is attached to the raised
- * exception; a caller branches on the exception <b>type</b>, never on the text.
+ * <p>The untrusted server diagnostic is sanitized before it is attached to the raised exception; a caller
+ * branches on the exception <b>type</b>, never on the text.
  */
 public final class ErrorClassifier {
 
@@ -22,7 +22,7 @@ public final class ErrorClassifier {
      * @param code             the wire {@link ErrorCode}
      * @param carrier          the frame that carried it ({@code ERROR_CLOSE} or {@code WATCH_CANCELED})
      * @param rawServerMessage the untrusted server diagnostic (sanitized here; never machine-parsed)
-     * @return the §07 reaction
+     * @return the reaction
      */
     public static Reaction classify(ErrorCode code, Carrier carrier, String rawServerMessage) {
         String msg = Sanitize.message(rawServerMessage);

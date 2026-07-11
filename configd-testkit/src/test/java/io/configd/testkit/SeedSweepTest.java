@@ -15,12 +15,11 @@ import java.util.stream.LongStream;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Parameterized seed sweep for core Raft safety invariants - de-vacuated.
+ * Parameterized seed sweep for core Raft safety invariants.
  * <p>
- * The previous version had three bare {@code return} statements
- * (no-leader, no-commit, no-failover) that passed green having asserted nothing,
- * so "20,000 green tests" measured execution count, not property coverage. This
- * version:
+ * A bare pass/fail per seed would be vacuous if a seed could silently skip the actual
+ * assertion (no leader elected, no commit, no failover) and still report green, measuring
+ * execution count rather than property coverage. This test instead:
  * <ul>
  *   <li>checks the full cross-node safety invariant set <b>after every tick, every
  *       seed</b> via {@link SimInvariants} (a violation FAILS the seed with replay
@@ -28,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.*;
  *       so the 8 named in-node checks fire too;</li>
  *   <li>treats a goal not reached within budget (no leader / no commit / no
  *       failover) as a <b>recorded liveness stall</b> - counted, never silently
- *       passed, never failed (charter: liveness findings are registered);</li>
+ *       passed, never failed;</li>
  *   <li>asserts a per-seed <b>minimum-activity predicate</b> for the
  *       happy-path seeds and, at the sweep level, that the real-assertion rate is
  *       not implausibly low (the all-stall regression guard) - see
@@ -48,7 +47,7 @@ class SeedSweepTest {
     }
 
     /**
-     * Election Safety: at most one leader per term. Now checked continuously by
+     * Election Safety: at most one leader per term. Checked continuously by
      * {@link SimInvariants} (every tick, plus the in-node {@code election_safety}
      * check), so the property is exercised on EVERY tick of EVERY seed - not just
      * sampled at the end. Always reaches a real assertion (a 5-node cluster with no
@@ -82,10 +81,11 @@ class SeedSweepTest {
 
     /**
      * Commit durability across leader failure. Safety invariants are checked every
-     * tick throughout. The three former silent returns are now recorded liveness
-     * stalls; the durability assertion is reached only when the seed actually
-     * elected, committed, and failed over - and that real-assertion outcome is what
-     * {@link #sweepActivityIsNotVacuous()} accounts for.
+     * tick throughout. A seed that fails to elect, commit, or fail over records a
+     * liveness stall rather than silently returning; the durability assertion is
+     * reached only when the seed actually elected, committed, and failed over - and
+     * that real-assertion outcome is what {@link #sweepActivityIsNotVacuous()}
+     * accounts for.
      */
     @ParameterizedTest
     @MethodSource("seeds")
@@ -104,9 +104,9 @@ class SeedSweepTest {
 
         int leader = electWhileChecking(cluster, inv[0], activity, 1200);
         if (leader < 0) {
-            // Was a silent `return`. Now a RECORDED liveness stall - the
-            // safety invariants were still checked on every tick above; we simply
-            // did not reach the durability assertion this seed.
+            // A recorded liveness stall - the safety invariants were still checked
+            // on every tick above; we simply did not reach the durability assertion
+            // this seed.
             return activity;
         }
         activity.recordLeaderAtTerm(cluster.node(leader).currentTerm());
@@ -114,7 +114,7 @@ class SeedSweepTest {
         long seq = proposeAndCommitWhileChecking(cluster, inv[0], leader,
                 "sweep-key", "sweep-val", 200);
         if (seq <= 0) {
-            return activity; // recorded no-commit stall (was silent return)
+            return activity; // recorded no-commit stall
         }
         activity.recordCommit();
 
@@ -125,7 +125,7 @@ class SeedSweepTest {
         int newLeader = awaitStableLeaderWhileChecking(cluster, inv[0], activity,
                 Set.of(leader), 2000);
         if (newLeader < 0) {
-            return activity; // recorded no-failover stall (was silent return)
+            return activity; // recorded no-failover stall
         }
         activity.recordFailover();
 
@@ -144,9 +144,8 @@ class SeedSweepTest {
      * Sweep-level vacuity guard. Runs a fixed batch and asserts that a
      * healthy majority of seeds actually <em>reached</em> the durability assertion
      * (elected + committed + failed over). If a regression makes the cluster unable
-     * to commit/fail-over, the old code would have passed silently on every seed;
-     * here the real-assertion rate collapses and this test FAILS loudly, naming the
-     * honest count. This is the assertion that "20,000 green" never made.
+     * to commit/fail-over, the real-assertion rate collapses and this test FAILS
+     * loudly, naming the honest count, rather than passing silently on every seed.
      */
     @Test
     void sweepActivityIsNotVacuous() {
@@ -182,11 +181,9 @@ class SeedSweepTest {
                         + " — the sweep would be passing vacuously.");
     }
 
-    // ------------------------------------------------------------------
-    // Helpers: drive the cluster while checking safety invariants each tick.
-    // These replace the harness convenience methods (which do not check
-    // invariants) so that EVERY tick of EVERY seed is safety-checked.
-    // ------------------------------------------------------------------
+    // Helpers: drive the cluster while checking safety invariants each tick. These replace
+    // the harness convenience methods (which do not check invariants) so that EVERY tick of
+    // EVERY seed is safety-checked.
 
     private static ConsistencyPropertyTests.ClusterHarness newCheckedCluster(
             long seed, SimInvariants[] out) {

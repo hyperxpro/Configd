@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * with the reconnect recovery loop live ({@link EdgeFanOutSim#enableEdgeRecovery}).
  *
  * <h2>The judge</h2>
- * The V1 snapshot - delta equivalence machinery, not a parallel judge:
+ * The snapshot-delta equivalence machinery, not a parallel judge:
  * <ul>
  *   <li>per-tick THROWING safety invariants ({@link EdgeInvariants}: per-edge version
  *       monotonicity, no stale overwrite) run inside every {@code sim.tick()};</li>
@@ -77,17 +77,15 @@ class EdgeBootstrapUnderSustainedWritesTest {
     private int writeCounter;
 
     /**
-     * C1 ack-lag heal disabled (the EdgeGapRecoveryTest control): the ONLY recovery is
-     * C3's resubscribe, so a TAIL-replaying control edge provably never receives a
-     * snapshot - the pure-stream side of the equivalence claim.
+     * Ack-lag heal disabled (the EdgeGapRecoveryTest control): the only recovery
+     * path is resubscribe, so a TAIL-replaying control edge provably never
+     * receives a snapshot - the pure-stream side of the equivalence claim.
      */
     private static FanOutConfig noAckLagHealConfig() {
         return new FanOutConfig(64, 80, 64, 262_144, 1_000_000L, 250L, 5L, 1_048_576);
     }
 
-    // -----------------------------------------------------------------------
-    // Scenario 1 - the primary equivalence proof, multiple seeds
-    // -----------------------------------------------------------------------
+    // Scenario 1: the primary equivalence proof, multiple seeds.
 
     @ParameterizedTest
     @ValueSource(longs = {41L, 42L, 43L, 44L})
@@ -145,7 +143,7 @@ class EdgeBootstrapUnderSustainedWritesTest {
 
         settleAndJudge(sim, driver);
 
-        // The V1 snapshot - delta EQUIVALENCE, stated directly and judged by the SAME
+        // The snapshot-delta EQUIVALENCE, stated directly and judged by the SAME
         // machinery: snapshot+tail-bootstrapped joiner == streamed-everything control.
         // With the ack-lag heal disabled, a TAIL-only control is structural: every
         // veteran (re)subscribe is within the 10k ring horizon => TAIL, never a snapshot.
@@ -160,9 +158,7 @@ class EdgeBootstrapUnderSustainedWritesTest {
         sim.invariants().finalCheck(List.of(joiner), veteran.snapshot());
     }
 
-    // -----------------------------------------------------------------------
-    // Scenario 2 - faults on the OTHER edges; the joiner's channel stays clean
-    // -----------------------------------------------------------------------
+    // Scenario 2: faults on the other edges; the joiner's channel stays clean.
 
     @Test
     void joinUnderFaultsOnOtherEdgesBootstrapsExactlyAndEveryoneReconverges() {
@@ -217,9 +213,7 @@ class EdgeBootstrapUnderSustainedWritesTest {
         assertTrue(joiner.snapshotsApplied() >= 1);
     }
 
-    // -----------------------------------------------------------------------
-    // Scenario 3 - the JOINER's own channel faulted: the transfer is lost mid-flight
-    // -----------------------------------------------------------------------
+    // Scenario 3: the joiner's own channel faulted - the transfer is lost mid-flight.
 
     @Test
     void transferLostMidFlightOnTheJoinersChannelSelfHealsToExactConvergence() {
@@ -268,9 +262,7 @@ class EdgeBootstrapUnderSustainedWritesTest {
         settleAndJudge(sim, driver);
     }
 
-    // -----------------------------------------------------------------------
-    // Scenario 4 - dup channel: every frame across the cutover is duplicated
-    // -----------------------------------------------------------------------
+    // Scenario 4: dup channel - every frame across the cutover is duplicated.
 
     @Test
     void duplicatedFramesAcrossTheCutoverNeverCauseDoubleApplicationDivergence() {
@@ -326,9 +318,7 @@ class EdgeBootstrapUnderSustainedWritesTest {
         assertTrue(joiner.snapshotsApplied() >= 1);
     }
 
-    // -----------------------------------------------------------------------
-    // Helpers - deterministic, tick-driven, no sleeps
-    // -----------------------------------------------------------------------
+    // Helpers: deterministic, tick-driven, no sleeps.
 
     /**
      * One tick of sustained writes: propose one PUT (unique value per write - the
@@ -348,13 +338,14 @@ class EdgeBootstrapUnderSustainedWritesTest {
     }
 
     /**
-     * The end-of-run judging discipline (class javadoc): exhaust the seed schedule,
-     * fence, settle the CP level, drive every edge to its source's version (bounded),
-     * then run the byte-equality judge. The fence writes matter: a final-delta reorder
-     * can strand an edge one seq short with ack-lag 1 (below the demote threshold) and
-     * nothing left in flight to trigger the gap heal - production heals that via the
-     * the staleness ladder on wall-clock timescales the sim does not simulate, so
-     * the fence supplies the arriving frame that lets the C3 recovery fire instead.
+     * The end-of-run judging discipline (see the class javadoc): exhaust the seed
+     * schedule, fence, settle the CP level, drive every edge to its source's version
+     * (bounded), then run the byte-equality judge. The fence writes matter: a
+     * final-delta reorder can strand an edge one seq short with ack-lag 1 (below the
+     * demote threshold) and nothing left in flight to trigger the gap heal -
+     * production heals that via the staleness ladder on wall-clock timescales the sim
+     * does not simulate, so the fence supplies the arriving frame that lets the
+     * resubscribe recovery fire instead.
      */
     private void settleAndJudge(EdgeFanOutSim sim, C1StreamDriver driver) {
         for (int t = 0; t < TICKS; t++) {

@@ -14,18 +14,18 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * Runner II (client-conforms) for the §06 F9-2 TLS profile: the reference client completes a real mTLS
- * handshake against a server that enables <b>only</b> {@code TLSv1.3} and <b>only</b> the two AEAD cipher
- * suites {@code TLS_AES_256_GCM_SHA384} / {@code TLS_AES_128_GCM_SHA256} — so a successful handshake proves the
+ * Client-conforms test for the TLS profile: the reference client completes a real mTLS handshake against a
+ * server that enables <b>only</b> {@code TLSv1.3} and <b>only</b> the two AEAD cipher suites
+ * {@code TLS_AES_256_GCM_SHA384} / {@code TLS_AES_128_GCM_SHA256}, so a successful handshake proves the
  * client speaks exactly that profile (it offers TLSv1.3 and at least one of the two suites; a client that
  * offered neither, or expected TLS 1.2, could not negotiate). The client's profile is additionally code-pinned
  * to TLSv1.3-only in {@code ClientTls} (PROTOCOLS = {"TLSv1.3"}, CIPHERS = the two AEAD suites), matching the
  * server's {@code TlsConfig}.
  *
- * <p>The §06 F9-4 SAN endpoint check and the F6A-4 no-AUTH-frame property are proven in the edge module's
- * {@code EdgeTlsTest}; this class re-expresses the F9-2 profile assertion into the conformance module so the
- * coverage audit maps the clause. F9-3 (identity = the verified client-cert Subject DN; {@code edgeId}
- * advisory) is a server-side identity override with no client-observable wire signal — reported as a skip.
+ * <p>The SAN endpoint check and the no-AUTH-frame property are proven in the edge module's
+ * {@code EdgeTlsTest}; this class re-expresses the profile assertion into the conformance module. The
+ * server-side identity override (identity = the verified client-cert Subject DN; {@code edgeId} advisory)
+ * has no client-observable wire signal and is not asserted here.
  */
 @Timeout(60)
 class ClauseTlsProfileTest {
@@ -44,7 +44,7 @@ class ClauseTlsProfileTest {
     void mtlsHandshakeUsesTheTlsV13AeadProfile() throws Exception {
         // needClientAuth=true: the server requires the client certificate (the mTLS posture). The server socket
         // enables ONLY TLSv1.3 + the two AEAD suites (MockEdgeServer.startTls), so reaching AUTHENTICATED is
-        // proof the client negotiated exactly the F9-2 profile.
+        // proof the client negotiated exactly that profile.
         try (MockEdgeServer server = MockEdgeServer.startTls(
                 certs.serverContext(false), true, false, MockEdgeServer.Conn::parkUntilClosed)) {
             ConfigdClientConfig config = ConfigdClientConfig.builder()

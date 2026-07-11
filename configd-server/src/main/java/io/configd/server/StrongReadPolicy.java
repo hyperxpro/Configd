@@ -18,16 +18,16 @@ import java.util.Set;
  * safe failure is to refuse to answer.
  *
  * <p><b>Freshness, not confidentiality.</b> "strong-read" / {@code secure/} is a
- * <em>freshness</em> guarantee, NOT encryption: values are stored plaintext at rest
- * (integrity-checked only, ADR-0042). Configd does not encrypt data at rest in v1; do not store
- * secrets here. At-rest encryption is a v2 item.
+ * <em>freshness</em> guarantee, NOT encryption. At-rest encryption is optional
+ * ({@code configd.raft.encryption.enabled}) and off by default; unless it is turned on, values
+ * are stored plaintext at rest (integrity-checked only). Do not rely on this class alone to
+ * protect secrets unless encryption at rest is enabled.
  *
  * <p>Key-class assignment here is <b>configuration-driven</b>: a key is a
  * strong-read key iff it starts with one of a configured set of prefixes
- * (default {@code secure/}). This is the minimal, testable enforcement seam for
- * this session; the fuller {@code ConfigScope}-based class story
- * (GLOBAL/REGIONAL/LOCAL routing) is deferred. Until then
- * the prefix set is the single source of truth for the strong-read class.
+ * (default {@code secure/}). This is the minimal, testable enforcement mechanism; a fuller
+ * {@code ConfigScope}-based classification (GLOBAL/REGIONAL/LOCAL routing) does not exist yet.
+ * Until then the prefix set is the single source of truth for the strong-read class.
  *
  * <p>Immutable and thread-safe.
  */

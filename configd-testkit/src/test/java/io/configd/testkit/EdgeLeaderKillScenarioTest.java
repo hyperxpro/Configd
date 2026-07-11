@@ -11,7 +11,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Targeted deterministic scenario (design section 7 sim plan): the CP leader is killed
+ * Targeted deterministic scenario: the CP leader is killed
  * <b>mid-stream</b> while edges tail with the real {@link C1StreamDriver}, and we assert
  * (1) no edge version ever decreases across the leadership change, and (2) the edges
  * eventually converge to the (new leader's) authoritative store after re-election +

@@ -28,7 +28,7 @@ import java.util.function.LongConsumer;
  * {@code FanOutServer} runs - once per subscribed edge each sim tick. This is
  * what replaces {@link StreamDriver#NONE}: with it, committed mutations actually reach the
  * edges over the simulated edge network, so {@link EdgePropagationBacklogTest} converges
- * and the 507-seed gate exercises the live drain logic.
+ * and the seed sweep exercises the live drain logic.
  *
  * <h2>Wiring (per edge)</h2>
  * Each edge gets one {@link FanOutSessionCore} bound to its subscribed CP node's
@@ -63,13 +63,13 @@ final class C1StreamDriver implements StreamDriver {
     private final Clock clock;
 
     /**
-     * OPT-IN slow-consumer governor. Null (the default and the gate path) preserves the
-     * historical behavior byte-for-byte: no admission, no demotion feed, no policy
-     * disconnects. With a governor: each session's demotions feed it, queue-pressure edges
-     * and ack progress are reported per tick, a QUARANTINED/UNHEALTHY verdict kicks the
-     * connection (dead sink + on-wire {@link EdgeStream.ErrorClose} code 8 - the real edge
-     * core reaction runs), and every (re)subscribe routes through {@code admit} - refusals
-     * are retried each tick, modelling the production edge's bounded reconnect loop.
+     * Opt-in slow-consumer governor. Null (the default) preserves the historical behavior
+     * byte-for-byte: no admission, no demotion feed, no policy disconnects. With a governor:
+     * each session's demotions feed it, queue-pressure edges and ack progress are reported per
+     * tick, a QUARANTINED/UNHEALTHY verdict kicks the connection (dead sink + on-wire
+     * {@link EdgeStream.ErrorClose} code 8 - the real edge core reaction runs), and every
+     * (re)subscribe routes through {@code admit} - refusals are retried each tick, modelling the
+     * production edge's bounded reconnect loop.
      */
     private final SlowConsumerGovernor governor;
 
@@ -169,7 +169,7 @@ final class C1StreamDriver implements StreamDriver {
     }
 
     /**
-     * Lazily creates + subscribes a session for {@code edge} on first sight. With the C4
+     * Lazily creates + subscribes a session for {@code edge} on first sight. With the
      * governor live the subscribe routes through admission (a refusal goes to the per-tick
      * retry loop and this returns null) - the sim analogue of the production server
      * refusing the SUBSCRIBE and the edge's connect loop retrying.
@@ -198,7 +198,7 @@ final class C1StreamDriver implements StreamDriver {
                 // Forced re-bootstrap: cursor rebound to 0 so the decideMode cursor-0
                 // rule yields SNAPSHOT_FIRST - exactly the FanOutServer admission rewrite.
                 case ALLOW_FORCE_SNAPSHOT -> cursor = 0L;
-                case ALLOW -> { /* admit as requested */ }
+                case ALLOW -> { }
             }
         }
         int cpNode = edge.subscribedCpNode();
@@ -254,13 +254,13 @@ final class C1StreamDriver implements StreamDriver {
     }
 
     /**
-     * C3 recovery seam: re-subscribes {@code edge} at {@code resumeCursor} - the sim
-     * analogue of the edge process tearing down its connection and re-SUBSCRIBE-ing. The
-     * OLD session is neutralized (its sink goes dead - frames from a torn-down connection
-     * never reach the edge) and a FRESH {@link FanOutSessionCore} runs the server's
-     * already-tested TAIL/SNAPSHOT_FIRST decision for the carried cursor (screen C3-1: the
-     * recovery path IS the subscription path; zero new wire surface). Deterministic:
-     * single sim thread, invoked from the edge's directive drain.
+     * Recovery seam: re-subscribes {@code edge} at {@code resumeCursor} - the sim analogue
+     * of the edge process tearing down its connection and re-subscribing. The old session is
+     * neutralized (its sink goes dead - frames from a torn-down connection never reach the
+     * edge) and a fresh {@link FanOutSessionCore} runs the server's already-tested
+     * TAIL/SNAPSHOT_FIRST decision for the carried cursor: the recovery path is the
+     * subscription path, with zero new wire surface. Deterministic: single sim thread,
+     * invoked from the edge's directive drain.
      */
     void resubscribe(Context ctx, EdgeActor edge, long resumeCursor) {
         SimSink oldSink = sinks.get(edge.edgeId());
@@ -271,9 +271,7 @@ final class C1StreamDriver implements StreamDriver {
         subscribeWithAdmission(ctx, edge, resumeCursor, true);
     }
 
-    // -----------------------------------------------------------------------
-    // C4 governor plumbing (all of it conditional on a non-null governor)
-    // -----------------------------------------------------------------------
+    // Governor plumbing (all of it conditional on a non-null governor).
 
     /**
      * Demotion-listener seam (mirrors the FanOutServer connection): every demotion feeds
@@ -370,7 +368,7 @@ final class C1StreamDriver implements StreamDriver {
         @Override
         public boolean offer(EdgeFrame frame) {
             if (dead) {
-                // The edge tore this connection down (C3 resubscribe); a dead transport
+                // The edge tore this connection down via a resubscribe; a dead transport
                 // swallows frames exactly like a closed socket. Returning true keeps the
                 // orphaned session silent rather than self-closing on every emit.
                 return true;

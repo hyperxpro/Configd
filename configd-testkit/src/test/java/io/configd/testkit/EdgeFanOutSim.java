@@ -26,8 +26,7 @@ import java.util.Set;
  *   <li>a per-CP-node {@link FanOutBuffer} wired via
  *       {@link io.configd.store.ConfigStateMachine#addListener} <b>exactly mirroring
  *       {@code ConfigdServer}'s production wiring</b>: seq = the listener version S,
- *       {@code commitTimestampMillis} = that node's sim clock at apply (commit-notification handoff spec
- *       section 6 / commit-timestamp spec section 2);</li>
+ *       {@code commitTimestampMillis} = that node's sim clock at apply;</li>
  *   <li>a SECOND {@link AdversarialNetwork} for CP->edge fan-out channels, seeded
  *       from {@link AdversarialSchedule#mixSeed}{@code (seed, TAG_EDGE_NET)} so the
  *       CP network and every existing seed behavior stay byte-identical;</li>
@@ -35,17 +34,17 @@ import java.util.Set;
  *       partition/crash/lag faults - the CP fault grammar is untouched;</li>
  *   <li>a roster of {@link EdgeActor}s (ids 100+), each subscribed to one CP node;</li>
  *   <li>a {@link StreamDriver} seam - the server-side per-edge streaming logic.
- *       V1 defaults to {@link StreamDriver#NONE} (nothing is delivered - the honest
+ *       Defaults to {@link StreamDriver#NONE} (nothing is delivered - the honest
  *       current state); tests may inject a {@link DirectInjectionDriver}.</li>
  * </ul>
  *
- * <h2>New mixSeed tag registry (all >= 1_010, non-colliding)</h2>
+ * <h2>mixSeed tag registry (all >= 1_010, non-colliding)</h2>
  * <ul>
  *   <li>{@link #TAG_EDGE_NET} = 1_010 - CP->edge {@link AdversarialNetwork} seed</li>
  *   <li>{@link #TAG_EDGE_NETCFG} = 1_011 - edge network dup/drop base rates</li>
  *   <li>{@link EdgeFaultSchedule#TAG_EDGE_FAULT} = 1_012 - edge fault schedule</li>
  * </ul>
- * (Existing CP tags, unchanged: 1_001 fault, 1_002 workload, 2_001 net, 3_001 skew,
+ * (CP tags, unchanged: 1_001 fault, 1_002 workload, 2_001 net, 3_001 skew,
  * 3_002 netcfg; per-node election streams use the small node id.)
  *
  * <h2>Tick order</h2>
@@ -75,7 +74,7 @@ final class EdgeFanOutSim {
     private final EdgeFaultSchedule edgeFaults;
     private final StreamDriver streamDriver;
 
-    /** Per-CP-node fan-out buffer (the section 4.6 source the StreamDriver reads). */
+    /** Per-CP-node fan-out buffer (the source the StreamDriver reads). */
     private final List<FanOutBuffer> fanOutBuffers = new ArrayList<>();
     /** Per-CP-node replay source (the GAP recovery seam). */
     private final List<ReplaySource> replaySources = new ArrayList<>();
@@ -91,11 +90,10 @@ final class EdgeFanOutSim {
     private final Map<Integer, Set<Long>> recordedPublications = new HashMap<>();
 
     /**
-     * OBSERVER-ONLY propagation probe (charter section 3 V2). Null until
-     * {@link #attachProbe} is called. When attached it samples
-     * {@code recordPublished} at the FanOutBuffer publish site and {@code recordVisible}
-     * at each edge's apply moment. Strictly observer-only: it reads already-computed
-     * values and never perturbs the determinism digest ({@code ProbeMechanismTest}).
+     * Observer-only propagation probe. Null until {@link #attachProbe} is called. When
+     * attached it samples {@code recordPublished} at the FanOutBuffer publish site and
+     * {@code recordVisible} at each edge's apply moment. Strictly observer-only: it reads
+     * already-computed values and never perturbs the determinism digest ({@code ProbeMechanismTest}).
      */
     private PropagationProbe probe;
 
@@ -117,7 +115,7 @@ final class EdgeFanOutSim {
      * @param edgeFaults   whether to schedule edge faults
      * @param streamDriver the server-side streaming seam (default {@link StreamDriver#NONE})
      * @param intensity    CP fault/op intensity (kept identical to plain AdversarialSim by default)
-     * @param boundMs      eventual-delivery bound (contract section 2)
+     * @param boundMs      eventual-delivery bound
      */
     EdgeFanOutSim(long seed, int cpNodeCount, int edgeCount, int totalTicks,
             boolean edgeFaults, StreamDriver streamDriver,
@@ -127,10 +125,10 @@ final class EdgeFanOutSim {
     }
 
     /**
-     * Full constructor with an explicit per-CP-node fan-out ring capacity (C3 tests shrink
-     * it so the replay horizon is crossable at sim scale - production and the gate path
-     * stay at {@link #FanOutBuffer_CAPACITY}; the delegating constructors are unchanged,
-     * so existing seeds are byte-identical).
+     * Full constructor with an explicit per-CP-node fan-out ring capacity (some tests
+     * shrink it so the replay horizon is crossable at sim scale; production and the gate
+     * path stay at {@link #FanOutBuffer_CAPACITY}. The delegating constructors are
+     * unchanged, so existing seeds stay byte-identical).
      */
     EdgeFanOutSim(long seed, int cpNodeCount, int edgeCount, int totalTicks,
             boolean edgeFaults, StreamDriver streamDriver,
@@ -155,32 +153,31 @@ final class EdgeFanOutSim {
             // publish a full CommitNotification with the leader commit timestamp.
             cpSim.stateMachine(cpNode).addListener((mutations, version) -> {
                 long fromVersion = version - 1;
-                // V1 sim path: unsigned legacy delta (signature rows are C2). The
-                // production wiring forwards stateMachine.lastSignature()/epoch/nonce;
-                // the sim's ConfigStateMachine has no signer, so signature is null.
+                // The sim path uses an unsigned legacy delta. The production wiring
+                // forwards stateMachine.lastSignature()/epoch/nonce; the sim's
+                // ConfigStateMachine has no signer, so signature is null.
                 ConfigDelta delta = new ConfigDelta(fromVersion, version, mutations);
-                // C-1 review fix: capture the PUBLISHING node's SKEWED clock as the commit
-                // timestamp - mirroring production, where the leader's (skewed) clock stamps
-                // the commit on the apply thread. Previously this used the global unskewed
-                // cpSim.currentTime(), which could not exercise the +/-50 ms NTP-skew error
-                // term the contract names as the only residual error (blocker for C2's
-                // (staleness/skew-tripwire tests). The CP digest folds
-                // role/term/leader/log-indices/store-version - NOT commit timestamps - so
-                // this change leaves EdgeSeedCompatTest byte-identical (verified).
+                // Capture the PUBLISHING node's SKEWED clock as the commit timestamp,
+                // mirroring production where the leader's (skewed) clock stamps the commit
+                // on the apply thread. The global unskewed cpSim.currentTime() could not
+                // exercise the +/-50 ms NTP-skew error the contract treats as the only
+                // residual error, which the staleness/skew-tripwire tests need. The CP
+                // digest folds role/term/leader/log-indices/store-version - not commit
+                // timestamps - so this leaves EdgeSeedCompatTest byte-identical (verified).
                 long commitTimestampMillis = cpSim.skewedClock(cpNode).currentTimeMillis();
                 buffer.publish(new CommitNotification(version, commitTimestampMillis, delta));
                 recordPublicationObligation(version, cpNode, commitTimestampMillis);
-                // OBSERVER-ONLY: publish ts = leader commit timestamp
-                // (commit-timestamp spec section 2 / contract section 2). Keyed by seq; overwriting on a
-                // re-publish is idempotent. No-op when no probe is attached.
+                // Observer-only: publish timestamp is the leader commit timestamp. Keyed
+                // by seq, so overwriting on a re-publish is idempotent; a no-op when no
+                // probe is attached.
                 if (probe != null) {
                     probe.recordPublished(version, commitTimestampMillis);
                 }
             });
         }
 
-        // Second AdversarialNetwork for CP->edge channels. mixSeed with a NEW tag so
-        // the CP network's stream is untouched (byte-identical historical seeds).
+        // Second AdversarialNetwork for CP->edge channels. mixSeed with a distinct tag
+        // so the CP network's stream is untouched (byte-identical historical seeds).
         this.edgeNetwork = new AdversarialNetwork(
                 AdversarialSchedule.mixSeed(seed, TAG_EDGE_NET), 1, 10);
         // Edge network dup base rate from its own sub-stream (does not touch CP).
@@ -213,19 +210,14 @@ final class EdgeFanOutSim {
     /** Same capacity as production ({@code ConfigdServer.FANOUT_BUFFER_CAPACITY}). */
     private static final int FanOutBuffer_CAPACITY = 10_000;
 
-    // -----------------------------------------------------------------------
-    // Accessors
-    // -----------------------------------------------------------------------
-
     /**
-     * Attaches an OBSERVER-ONLY {@link io.configd.probe.PropagationProbe} (charter
-     * section 3 V2). Publish samples are fed at the FanOutBuffer publish site
-     * (publish ts = leader commit timestamp); visibility samples are fed at each edge's
-     * apply moment (visible ts = logical sim time) via the {@link EdgeApplyObserver}
-     * seam. The probe records {@code staleness = visibleTs - publishTs} (contract section 2
-     * delivery invariant) per seq and edge.
+     * Attaches an observer-only {@link io.configd.probe.PropagationProbe}. Publish
+     * samples are fed at the FanOutBuffer publish site (publish ts = leader commit
+     * timestamp); visibility samples are fed at each edge's apply moment (visible ts =
+     * logical sim time) via the {@link EdgeApplyObserver} seam. The probe records
+     * {@code staleness = visibleTs - publishTs} per seq and edge.
      * <p>
-     * This is strictly observer-only and MUST NOT change behavior or the determinism
+     * This is strictly observer-only and must not change behavior or the determinism
      * digest - {@code ProbeMechanismTest} proves the digest is identical with and
      * without a probe attached. Idempotent re-attach replaces the probe binding.
      *
@@ -266,12 +258,12 @@ final class EdgeFanOutSim {
     }
 
     /**
-     * TEST SEAM (C3): enables the REAL recovery loop for edge {@code edgeIndex} - the
+     * TEST SEAM: enables the real recovery loop for edge {@code edgeIndex} - the
      * core's {@link io.configd.edge.EdgeClientCore.ConnectionDirective}s (gap resubscribe,
      * DISCONNECTED re-bootstrap, heartbeat silence, poison retries) are acted on by a real
-     * {@link C1StreamDriver#resubscribe} instead of being drained-and-ignored. OPT-IN and
-     * additive: never invoked on the gate path, so existing seeds are byte-identical
-     * (the EdgeSeedCompatTest discipline). Requires the sim to run a {@link C1StreamDriver}.
+     * {@link C1StreamDriver#resubscribe} instead of being drained-and-ignored. Opt-in and
+     * additive: never invoked on the gate path, so existing seeds stay byte-identical.
+     * Requires the sim to run a {@link C1StreamDriver}.
      */
     void enableEdgeRecovery(int edgeIndex) {
         if (!(streamDriver instanceof C1StreamDriver c1)) {
@@ -304,17 +296,16 @@ final class EdgeFanOutSim {
     }
 
     /**
-     * TEST SEAM: a ZERO-STATE edge joins the running sim, subscribed to
+     * TEST SEAM: a zero-state edge joins the running sim, subscribed to
      * {@code subscribedCpNode}. The {@link C1StreamDriver} subscribes it lazily on the
      * next {@link #tick()} with resume cursor 0 - against a populated ring the server's
-     * {@code decideMode} answers SNAPSHOT_FIRST, so the join runs the REAL production
+     * {@code decideMode} answers SNAPSHOT_FIRST, so the join runs the real production
      * bootstrap (snapshot transfer + exact-cutover tail) under whatever writes are
-     * flowing. OPT-IN and additive: never invoked on the gate path and consumes no RNG,
-     * so existing seeds are byte-identical (the EdgeSeedCompatTest discipline). The
-     * joiner participates in every per-tick invariant and in {@link #finalCheck()} like
-     * any roster edge; the scheduled {@link EdgeFaultSchedule} never targets it (its
-     * indices were drawn against the construction-time roster), which is exactly the
-     * C5 "faults on the OTHER edges" shape.
+     * flowing. Opt-in and additive: never invoked on the gate path and consumes no RNG,
+     * so existing seeds stay byte-identical. The joiner participates in every per-tick
+     * invariant and in {@link #finalCheck()} like any roster edge; the scheduled
+     * {@link EdgeFaultSchedule} never targets it, since its indices were drawn against
+     * the construction-time roster - i.e. faults land only on the other edges.
      *
      * @param subscribedCpNode the CP node the joiner subscribes to
      * @return the joiner's roster index (for {@link #edges()}/{@link #partitionEdge})
@@ -327,23 +318,19 @@ final class EdgeFanOutSim {
     }
 
     /**
-     * TEST SEAM (C5): sets the CP->edge duplication rate (e.g. {@code 1.0} so every frame
-     * across the bootstrap cutover is duplicated - the dup-channel non-vacuity demand,
-     * screen NOTE C5-2). RNG-stream-safe: the dup draw happens on every send regardless
-     * of the rate, so changing the rate changes no draw sequence.
+     * TEST SEAM: sets the CP->edge duplication rate (e.g. {@code 1.0} so every frame
+     * across the bootstrap cutover is duplicated, to exercise the dup-channel path).
+     * RNG-stream-safe: the dup draw happens on every send regardless of the rate, so
+     * changing the rate changes no draw sequence.
      */
     void setEdgeDupRateForTest(double rate) {
         edgeNetwork.setDupRate(rate);
     }
 
-    /** Duplicated CP->edge sends so far (the C5 dup-channel non-vacuity witness). */
+    /** Duplicated CP->edge sends so far (the dup-channel non-vacuity witness). */
     long edgeDupCount() {
         return edgeNetwork.dupCount();
     }
-
-    // -----------------------------------------------------------------------
-    // Run / tick
-    // -----------------------------------------------------------------------
 
     /** Runs the whole scheduled simulation, checking edge invariants after every tick. */
     void run() {
@@ -368,7 +355,7 @@ final class EdgeFanOutSim {
         // (3) deliver due edge-network messages into edge inboxes.
         edgeNetwork.deliverDue(currentTimeMs);
 
-        // (4) tick the StreamDriver seam (NONE delivers nothing in V1).
+        // (4) tick the StreamDriver seam (NONE delivers nothing by default).
         streamDriver.drive(driverContext());
 
         // (5) tick edges (drain inbox + apply).
@@ -404,10 +391,6 @@ final class EdgeFanOutSim {
         lastTotalGaps = gaps;
         lastTotalSnapshots = snapshots;
     }
-
-    // -----------------------------------------------------------------------
-    // Final convergence check (invariant c) - heal-all + drain, then compare
-    // -----------------------------------------------------------------------
 
     /**
      * Heals all edge faults, drains the edge network + inboxes for a bounded window,
@@ -480,8 +463,8 @@ final class EdgeFanOutSim {
      * the CP cluster has fully converged, so a genuine quiet drain window exists for the
      * edges. Used by the gate sweep to bucket "convergence expected" seeds from
      * "never-healed" ones (an edge subscribed to a frozen/behind CP node legitimately cannot
-     * converge - that is a CP-sim liveness limit, not a C1 fault). Returns false when there is
-     * no leader.
+     * converge - that is a CP-sim liveness limit, not a fault in the edge layer). Returns
+     * false when there is no leader.
      */
     boolean cpFullyConverged() {
         int leader = cpSim.findLeader();
@@ -498,7 +481,7 @@ final class EdgeFanOutSim {
     }
 
     /**
-     * Bounded drain window for {@link #finalCheck()}. Sized to let the C1 recovery loop
+     * Bounded drain window for {@link #finalCheck()}. Sized to let the recovery loop
      * complete: a stranded edge recovers via the server's ack-lag demotion -> snapshot ->
      * (network latency 1 - 10 ms) -> edge apply -> ack cycle, which the session retries every
      * couple of ticks until the edge's CURSOR_ACK confirms the snapshot. A few hundred ticks
@@ -509,10 +492,6 @@ final class EdgeFanOutSim {
 
     /** CP settle window for {@link #finalCheckHealingCp()} (re-election + replication). */
     private static final int CP_SETTLE_TICKS = 300;
-
-    // -----------------------------------------------------------------------
-    // Internals
-    // -----------------------------------------------------------------------
 
     private StreamDriver.Context driverContext() {
         return new StreamDriver.Context() {
@@ -530,7 +509,6 @@ final class EdgeFanOutSim {
                 return replaySources.get(cpNode);
             }
             @Override public void send(EdgeActor edge, EdgeStream message) {
-                // Push over the edge network from the edge's subscribed CP node.
                 edgeNetwork.send(NodeId.of(edge.subscribedCpNode()),
                         NodeId.of(edge.edgeId()), message, currentTimeMs);
             }

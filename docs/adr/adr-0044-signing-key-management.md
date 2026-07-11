@@ -3,9 +3,9 @@
 ## Status
 Accepted. Supersedes the earlier warn-only signing-key mitigation (the server used to warn and continue; it now refuses to start by default).
 
-> **Extended by (as-built):** the signing-key custody now composes with a persisted dual-slot **keyring**
+> **Extended by:** the signing-key custody now composes with a persisted dual-slot **keyring**
 > (`NodeKeyring`) that holds independent per-term encryption roots (non-destructive rotation), and with an
-> optional **external KMS** custody path — the per-node keyring-custody secret can be sealed in a versioned
+> optional **external KMS** custody path - the per-node keyring-custody secret can be sealed in a versioned
 > `raft-kms-root` carrier (`KmsSealedRootStore`) via the Vault Transit provider, moving the root of trust
 > off-host so at-rest confidentiality no longer fate-shares with a co-located signing key. The co-location
 > fail-closed rule below is unchanged. See `docs/design/group-b/07-upgrade-capability-as-built.md` §2 and

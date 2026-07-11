@@ -8,8 +8,8 @@ Accepted (2026-04-19)
 Every committed Configd command (`PUT`, `DELETE`, `BATCH`) is signed by the
 state machine before its mutation is published to subscribers. The
 signature (Ed25519 over the canonical batch encoding plus an `(epoch,
-nonce)` replay-binding payload - see ADR-0018 fan-out and the F-0052
-finding) is what edge-side `DeltaApplier` instances verify before
+nonce)` replay-binding payload that binds the signature to a specific
+epoch and nonce - see ADR-0018 fan-out) is what edge-side `DeltaApplier` instances verify before
 applying the delta locally. An unsigned (or wrongly-signed) command on
 the apply path therefore has two failure modes:
 
@@ -24,14 +24,14 @@ The authoritative signing call lives in
 (method `signCommand`). When the configured `ConfigSigner` is unable
 to produce a signature - either because the underlying provider throws
 a `GeneralSecurityException`, or because the signer is verify-only and
-its `sign()` throws `IllegalStateException` - we must NOT publish the
-mutation as if signing had succeeded.
+its `sign()` throws `IllegalStateException` - the mutation must not be
+published as if signing had succeeded.
 
-The `signFailureFailsClose`
-regression test in `ConfigStateMachineTest` already encodes this
-behaviour. This ADR formalises the contract those tests assert against,
-so that the contract is discoverable from the decisions index rather
-than only from the test name.
+The `signFailureLeavesStoreUnmutated` regression test in
+`ConfigStateMachineTest` already encodes this behaviour. This ADR
+formalises the contract those tests assert against, so that the
+contract is discoverable from the decisions index rather than only
+from the test name.
 
 ## Decision
 
@@ -40,10 +40,11 @@ The state machine **fails closed on signature failure**:
 1. `ConfigStateMachine.signCommand` catches both
    `GeneralSecurityException` and `IllegalStateException` from the
    underlying signer.
-2. On either, it logs at SEVERE, clears the cached
-   `lastSignature`/`lastEpoch`/`lastNonce`, and re-throws an
-   `IllegalStateException` with message prefix `fail-close: signing
-   failed for committed command`.
+2. On either, it logs at SEVERE and re-throws an `IllegalStateException`
+   ("Failed to sign applied command - fail-close abort"). `lastSignature`,
+   `lastEpoch`, and `lastNonce` are only ever assigned after a signer call
+   succeeds, so a failed attempt leaves them exactly as they were before
+   - there is nothing to roll back.
 3. The thrown exception propagates out of `apply()`. Raft's apply
    contract treats an unchecked throw as a hard fault and refuses to
    commit further entries until operator intervention.
@@ -75,11 +76,11 @@ arm of the apply switch.
 - **Positive:** No unsigned mutation ever crosses the apply boundary.
   The signing chain is the single source of truth for delta
   authenticity. The fail-close path is testable from a single seed
-  (`ConfigStateMachineTest$SigningIntegration.signFailureFailsClose`).
+  (`ConfigStateMachineTest$SignFailurePreservesStore.signFailureLeavesStoreUnmutated`).
 - **Negative:** Write availability becomes a function of signing-key
   health. A corrupted, unreadable, or revoked Ed25519 keypair stops
   writes globally until the operator rotates per
-  `runbooks/disaster-recovery.md` ("Signing key compromise" section).
+  `ops/runbooks/disaster-recovery.md` ("Signing key compromise" section).
 - **Operator burden:** the on-call rotation (ADR-0025) must include
   a key-rotation drill at least quarterly to keep mean time to recover
   from a key-health failure inside the documented incident SLA.
@@ -88,12 +89,10 @@ arm of the apply switch.
 
 - ADR-0018 - event-driven notification (consumer of the signed delta)
 - ADR-0025 - on-call rotation procurement (who responds when fail-close trips)
-- F-0052 (signing-payload binding `epoch`+`nonce`)
-- PA-1004 (sign-or-fail-close requirement)
-- `runbooks/disaster-recovery.md` - signing-key compromise path
+- `ops/runbooks/disaster-recovery.md` - signing-key compromise path
 
 ## Verification
 
-- **Testable via:** `configd-config-store/src/test/java/io/configd/store/ConfigStateMachineTest.java` - the nested `SigningIntegration` test class includes `signFailureFailsClose`, which constructs a verify-only `ConfigSigner` (public key only, `sign()` throws), then asserts that `apply(...)` throws `IllegalStateException` with message containing `signing failed`. The same class also covers the success path (`signatureVerifiesWithPublicKey`) so the regression has both polarity assertions.
+- **Testable via:** `configd-config-store/src/test/java/io/configd/store/ConfigStateMachineTest.java` - the nested `SignFailurePreservesStore` test class includes `signFailureLeavesStoreUnmutated` (and its DELETE/BATCH counterparts), which construct a verify-only `ConfigSigner` (public key only, `sign()` throws) and assert that `apply(...)` throws `IllegalStateException` and leaves the store unmutated. The `SigningIntegration` nested class covers the success path (`signatureVerifiesWithPublicKey`) so the regression has both polarity assertions.
 - **Invalidated by:** any change to `ConfigStateMachine.signCommand` that catches `GeneralSecurityException` / `IllegalStateException` and returns normally instead of re-throwing; or by moving the `notifyListeners(...)` call before `signCommand(...)` in the apply switch (which would publish first, sign second).
-- **Operator check:** in the live cluster, `configd_state_machine_apply_failure_total{reason="sign_fail_close"}` (when wired by F5/F6 metric work) increments visibly, and `configd_write_commit_total` rate drops to zero - pages the on-call rotation per `ConfigdControlPlaneAvailability`. The incident commander follows `runbooks/disaster-recovery.md` "Signing key compromise" branch to rotate the keypair.
+- **Operator check:** in the live cluster, `configd_write_commit_total` stops advancing and `configd_inbound_routing_throwable_total` increments, which pages the on-call rotation. The incident commander follows the `ops/runbooks/disaster-recovery.md` "Signing key compromise" branch to rotate the keypair.

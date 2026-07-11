@@ -28,7 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * bindings added via {@link AclService#assignRole}.
  * <p>
  * The load-bearing guarantee is <b>byte-identity in production</b>: with no role defined/assigned and an
- * empty {@code roles} argument the role-aware path reduces exactly to the historical own-grants-only
+ * empty {@code roles} argument the role-aware path reduces exactly to the own-grants-only
  * evaluation - {@link #emptyRolesByteIdentical()} and {@link #productionShapeThroughRoleAwarePath()} pin
  * this. The deny-through-roles tests prove the critical property that deny is subtracted <b>once</b> over
  * the combined own+role set, so a DENY (own or role) wins over an ALLOW (own or role) in either order.
@@ -42,9 +42,7 @@ class AclServiceRoleTest {
         acl = new AclService();
     }
 
-    // -----------------------------------------------------------------------
     // Test helpers: build single-policy roles out of literal-prefix allow/deny rules.
-    // -----------------------------------------------------------------------
 
     private static PolicyRule allowRule(String prefix, AclService.Permission... caps) {
         return new PolicyRule(prefix, Set.of(caps), Set.of());
@@ -58,9 +56,7 @@ class AclServiceRoleTest {
         return new Role(name, List.of(new Policy(name + "-policy", List.of(rules))));
     }
 
-    // -----------------------------------------------------------------------
     // Byte-identity: empty roles reduce the role-aware path to own-grants-only
-    // -----------------------------------------------------------------------
 
     /**
      * Across a battery of grant shapes the 3-arg {@code isAllowed} equals the 4-arg with an empty role
@@ -89,9 +85,7 @@ class AclServiceRoleTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Role grants extend reach
-    // -----------------------------------------------------------------------
 
     @Test
     void roleAddsReach() {
@@ -127,9 +121,7 @@ class AclServiceRoleTest {
         assertTrue(acl.isAllowed("p", Set.of("writer"), "a.x", WRITE), "role WRITE composes with own READ");
     }
 
-    // -----------------------------------------------------------------------
     // Deny precedence THROUGH roles - the critical "single subtract over the combined set" property
-    // -----------------------------------------------------------------------
 
     @Test
     void denyInRoleOverridesOwnAllow() {
@@ -178,9 +170,7 @@ class AclServiceRoleTest {
         assertFalse(acl.isAllowed("p", Set.of("readerOnly"), "a.x", WATCH), "nor (effective) WATCH");
     }
 
-    // -----------------------------------------------------------------------
     // ACL-static role binding (assignRole) - additive to authn-asserted roles
-    // -----------------------------------------------------------------------
 
     @Test
     void assignRoleStaticBinding() {
@@ -216,9 +206,7 @@ class AclServiceRoleTest {
                 "the double-assign confers nothing beyond the role's single READ rule");
     }
 
-    // -----------------------------------------------------------------------
-    // INV-WATCH-READ floor holds across the combined own+role union
-    // -----------------------------------------------------------------------
+    // The WATCH-requires-READ floor holds across the combined own+role union
 
     @Test
     void watchFloorThroughRoles() {
@@ -247,9 +235,7 @@ class AclServiceRoleTest {
                 "once a role supplies READ, the WATCH floor is satisfied over the union");
     }
 
-    // -----------------------------------------------------------------------
     // Default-deny over unknown principal + unknown role
-    // -----------------------------------------------------------------------
 
     @Test
     void defaultDenyUnknownPrincipalAndRole() {
@@ -263,9 +249,7 @@ class AclServiceRoleTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Null checks (4-arg isAllowed, defineRole, assignRole)
-    // -----------------------------------------------------------------------
 
     @Test
     void nullChecks() {
@@ -279,9 +263,7 @@ class AclServiceRoleTest {
         assertThrows(NullPointerException.class, () -> acl.assignRole("p", null));
     }
 
-    // -----------------------------------------------------------------------
     // Production shape through the role-aware path (the byte-identity wiring guarantee)
-    // -----------------------------------------------------------------------
 
     /**
      * Mirrors production exactly: {@code grant("", "root", allOf)} plus the authn layer asserting the

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# GATE (ii) — DISCRIMINATION. For each seeded bug: run the scenario against the
+# GATE (ii) -- DISCRIMINATION. For each seeded bug: run the scenario against the
 # UNMUTATED jar (must be GREEN/linearizable, the control), then apply the bug
 # patch, rebuild a scratch jar, run again (must go RED/non-linearizable), then
-# revert. Production source is left clean — the bug only ever exists in a scratch
+# revert. Production source is left clean -- the bug only ever exists in a scratch
 # build. If a seeded bug does NOT go RED, the harness is blind to that class:
 # STOP (this script exits non-zero) and fix the harness before trusting any run.
 #

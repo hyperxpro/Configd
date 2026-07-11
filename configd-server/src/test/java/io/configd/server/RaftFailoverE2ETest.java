@@ -40,29 +40,29 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Gate-4 scenario 1 — <b>leader failover over the REAL Netty consensus wire, with no data loss.</b>
+ * <b>Leader failover over the real Netty consensus wire, with no data loss.</b>
  *
- * <p>The multi-Raft memory records that {@code N>1} replication is wired and green but the failover
- * path (kill the leader, re-elect, confirm nothing committed is lost) was never exercised over the real
- * transport. {@code EncryptedMultiShardClusterCompositionTest} proves replication + a follower
- * restart-rejoin; this proves the harder property — <em>a LEADER dying mid-flight forces a re-election on
- * the survivors and every acknowledged write survives it.</em>
+ * <p>{@code N>1} replication is wired and green, but the failover path (kill the leader, re-elect, confirm
+ * nothing committed is lost) needs its own exercise over the real transport. {@code
+ * EncryptedMultiShardClusterCompositionTest} proves replication and a follower restart-rejoin; this proves
+ * the harder property: <em>a leader dying mid-flight forces a re-election on the survivors and every
+ * acknowledged write survives it.</em>
  *
  * <p>Wiring mirrors {@code NettyConsensusLivenessTest.RealWireCluster} (the proven real-wire pattern):
  * three nodes, each on its own owner thread behind its own plaintext {@link NettyRaftTransport}, wrapped by
- * a {@link RaftTransportAdapter} then a {@link CoalescingRaftTransport} (coalescing ACTIVE), driving a real
+ * a {@link RaftTransportAdapter} then a {@link CoalescingRaftTransport} (coalescing active), driving a real
  * {@link RaftNode} over real localhost TCP. Each node keeps its own {@link VersionedConfigStore} so a
- * committed value can be read back on any survivor. Everything is deadline-polled — no sleep-as-sync; the
- * per-method {@link Timeout} is pure hang detection.
+ * committed value can be read back on any survivor. Everything is deadline-polled, with no sleep-as-sync;
+ * the per-method {@link Timeout} is pure hang detection.
  *
  * <h2>The proof</h2>
  * <ol>
- *   <li>Elect a stable leader; commit a batch of writes and confirm each replicates + applies on all three.</li>
- *   <li>KILL the leader (close its transport, stop its ticks) — the equivalent of a node crash mid-stream.</li>
- *   <li>A NEW leader (a different node) is elected on the two survivors within the election budget.</li>
+ *   <li>Elect a stable leader; commit a batch of writes and confirm each replicates and applies on all three.</li>
+ *   <li>Kill the leader (close its transport, stop its ticks): the equivalent of a node crash mid-stream.</li>
+ *   <li>A new leader (a different node) is elected on the two survivors within the election budget.</li>
  *   <li><b>No data loss:</b> every pre-failover committed key is still present with its exact value on both
- *       survivors — read straight from their stores.</li>
- *   <li>The new leader accepts a fresh write that commits + replicates on both survivors (the cluster is
+ *       survivors, read straight from their stores.</li>
+ *   <li>The new leader accepts a fresh write that commits and replicates on both survivors (the cluster is
  *       live again, from a 2-of-3 quorum).</li>
  * </ol>
  */
@@ -73,8 +73,9 @@ final class RaftFailoverE2ETest {
     private static final int GROUP = 0;
     private static final long BASE_SEED = 0xFA170FL;
 
-    // Election budget: heartbeat 50ms (5 ticks) << election 1000-2000ms (100-200 ticks) => ratio 20, the
-    // NettyConsensusLivenessTest-proven-stable range, so 2-vCPU jitter cannot manufacture a spurious election.
+    // Election budget: heartbeat 50ms (5 ticks) is well under election 1000-2000ms (100-200 ticks), giving
+    // ratio 20, the NettyConsensusLivenessTest-proven-stable range, so 2-vCPU jitter cannot manufacture a
+    // spurious election.
     private static final int TICK_PERIOD_MS = 10;
     private static final int HEARTBEAT_MS = 50;
     private static final int ELECTION_MIN_MS = 1000;
@@ -108,7 +109,7 @@ final class RaftFailoverE2ETest {
         System.setProperty("configd.raft.netty.workerThreads", "1"); // less event-loop contention on 2 vCPU
         cluster = new Cluster();
 
-        // --- 1) elect + replicate a batch across all three nodes ---
+        // 1) elect and replicate a batch across all three nodes
         int leader0 = cluster.electStableLeader(STABILIZE_BUDGET_MS);
         assertTrue(leader0 >= 0, "a stable leader must be elected on the real Netty wire");
         long term0 = cluster.maxTerm();
@@ -118,17 +119,17 @@ final class RaftFailoverE2ETest {
             long committed = cluster.commitAndAwaitReplication(leader0, "k" + k, "v" + k, /*excluded=*/-1);
             assertTrue(committed > 0, "write k" + k + " must reach a committed index pre-failover");
         }
-        // Every committed key is present on ALL three before we kill anyone (baseline).
+        // Every committed key is present on all three before we kill anyone (baseline).
         for (int i = 0; i < NODES; i++) {
             for (int k = 0; k < keyCount; k++) {
                 assertValue(cluster.stores[i], "k" + k, "v" + k, "node " + i + " pre-failover");
             }
         }
 
-        // --- 2) KILL the leader mid-stream (crash equivalent: transport closed, ticks stopped) ---
+        // 2) kill the leader mid-stream (crash equivalent: transport closed, ticks stopped)
         cluster.killNode(leader0);
 
-        // --- 3) a NEW leader is elected among the two survivors ---
+        // 3) a new leader is elected among the two survivors
         int leader1 = cluster.awaitStableLeaderExcluding(leader0, FAILOVER_BUDGET_MS);
         assertTrue(leader1 >= 0,
                 "the two survivors must elect a new stable leader after the leader was killed");
@@ -136,7 +137,7 @@ final class RaftFailoverE2ETest {
         assertTrue(cluster.maxTerm() > term0,
                 "a real re-election must advance the term past the pre-failover term " + term0);
 
-        // --- 4) NO DATA LOSS: every pre-failover committed key survives on both survivors ---
+        // 4) no data loss: every pre-failover committed key survives on both survivors
         for (int i = 0; i < NODES; i++) {
             if (i == leader0) {
                 continue;
@@ -147,7 +148,7 @@ final class RaftFailoverE2ETest {
             }
         }
 
-        // --- 5) the cluster is live again: a fresh write commits + replicates on both survivors ---
+        // 5) the cluster is live again: a fresh write commits and replicates on both survivors
         long postCommit = cluster.commitAndAwaitReplication(leader1, "post", "after-failover", leader0);
         assertTrue(postCommit > 0, "a post-failover write must commit on the new leader's 2-of-3 quorum");
         for (int i = 0; i < NODES; i++) {
@@ -170,9 +171,7 @@ final class RaftFailoverE2ETest {
                 ctx + ": key '" + key + "' must hold its committed value");
     }
 
-    // =======================================================================
     // real-wire cluster (mirrors NettyConsensusLivenessTest.RealWireCluster; stores retained, node kill added)
-    // =======================================================================
 
     private final class Cluster {
         private final NodeId[] ids = new NodeId[NODES];

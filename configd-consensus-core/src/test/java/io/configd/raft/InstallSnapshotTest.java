@@ -27,8 +27,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class InstallSnapshotTest {
 
-    // Test infrastructure (mirrors RaftNodeTest patterns)
-
     static final class TestTransport implements RaftTransport {
         private final List<SentMessage> messages = new ArrayList<>();
         private java.util.function.BiConsumer<NodeId, RaftMessage> sendInterceptor;
@@ -81,7 +79,6 @@ class InstallSnapshotTest {
         @Override
         public long apply(long index, long term, byte[] command) {
             applied.add(new AppliedEntry(index, term, command));
-            // Build snapshot data as a simple accumulation
             snapshotData = ("snap-" + index).getBytes();
             return StateMachine.NON_MUTATING;
         }
@@ -154,7 +151,6 @@ class InstallSnapshotTest {
             }
         }
 
-        /** Delivers messages only to specific targets. */
         void deliverMessagesTo(Set<NodeId> targets) {
             Map<NodeId, List<RaftMessage>> toDeliver = new HashMap<>();
             for (var entry : transports.entrySet()) {
@@ -204,8 +200,6 @@ class InstallSnapshotTest {
         }
     }
 
-    // Direct InstallSnapshot RPC tests
-
     @Nested
     class DirectInstallSnapshotTests {
 
@@ -228,19 +222,15 @@ class InstallSnapshotTest {
 
             node2.handleMessage(req);
 
-            // Verify state machine was restored
             assertNotNull(sm2.restoredFrom);
             assertArrayEquals(snapData, sm2.restoredFrom);
 
-            // Verify log was compacted to snapshot point
             assertEquals(10, log2.snapshotIndex());
             assertEquals(1, log2.snapshotTerm());
 
-            // Verify commit and applied indices advanced
             assertEquals(10, log2.commitIndex());
             assertEquals(10, log2.lastApplied());
 
-            // Verify success response was sent
             List<InstallSnapshotResponse> responses =
                     transport2.messagesOfType(InstallSnapshotResponse.class);
             assertEquals(1, responses.size());
@@ -259,24 +249,20 @@ class InstallSnapshotTest {
             RandomGenerator rng2 = new java.util.Random(42);
             RaftNode node2 = new RaftNode(config2, log2, transport2, sm2, rng2);
 
-            // Advance node2's term to 5
             node2.handleMessage(new AppendEntriesRequest(5, n1, 0, 0, List.of(), 0));
             transport2.clear();
 
-            // Send snapshot with stale term 3
             InstallSnapshotRequest req = new InstallSnapshotRequest(
                     3, n1, 10, 1, 0, "data".getBytes(), true
             );
             node2.handleMessage(req);
 
-            // Should reject
             List<InstallSnapshotResponse> responses =
                     transport2.messagesOfType(InstallSnapshotResponse.class);
             assertEquals(1, responses.size());
             assertFalse(responses.getFirst().success());
             assertEquals(5, responses.getFirst().term());
 
-            // State machine should not be touched
             assertNull(sm2.restoredFrom);
         }
 
@@ -293,11 +279,9 @@ class InstallSnapshotTest {
             RandomGenerator rng2 = new java.util.Random(42);
             RaftNode node2 = new RaftNode(config2, log2, transport2, sm2, rng2);
 
-            // Node2 is at term 1
             node2.handleMessage(new AppendEntriesRequest(1, n1, 0, 0, List.of(), 0));
             transport2.clear();
 
-            // Snapshot with higher term
             InstallSnapshotRequest req = new InstallSnapshotRequest(
                     5, n1, 10, 3, 0, "snapshot".getBytes(), true
             );
@@ -321,21 +305,17 @@ class InstallSnapshotTest {
             RandomGenerator rng2 = new java.util.Random(42);
             RaftNode node2 = new RaftNode(config2, log2, transport2, sm2, rng2);
 
-            // First snapshot at index 10
             node2.handleMessage(new InstallSnapshotRequest(
                     1, n1, 10, 1, 0, "first".getBytes(), true));
             transport2.clear();
-            sm2.restoredFrom = null; // Reset
+            sm2.restoredFrom = null;
 
-            // Second snapshot at index 5 (older) - should be ignored
             node2.handleMessage(new InstallSnapshotRequest(
                     1, n1, 5, 1, 0, "older".getBytes(), true));
 
-            // State machine should NOT be restored again
             assertNull(sm2.restoredFrom);
-            assertEquals(10, log2.snapshotIndex()); // unchanged
+            assertEquals(10, log2.snapshotIndex());
 
-            // Should still send success (snapshot already applied)
             List<InstallSnapshotResponse> responses =
                     transport2.messagesOfType(InstallSnapshotResponse.class);
             assertEquals(1, responses.size());
@@ -355,16 +335,15 @@ class InstallSnapshotTest {
             RandomGenerator rng2 = new java.util.Random(42);
             RaftNode node2 = new RaftNode(config2, log2, transport2, sm2, rng2);
 
-            // Make node2 a candidate
             for (int i = 0; i < 301; i++) {
                 node2.tick();
             }
-            // It might be in pre-vote or candidate; receive pre-vote grants
+            // The node may still be in pre-vote rather than candidate; grant via pre-vote
+            // responses so it reaches candidate regardless of which phase it is in.
             node2.handleMessage(new RequestVoteResponse(node2.currentTerm(), true, n1, true));
             node2.handleMessage(new RequestVoteResponse(node2.currentTerm(), true, n3, true));
             transport2.clear();
 
-            // Send InstallSnapshot with the candidate's current term
             long candidateTerm = node2.currentTerm();
             InstallSnapshotRequest req = new InstallSnapshotRequest(
                     candidateTerm, n1, 10, 1, 0, "snap".getBytes(), true
@@ -374,8 +353,6 @@ class InstallSnapshotTest {
             assertEquals(RaftRole.FOLLOWER, node2.role());
         }
     }
-
-    // Snapshot trigger tests
 
     @Nested
     class SnapshotTriggerTests {
@@ -390,24 +367,19 @@ class InstallSnapshotTest {
             RandomGenerator rng = new java.util.Random(42);
             RaftNode node = new RaftNode(config, log, transport, sm, rng);
 
-            // Become leader (single node)
             for (int i = 0; i < 301; i++) {
                 node.tick();
             }
 
-            // Propose entries
             for (int i = 0; i < 10; i++) {
                 node.propose(new byte[]{(byte) i});
             }
 
-            // Entries should be committed and applied (single node)
             assertTrue(log.lastApplied() > 0);
             int sizeBeforeSnapshot = log.size();
 
-            // Trigger snapshot
             assertTrue(node.triggerSnapshot());
 
-            // Log should be compacted
             assertEquals(0, log.size());
             assertTrue(log.snapshotIndex() > 0);
         }
@@ -422,12 +394,9 @@ class InstallSnapshotTest {
             RandomGenerator rng = new java.util.Random(42);
             RaftNode node = new RaftNode(config, log, transport, sm, rng);
 
-            // No entries applied - nothing to snapshot
             assertFalse(node.triggerSnapshot());
         }
     }
-
-    // Integration: lagging follower receives snapshot
 
     @Nested
     class LaggingFollowerIntegrationTests {
@@ -440,18 +409,15 @@ class InstallSnapshotTest {
             RaftNode leader = cluster.nodes.get(NodeId.of(1));
             NodeId laggingNode = NodeId.of(3);
 
-            // Propose several entries, but only deliver to node 2 (not node 3)
             for (int i = 0; i < 5; i++) {
                 leader.propose(new byte[]{(byte) i});
             }
 
-            // Deliver only between node 1 and node 2
             Set<NodeId> activeNodes = Set.of(NodeId.of(1), NodeId.of(2));
             for (int round = 0; round < 10; round++) {
                 cluster.deliverMessagesTo(activeNodes);
             }
 
-            // Heartbeat to propagate commit
             for (int i = 0; i < 51; i++) {
                 leader.tick();
             }
@@ -459,23 +425,17 @@ class InstallSnapshotTest {
                 cluster.deliverMessagesTo(activeNodes);
             }
 
-            // Leader should have committed entries
             assertTrue(leader.log().commitIndex() >= 5);
 
-            // Now trigger snapshot on leader - this compacts the log
             assertTrue(leader.triggerSnapshot());
             assertTrue(leader.log().snapshotIndex() > 0);
 
-            // Clear any pending messages to isolate the snapshot transfer
             cluster.transports.values().forEach(TestTransport::clear);
 
-            // Now trigger a heartbeat that will try to send to node 3
-            // Since node 3 is behind the snapshot, leader should send InstallSnapshot
             for (int i = 0; i < 51; i++) {
                 leader.tick();
             }
 
-            // Check that an InstallSnapshot was sent to node 3
             TestTransport leaderTransport = cluster.transports.get(NodeId.of(1));
             List<InstallSnapshotRequest> snapReqs =
                     leaderTransport.messagesTo(laggingNode, InstallSnapshotRequest.class);
@@ -489,15 +449,12 @@ class InstallSnapshotTest {
             assertTrue(snapReq.data().length > 0);
             assertTrue(snapReq.done());
 
-            // Now deliver the snapshot to node 3
             cluster.deliverAllMessages(10);
 
-            // Node 3's log should be caught up to the snapshot point
             RaftLog log3 = cluster.logs.get(laggingNode);
             assertTrue(log3.snapshotIndex() > 0,
                     "Lagging follower should have applied the snapshot");
 
-            // Node 3's state machine should have been restored
             TestStateMachine sm3 = cluster.stateMachines.get(laggingNode);
             assertNotNull(sm3.restoredFrom,
                     "Lagging follower's state machine should be restored from snapshot");
@@ -511,7 +468,6 @@ class InstallSnapshotTest {
             RaftNode leader = cluster.nodes.get(NodeId.of(1));
             NodeId laggingNode = NodeId.of(3);
 
-            // Propose entries, deliver only to node 2
             for (int i = 0; i < 3; i++) {
                 leader.propose(new byte[]{(byte) i});
             }
@@ -520,7 +476,6 @@ class InstallSnapshotTest {
                 cluster.deliverMessagesTo(activeNodes);
             }
 
-            // Heartbeat and deliver to commit
             for (int i = 0; i < 51; i++) {
                 leader.tick();
             }
@@ -528,27 +483,21 @@ class InstallSnapshotTest {
                 cluster.deliverMessagesTo(activeNodes);
             }
 
-            // Compact the leader's log
             assertTrue(leader.triggerSnapshot());
 
-            // Propose MORE entries after snapshot
             leader.propose(new byte[]{99});
             for (int round = 0; round < 5; round++) {
                 cluster.deliverMessagesTo(activeNodes);
             }
 
-            // Now deliver everything - node 3 should receive snapshot + new entries
             cluster.deliverAllMessages(20);
             cluster.tickLeaderHeartbeatAndDeliver();
 
-            // Node 3 should have caught up
             RaftLog log3 = cluster.logs.get(laggingNode);
             assertTrue(log3.snapshotIndex() > 0 || log3.lastIndex() > 0,
                     "Node 3 should have state from snapshot or subsequent entries");
         }
     }
-
-    // Leader handles InstallSnapshotResponse
 
     @Nested
     class InstallSnapshotResponseHandlingTests {
@@ -560,37 +509,29 @@ class InstallSnapshotTest {
 
             RaftNode leader = cluster.nodes.get(NodeId.of(1));
 
-            // Propose and commit entries
             for (int i = 0; i < 3; i++) {
                 leader.propose(new byte[]{(byte) i});
             }
             cluster.deliverAllMessages(10);
 
-            // Trigger snapshot
             leader.triggerSnapshot();
             long snapIndex = leader.log().snapshotIndex();
             assertTrue(snapIndex > 0);
 
-            // Simulate receiving a successful snapshot response from node 3
             cluster.transports.get(NodeId.of(1)).clear();
             leader.handleMessage(new InstallSnapshotResponse(
                     leader.currentTerm(), true, NodeId.of(3), snapIndex));
 
-            // After snapshot response, leader should send regular AppendEntries
-            // on the next heartbeat since nextIndex is now past the snapshot
             for (int i = 0; i < 51; i++) {
                 leader.tick();
             }
 
-            // Check that AppendEntries (not InstallSnapshot) is sent to node 3
             TestTransport leaderTransport = cluster.transports.get(NodeId.of(1));
             List<AppendEntriesRequest> appendReqs =
                     leaderTransport.messagesTo(NodeId.of(3), AppendEntriesRequest.class);
             List<InstallSnapshotRequest> snapReqs =
                     leaderTransport.messagesTo(NodeId.of(3), InstallSnapshotRequest.class);
 
-            // Either we get AppendEntries (normal catch-up) or no more InstallSnapshot
-            // since the follower is now at the snapshot index
             assertTrue(appendReqs.size() > 0 || snapReqs.isEmpty(),
                     "After successful snapshot, leader should send AppendEntries or no snapshot");
         }
@@ -604,7 +545,6 @@ class InstallSnapshotTest {
             long leaderTerm = leader.currentTerm();
             assertEquals(RaftRole.LEADER, leader.role());
 
-            // Send a snapshot response with a higher term
             leader.handleMessage(new InstallSnapshotResponse(
                     leaderTerm + 5, false, NodeId.of(3), 0L));
 
@@ -620,17 +560,13 @@ class InstallSnapshotTest {
             RaftNode leader = cluster.nodes.get(NodeId.of(1));
             long leaderTerm = leader.currentTerm();
 
-            // Send a snapshot response with an old term
             leader.handleMessage(new InstallSnapshotResponse(
                     leaderTerm - 1, true, NodeId.of(3), 0L));
 
-            // Should still be leader, nothing changed
             assertEquals(RaftRole.LEADER, leader.role());
             assertEquals(leaderTerm, leader.currentTerm());
         }
     }
-
-    // Metrics tests
 
     @Nested
     class MetricsTests {
@@ -658,7 +594,6 @@ class InstallSnapshotTest {
 
             RaftNode leader = cluster.nodes.get(NodeId.of(1));
 
-            // Propose entries but don't deliver - followers will lag
             leader.propose(new byte[]{1});
             leader.propose(new byte[]{2});
 
@@ -689,7 +624,6 @@ class InstallSnapshotTest {
             RandomGenerator rng = new java.util.Random(42);
             RaftNode node = new RaftNode(config, log, transport, sm, rng);
 
-            // Become leader and propose entries
             for (int i = 0; i < 301; i++) {
                 node.tick();
             }
@@ -705,8 +639,6 @@ class InstallSnapshotTest {
         }
     }
 
-    // ReadIndex integration tests via RaftNode
-
     @Nested
     class ReadIndexIntegrationTests {
 
@@ -720,13 +652,11 @@ class InstallSnapshotTest {
             RandomGenerator rng = new java.util.Random(42);
             RaftNode node = new RaftNode(config, log, transport, sm, rng);
 
-            // Become leader
             for (int i = 0; i < 301; i++) {
                 node.tick();
             }
             assertEquals(RaftRole.LEADER, node.role());
 
-            // ReadIndex should be immediately ready for single-node cluster
             long readId = node.readIndex();
             assertTrue(readId >= 0);
             assertTrue(node.isReadReady(readId));
@@ -752,19 +682,14 @@ class InstallSnapshotTest {
 
             RaftNode leader = cluster.nodes.get(NodeId.of(1));
 
-            // Ensure entries are committed and applied
             cluster.deliverAllMessages(10);
             cluster.tickLeaderHeartbeatAndDeliver();
 
-            // Start a read
             long readId = leader.readIndex();
             assertTrue(readId >= 0);
 
-            // Before heartbeat, read might not be ready (depends on timing)
-            // Tick through a heartbeat interval and deliver responses
             cluster.tickLeaderHeartbeatAndDeliver();
 
-            // After heartbeat round with quorum, read should be ready
             assertTrue(leader.isReadReady(readId),
                     "Read should be ready after heartbeat confirms quorum");
         }

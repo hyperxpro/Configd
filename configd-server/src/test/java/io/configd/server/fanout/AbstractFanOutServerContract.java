@@ -59,20 +59,16 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Transport-equivalence contract for the edge fan-out endpoint. The SAME mTLS admission,
- * mTLS-attack rejection, slow-consumer / quarantine policy, admission-bound, S2-S4 propagation, and
+ * mTLS-attack rejection, slow-consumer / quarantine policy, admission-bound, propagation, and
  * protocol-violation behaviour is proven against EVERY {@link FanOutEndpoint} implementation by
- * varying ONLY server construction ({@link #newServer}); the assertions, deadlines, injected clocks,
- * and keytool fixtures are transcribed verbatim from the per-transport JDK tests this folds in
- * ({@code FanOutServerMtlsTest}, {@code FanOutServerMtlsAttackTest}, {@code FanOutServerQuarantineTest},
- * {@code FanOutServerAdmissionBoundTest}, and the {@code FanOutServerIntegrationTest} corruption legs).
+ * varying ONLY server construction ({@link #newServer}).
  *
  * <h2>Test fixture discipline</h2>
- * The expensive keytool keystore/cert generation (many subprocesses, merged here from the mTLS +
- * mTLS-attack fixtures) is hoisted into one {@code @BeforeAll static} fixture (cached temp dir,
- * {@code @AfterAll} cleanup), which JUnit runs once per concrete subclass and does NOT subject to the
- * class {@link Timeout}. Each test carries a generous method-level {@code @Timeout(120)} for pure hang
- * detection on the throttled 2-vCPU box, never a perf assertion; deadline-polling on socket reads
- * only (no {@code sleep} as synchronization).
+ * The expensive keytool keystore/cert generation (many subprocesses) is hoisted into one
+ * {@code @BeforeAll static} fixture (cached temp dir, {@code @AfterAll} cleanup), which JUnit runs
+ * once per concrete subclass and does NOT subject to the class {@link Timeout}. Each test carries a
+ * generous method-level {@code @Timeout(120)} for pure hang detection on the throttled 2-vCPU box,
+ * never a perf assertion; deadline-polling on socket reads only (no {@code sleep} as synchronization).
  */
 @Timeout(120)
 abstract class AbstractFanOutServerContract {
@@ -95,7 +91,6 @@ abstract class AbstractFanOutServerContract {
 
     private static final char[] PASS = "changeit".toCharArray();
 
-    // ---- merged TLS fixture (mTLS + mTLS-attack) ----
     private static Path fixtureDir;
     private static Path serverKeyStore;
     private static Path serverTrustStore;
@@ -103,7 +98,6 @@ abstract class AbstractFanOutServerContract {
     private static Path rogueKeyStore;     // self-signed, NOT trusted by the server
     private static Path expiredKeyStore;   // CA-signed end-entity, validity window already past
 
-    // ---- per-test mutable state (the quarantine legs) ----
     private FanOutEndpoint server;
     private MutableClock clock;
     private SlowConsumerGovernor governor;
@@ -184,10 +178,6 @@ abstract class AbstractFanOutServerContract {
         }
     }
 
-    // =======================================================================
-    // mTLS admission (folded from FanOutServerMtlsTest)
-    // =======================================================================
-
     @Test
     @Timeout(120)
     void rejectsClientWithNoCertificate() throws Exception {
@@ -203,7 +193,6 @@ abstract class AbstractFanOutServerContract {
     @Timeout(120)
     void rejectsClientWithUntrustedCertificate() throws Exception {
         int port = startMtlsServer();
-        // The rogue client presents a cert the server does not trust -> connection unusable.
         assertConnectionRejected(clientContext(rogueKeyStore, serverTrustStore), port, null);
     }
 
@@ -211,7 +200,6 @@ abstract class AbstractFanOutServerContract {
     @Timeout(120)
     void acceptsTrustedClientAndCompletesSubscribe() throws Exception {
         int port = startMtlsServer();
-        // The legit client presents a trusted cert -> handshake succeeds, SUBSCRIBE works.
         SSLContext clientCtx = clientContext(clientKeyStore, serverTrustStore);
         SSLSocket sock = (SSLSocket) clientCtx.getSocketFactory().createSocket();
         sock.connect(new InetSocketAddress("127.0.0.1", port), 2_000);
@@ -227,10 +215,6 @@ abstract class AbstractFanOutServerContract {
             assertTrue(f instanceof EdgeFrame.SubscribeOk);
         }
     }
-
-    // =======================================================================
-    // mTLS NEGATIVE / attacks (folded from FanOutServerMtlsAttackTest)
-    // =======================================================================
 
     @Test
     @Timeout(120)
@@ -270,10 +254,6 @@ abstract class AbstractFanOutServerContract {
         assertConnectionRejected(clientContext(clientKeyStore, serverTrustStore), port,
                 new String[]{"TLSv1.2"});
     }
-
-    // =======================================================================
-    // Slow-consumer / quarantine policy (folded from FanOutServerQuarantineTest)
-    // =======================================================================
 
     private static final String EDGE_ID = "edge-q";
     private static final long T0 = 1_700_000_000_000L;
@@ -347,7 +327,7 @@ abstract class AbstractFanOutServerContract {
             throws Exception {
         int port = startServer();
 
-        // --- Phase 1: quarantine. Subscribe, never ack; every 3 publishes overflow the
+        // Phase 1: quarantine. Subscribe, never ack; every 3 publishes overflow the
         // 2-frame queue -> demotion. The 2nd demotion trips demoteLimit -> QUARANTINED ->
         // ERROR_CLOSE code 8 + socket close.
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
@@ -382,7 +362,7 @@ abstract class AbstractFanOutServerContract {
         assertEquals(1, governorMetrics.quarantines.get(),
                 "edge_fanout_quarantines_total must move exactly once");
 
-        // --- Phase 2: reconnect during the cooldown -> REFUSED at SUBSCRIBE with code 8.
+        // Phase 2: reconnect during the cooldown -> REFUSED at SUBSCRIBE with code 8.
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge.subscribeFullStore(EDGE_ID, 6L);
             EdgeFrame.ErrorClose refusal =
@@ -398,7 +378,7 @@ abstract class AbstractFanOutServerContract {
         assertEquals(ConsumerState.QUARANTINED, governor.state(EDGE_ID),
                 "a refusal must not mutate the state");
 
-        // --- Phase 3: the cooldown elapses (clock advance, no sleep) -> readmitted with
+        // Phase 3: the cooldown elapses (clock advance, no sleep) -> readmitted with
         // the re-bootstrap FORCED: SNAPSHOT_FIRST despite the high resume cursor.
         clock.advance(60_001);
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
@@ -424,12 +404,12 @@ abstract class AbstractFanOutServerContract {
     }
 
     /**
-     * The C4 sign-off P1 (C4-A) regression leg: the LIVE session loop's time-driven
-     * evaluation must actually fire. Before the fix, the eval-cadence sentinel
-     * ({@code Long.MIN_VALUE}) was compared by SUBTRACTION - which overflows negative for
-     * any real clock value - so {@code governor.evaluate()} never ran on this loop and
-     * HEALTHY->SLOW (the section 7 warn tier, CT-27's transition) was unreachable at runtime.
-     * This test drives the promotion end-to-end at the server: a subscriber holds its
+     * Regression test: the LIVE session loop's time-driven evaluation must actually fire.
+     * Before the fix, the eval-cadence sentinel ({@code Long.MIN_VALUE}) was compared by
+     * SUBTRACTION - which overflows negative for any real clock value - so
+     * {@code governor.evaluate()} never ran on this loop and the HEALTHY->SLOW warn-tier
+     * transition was unreachable at runtime. This test drives the promotion end-to-end at
+     * the server: a subscriber holds its
      * queue at/above warn, the injected clock advances past
      * {@code edge.fanout.policy.queueWarnWindowMs}, and the SESSION LOOP (no direct
      * governor calls from the test) must promote the identity to SLOW and move
@@ -467,11 +447,9 @@ abstract class AbstractFanOutServerContract {
     }
 
     /**
-     * The CT-30 closing condition at the wire: the {@code quarantineLimit}-th quarantine
-     * escalates to UNHEALTHY through a LIVE server - exercising the
-     * {@code onDemotionEvent} UNHEALTHY teardown arm (previously only the
-     * QUARANTINED half was process-proven), the unhealthy-cooldown refusal at the wire,
-     * and the C4-3 automatic readmission after {@code unhealthyCooldownMs}.
+     * The {@code quarantineLimit}-th quarantine escalates to UNHEALTHY through a LIVE server,
+     * exercising the {@code onDemotionEvent} UNHEALTHY teardown arm, the unhealthy-cooldown
+     * refusal at the wire, and automatic readmission after {@code unhealthyCooldownMs}.
      */
     @Test
     void secondQuarantineWithinTheWindowEscalatesToUnhealthyAtTheWire() throws Exception {
@@ -480,7 +458,7 @@ abstract class AbstractFanOutServerContract {
         int port = startServer(new SlowConsumerPolicyConfig(
                 10_000L, 1, 10, 60_000L, 60_000L, 2, 3_600_000L, 120_000L, 4_096));
 
-        // --- Quarantine #1: one overflow demotion suffices (demoteLimit=1).
+        // Quarantine #1: one overflow demotion suffices (demoteLimit=1).
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge.subscribeFullStore(EDGE_ID, 0L);
             readUntil(edge, EdgeFrame.SubscribeOk.class);
@@ -492,7 +470,7 @@ abstract class AbstractFanOutServerContract {
         awaitGovernorState(ConsumerState.QUARANTINED, "first quarantine");
         assertEquals(1, governorMetrics.quarantines.get());
 
-        // --- Readmission, then quarantine #2 -> UNHEALTHY through the live teardown arm.
+        // Readmission, then quarantine #2 -> UNHEALTHY through the live teardown arm.
         clock.advance(60_001);
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge.subscribeFullStore(EDGE_ID, 0L);
@@ -514,7 +492,7 @@ abstract class AbstractFanOutServerContract {
         assertEquals(1, governorMetrics.unhealthy.get(),
                 "edge_fanout_unhealthy_total must move exactly once (alert-grade)");
 
-        // --- Refused throughout the unhealthy cooldown, with the state named.
+        // Refused throughout the unhealthy cooldown, with the state named.
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge.subscribeFullStore(EDGE_ID, 6L);
             EdgeFrame.ErrorClose refusal =
@@ -528,7 +506,7 @@ abstract class AbstractFanOutServerContract {
         assertTrue(governorMetrics.reconnectsRefused.get() >= 1);
         assertEquals(ConsumerState.UNHEALTHY, governor.state(EDGE_ID));
 
-        // --- The unhealthy cooldown ALONE readmits (C4-3), snapshot-first forced.
+        // The unhealthy cooldown alone readmits, snapshot-first forced.
         clock.advance(120_001);
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge.subscribeFullStore(EDGE_ID, 999_999L);
@@ -574,10 +552,6 @@ abstract class AbstractFanOutServerContract {
             assertEquals(ConsumerState.HEALTHY, governor.state("edge-ok"));
         }
     }
-
-    // =======================================================================
-    // Admission bound (folded from FanOutServerAdmissionBoundTest)
-    // =======================================================================
 
     @Test
     @Timeout(60)
@@ -637,14 +611,10 @@ abstract class AbstractFanOutServerContract {
         assertEquals("maxSessions must be positive: 0", e.getMessage());
     }
 
-    // =======================================================================
-    // S2-S4 propagation (NEW; the C1 server path end-to-end without ConfigdServer)
-    // =======================================================================
-
     /**
-     * The full C1/C2/C3/C4 server path over a direct plaintext {@link FanOutEndpoint} (no
+     * The full server path over a direct plaintext {@link FanOutEndpoint} (no
      * {@code ConfigdServer}, no HTTP API): SUBSCRIBE->SUBSCRIBE_OK(TAIL) on an empty buffer; verbatim,
-     * strictly-increasing-seq NOTIFY of two committed deltas (version monotonicity / no stale
+     * strictly-increasing-seq NOTIFY of two committed deltas (version monotonicity, no stale
      * overwrite), each with byte-identical key+value; CURSOR_ACK flow-control; demotion->chunked
      * SNAPSHOT recovery once the edge stops acking under a flood; and resumed TAIL past the snapshot
      * seq. Publishes go through the SAME {@code publish(key,value)} helper the quarantine legs use, so
@@ -670,13 +640,13 @@ abstract class AbstractFanOutServerContract {
         int port = server.localPort();
 
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 15_000)) {
-            // --- SUBSCRIBE -> SUBSCRIBE_OK(TAIL) on an empty buffer ---
+            // SUBSCRIBE -> SUBSCRIBE_OK(TAIL) on an empty buffer.
             edge.subscribeFullStore("edge-prop", 0L);
             EdgeFrame.SubscribeOk ok =
                     (EdgeFrame.SubscribeOk) readUntil(edge, EdgeFrame.SubscribeOk.class);
             assertEquals(EdgeFrame.Mode.TAIL, ok.mode(), "empty buffer at subscribe → TAIL");
 
-            // --- two committed mutations delivered verbatim, strictly increasing seq ---
+            // Two committed mutations delivered verbatim, strictly increasing seq.
             publish("svc/a", "v-a");
             long seqA = expectVerbatimNotify(edge, "svc/a", "v-a", 0L);
             edge.cursorAck(seqA);
@@ -686,7 +656,7 @@ abstract class AbstractFanOutServerContract {
             assertTrue(seqB > seqA, "version monotonicity: the second NOTIFY seq must exceed the first");
             edge.cursorAck(seqB);
 
-            // --- STOP acking + flood ~300 publishes -> DEMOTED_TO_CATCHUP then chunked SNAPSHOT ---
+            // Stop acking + flood ~300 publishes -> DEMOTED_TO_CATCHUP then chunked SNAPSHOT.
             long floodTarget = seqB;
             for (int i = 0; i < 300; i++) {
                 publish("flood/" + i, "x" + i);
@@ -717,17 +687,13 @@ abstract class AbstractFanOutServerContract {
             assertTrue(end.snapshotSeq() > 0 && end.snapshotSeq() <= floodTarget,
                     "snapshot seq must be a valid committed seq in (0, floodTarget]: " + end.snapshotSeq());
 
-            // --- ack the snapshot point; tailing resumes with a NOTIFY seq > snapshotSeq ---
+            // Ack the snapshot point; tailing resumes with a NOTIFY seq > snapshotSeq.
             edge.cursorAck(end.snapshotSeq());
             publish("after/snap", "post");
             long resumedSeq = collectNotifiedSeqAtLeast(edge, end.snapshotSeq() + 1);
             assertTrue(resumedSeq >= end.snapshotSeq() + 1, "tail resumes after the snapshot");
         }
     }
-
-    // =======================================================================
-    // Protocol violations (folded from FanOutServerIntegrationTest, against a direct server)
-    // =======================================================================
 
     @Test
     void garbageFirstFrameClosesWithoutCrashing() throws Exception {
@@ -808,9 +774,9 @@ abstract class AbstractFanOutServerContract {
             assertNotNull(readUntil(edge, EdgeFrame.SubscribeOk.class),
                     "the 0x01 SUBSCRIBE must be accepted (it pins the connection version)");
             // Now send a frame STAMPED 0x02 on the 0x01-pinned connection. The per-connection version pin
-            // (W5-11) rejects it as BAD_WIRE_VERSION over the wire - a mixed-version relay cannot feed a
-            // 0x02 frame onto a 0x01 connection. With a session established BOTH transports emit a final
-            // ERROR_CLOSE before closing, so the documented first-frame-pin code is assertable at the wire.
+            // rejects it as BAD_WIRE_VERSION over the wire - a mixed-version relay cannot feed a
+            // 0x02 frame onto a 0x01 connection. With a session established both transports emit a final
+            // ERROR_CLOSE before closing, so the first-frame-pin code is assertable at the wire.
             edge.sendRaw(EdgeFrameCodec.encode(new EdgeFrame.CursorAck(1L), EdgeFrameCodec.EDGE_WIRE_VERSION_V2));
             EdgeFrame bye = readErrorCloseOrClosed(edge);
             assertNotNull(bye, "a cross-version-pinned frame must draw a final ERROR_CLOSE over the wire");
@@ -820,10 +786,6 @@ abstract class AbstractFanOutServerContract {
             assertTrue(drainUntilClosed(edge), "the server must close the cross-version-pinned connection");
         }
     }
-
-    // -----------------------------------------------------------------------
-    // server starters
-    // -----------------------------------------------------------------------
 
     private int startMtlsServer() throws Exception {
         TlsConfig serverTls = new TlsConfig(
@@ -861,10 +823,6 @@ abstract class AbstractFanOutServerContract {
         server.start();
         return server.localPort();
     }
-
-    // -----------------------------------------------------------------------
-    // wire helpers (deadline-polling; no sleep-as-sync)
-    // -----------------------------------------------------------------------
 
     /**
      * Asserts a connection from {@code clientCtx} is rejected: the handshake fails OR the connection
@@ -1157,10 +1115,6 @@ abstract class AbstractFanOutServerContract {
         return wire;
     }
 
-    // -----------------------------------------------------------------------
-    // SSL context + keystore loading
-    // -----------------------------------------------------------------------
-
     /**
      * Builds an SSLContext with an optional client key store and a trust store. Uses the generic
      * "TLS" protocol so the version-downgrade test can deliberately restrict the SOCKET to TLSv1.2;
@@ -1196,10 +1150,6 @@ abstract class AbstractFanOutServerContract {
             // best-effort
         }
     }
-
-    // -----------------------------------------------------------------------
-    // keytool fixture builders (merged from the mTLS + mTLS-attack tests)
-    // -----------------------------------------------------------------------
 
     private static void genKeyPair(Path keyStore, String alias, String dname, String... validity)
             throws Exception {
@@ -1264,10 +1214,6 @@ abstract class AbstractFanOutServerContract {
         int rc = new ProcessBuilder(command).redirectErrorStream(true).inheritIO().start().waitFor();
         assertTrue(rc == 0, "keytool failed: " + String.join(" ", command));
     }
-
-    // -----------------------------------------------------------------------
-    // test fixtures (verbatim from FanOutServerQuarantineTest)
-    // -----------------------------------------------------------------------
 
     /** A manually-advanced {@link Clock}: the cooldown elapses by {@link #advance}. */
     private static final class MutableClock implements Clock {

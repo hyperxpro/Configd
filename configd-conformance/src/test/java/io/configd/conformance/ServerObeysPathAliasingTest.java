@@ -26,14 +26,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 /**
- * The redteam NON-ALIASING lock for §01 A3-4 — the SERVER-side complement to the client-side canonicalization
- * (which now rejects these spellings before the wire; see {@code ClausePathGrammarTest}). Because the reference
+ * The redteam NON-ALIASING lock for §01 A3-4 -- the SERVER-side complement to the client-side canonicalization
+ * (which rejects these spellings before the wire; see {@code ClausePathGrammarTest}). Because the reference
  * client refuses a non-canonical key, this test uses RAW {@link HttpClient} to push the hostile spellings past
  * the client and prove the SERVER never resolves a traversal (`..`) or empty-segment (`//`) spelling to a
  * DIFFERENT (sensitive) key.
  *
  * <p>The server deliberately does NOT normalize the key ({@code AdminApiHandler} takes the percent-decoded
- * {@code URI#getPath()} verbatim — §04 D8-2), so {@code app/public/../secret/x} and {@code app//secret/x} are
+ * {@code URI#getPath()} verbatim -- §04 D8-2), so {@code app/public/../secret/x} and {@code app//secret/x} are
  * DISTINCT literal keys, not aliases of {@code app/secret/x}. The threat this locks out: a principal granted
  * {@code app/public/} tricking the server into serving {@code app/secret/x} by requesting
  * {@code app/public/../secret/x}. The traversal is sent as {@code %2E%2E} so a literal {@code ..} survives on the
@@ -61,20 +61,20 @@ class ServerObeysPathAliasingTest {
     void serverNeverAliasesTraversalOrEmptySegmentSpellingsToASensitiveKey() throws Exception {
         URI base = start();
 
-        // Baseline A: the sensitive key app/secret/x exists but is ACL-protected — the principal (granted only
+        // Baseline A: the sensitive key app/secret/x exists but is ACL-protected -- the principal (granted only
         // app/public/ READ) is denied, and a 403 never carries the value.
         HttpResponse<byte[]> secret = raw(uri(base, "/v1/config/app/secret/x"), "user-tok");
         assertEquals(403, secret.statusCode(), "app/secret/x is READ-denied to the principal (baseline)");
         assertFalse(bodyText(secret).contains(SECRET), "a 403 never carries the sensitive value");
 
-        // Baseline B: the grant genuinely works — a legitimate key under app/public/ reads back 200.
+        // Baseline B: the grant genuinely works -- a legitimate key under app/public/ reads back 200.
         HttpResponse<byte[]> legit = raw(uri(base, "/v1/config/app/public/y"), "user-tok");
         assertEquals(200, legit.statusCode(), "a legit key under the app/public/ grant reads 200 (grant is real)");
 
         // (1) Dot-dot traversal. `%2E%2E` keeps a literal '..' on the wire (no transport/URI dot-segment
-        // normalization collapses it), so the server decodes the key VERBATIM as `app/public/../secret/x` — a
+        // normalization collapses it), so the server decodes the key VERBATIM as `app/public/../secret/x` -- a
         // DISTINCT literal key: it is legitimately under the principal's app/public/ READ grant (so ACL permits
-        // it), but no such literal key was ever stored, so it is a definite 404 — NEVER traversed to
+        // it), but no such literal key was ever stored, so it is a definite 404 -- NEVER traversed to
         // app/secret/x. Had the server normalized '..', this would instead resolve to app/secret/x (a 403, or a
         // leak); a 404 proves the literal, un-normalized resolution.
         HttpResponse<byte[]> dotdot = raw(uri(base, "/v1/config/app/public/%2E%2E/secret/x"), "user-tok");
@@ -82,14 +82,12 @@ class ServerObeysPathAliasingTest {
         assertFalse(bodyText(dotdot).contains(SECRET), "the '..' spelling NEVER surfaces app/secret/x's value (A3-4)");
 
         // (2) Empty-segment spelling. `app//secret/x` is a DISTINCT literal key that does NOT start with the
-        // app/public/ grant prefix, so it is default-denied (403) — never collapsed to app/secret/x, never the
+        // app/public/ grant prefix, so it is default-denied (403) -- never collapsed to app/secret/x, never the
         // value.
         HttpResponse<byte[]> doubleSlash = raw(uri(base, "/v1/config/app//secret/x"), "user-tok");
         assertEquals(403, doubleSlash.statusCode(), "the '//' spelling is a distinct literal key, default-denied (A3-4)");
         assertFalse(bodyText(doubleSlash).contains(SECRET), "the '//' spelling NEVER surfaces app/secret/x's value (A3-4)");
     }
-
-    // -----------------------------------------------------------------------
 
     /** Auth+ACL ON: principal `user` holds READ on `app/public/` ONLY; `app/secret/` is ungranted (default-deny). */
     private URI start() throws IOException {
@@ -111,7 +109,7 @@ class ServerObeysPathAliasingTest {
         return URI.create("http://127.0.0.1:" + server.port());
     }
 
-    /** Build the target from a raw string — NO {@code resolve()}/{@code normalize()}, so `%2E%2E` and `//` survive. */
+    /** Build the target from a raw string -- NO {@code resolve()}/{@code normalize()}, so `%2E%2E` and `//` survive. */
     private static URI uri(URI base, String rawPathAndQuery) {
         return URI.create(base.toString() + rawPathAndQuery);
     }

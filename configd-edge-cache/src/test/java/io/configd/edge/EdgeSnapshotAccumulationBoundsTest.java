@@ -19,12 +19,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * WH-13 / WH-15 red-team: client-side snapshot-chunk accumulation bounds in
- * {@link EdgeClientCore}. Before the fix {@code onSnapshotChunk} appended every chunk with no
- * count/byte bound and ignored {@code SnapshotBegin.chunkCount} / {@code totalBytes}, so a
- * malicious or compromised distribution server (or plaintext) could stream chunks until the edge
- * heap approached the codec's ~2 GiB reassemble ceiling -> OOM. The fix bounds accumulation by
- * the BEGIN-declared {@code chunkCount}/{@code totalBytes} (WH-15 cross-field) AND the hard
+ * Client-side snapshot-chunk accumulation bounds in {@link EdgeClientCore}. The
+ * {@code SnapshotBegin.chunkCount}/{@code totalBytes} fields are attacker-controlled (a
+ * malicious or compromised distribution server, or plaintext), so {@code onSnapshotChunk}
+ * must not trust them: a flood of chunks could otherwise stream until the edge heap approaches
+ * the codec's ~2 GiB reassemble ceiling and OOMs. Accumulation is bounded by the BEGIN-declared
+ * {@code chunkCount}/{@code totalBytes} (cross-field) AND the hard
  * {@link EdgeClientCore#MAX_SNAPSHOT_TOTAL_BYTES} / {@link EdgeClientCore#MAX_SNAPSHOT_CHUNKS}
  * ceilings, rejecting a flood through the same protocol-error path as a chunk-outside-transfer
  * ({@link IllegalStateException} -> poison/reconnect). A valid multi-chunk snapshot still
@@ -71,7 +71,7 @@ class EdgeSnapshotAccumulationBoundsTest {
     @Test
     void accumulatedBytesBeyondDeclaredTotalIsRejected() {
         // BEGIN declares 10 chunks but only 4 total bytes; a 5-byte chunk overshoots totalBytes
-        // and is rejected before the list grows unbounded (WH-15 cross-field cap).
+        // and is rejected before the list grows unbounded (cross-field cap).
         core.onFrame(new EdgeFrame.SnapshotBegin(7L, 10, 4L));
         IllegalStateException e = assertThrows(IllegalStateException.class,
                 () -> core.onFrame(chunk(0, 5)));

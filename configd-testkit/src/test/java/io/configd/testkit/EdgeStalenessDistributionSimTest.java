@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * staleness frontier on the edges, both driven through the real
  * {@link C1StreamDriver} / {@link io.configd.edge.EdgeClientCore}.
  *
- * <p><b>Split ownership (charter section 3 V2):</b> this asserts the MECHANISM produces a
+ * <p><b>Split ownership:</b> this asserts the MECHANISM produces a
  * distribution (a non-vacuous histogram with sane percentiles); it deliberately sets NO p99
  * performance target - the real {@code p99 < 500ms} bound is for real
  * propagation latency. The point here is that the clock + probe + frontier wiring works

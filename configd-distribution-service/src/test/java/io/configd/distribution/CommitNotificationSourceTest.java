@@ -30,16 +30,13 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class CommitNotificationSourceTest {
 
-    // ------------------------------------------------------------------
-    // A tiny authoritative model that mirrors the cumulative committed
-    // state, and a ReplaySource over it (the source of truth the buffer
-    // is a cache for). seq == applied-mutation sequence S.
-    // ------------------------------------------------------------------
+    // A tiny authoritative model mirroring the cumulative committed state,
+    // with a ReplaySource over it: this is the source of truth that the
+    // buffer is a cache for. seq is the applied-mutation sequence number.
     private static final class Authoritative implements ReplaySource {
         private final TreeMap<String, byte[]> state = new TreeMap<>();
         private long seq = 0;
 
-        /** Applies a mutation, returns the notification with the assigned seq. */
         CommitNotification applyAndNotify(ConfigMutation m, long commitTs) {
             seq++;
             switch (m) {
@@ -51,7 +48,7 @@ class CommitNotificationSourceTest {
         }
 
         Map<String, byte[]> snapshotMap() {
-            // deep copy for assertion comparison
+            // clone each value so the returned map is independent of later mutations to state
             Map<String, byte[]> copy = new HashMap<>();
             state.forEach((k, v) -> copy.put(k, v.clone()));
             return copy;
@@ -79,9 +76,6 @@ class CommitNotificationSourceTest {
         return true;
     }
 
-    // ==================================================================
-    // (a) BOUND
-    // ==================================================================
     @Test
     void boundSustainedAppendsNeverGrowBeyondRing() {
         int cap = 16;
@@ -98,16 +92,12 @@ class CommitNotificationSourceTest {
         assertEquals(cap * 100 - cap + 1, buf.oldestSeq());
     }
 
-    // ==================================================================
-    // (b) OVERFLOW POLICY - drop count + GAP on stale cursor
-    // ==================================================================
     @Test
     void overflowIncrementsDropCountAndStaleCursorGetsGap() {
         int cap = 8;
         FanOutBuffer buf = new FanOutBuffer(cap);
         Authoritative auth = new Authoritative();
 
-        // Fill exactly to capacity - no eviction yet.
         for (int i = 0; i < cap; i++) {
             buf.publish(auth.applyAndNotify(put("k" + i, "v" + i), 1000 + i));
         }
@@ -179,10 +169,6 @@ class CommitNotificationSourceTest {
         assertTrue(((CommitNotificationSource.Result.Ok) r).notifications().isEmpty());
     }
 
-    // ==================================================================
-    // (c) REPLAYABILITY - exactly-once over effect across overflow,
-    //     seeded randomized interleaving of appends / overflows / reads.
-    // ==================================================================
     @Test
     void replayThenTailObservesEveryMutationEffectExactly() {
         for (long seed = 0; seed < 25; seed++) {
@@ -214,11 +200,9 @@ class CommitNotificationSourceTest {
                 buf.publish(auth.applyAndNotify(m, 1000L + round));
             }
 
-            // Consumer attempts to advance.
             cursor = drainConsumer(buf, auth, consumerView, cursor);
         }
 
-        // Final catch-up: drain until caught up to latest.
         while (cursor < buf.latestSeq()) {
             long before = cursor;
             cursor = drainConsumer(buf, auth, consumerView, cursor);
@@ -261,8 +245,8 @@ class CommitNotificationSourceTest {
     private void applyNotifications(List<CommitNotification> ns, Map<String, byte[]> view) {
         long prev = Long.MIN_VALUE;
         for (CommitNotification n : ns) {
-            // Contiguity / monotonicity assertion: a non-GAP run must be strictly
-            // ascending in seq with no duplicates (the non-atomic read hazard this test pins).
+            // Guards against a lapped reader seeing duplicated or skipped notifications:
+            // a non-GAP run must be strictly ascending in seq with no duplicates.
             assertTrue(n.seq() > prev, "non-GAP run must be strictly ascending in seq");
             prev = n.seq();
             for (ConfigMutation m : n.delta().mutations()) {
@@ -280,7 +264,7 @@ class CommitNotificationSourceTest {
 
     @Test
     void legacyDeltaAppendStillWorks() {
-        // The legacy append(ConfigDelta) path must still feed the buffer.
+        // The older append(ConfigDelta) path must still feed the buffer alongside publish/readSince.
         FanOutBuffer buf = new FanOutBuffer(4);
         buf.append(new ConfigDelta(0, 1, List.of(put("k", "v"))));
         assertEquals(1, buf.size());

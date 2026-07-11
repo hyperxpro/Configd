@@ -10,8 +10,8 @@ implements watches **identically** — most critically, **vector-native and per-
 draft**.
 
 This section **formalizes** the watch research in
-[`../../archive/research/watches/`](../../archive/research/watches/) (`recommendation.md`, `configd-analysis.md`,
-`prior-art.md`, `decision-log.md`). Where this RFC says MUST/SHOULD/MAY, the research explains *why*. This
+[`../../archive/research/watches/`](../../archive/research/watches/) (`recommendation.md`,
+`configd-analysis.md`). Where this RFC says MUST/SHOULD/MAY, the research explains *why*. This
 section is **normative**; the research is explanatory.
 
 It **composes with**:
@@ -59,7 +59,7 @@ N = 1** (a one-element vector). A scalar-cursor or global-order assumption is **
 *(Rationale: a single shard happens to have a total order, so a driver written against N = 1 that assumes a
 scalar cursor and global order will compile, pass its tests, and then **silently corrupt its view the
 moment the cluster shards.** This is the single most important rule in this section;
-`../../archive/research/watches/recommendation.md` §12, [DL-W-03](../../archive/research/watches/decision-log.md).)*
+`../../archive/research/watches/recommendation.md` §12.)*
 
 ### 1.3 Versioning and the wire-version bump
 
@@ -134,7 +134,7 @@ assume one-shot semantics. *(Rationale: ZooKeeper's one-shot watch "cannot relia
 because of the re-registration gap. ZooKeeper 3.6+ added PERSISTENT / PERSISTENT_RECURSIVE watches that
 remove the re-registration burden but still deliver a **signal-then-reread**, not a resumable event log
 (`prior-art.md` §3). Configd's differentiator is therefore **resumability** — a replayable, cursor-keyed
-history (W2-6) — not merely persistence; `../../archive/research/watches/prior-art.md` §3.)*
+history (W2-6) — not merely persistence; `../../archive/research/watches/recommendation.md` §1.)*
 
 **W2-6 (resumable with no-miss-in-window).** A watch **MUST** be **resumable** from its cursor vector
 (§3) with a **no-missed-events** guarantee while each component stays within that shard's retained history
@@ -216,7 +216,7 @@ cursor_vector := [ topologyEpoch:u64 ] [ count:u32 ] ( gid:u32  S:u64 )*count   
                   count == 0  ⇒  "from now per shard"  (W3-4)
 ```
 
-**The leading `topologyEpoch:u64` (frozen-format A4) is REQUIRED and binds the whole resume token to the
+**The leading `topologyEpoch:u64` is REQUIRED and binds the whole resume token to the
 topology generation that minted it** (the server's `ShardMap.epoch()`; §06 F5-3 / F8). The wire floor is
 therefore **12 bytes** (`topologyEpoch:u64 + count:u32`), even for the `count == 0` from-now cursor. A driver
 **MUST**:
@@ -341,7 +341,7 @@ A multiplexed connection may interleave catch-up substreams for **different** `(
 concurrently, so the catch-up frames **MUST** carry the multiplex tag to be disambiguated. Because the
 existing `SNAPSHOT_*` frames are golden-fixture-pinned and **MUST NOT** be mutated (W1-3), §2 adds
 `WATCH_SNAPSHOT_*` (`0x10`..`0x12`) — structurally the existing snapshot frames **plus** a leading
-`(watch_id, gid)`, **reusing the same chunked, backpressure-paced, cutover-after-END mechanism** (RR-102).
+`(watch_id, gid)`, **reusing the same chunked, backpressure-paced, cutover-after-END mechanism**.
 *(This is the one place where "reuse `SnapshotBegin/Chunk/End`" must mean "reuse the mechanism," not "reuse
 the literal frame": multiplexing forces the tag, and byte-stability of the built plane forbids editing the
 existing frame.)*
@@ -528,7 +528,7 @@ WATCH_SNAPSHOT_CHUNK payload:  [ watch_id:u64 ][ gid:u32 ][ index:u32 ][ bytes:b
 WATCH_SNAPSHOT_END   payload:  [ watch_id:u64 ][ gid:u32 ][ snapshot_seq:u64 ]
 ```
 
-**W5-10 (per-shard inline catch-up — reuses the RR-102 mechanism).** When a shard component is in
+**W5-10 (per-shard inline catch-up — reuses the chunked snapshot-transfer mechanism).** When a shard component is in
 `SNAPSHOT_FIRST` (fresh-with-existing-state, or fallen behind the buffer — W6-3), the server **MUST**
 transfer a **prefix-filtered snapshot of that one shard** as a `WATCH_SNAPSHOT_BEGIN` → `*_CHUNK` →
 `*_END` substream tagged `(watch_id, gid)`, backpressure-paced, with **cutover only after `END`** — then
@@ -900,12 +900,12 @@ item.
 |---|---|
 | Change stream unit | `CommitNotification{seq = S, commitTimestampMillis, delta}` (ADR-0034) |
 | Cursor + replay boundary | `CommitNotificationSource.readSince(cursor) → Result.Ok(run) \| Result.Gap(oldestRetainedSeq)` |
-| Hot buffer (drop-oldest, GAP-signalling) | `FanOutBuffer` — bounded ring, single-writer, lock-free readers, `lastEvictedSeq` watermark (ADR-0036, RR-066/RR-096) |
+| Hot buffer (drop-oldest, GAP-signalling) | `FanOutBuffer` — bounded ring, single-writer, lock-free readers, `lastEvictedSeq` watermark (ADR-0036) |
 | Per-shard fan-out | one `FanOutBuffer` **per shard** on its owner thread (Seam G1) |
 | Wire codec | `EdgeFrame` family + `EdgeFrameCodec` (`EDGE_WIRE_VERSION 0x01`, length-prefixed, CRC32C, golden-pinned) |
 | Connection-level subscribe | `Subscribe{fullStore, prefixes, resumeCursor (scalar), failoverResumeCursor, edgeId}`; `effectiveResumeCursor()` |
 | Resume-mode decision | `SubscribeOk{latestSeq, Mode∈{TAIL, SNAPSHOT_FIRST}}` |
-| Chunked catch-up | `SnapshotBegin/Chunk/End` (RR-102; backpressure-paced, cutover-after-END) |
+| Chunked catch-up | `SnapshotBegin/Chunk/End` (backpressure-paced, cutover-after-END) |
 | Freshness frontier | `StalenessTracker` (ADR-0039) |
 | mTLS endpoint + admission | `FanOutServer` (cert-DN identity, `maxSessions`, bounded per-conn queue) |
 | Backpressure / abuse | `SlowConsumerGovernor` ladder + 10-code `ErrorCode` taxonomy |

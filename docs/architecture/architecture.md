@@ -6,28 +6,29 @@ in-process cache at the edge in microseconds. The shape is deliberately Quicksil
 Raft root of truth for writes, plus asynchronous, bounded-staleness fan-out to edge readers
 that hold a local copy and take no part in consensus (ADR-0030).
 
-This document describes the system **as it ships in v1**. Where a capability is deferred, it
-says so and points at [`../v2-backlog.md`](../v2-backlog.md). The load-bearing consensus
-threading rules live in a companion spec: [`raft-threading-contract.md`](raft-threading-contract.md).
+This document describes the system as it runs today. Where a capability is out of scope, it says
+so; see [`../operations/known-limitations.md`](../operations/known-limitations.md) for the full
+list. The load-bearing consensus threading rules live in a companion spec:
+[`raft-threading-contract.md`](raft-threading-contract.md).
 
-## What v1 is (and is not)
+## What it does (and does not do)
 
-v1 is a **single, region-local sharded-Raft cluster**. It is NOT a global, multi-region,
+Configd is a **single, region-local sharded-Raft cluster**. It is NOT a global, multi-region,
 hierarchical-Raft write topology. An earlier design proposed a global Raft group plus per-region
 groups with closed-timestamp follower reads; that design was rejected on cross-region write-latency
 arithmetic and operational complexity (ADR-0030), and the write-availability target was formally
 renegotiated (ADR-0031). None of it was built.
 
-What v1 actually runs:
+What it actually runs:
 
 - **One region-local Raft group by default (N=1).** Hash-within-scope sharding is wired and
   measured; a multi-shard deployment (N>1) is supported, with leadership maintained by a built-in
   auto-balancer (the measured 2.45x was under manual placement -- see Sharding and Measured envelope, below).
 - **Centralized writes, asynchronous edge reads.** All linearizable writes commit in the root
   group. Committed deltas fan out to edges that serve sequentially-consistent, bounded-stale reads.
-- **Single region.** Cross-region / WAN write consensus is explicitly out of scope for v1
+- **Single region.** Cross-region / WAN write consensus is explicitly out of scope
   (ADR-0024, ADR-0030). A full-region loss requires manual standby cutover; sub-second region
-  failover is a deferred capability.
+  failover is not implemented.
 
 ## Control plane and data plane
 
@@ -45,7 +46,7 @@ plane; nothing flows back up the read path.
 
 ## Topology
 
-A v1 deployment is a small, region-local Raft group (typically 3 voters across availability zones
+A typical deployment is a small, region-local Raft group (typically 3 voters across availability zones
 for automatic single-AZ survival) plus a fan-out tree of edge readers.
 
 ```mermaid
@@ -156,7 +157,7 @@ bursty prefixes across all shards by construction.
 - `ConfigScope` selects the pool of groups (and voter topology) for a key; the hash selects the
   group within that pool. This replaces a single constant group id at the existing
   `ConfigWriteService.propose(scope, cmd)` -> `MultiRaftDriver.propose(groupId, cmd)` seam.
-- **N=1 is the v1 default and is byte-identical to a non-sharded build** -- a `StaticShardMap(1)`
+- **N=1 is the default and is byte-identical to a non-sharded build** -- a `StaticShardMap(1)`
   routes every key to the one group. Shard count is set with `-Dconfigd.raft.shardCount=N`.
 - Each group is owned by exactly one owner thread for the life of the process; different groups may
   progress on different threads (the throughput unlock), the same group never does (the safety
@@ -165,8 +166,8 @@ bursty prefixes across all shards by construction.
   localizes per-key deltas to subscribed edges via a radix trie, so shard layout never reaches an
   edge.
 
-Dynamic resharding (online split/merge/rebalance) is deferred to v2 behind the same `ShardMap`
-interface (ADR-multiraft-topology); v1 ships `StaticShardMap` with a fixed N.
+Dynamic resharding (online split/merge/rebalance) is not implemented; it is designed behind the
+same `ShardMap` interface (ADR-multiraft-topology). Configd ships `StaticShardMap` with a fixed N.
 
 ## Consensus, replication, and durability
 
@@ -179,7 +180,7 @@ The consensus core is a full, tick-driven Raft implementation:
   `POST /v1/admin/groups/{gid}/transfer-leadership` route **and** driven automatically by a decentralized
   **leadership auto-balance loop** (`LeaderBalanceLoop`, one per node, on by default at N>1, sheds one
   over-owned leader per cycle). It is not yet invoked to hand off leadership on graceful shutdown (see
-  Measured envelope and the v2 backlog).
+  Measured envelope and What it does not do, below).
 - **Joint-consensus reconfiguration** and no-op commit on election.
 - At-rest durability artifacts (snapshot blob, WAL records, persistent Raft state) carry an
   integrity envelope (below).
@@ -189,8 +190,8 @@ The consensus core is a full, tick-driven Raft implementation:
 `nextExpectedOffset`; the follower installs only after the whole snapshot is reassembled in order. This
 lifts the old 4 MiB single-frame total-state ceiling. The total is now bounded by the follower's **heap**
 and a fail-closed cap (`configd.raft.maxReassembledSnapshotBytes`, default 512 MiB) that refuses an over-cap
-reassembly (drop the partial, log `SEVERE`, no install/OOM) rather than wedging silently. Observability
-(Gate-2): `configd_snapshot_bytes` (snapshot size vs the per-chunk cap),
+reassembly (drop the partial, log `SEVERE`, no install/OOM) rather than wedging silently. Observability:
+`configd_snapshot_bytes` (snapshot size vs the per-chunk cap),
 `raft_shard_snapshot_reassembly_refused_<gid>`, and `raft_shard_replication_lag_max_<gid>` (the follower-lag
 proxy). Disk-spilling reassembly is a later item.
 
@@ -234,9 +235,9 @@ The edge store is a persistent Hash Array Mapped Trie (HAMT) with structural sha
 - **Poison-pill handling.** A value that fails validation serves the previous known-good version and
   emits a metric rather than propagating a bad entry.
 
-## Watches (v1)
+## Watches
 
-v1 implements the server side of the RFC 2 driver-protocol watch surface on the edge endpoint
+Configd implements the server side of the RFC 2 driver-protocol watch surface on the edge endpoint
 (`--edge-port`): a vector-native per-shard cursor `(gid, seq)`, the `WATCH_*` frames, a
 multiplex/filter veneer, a whole-target authorization gate (`READ and WATCH`, reject-not-filter,
 fail-closed), per-watch filtered delivery with catch-up snapshots, and bounded revocation under a
@@ -291,7 +292,7 @@ writes shed with 429 next; edge reads from the local HAMT are never shed.
 
 ## Security posture
 
-v1 has a real, code-wired security model. It is **secure-by-config, not secure-by-default**: except
+Configd has a real, code-wired security model. It is **secure-by-config, not secure-by-default**: except
 for rate limiting (and write-admission control, now on by default), every control is off until an operator
 enables it (each emits a loud startup warning when off). Enabling auth + TLS + audit + replay before
 production is a documented release gate ([`../operations/operator-runsheet.md`](../operations/operator-runsheet.md),
@@ -358,8 +359,8 @@ not "auth required by default"; a deliberate no-auth public deployment stays pos
 
 ## Runtime
 
-- **Java 25** (Amazon Corretto), run with `--enable-preview` (ADR-0022). A migration to the next LTS
-  (Java 29, expected 2027) is planned; preview features are tracked for stabilization.
+- **Java 25** (Amazon Corretto), run with `--enable-preview` (ADR-0022). The next LTS, Java 29, is
+  expected in 2027; preview features are tracked for stabilization ahead of that migration.
 - **Generational ZGC** (`-XX:+UseZGC`) for the serving JVM (ADR-0041). Generational is the only ZGC
   on JDK 25, so the removed `-XX:+ZGenerational` flag is not passed. In a same-box, same-workload
   bake-off, ZGC held its worst-case stop-the-world pause around 0.045 ms (versus about 20-29 ms for
@@ -388,31 +389,29 @@ server; the full verdict is
   decentralized `LeaderBalanceLoop` maintains that placement automatically (it sheds one over-owned leader per
   cycle), with an ADMIN transfer route for manual placement. The 2.45x itself was measured under **manual**
   one-leader-per-box placement, so the balancer is built and E2E-tested but **not yet load-measured at scale**;
-  transfer-on-graceful-shutdown remains a follow-up (v2 backlog).
+  transfer-on-graceful-shutdown remains a follow-up.
 - **Edge reads:** microsecond-scale in-process; about 53,600 req/s at 64 connections over the HTTP
   edge surface.
 - **Long-run stability:** a **6-hour** soak ran clean (flat file descriptors, stable heap floor, GC
   under 1%, zero rejected). This is 6 hours, not a 24/72-hour soak.
 
-## What v1 does not do (v2 / v3)
+## What it does not do
 
-Stated scope, not gaps. See [`../v2-backlog.md`](../v2-backlog.md) for the full list. (Encryption at rest,
-the auth SPI + full auth system, the KMS SPI + Vault provider, the leadership balancer, chunked snapshot,
-multi-shard N>1 watches, and a Java reference client + conformance suite have all **shipped** since an earlier
-draft of this list called them deferred.)
+Stated scope, not gaps. The full list is in
+[`../operations/known-limitations.md`](../operations/known-limitations.md).
 
 - **Online/admin key rotation trigger** -- rotation is built and non-destructive but offline
-  (out-of-band on a stopped node) in v1.
+  (out-of-band on a stopped node).
 - **Transfer-on-graceful-shutdown** -- the leadership balancer and manual transfer route ship; a node does
   not hand off leadership on SIGTERM (it flips readiness to draining).
 - **Additional-language client drivers** -- the Java reference client + conformance suite ship; Rust/Go/Python
   drivers are buildable from the stand-alone RFC ([`../rfc/driver-protocol/`](../rfc/driver-protocol/)) on demand.
-- **Disjoint sharded-edge topology / globally-ordered cross-shard watch** -- v1 multi-shard watches are served
+- **Disjoint sharded-edge topology / globally-ordered cross-shard watch** -- multi-shard watches are served
   by one aggregating endpoint, per-key/per-shard ordered; a global cross-shard order is out of scope by design
   (no global clock).
 - **Additional KMS backends** -- `local` and Vault Transit ship behind the KMS SPI; AWS/GCP/HSM providers can
   be added without a core edit.
-- **Dynamic resharding, a `list` endpoint, a BATCH API, and cross-region / WAN** -- deferred.
+- **Dynamic resharding, a `list` endpoint, a BATCH API, and cross-region / WAN** -- not implemented.
 
 ## Where to go next
 
@@ -422,4 +421,3 @@ draft of this list called them deferred.)
   known-limitations, consistency contract, burn-in contract, runbooks)
 - Driver protocol: [`../rfc/driver-protocol/`](../rfc/driver-protocol/)
 - Evidence and history: [`../archive/`](../archive/)
-- What is coming next: [`../v2-backlog.md`](../v2-backlog.md)

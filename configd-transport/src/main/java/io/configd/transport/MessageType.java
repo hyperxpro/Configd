@@ -29,7 +29,7 @@ public enum MessageType {
      */
     RAFT_COALESCED_HEARTBEAT(0x11),
     /**
-     * Peer-quorum anchor-witness gossip (Gate 3c, R-a&#39; closer): a node announces its per-group
+     * Peer-quorum anchor-witness gossip: a node announces its per-group
      * anchorSeq to its peers so a within-term vote rollback (which lowers anchorSeq) is witnessed
      * across the cluster. Symmetric; per group ({@code frame.groupId() = gid}). A {@code RAFT_WITNESS}
      * with the QUERY flag set (the boot path) is answered by a {@link #RAFT_WITNESS_REPLY}. The

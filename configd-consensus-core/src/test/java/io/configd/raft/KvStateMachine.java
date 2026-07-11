@@ -12,7 +12,8 @@ import java.util.Map;
  * so a snapshot taken at index N and restored on a fresh instance reconstructs
  * exactly the committed key/value contents through index N.
  * <p>
- * Commands are {@code PUT key=value} encoded as UTF-8 {@code "key\0value"}.
+ * Commands are {@code PUT key=value} encoded as a 4-byte key length followed by
+ * the UTF-8 key bytes and then the UTF-8 value bytes.
  * Empty commands (no-op election entries) are non-mutating. The applied-mutation
  * sequence increments on every mutating apply, mirroring the contract used by
  * {@code ConfigStateMachine} so the commit-outcome seam behaves identically under test.

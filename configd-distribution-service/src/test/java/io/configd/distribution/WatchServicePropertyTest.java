@@ -29,8 +29,8 @@ class WatchServicePropertyTest {
     }
 
     /**
-     * INV-W1: Every committed mutation generates exactly one notification
-     * per matching watcher (prefix filter). No duplicates, no missed events.
+     * Every committed mutation generates exactly one notification per
+     * matching watcher (prefix filter). No duplicates, no missed events.
      */
     @Property(tries = 200)
     void everyMutationNotifiesMatchingWatchersExactlyOnce(
@@ -48,19 +48,17 @@ class WatchServicePropertyTest {
             totalMutations++;
         }
 
-        // Each mutation should have produced exactly one event for the all-key watcher
         assertEquals(totalMutations, allKeyWatcher.size(),
                 "INV-W1: watcher must receive exactly one event per mutation");
 
-        // Total mutations across all events must match
         int totalReceived = allKeyWatcher.stream().mapToInt(WatchEvent::size).sum();
         assertEquals(totalMutations, totalReceived,
                 "INV-W1: total mutations received must match total committed");
     }
 
     /**
-     * INV-W2: Version cursors are strictly monotonically increasing
-     * across consecutive events delivered to the same watcher.
+     * Version cursors are strictly monotonically increasing across
+     * consecutive events delivered to the same watcher.
      */
     @Property(tries = 200)
     void versionCursorsAreMonotonicallyIncreasing(
@@ -85,8 +83,8 @@ class WatchServicePropertyTest {
     }
 
     /**
-     * INV-W3: A watcher with prefix P only receives mutations for keys
-     * starting with P. Never receives non-matching keys.
+     * A watcher with prefix P only receives mutations for keys starting
+     * with P; it never receives non-matching keys.
      */
     @Property(tries = 200)
     void prefixFilterNeverDeliversNonMatchingKeys(
@@ -96,7 +94,6 @@ class WatchServicePropertyTest {
         List<WatchEvent> received = new CopyOnWriteArrayList<>();
         service.register(prefix, received::add);
 
-        // Send matching and non-matching mutations
         List<ConfigMutation> mutations = List.of(
                 new ConfigMutation.Put(prefix + "match-a", VALUE),
                 new ConfigMutation.Put("nomatch.key", VALUE),
@@ -106,7 +103,6 @@ class WatchServicePropertyTest {
         service.onConfigChange(mutations, 1);
         service.flushAndDispatch();
 
-        // Every delivered mutation must match the prefix
         for (WatchEvent event : received) {
             for (ConfigMutation m : event.mutations()) {
                 String key = switch (m) {
@@ -121,9 +117,9 @@ class WatchServicePropertyTest {
     }
 
     /**
-     * INV-W4: Coalescing preserves all mutations - no mutations are lost.
-     * The union of mutations across all events for a watcher equals the
-     * set of matching committed mutations.
+     * Coalescing preserves all mutations: the union of mutations across
+     * all events delivered to a watcher equals the set of matching
+     * committed mutations.
      */
     @Property(tries = 100)
     void coalescingPreservesAllMutations(
@@ -145,11 +141,9 @@ class WatchServicePropertyTest {
                     List.of(new ConfigMutation.Put(key, VALUE)), i);
         }
 
-        // Flush the coalesced batch
         clock.advanceNanos(100_000_000L);
         service.tick();
 
-        // Collect all delivered keys
         Set<String> delivered = new LinkedHashSet<>();
         for (WatchEvent event : received) {
             for (ConfigMutation m : event.mutations()) {
@@ -166,7 +160,7 @@ class WatchServicePropertyTest {
     }
 
     /**
-     * INV-W5: Cancelled watches never receive further events.
+     * Cancelled watches never receive further events.
      */
     @Property(tries = 100)
     void cancelledWatchNeverReceivesEvents(
@@ -197,7 +191,8 @@ class WatchServicePropertyTest {
     }
 
     /**
-     * INV-W6: Watch cursor after processing matches the last event version.
+     * A watch's cursor after processing matches the version of the last
+     * event it received.
      */
     @Property(tries = 200)
     void cursorMatchesLastEventVersion(
@@ -217,10 +212,6 @@ class WatchServicePropertyTest {
         assertEquals(eventVersions.getLast(), service.cursor(watchId),
                 "INV-W6: cursor must equal the version of the last delivered event");
     }
-
-    // -----------------------------------------------------------------------
-    // Test clock
-    // -----------------------------------------------------------------------
 
     private static final class TestClock implements Clock {
         private long nanos = 1_000_000_000L;

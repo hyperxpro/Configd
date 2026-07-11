@@ -56,15 +56,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * (ACL/403), privilege-escalation refusal, audit completeness + chain verification, replay
  * (401/409), strong-read fail-close, and the path-normalization evasion
  * vectors - must hold byte-for-byte on each. A control that passes on JDK but not Netty is a
- * migration regression (the worst outcome), so this is the equivalence proof, not
- * a hopeful re-implementation.
+ * migration regression, so this is an equivalence proof, not a re-implementation.
  *
- * <p>The four incumbent JDK test classes (ConfigHandlerAuthTest, ConfigHandlerAuditTest,
- * ConfigHandlerReplayTest, StrongReadFailClosedTest) are consolidated here verbatim - same
- * assertions, same failure messages, same behaviour - and the per-server bind is the only thing the
- * subclasses vary. The incumbent classes reached the bound port via reflection on the private
- * {@code server} field; that does not work for Netty, so this contract uses {@link ServerHandle#port()}
- * uniformly (the JDK adapter already exposes the identical {@link HttpApiServer#port()}).
+ * <p>The per-server bind is the only thing the subclasses vary; everything else - assertions,
+ * failure messages, behaviour - is shared here. Each subclass exposes its bound port via
+ * {@link ServerHandle#port()} rather than reflection on a private field, since the Netty adapter has
+ * no such field to reflect on (the JDK adapter's {@link HttpApiServer#port()} is wrapped the same way).
  *
  * <p><b>(load-bearing, do not weaken).</b> The strong-read key is derived from
  * {@link URI#getPath()} (percent-decoded, not normalized, not lower-cased), and BOTH adapters build
@@ -77,10 +74,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @Timeout(60)
 abstract class AbstractAdminApiServerContract {
-
-    // -----------------------------------------------------------------------
-    // Transport seam: a started server + its bound port + a stop hook.
-    // -----------------------------------------------------------------------
 
     /** A started server: its bound port and a stop hook (transport-agnostic). */
     interface ServerHandle {
@@ -113,10 +106,6 @@ abstract class AbstractAdminApiServerContract {
     /** Starts the transport under test from {@code spec} on an ephemeral port (0). */
     abstract ServerHandle startServer(ServerSpec spec) throws Exception;
 
-    // -----------------------------------------------------------------------
-    // Per-test lifecycle: one server + one client, torn down after each test.
-    // -----------------------------------------------------------------------
-
     private ServerHandle server;
     private HttpClient client;
 
@@ -128,16 +117,11 @@ abstract class AbstractAdminApiServerContract {
         }
     }
 
-    /** Starts {@code spec}, records the handle for teardown, builds a fresh client, returns the port. */
     private int start(ServerSpec spec) throws Exception {
         server = startServer(spec);
         client = HttpClient.newHttpClient();
         return server.port();
     }
-
-    // -----------------------------------------------------------------------
-    // Shared fixtures (transcribed verbatim from the four incumbent classes).
-    // -----------------------------------------------------------------------
 
     /** "good-reader" -> reader principal; "good-writer" -> writer principal; else denied. */
     private static AuthInterceptor authInterceptor() {
@@ -180,10 +164,6 @@ abstract class AbstractAdminApiServerContract {
                 StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null);
     }
 
-    // -----------------------------------------------------------------------
-    // Shared HTTP helpers (built per test; mirror the incumbent helpers).
-    // -----------------------------------------------------------------------
-
     /** A request to {@code /v1/config/<path>} with an optional bearer token + optional body. */
     private HttpResponse<String> send(int port, String method, String path, String token, String body)
             throws IOException, InterruptedException {
@@ -207,7 +187,8 @@ abstract class AbstractAdminApiServerContract {
                 HttpResponse.BodyHandlers.ofString());
     }
 
-    /** Sends a GET with the path-and-query used VERBATIM (no client-side re-encoding). C6 evasion vectors. */
+    /** Sends a GET with the path-and-query used VERBATIM (no client-side re-encoding); used for the
+     *  path-normalization evasion vectors. */
     private HttpResponse<String> getRaw(int port, String rawPathAndQuery) throws Exception {
         return client.send(HttpRequest.newBuilder()
                         .uri(URI.create("http://127.0.0.1:" + port + rawPathAndQuery))
@@ -215,19 +196,8 @@ abstract class AbstractAdminApiServerContract {
                 HttpResponse.BodyHandlers.ofString());
     }
 
-    // =======================================================================
-    // Section 1 - ConfigHandlerAuthTest: authn / authz / escalation.
-    // =======================================================================
-
-    // ------------------------------------------------------------------
-    // Token presence / validity (checkAuth token branches)
-    // ------------------------------------------------------------------
-
     @Test
     void getWithNoTokenIsUnauthenticated() throws Exception {
-        // Corrected semantics: a MISSING credential is AUTHENTICATION,
-        // not authorization - RFC 7235 requires 401,
-        // with a WWW-Authenticate: Bearer challenge.
         int port = start(authSpec());
         HttpResponse<String> resp = send(port, "GET", "/v1/config/app/feature", null, null);
         assertEquals(401, resp.statusCode(), "a missing bearer token must be 401 (authenticate(null) -> Denied)");
@@ -238,7 +208,6 @@ abstract class AbstractAdminApiServerContract {
 
     @Test
     void getWithInvalidTokenIsUnauthenticated() throws Exception {
-        // An INVALID credential is still authentication failure -> 401.
         int port = start(authSpec());
         HttpResponse<String> resp = send(port, "GET", "/v1/config/app/feature", "bogus", null);
         assertEquals(401, resp.statusCode(), "an unknown token must be 401");
@@ -249,8 +218,7 @@ abstract class AbstractAdminApiServerContract {
 
     @Test
     void getWithMalformedAuthorizationHeaderIsUnauthenticated() throws Exception {
-        // A non-"Bearer " header leaves token null -> authenticate(null)
-        // -> Denied -> 401 (not 403).
+        // A non-"Bearer " header leaves the token null, so authenticate(null) denies it (401, not 403).
         int port = start(authSpec());
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create("http://127.0.0.1:" + port + "/v1/config/app/feature"))
@@ -261,10 +229,8 @@ abstract class AbstractAdminApiServerContract {
         assertEquals("Bearer", basic.headers().firstValue("WWW-Authenticate").orElse(null));
     }
 
-    // ------------------------------------------------------------------
-    // Mutating calls (PUT/DELETE) must ALSO return 401 (not 403)
-    // for missing/malformed/invalid credentials. Each is its own attack.
-    // ------------------------------------------------------------------
+    // PUT/DELETE with missing/malformed/invalid credentials must also 401, not 403 - tested
+    // independently since each method is its own attack surface.
 
     @Test
     void putWithNoTokenIsUnauthenticated() throws Exception {
@@ -285,7 +251,6 @@ abstract class AbstractAdminApiServerContract {
     @Test
     void putWithMalformedAuthorizationHeaderIsUnauthenticated() throws Exception {
         int port = start(authSpec());
-        // A "Bearer "-less header leaves the token null -> 401.
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create("http://127.0.0.1:" + port + "/v1/config/app/feature"))
                 .header("Authorization", "Basic Zm9vOmJhcg==")
@@ -301,24 +266,17 @@ abstract class AbstractAdminApiServerContract {
         assertEquals(401, resp.statusCode(), "a PUT with an unknown token must be 401");
     }
 
-    // ------------------------------------------------------------------
-    // Permission: READ vs WRITE, and per-key ACL allow/deny
-    // ------------------------------------------------------------------
-
     @Test
     void readerCanGetButCannotWrite() throws Exception {
         int port = start(authSpec());
 
-        // reader has READ on app/ -> GET allowed.
         HttpResponse<String> get = send(port, "GET", "/v1/config/app/feature", "good-reader", null);
         assertEquals(200, get.statusCode(), "reader with READ must be allowed to GET");
         assertEquals("on", get.body());
 
-        // reader lacks WRITE on app/ -> PUT denied (the WRITE-permission branch).
         HttpResponse<String> put = send(port, "PUT", "/v1/config/app/feature", "good-reader", "off");
         assertEquals(403, put.statusCode(), "reader without WRITE must be denied a PUT");
 
-        // reader lacks WRITE -> DELETE denied.
         HttpResponse<String> del = send(port, "DELETE", "/v1/config/app/feature", "good-reader", null);
         assertEquals(403, del.statusCode(), "reader without WRITE must be denied a DELETE");
     }
@@ -341,7 +299,6 @@ abstract class AbstractAdminApiServerContract {
     @Test
     void perKeyAclDeniesAccessOutsideGrantedPrefix() throws Exception {
         int port = start(authSpec());
-        // Neither principal has any grant on "locked/" -> denied even with a valid token.
         HttpResponse<String> get = send(port, "GET", "/v1/config/locked/secret", "good-reader", null);
         assertEquals(403, get.statusCode(), "a valid principal with no ACL on this prefix must be denied");
         assertNotEquals("shh", get.body(), "the value outside the granted prefix must not leak");
@@ -350,20 +307,15 @@ abstract class AbstractAdminApiServerContract {
         assertEquals(403, put.statusCode(), "even the writer has no grant on locked/");
     }
 
-    // ------------------------------------------------------------------
-    // Privilege-escalation coverage. An authenticated caller must NOT
-    // be able to escalate a READ grant into a WRITE/DELETE, nor reach a key
-    // outside its granted prefix. Each is a 403 (authenticated, unauthorized) -
-    // never a 401, and never a success. NOTE: there is NO HTTP membership or
-    // restore endpoint (membership = Raft proposeConfigChange; restore =
-    // ops/scripts/restore-snapshot.sh), so privilege control for those lives at
-    // the Raft/CLI layer, not here - there is no endpoint to attack.
-    // ------------------------------------------------------------------
+    // Privilege-escalation coverage: an authenticated caller must not be able to escalate a READ
+    // grant into a WRITE/DELETE, nor reach a key outside its granted prefix - each case is a 403
+    // (authenticated, unauthorized), never a 401 and never a success. There is no HTTP membership or
+    // restore endpoint (membership goes through Raft's proposeConfigChange; restore is an operator
+    // script), so privilege control for those lives at the Raft/CLI layer, not here.
 
     @Test
     void readScopedPrincipalCannotEscalateToWrite() throws Exception {
         int port = start(authSpec());
-        // reader has READ on app/ but NOT WRITE: a PUT is an escalation attempt -> 403.
         HttpResponse<String> put = send(port, "PUT", "/v1/config/app/feature", "good-reader", "off");
         assertEquals(403, put.statusCode(), "read-scoped principal must not escalate to WRITE");
     }
@@ -371,7 +323,6 @@ abstract class AbstractAdminApiServerContract {
     @Test
     void readScopedPrincipalCannotEscalateToDelete() throws Exception {
         int port = start(authSpec());
-        // DELETE requires WRITE; the reader has none -> 403 (not 401, not success).
         HttpResponse<String> del = send(port, "DELETE", "/v1/config/app/feature", "good-reader", null);
         assertEquals(403, del.statusCode(), "read-scoped principal must not escalate to DELETE");
     }
@@ -379,7 +330,6 @@ abstract class AbstractAdminApiServerContract {
     @Test
     void writerCannotCrossIntoAnUngrantedPrefixOnDelete() throws Exception {
         int port = start(authSpec());
-        // writer has WRITE on app/ but NO grant on locked/: a cross-prefix DELETE -> 403.
         HttpResponse<String> del = send(port, "DELETE", "/v1/config/locked/secret", "good-writer", null);
         assertEquals(403, del.statusCode(), "a writer must not cross into an ungranted prefix on DELETE");
     }
@@ -387,7 +337,6 @@ abstract class AbstractAdminApiServerContract {
     @Test
     void putWithEmptyBodyIsRejectedAfterAuth() throws Exception {
         int port = start(authSpec());
-        // Authorized writer, but an empty body -> 400 (the handlePut body branch).
         HttpResponse<String> put = send(port, "PUT", "/v1/config/app/feature", "good-writer", "");
         assertEquals(400, put.statusCode(), "an empty PUT body must be rejected with 400 after the auth gate");
     }
@@ -395,20 +344,14 @@ abstract class AbstractAdminApiServerContract {
     @Test
     void missingKeyInPathIsRejected() throws Exception {
         int port = start(authSpec());
-        // "/v1/config/" with no key -> 400 (the handle() path-parsing branch).
         HttpResponse<String> resp = send(port, "GET", "/v1/config/", "good-reader", null);
         assertEquals(400, resp.statusCode(), "a request with no config key must be rejected");
     }
 
-    // =======================================================================
-    // Section 2 - ConfigHandlerAuditTest: audit completeness + chain.
-    //
-    // These assert on the AuditLog after the requests. The AuditLog is built
-    // here, wired into the spec, and reachable for the post-request assertion.
-    // Requests are sent sequentially (client.send blocks for the response, and
-    // the handler audits BEFORE writing the response), so the record order is
-    // deterministic on every transport.
-    // =======================================================================
+    // The following tests assert on the AuditLog after the requests; it is built here, wired into the
+    // spec, and reachable for the post-request assertion. Requests are sent sequentially (client.send
+    // blocks for the response, and the handler audits before writing the response), so the record
+    // order is deterministic on every transport.
 
     private final AtomicLong auditNow = new AtomicLong(1_700_000_000_000L);
 
@@ -447,13 +390,9 @@ abstract class AbstractAdminApiServerContract {
         AuditLog auditLog = newAuditLog();
         int port = startAudit(auditLog);
 
-        // 1) committed PUT
         assertEquals(200, sendKey(port, "PUT", "app/feature", "good-writer", "on").statusCode());
-        // 2) committed DELETE
         assertEquals(200, sendKey(port, "DELETE", "app/feature", "good-writer", null).statusCode());
-        // 3) denied write (reader lacks WRITE) -> 403
         assertEquals(403, sendKey(port, "PUT", "app/feature", "good-reader", "x").statusCode());
-        // 4) unauthenticated attempt -> 401
         assertEquals(401, sendKey(port, "PUT", "app/feature", null, "x").statusCode());
 
         java.util.List<AuditLog.Record> records = auditLog.records();
@@ -485,17 +424,11 @@ abstract class AbstractAdminApiServerContract {
     void noTokenStringEverAppearsInTheAuditTrail() throws Exception {
         AuditLog auditLog = newAuditLog();
         int port = startAudit(auditLog);
-        // The bearer credential value is "good-writer". After a committed PUT the
-        // record must contain the principal "writer", never the token.
         assertEquals(200, sendKey(port, "PUT", "app/secret", "good-writer", "v").statusCode());
         AuditLog.Record r = auditLog.records().get(0);
         assertEquals("writer", r.actor());
         assertTrue(!r.toString().contains("good-writer"), "the bearer token must never be in the audit record");
     }
-
-    // =======================================================================
-    // Section 3 - ConfigHandlerReplayTest: replay protection.
-    // =======================================================================
 
     private final AtomicLong replayNow = new AtomicLong(2_000_000_000_000L); // fixed wall clock
 
@@ -541,17 +474,15 @@ abstract class AbstractAdminApiServerContract {
     void verbatimReplayIsRejectedWhileFreshNonceIsAccepted() throws Exception {
         int port = startReplay(new ReplayGuard(replayClock(), 300_000L, 1000));
 
-        // 1) A valid PUT - capture the EXACT request (same headers + body).
         HttpRequest original = put(port, "app/feature", "on", replayNow.get(), "nonce-A");
         HttpResponse<String> first = client.send(original, HttpResponse.BodyHandlers.ofString());
         assertEquals(200, first.statusCode(), "the original valid PUT must commit: " + first.body());
 
-        // 2) Replay the captured request VERBATIM -> rejected as a replay (409).
+        // Resend the SAME request object (identical headers + body) to simulate a captured replay.
         HttpResponse<String> replay = client.send(original, HttpResponse.BodyHandlers.ofString());
         assertEquals(409, replay.statusCode(),
                 "a verbatim capture-and-replay must be rejected (409 Conflict): " + replay.body());
 
-        // 3) A fresh PUT with a NEW nonce (same token, current time) -> accepted.
         HttpRequest fresh = put(port, "app/feature", "off", replayNow.get(), "nonce-B");
         HttpResponse<String> third = client.send(fresh, HttpResponse.BodyHandlers.ofString());
         assertEquals(200, third.statusCode(), "a fresh nonce must be accepted: " + third.body());
@@ -560,7 +491,6 @@ abstract class AbstractAdminApiServerContract {
     @Test
     void staleTimestampIsRejected() throws Exception {
         int port = startReplay(new ReplayGuard(replayClock(), 300_000L, 1000));
-        // A request whose timestamp is well outside the +/-300s window.
         HttpRequest stale = put(port, "app/feature", "on", replayNow.get() - 600_000L, "nonce-S");
         HttpResponse<String> resp = client.send(stale, HttpResponse.BodyHandlers.ofString());
         assertEquals(401, resp.statusCode(), "a stale-timestamp request must be rejected (401): " + resp.body());
@@ -569,7 +499,6 @@ abstract class AbstractAdminApiServerContract {
     @Test
     void missingReplayHeadersAreRejectedWhenGuardEnabled() throws Exception {
         int port = startReplay(new ReplayGuard(replayClock(), 300_000L, 1000));
-        // Authenticated, but no replay headers at all -> MALFORMED -> 401.
         HttpRequest noHeaders = HttpRequest.newBuilder()
                 .uri(URI.create("http://127.0.0.1:" + port + "/v1/config/app/feature"))
                 .header("Authorization", "Bearer good-writer")
@@ -582,8 +511,7 @@ abstract class AbstractAdminApiServerContract {
 
     @Test
     void guardOffMeansHeadersAreNotRequired() throws Exception {
-        // Back-compat: with no guard wired (default), a PUT without replay headers
-        // commits as before. This is the pre-production default.
+        // With no guard wired (the default), a PUT without replay headers commits normally.
         int port = startReplay(/* guard */ null);
         HttpRequest plain = HttpRequest.newBuilder()
                 .uri(URI.create("http://127.0.0.1:" + port + "/v1/config/app/feature"))
@@ -594,18 +522,14 @@ abstract class AbstractAdminApiServerContract {
         assertEquals(200, resp.statusCode(), "with the guard off, no replay headers are needed: " + resp.body());
     }
 
-    // =======================================================================
-    // Section 4 - StrongReadFailClosedTest: strong
-    // reads served linearizably on the leader, fail-closed elsewhere; plus the
-    // five C6 path-normalization evasion vectors (load-bearing on all three).
-    // =======================================================================
+    // Strong reads are served linearizably on the leader and fail closed elsewhere; the five
+    // path-normalization evasion vectors below are load-bearing on all three transports.
 
     /** Backing store seeded so a stale local read WOULD succeed if allowed. */
     private VersionedConfigStore seededStore() {
         VersionedConfigStore store = new VersionedConfigStore();
-        // A security key and an ordinary key both present locally (a follower's
-        // local state). The fail-closed contract is the only thing that should
-        // stop the security key from being served from here.
+        // Both a security key and an ordinary key are present locally (a follower's local state);
+        // only the fail-closed contract should stop the security key being served from here.
         store.put("secure/killswitch", "DENY".getBytes(), 7);
         store.put("app/feature", "on".getBytes(), 8);
         return store;
@@ -618,8 +542,8 @@ abstract class AbstractAdminApiServerContract {
             @Override public Map<String, ReadResult> getPrefix(String prefix) { return store.getPrefix(prefix); }
             @Override public long currentVersion() { return store.currentVersion(); }
         };
-        // confirmLeadership(scope,key) == isLeader: a follower (false) makes
-        // linearizableRead return null, modelling an unconfirmable read (keyed+scoped SAM).
+        // confirmLeadership(scope,key) == isLeader: a follower (false) makes linearizableRead
+        // return null, modelling an unconfirmable read.
         return new ConfigReadService(reader, (scope, key) -> isLeader.get());
     }
 
@@ -631,10 +555,6 @@ abstract class AbstractAdminApiServerContract {
                 policy, leaderHint, /* auditLog */ null, /* replayGuard */ null));
     }
 
-    // ------------------------------------------------------------------
-    // Strong-read served linearizably on the leader
-    // ------------------------------------------------------------------
-
     @Test
     void leaderServesStrongReadKeyLinearizably() throws Exception {
         VersionedConfigStore store = seededStore();
@@ -642,17 +562,13 @@ abstract class AbstractAdminApiServerContract {
         int port = startStrong(store, readService(store, isLeader),
                 StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1));
 
-        // No consistency param: a strong-read key is ALWAYS linearizable.
+        // No consistency param: a strong-read key is always linearizable.
         HttpResponse<String> resp = get(port, "/v1/config/secure/killswitch");
         assertEquals(200, resp.statusCode());
         assertEquals("DENY", resp.body());
         assertEquals("linearizable", resp.headers().firstValue("X-Consistency").orElse(""));
         assertEquals("true", resp.headers().firstValue("X-Strong-Read").orElse(""));
     }
-
-    // ------------------------------------------------------------------
-    // Fail-closed on a follower / partitioned leader  (the core INV-1 case)
-    // ------------------------------------------------------------------
 
     @Test
     void followerFailsClosedForStrongReadKeyNeverServesStale() throws Exception {
@@ -663,7 +579,6 @@ abstract class AbstractAdminApiServerContract {
 
         HttpResponse<String> resp = get(port, "/v1/config/secure/killswitch");
 
-        // 503 fail-closed, NOT the stale local "DENY" with 200.
         assertEquals(503, resp.statusCode(),
                 "INV-1: a strong-read key on a non-leader must DENY, not serve local state");
         assertNotEquals("DENY", resp.body(),
@@ -676,17 +591,15 @@ abstract class AbstractAdminApiServerContract {
 
     @Test
     void leaderThatLosesConfirmationFailsClosed() throws Exception {
-        // Model a partitioned leader: it believes it is leader but ReadIndex
-        // cannot confirm quorum, so confirmLeadership() flips to false.
+        // Models a partitioned leader: it believes it is leader but ReadIndex cannot confirm
+        // quorum, so confirmLeadership() flips to false.
         VersionedConfigStore store = seededStore();
         AtomicBoolean confirmable = new AtomicBoolean(true);
         int port = startStrong(store, readService(store, confirmable),
                 StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(2));
 
-        // Confirmable: served linearizably.
         assertEquals(200, get(port, "/v1/config/secure/killswitch").statusCode());
 
-        // ReadIndex can no longer confirm leadership -> fail closed.
         confirmable.set(false);
         HttpResponse<String> resp = get(port, "/v1/config/secure/killswitch");
         assertEquals(503, resp.statusCode());
@@ -696,8 +609,6 @@ abstract class AbstractAdminApiServerContract {
 
     @Test
     void strongReadKeyIgnoresExplicitStaleRequest() throws Exception {
-        // Even if the client explicitly asks for stale, a strong-read key on a
-        // follower must still fail closed - the requested consistency is ignored.
         VersionedConfigStore store = seededStore();
         AtomicBoolean isLeader = new AtomicBoolean(false);
         int port = startStrong(store, readService(store, isLeader),
@@ -711,8 +622,8 @@ abstract class AbstractAdminApiServerContract {
 
     @Test
     void failsClosedWhenNoLinearizableReadPathConfigured() throws Exception {
-        // readService == null (stale-only node): a strong-read key has no safe
-        // answer and must fail closed rather than fall through to the store.
+        // readService == null (a stale-only node): a strong-read key has no safe answer and must
+        // fail closed rather than fall through to the store.
         VersionedConfigStore store = seededStore();
         int port = startStrong(store, /* readService */ null,
                 StrongReadPolicy.defaultPolicy(), (scope, key) -> null);
@@ -723,15 +634,10 @@ abstract class AbstractAdminApiServerContract {
         assertNotEquals("DENY", resp.body());
     }
 
-    // ------------------------------------------------------------------
-    // Ordinary (non-strong) key: stale serving on a follower is STILL allowed
-    // ------------------------------------------------------------------
-
     @Test
     void ordinaryKeyOnFollowerStillServesStale() throws Exception {
-        // The fail-closed contract applies ONLY to strong-read keys. An ordinary
-        // key on a follower must keep serving its bounded-stale local copy - the
-        // fix must not turn every follower read into a denial.
+        // The fail-closed contract applies only to strong-read keys; an ordinary key on a follower
+        // must keep serving its bounded-stale local copy, not turn every follower read into a denial.
         VersionedConfigStore store = seededStore();
         AtomicBoolean isLeader = new AtomicBoolean(false);
         int port = startStrong(store, readService(store, isLeader),
@@ -744,27 +650,22 @@ abstract class AbstractAdminApiServerContract {
         assertTrue(resp.headers().firstValue("X-Strong-Read").isEmpty());
     }
 
-    // ------------------------------------------------------------------
-    // Encoded-key bypass resistance.
-    //
-    // The strong-read classification keys off the SAME percent-decoded path
-    // (getRequestURI().getPath()) that resolves the value, so the classification
-    // key is structurally identical to the store-resolution key - a strong key's
-    // value cannot be read under a non-strong classification by encoding tricks.
-    // These tests LOCK that decode-before-check property against a future change
-    // (e.g. switching to getRawPath()/normalize/toLowerCase) by pinning the
-    // classification for each evasion vector. We assert via the OBSERVABLE
-    // behavior (fail-closed on a follower), not internals, so the test survives
-    // refactors but still catches a real bypass. C6: these MUST pass on the Netty
-    // and NIO subclasses too - both adapters build new URI(request.uri()), so the
-    // percent-decoded path (and thus the classification) is byte-identical.
-    // ------------------------------------------------------------------
+    // Encoded-key bypass resistance. The strong-read classification keys off the SAME
+    // percent-decoded path (getRequestURI().getPath()) that resolves the value, so the
+    // classification key is structurally identical to the store-resolution key - a strong key's
+    // value cannot be read under a non-strong classification via encoding tricks. These tests lock
+    // that decode-before-check property against a future change (e.g. switching to
+    // getRawPath()/normalize/toLowerCase) by pinning the classification for each evasion vector.
+    // They assert via the observable behavior (fail-closed on a follower), not internals, so they
+    // survive refactors but still catch a real bypass; both the Netty and NIO adapters build
+    // new URI(request.uri()), so the percent-decoded path is byte-identical across transports and
+    // these must pass there too.
 
     @Test
     void percentEncodedPrefixIsClassifiedStrongAndFailsClosed() throws Exception {
-        // %73 == 's': "/v1/config/%73ecure/killswitch" decodes to "secure/killswitch".
-        // The decode happens BEFORE the strong-read check, so this is still a strong
-        // key and a follower must fail closed - NOT serve the stale local DENY.
+        // %73 == 's': "/v1/config/%73ecure/killswitch" decodes to "secure/killswitch". The decode
+        // happens before the strong-read check, so this is still a strong key and a follower must
+        // fail closed - not serve the stale local DENY.
         VersionedConfigStore store = seededStore();
         AtomicBoolean isLeader = new AtomicBoolean(false);
         int port = startStrong(store, readService(store, isLeader),
@@ -845,13 +746,9 @@ abstract class AbstractAdminApiServerContract {
         assertEquals("on", resp.body(), "the query string must not redirect to the strong key's value");
     }
 
-    // =======================================================================
-    // Section 5 - C7: the /metrics Bearer gate. The incumbent proved
-    // this only on a direct JDK server (ConfigdServerTest#find0055); production
-    // has cut over to NettyHttpApiServer, so it must hold on Netty + NIO too.
-    // The handler's /metrics gate checks the authInterceptor ONLY (no ACL), so
-    // any VALID token is 200 regardless of grants.
-    // =======================================================================
+    // The /metrics Bearer gate must hold on Netty and NIO, not just a direct JDK server. The
+    // handler's /metrics gate checks the authInterceptor only (no ACL), so any valid token is 200
+    // regardless of grants.
 
     /** Spec for the metrics gate: the two-principal authInterceptor, no ACL, a metrics-bearing exporter. */
     private int startMetricsGate() throws Exception {
@@ -864,12 +761,11 @@ abstract class AbstractAdminApiServerContract {
 
     @Test
     void metricsRequiresBearerTokenWhenAuthConfigured() throws Exception {
-        // F-0055: with auth configured, an unauthenticated scrape leaks the exposition (a
-        // reconnaissance surface), so /metrics must 401 + advertise Bearer. This is authentication
-        // (no ACL for scraping), so any valid token is then accepted.
+        // With auth configured, an unauthenticated scrape leaks the exposition (a reconnaissance
+        // surface), so /metrics must 401 + advertise Bearer; any valid token is then accepted since
+        // this gate checks authentication only, not ACL.
         int port = startMetricsGate();
 
-        // No Authorization header -> 401 + WWW-Authenticate: Bearer.
         HttpResponse<String> noTok = client.send(HttpRequest.newBuilder()
                         .uri(URI.create("http://127.0.0.1:" + port + "/metrics")).GET().build(),
                 HttpResponse.BodyHandlers.ofString());
@@ -877,7 +773,6 @@ abstract class AbstractAdminApiServerContract {
         assertEquals("Bearer", noTok.headers().firstValue("WWW-Authenticate").orElse(null),
                 "a 401 MUST carry a WWW-Authenticate: Bearer challenge (RFC 7235 §3.1)");
 
-        // A valid token -> 200 + the Prometheus exposition (the gate checks auth only, not ACL).
         HttpResponse<String> authed = client.send(HttpRequest.newBuilder()
                         .uri(URI.create("http://127.0.0.1:" + port + "/metrics"))
                         .header("Authorization", "Bearer good-reader").GET().build(),
@@ -887,11 +782,8 @@ abstract class AbstractAdminApiServerContract {
                 "the metrics exposition is text/plain: " + authed.headers().firstValue("Content-Type").orElse(""));
     }
 
-    // =======================================================================
-    // Section 6 - C9: overloaded write -> 429 + Retry-After.
-    // The section 11 write-overload contract: a bounded-queue 429 carrying a Retry-After
-    // backoff. Modelled by a proposer that returns ProposeCommitResult.Overloaded.
-    // =======================================================================
+    // The write-overload contract: a bounded-queue 429 carrying a Retry-After backoff, modelled by
+    // a proposer that returns ProposeCommitResult.Overloaded.
 
     /** A write service whose proposer always reports backpressure (Overloaded). */
     private static ConfigWriteService overloadedWriteService() {
@@ -908,22 +800,17 @@ abstract class AbstractAdminApiServerContract {
                 store, overloadedWriteService(), /* readService */ null, authInterceptor(), aclService(),
                 StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null));
 
-        // Authorized writer, non-empty body, but the proposer is overloaded -> 429 + Retry-After: 1.
         HttpResponse<String> put = send(port, "PUT", "/v1/config/app/feature", "good-writer", "off");
         assertEquals(429, put.statusCode(), "a backpressured write must be rejected with 429 Overloaded");
         assertEquals("1", put.headers().firstValue("Retry-After").orElse(null),
                 "the 429 MUST carry a Retry-After backoff signal (§11 write-overload contract)");
     }
 
-    // =======================================================================
-    // Section 7 - C10: method 405. An unsupported method on the config endpoint,
-    // and a non-GET on a fixed endpoint, are both 405 Method Not Allowed.
-    // =======================================================================
-
     @Test
     void unsupportedMethodOnConfigEndpointIs405() throws Exception {
         int port = start(authSpec());
-        // PATCH is not GET/PUT/DELETE -> the config() switch default -> 405 (even for a valid writer).
+        // PATCH is not GET/PUT/DELETE, so it falls through the config() switch's default -> 405,
+        // even for a valid writer.
         HttpResponse<String> patch = send(port, "PATCH", "/v1/config/app/feature", "good-writer", "x");
         assertEquals(405, patch.statusCode(), "an unsupported method on /v1/config/{key} must be 405");
     }
@@ -931,23 +818,18 @@ abstract class AbstractAdminApiServerContract {
     @Test
     void nonGetOnFixedEndpointIs405() throws Exception {
         int port = start(authSpec());
-        // A fixed health endpoint is GET-only -> a POST is 405.
         HttpResponse<String> post = send(port, "POST", "/health/live", "good-writer", "x");
         assertEquals(405, post.statusCode(), "a non-GET on a fixed endpoint (/health/live) must be 405");
     }
 
-    // =======================================================================
-    // Section 8 - C11: server-side TLS. Exercises the Netty SslHandler path and
-    // regression-proves the JDK HttpsServer path: a server SSLContext (self-signed
-    // cert) is passed via ServerSpec.sslContext (the JDK adapter wraps it in an
-    // HttpsServer; the Netty adapter wraps it in a server-mode SslHandler - both
-    // server-side, no client auth). A trusting client GETs the PUBLIC /health/live
-    // over HTTPS -> 200. The keystore/truststore are generated ONCE per subclass
-    // (@BeforeAll runs once per concrete test container in JUnit 5) via the SAME
-    // keytool fixture the repo uses (NOT io.netty SelfSignedCertificate, which has
-    // JDK-25 module-access issues). The cert carries a SAN for 127.0.0.1 so the JDK
-    // HttpClient's default HTTPS endpoint identification succeeds.
-    // =======================================================================
+    // Server-side TLS: exercises the Netty SslHandler path and the JDK HttpsServer path. A server
+    // SSLContext (self-signed cert) is passed via ServerSpec.sslContext (the JDK adapter wraps it in
+    // an HttpsServer; the Netty adapter wraps it in a server-mode SslHandler - both server-side, no
+    // client auth). A trusting client GETs the public /health/live over HTTPS -> 200. The
+    // keystore/truststore are generated once per subclass (@BeforeAll runs once per concrete test
+    // container in JUnit 5) via keytool rather than io.netty's SelfSignedCertificate, which has
+    // JDK-25 module-access issues. The cert carries a SAN for 127.0.0.1 so the JDK HttpClient's
+    // default HTTPS endpoint identification succeeds.
 
     private static final char[] TLS_PASS = "changeit".toCharArray();
     private static Path tlsFixtureDir;
@@ -961,7 +843,7 @@ abstract class AbstractAdminApiServerContract {
         tlsTrustStore = tlsFixtureDir.resolve("server-ts.p12");
         Path serverCert = tlsFixtureDir.resolve("server.pem");
         // EC keypair, CN=localhost + SAN dns:localhost,ip:127.0.0.1 so HTTPS hostname
-        // verification of 127.0.0.1 passes (the repo's FanOutServerMtlsTest pattern).
+        // verification of 127.0.0.1 passes.
         runKeytool("keytool", "-genkeypair", "-alias", "server",
                 "-keyalg", "EC", "-groupname", "secp256r1",
                 "-sigalg", "SHA256withECDSA", "-validity", "1",
@@ -1049,17 +931,14 @@ abstract class AbstractAdminApiServerContract {
         assertEquals(0, rc, "keytool failed: " + String.join(" ", command));
     }
 
-    // =======================================================================
-    // Section 9 - ADMIN gate over real HTTP.
-    //
-    // A key under `_acl/` (or `_system/`) requires ADMIN for EVERY method (closing both policy MUTATION and
-    // DISCLOSURE), fail-closed, and byte-identical in production (only root touches _acl/, and root holds
-    // ADMIN). The gate DECISION is the handler's, but the decode-before-gate property rides each adapter's
-    // `new URI(request.uri())` - so a regression in either adapter's URI handling surfaces here on all three
-    // transports. The percent-decoding evasion vectors (%5Facl/, _acl%2F, _acl/../) are sent VERBATIM via
-    // sendRaw so the encoded bytes reach the server unmodified and are decoded by the SAME path the
-    // strong-read C6 vectors rely on. Write-time validation rejects malformed _acl/ policy with a 400.
-    // =======================================================================
+    // ADMIN gate over real HTTP: a key under `_acl/` (or `_system/`) requires ADMIN for every method
+    // (closing both policy mutation and disclosure), fail-closed, and byte-identical in production
+    // (only root touches _acl/, and root holds ADMIN). The gate decision is the handler's, but the
+    // decode-before-gate property rides each adapter's `new URI(request.uri())`, so a regression in
+    // either adapter's URI handling surfaces here on all three transports. The percent-decoding
+    // evasion vectors (%5Facl/, _acl%2F, _acl/../) are sent verbatim via sendRaw so the encoded bytes
+    // reach the server unmodified and are decoded by the same path the strong-read evasion vectors
+    // rely on. Write-time validation rejects malformed _acl/ policy with a 400.
 
     /** root -> allOf (break-glass); admin -> ADMIN on `_acl/`; writer -> broad WRITE but NOT ADMIN. */
     private static AuthInterceptor gateAuthInterceptor() {
@@ -1106,7 +985,6 @@ abstract class AbstractAdminApiServerContract {
     @Test
     void reservedPrefixRequiresAdminForEveryMethod() throws Exception {
         int port = startGate();
-        // writerP has broad WRITE but no ADMIN: every method on _acl/ is 403 (mutation AND disclosure).
         assertEquals(403, send(port, "GET", "/v1/config/_acl/roles/seed", "writer", null).statusCode(),
                 "a non-ADMIN GET of _acl/ must be 403 (policy DISCLOSURE closed)");
         assertEquals(403, send(port, "PUT", "/v1/config/_acl/roles/x", "writer", "allow READ app.").statusCode(),
@@ -1131,7 +1009,6 @@ abstract class AbstractAdminApiServerContract {
     @Test
     void writeTimeValidationRejectsMalformedReservedPolicyOverHttp() throws Exception {
         int port = startGate();
-        // adminP is authorized (ADMIN) but the body is malformed policy => 400 at write-time (pre-commit).
         assertEquals(400, send(port, "PUT", "/v1/config/_acl/roles/x", "admin", "allow NOPE app.").statusCode(),
                 "a malformed _acl/ policy body must be rejected 400 even for an ADMIN principal");
         assertEquals(400, send(port, "PUT", "/v1/config/_acl/roles/admin", "admin", "allow READ app.").statusCode(),
@@ -1141,8 +1018,8 @@ abstract class AbstractAdminApiServerContract {
     @Test
     void percentDecodingEvasionVectorsAreStillAdminGated() throws Exception {
         int port = startGate();
-        // Each decodes to an `_acl/` key BEFORE the gate (the adapter's new URI(...).getPath() decodes), so a
-        // non-ADMIN writer is still 403 - the gate keys off the decoded key, exactly like the store/loader.
+        // Each decodes to an `_acl/` key before the gate (the adapter's new URI(...).getPath() decodes it),
+        // so a non-ADMIN writer is still 403 - the gate keys off the decoded key, exactly like the store.
         assertEquals(403, sendRaw(port, "PUT", "/v1/config/%5Facl/roles/x", "writer", "v").statusCode(),
                 "%5Facl/ decodes to _acl/ → ADMIN-gated");
         assertEquals(403, sendRaw(port, "PUT", "/v1/config/_acl%2Froles/x", "writer", "v").statusCode(),
@@ -1153,8 +1030,9 @@ abstract class AbstractAdminApiServerContract {
 
     @Test
     void reservedWriteIsRefusedWhenAuthDisabled() throws Exception {
-        // Auth + ACL off (the non-production mode): an _acl/ write is refused (the bring-up poison footgun);
-        // an ordinary write still commits (auth-off is otherwise fully open).
+        // With auth + ACL off (the non-production mode), an _acl/ write is refused even though an
+        // ordinary write still commits (auth-off is otherwise fully open) - closing the bring-up
+        // footgun of silently poisoning policy before auth is configured.
         VersionedConfigStore store = new VersionedConfigStore();
         MetricsRegistry registry = new MetricsRegistry();
         int port = start(new ServerSpec(null, new HealthService(), new PrometheusExporter(registry),

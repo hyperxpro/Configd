@@ -12,14 +12,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Verifies that {@code RaftNode.becomeFollower} clears the pending ReadIndex state on
- * step-down ({@code readIndexState.clear()}). The untested gap was the
- * removal of that {@code clear()}: with it gone, a linearizable
- * read that was CONFIRMED under an OLD leadership term survives the step-down and
- * is served as "ready" again after the node RE-acquires leadership at a higher
- * term - a cross-term stale read (the read was confirmed against state/authority
- * that no longer holds). The per-call leadership re-check in {@code isReadReady}
- * masks the bug while the node is a follower, so the removal is only observable
- * across a step-down -> re-election cycle while the same read id is still held.
+ * step-down ({@code readIndexState.clear()}). Without it, a linearizable read that was
+ * CONFIRMED under an OLD leadership term survives the step-down and is served as "ready"
+ * again after the node RE-acquires leadership at a higher term - a cross-term stale read
+ * (the read was confirmed against state/authority that no longer holds). The per-call
+ * leadership re-check in {@code isReadReady} masks the bug while the node is a follower,
+ * so a missing clear is only observable across a step-down -> re-election cycle while the
+ * same read id is still held.
  */
 class ReadIndexStepDownClearTest {
 

@@ -27,7 +27,6 @@ class BackupRestoreRoundTripTest {
 
     @Test
     void snapshotRestoredIntoFreshClusterIsStateEqual() {
-        // ---- original cluster: apply a mix of put / overwrite / delete -------------------
         VersionedConfigStore origin = new VersionedConfigStore();
         ConfigStateMachine source = new ConfigStateMachine(origin, Clock.system());
         long idx = 0;
@@ -38,23 +37,19 @@ class BackupRestoreRoundTripTest {
         source.apply(++idx, 1, CommandCodec.encodeDelete("svc/c"));             // delete
         long sourceVersion = origin.currentVersion();
 
-        // ---- back up: the snapshot IS the backup artifact -------------------------------
         byte[] backup = source.snapshot();
         assertTrue(backup.length >= 12, "snapshot must carry the header + entries");
 
-        // ---- restore into a FRESH, empty state machine (fresh-cluster bootstrap) --------
         VersionedConfigStore restoredStore = new VersionedConfigStore();
         ConfigStateMachine restored = new ConfigStateMachine(restoredStore, Clock.system());
         restored.restoreSnapshot(backup);
 
-        // ---- state equality: key-for-key, plus the delete and the applied version -------
         assertArrayEquals(b("alpha"), restoredStore.get("svc/a").value(), "svc/a survives restore");
         assertArrayEquals(b("beta-1"), restoredStore.get("svc/b").value(), "overwrite wins after restore");
         assertFalse(restoredStore.get("svc/c").found(), "deleted key must NOT resurrect on restore");
         assertEquals(sourceVersion, restoredStore.currentVersion(),
                 "restored applied version must equal the snapshot's version");
 
-        // ---- and the restored cluster keeps serving writes from the restored version ----
         long next = restored.apply(sourceVersion + 1, 2, CommandCodec.encodePut("svc/d", b("delta")));
         assertEquals(sourceVersion + 1, next, "restored SM continues the version sequence");
         assertArrayEquals(b("delta"), restoredStore.get("svc/d").value());

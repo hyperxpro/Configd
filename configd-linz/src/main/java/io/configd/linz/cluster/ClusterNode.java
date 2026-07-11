@@ -30,7 +30,7 @@ public final class ClusterNode {
     private final int raftPort;
     private final int apiPort;
     private final Path dataDir;
-    private final Path signingKeyFile;      // the node's Ed25519 signing key, OUTSIDE dataDir (D-1)
+    private final Path signingKeyFile;      // the node's Ed25519 signing key, OUTSIDE dataDir
     private final String peersCsv;          // other node ids, comma-separated
     private final String peerAddressesCsv;  // id=host:port,... for ALL nodes
     private final Path jar;
@@ -152,9 +152,9 @@ public final class ClusterNode {
                 "-jar", jar.toString(),
                 "--node-id", Integer.toString(id),
                 "--data-dir", dataDir.toString(),
-                // Mount the signing key OUTSIDE the data dir so the server's D-1 co-location guard
-                // (PA-2021) is SATISFIED, not disabled. The same stable path is reused on restart()
-                // after kill -9 so WAL recovery keeps a valid at-rest integrity chain.
+                // Mount the signing key OUTSIDE the data dir so the server's co-location guard is
+                // SATISFIED, not disabled. The same stable path is reused on restart() after kill -9
+                // so WAL recovery keeps a valid at-rest integrity chain.
                 "--signing-key-file", signingKeyFile.toString(),
                 "--peers", peersCsv,
                 "--bind-address", "127.0.0.1",

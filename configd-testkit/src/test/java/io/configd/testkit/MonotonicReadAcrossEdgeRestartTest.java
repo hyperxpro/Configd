@@ -19,8 +19,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Per-session monotonic reads ACROSS edge restart (the read/cursor half is the edge client; the
- * re-bootstrap path is C3). An edge is a cache: a crash loses the store. A client that holds a
- * cursor at version V, after the edge crashes + restarts + re-bootstraps, must have its reads
+ * re-bootstrap path is the recovery path). An edge is a cache: a crash loses the store. A client
+ * that holds a cursor at version V, after the edge crashes + restarts + re-bootstraps, must have its reads
  * with cursor V <b>refused</b> (NOT_FOUND via the monotonic_read seam) until the rebuilt
  * store catches up PAST V - never serving pre-crash-stale data.
  *

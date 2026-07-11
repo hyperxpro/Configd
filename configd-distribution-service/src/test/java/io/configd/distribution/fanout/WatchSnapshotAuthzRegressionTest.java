@@ -26,21 +26,21 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Regression tests for the watch catch-up <b>snapshot</b> authorization fixes (redteam F1/F2):
- * the snapshot path is the one server-to-client path the per-{@code NOTIFY} filter does not cover,
- * so left unfixed a narrow watch received the whole store on its first snapshot - a read-authz bypass
- * around the subscription gate (W7-4 / W5-10). The fixes:
+ * Regression tests for the watch catch-up snapshot authorization fixes: the snapshot path is the
+ * one server-to-client path the per-{@code NOTIFY} filter does not cover, so left unfixed a narrow
+ * watch received the whole store on its first snapshot - a read-authz bypass around the
+ * subscription gate. The fixes this pins:
  * <ul>
- *   <li><b>W3-4 (F1):</b> a from-now watch ({@code cursor==0}, no {@code with_initial_snapshot})
- *       TAILs from the frontier - it is NOT put in {@code SNAPSHOT_FIRST}, so it receives <b>no</b>
- *       catch-up snapshot at all (the common-path leak is eliminated outright).</li>
- *   <li><b>Source filtering (F1):</b> when a snapshot IS delivered ({@code with_initial_snapshot},
- *       or a resume behind the buffer), {@link FilteringReplaySource} filters it to the watch's
- *       target, so a narrow watch never receives a key it could not read; FULL /
- *       {@code full_chain_verify} (root-authorized) pass through whole.</li>
- *   <li><b>Fixed owner tag (F2):</b> a connection-level snapshot is tagged to the FIXED drain-owner
- *       captured when the drain starts, not {@code firstLiveWatchId()} per-frame - so an owner that
- *       cancels mid-transfer cannot mis-attribute its snapshot to a {@code TAIL}-acked sibling.</li>
+ *   <li>A from-now watch ({@code cursor==0}, no {@code with_initial_snapshot}) TAILs from the
+ *       frontier - it is NOT put in {@code SNAPSHOT_FIRST}, so it receives <b>no</b> catch-up
+ *       snapshot at all (the common-path leak is eliminated outright).</li>
+ *   <li>When a snapshot IS delivered ({@code with_initial_snapshot}, or a resume behind the
+ *       buffer), {@link FilteringReplaySource} filters it to the watch's target, so a narrow watch
+ *       never receives a key it could not read; FULL / {@code full_chain_verify} (root-authorized)
+ *       pass through whole.</li>
+ *   <li>A connection-level snapshot is tagged to the fixed drain-owner captured when the drain
+ *       starts, not {@code firstLiveWatchId()} per-frame - so an owner that cancels mid-transfer
+ *       cannot mis-attribute its snapshot to a {@code TAIL}-acked sibling.</li>
  * </ul>
  */
 class WatchSnapshotAuthzRegressionTest {
@@ -71,8 +71,8 @@ class WatchSnapshotAuthzRegressionTest {
 
     @Test
     void fromNowNarrowWatchTailsWithNoSnapshot() {
-        // W3-4 (F1): a fresh from-now KEY watch on a non-empty store TAILs - no catch-up snapshot,
-        // so there is no whole-store exposure path at all.
+        // A fresh from-now KEY watch on a non-empty store TAILs - no catch-up snapshot, so there is
+        // no whole-store exposure path at all.
         driver = newDriver(snapshot(1L, "/k/a", "public", "/secret/x", "TOPSECRET-cross-tenant"));
         feed(new EdgeFrame.WatchCreate(1L, 0, EdgeFrame.WATCH_TARGET_KEY,
                 "/k/a".getBytes(StandardCharsets.UTF_8), WatchCursor.fromNow(), 0));
@@ -88,8 +88,8 @@ class WatchSnapshotAuthzRegressionTest {
 
     @Test
     void withInitialSnapshotNarrowWatchGetsTargetFilteredSnapshotNotWholeStore() {
-        // with_initial_snapshot IS the snapshot-then-tail path (W5-4a); the snapshot MUST be filtered
-        // to the watch's target (W5-10 / W7-4). A /k/a-only watch must NOT receive /secret/x.
+        // with_initial_snapshot is the snapshot-then-tail path; the snapshot must be filtered to the
+        // watch's target. A /k/a-only watch must not receive /secret/x.
         driver = newDriver(snapshot(1L, "/k/a", "public-value", "/secret/x", "TOPSECRET-cross-tenant"));
         feed(new EdgeFrame.WatchCreate(1L, 0, EdgeFrame.WATCH_TARGET_KEY,
                 "/k/a".getBytes(StandardCharsets.UTF_8), WatchCursor.fromNow(),
@@ -112,7 +112,7 @@ class WatchSnapshotAuthzRegressionTest {
 
     @Test
     void fullWatchWithInitialSnapshotReceivesWholeStore() {
-        // FULL is root-authorized (W7-3) => NO filtering; it legitimately receives every key.
+        // FULL is root-authorized, so it is never filtered; it legitimately receives every key.
         driver = newDriver(snapshot(1L, "/k/a", "public", "/secret/x", "secret"));
         feed(new EdgeFrame.WatchCreate(1L, 0, EdgeFrame.WATCH_TARGET_FULL,
                 new byte[0], WatchCursor.fromNow(), EdgeFrame.WATCH_FLAG_WITH_INITIAL_SNAPSHOT));
@@ -125,9 +125,9 @@ class WatchSnapshotAuthzRegressionTest {
 
     @Test
     void snapshotStaysTaggedToTheDrainOwnerWhenItCancelsMidTransfer() {
-        // F2: A (with_initial_snapshot) owns the drain + SNAPSHOT_FIRST; B (KEY) rides TAIL. If the
-        // owner A cancels while its snapshot is paused on backpressure, the resumed WATCH_SNAPSHOT_*
-        // stays tagged to A (the FIXED captured owner), never mis-attributed to TAIL-acked sibling B.
+        // A (with_initial_snapshot) owns the drain and SNAPSHOT_FIRST; B (KEY) rides TAIL. If owner A
+        // cancels while its snapshot is paused on backpressure, the resumed WATCH_SNAPSHOT_* stays
+        // tagged to A (the captured owner), never mis-attributed to the TAIL-acked sibling B.
         driver = newDriver(snapshot(1L, "/k/a", "pub", "/secret/x", "TOPSECRET"));
 
         feed(new EdgeFrame.WatchCreate(1L, 0, EdgeFrame.WATCH_TARGET_FULL,

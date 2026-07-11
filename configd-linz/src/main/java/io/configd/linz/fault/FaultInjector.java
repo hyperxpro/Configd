@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit;
  *       on the raft {@code --dport}: a fraction of inbound frames vanish, forcing TCP
  *       retransmits, heartbeat jitter and election churn on an otherwise-connected node.
  *       This is the packet-loss/dribble nemesis. {@code DROP} (not {@code REJECT}) is
- *       correct here because we WANT silent loss; the RR-002 bounded connect keeps a
+ *       correct here because we WANT silent loss; a bounded connect timeout keeps a
  *       dropped SYN from stalling the leader's tick loop.</li>
  * </ul>
  *
@@ -65,7 +65,7 @@ public final class FaultInjector implements AutoCloseable {
         this.dryRun = dryRun;
     }
 
-    // ---- full isolation (symmetric listener-port cut) ----
+    // Full isolation (symmetric listener-port cut).
 
     /** Cuts a node's inbound Raft socket (a network partition isolating it). Idempotent. */
     public void isolate(ClusterNode node) throws IOException, InterruptedException {
@@ -79,7 +79,7 @@ public final class FaultInjector implements AutoCloseable {
         remove(rejectSpec("INPUT", node.raftPort()));
     }
 
-    // ---- probabilistic packet loss (dribble) ----
+    // Probabilistic packet loss (dribble).
 
     /**
      * Randomly drops {@code lossPercent}% of inbound frames to a node's Raft port using
@@ -95,7 +95,7 @@ public final class FaultInjector implements AutoCloseable {
         remove(lossSpec("INPUT", node.raftPort(), lossPercent));
     }
 
-    // ---- teardown ----
+    // Teardown.
 
     /** Removes every rule still active (teardown). Best-effort; never throws. */
     public void healAll() {
@@ -117,7 +117,7 @@ public final class FaultInjector implements AutoCloseable {
         healAll();
     }
 
-    // ---- rule specs (the match predicate + target, without the -I/-D verb) ----
+    // Rule specs: the match predicate + target, without the -I/-D verb.
 
     private static List<String> rejectSpec(String chain, int port) {
         return List.of(chain, "-p", "tcp", "--dport", Integer.toString(port),
@@ -132,7 +132,7 @@ public final class FaultInjector implements AutoCloseable {
                 "-m", "statistic", "--mode", "random", "--probability", prob, "-j", "DROP");
     }
 
-    // ---- iptables plumbing ----
+    // iptables plumbing.
 
     private synchronized void insert(List<String> spec) throws IOException, InterruptedException {
         Rule r = new Rule(spec);

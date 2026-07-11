@@ -28,20 +28,20 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * The client-side watch state machine over one {@code 0x02} edge connection (§02) — one {@code watch_id},
+ * The client-side watch state machine over one {@code 0x02} edge connection — one {@code watch_id},
  * potentially multi-shard (the server aggregating endpoint fans a PREFIX/FULL watch across all shards over
- * this one connection, W4-5). It implements the driver merge (W4-2): dedup by {@code (gid, S)} (drop a
+ * this one connection). It implements the driver merge: dedup by {@code (gid, S)} (drop a
  * {@code WATCH_EVENT} iff {@code S ≤ cursor[gid]}), advance the per-shard cursor vector, advance idle
- * components on {@code WATCH_PROGRESS} bookmarks (W4-4, component-wise max-merge), and present the events as a
- * per-key/per-shard-ordered stream (NEVER a cross-shard order, W6-2). Catch-up reuses {@link SnapshotReassembler}
- * keyed per {@code gid} (only the lagging shard snapshots; siblings keep tailing, W6-3). {@code full_chain_verify}
- * receives the verbatim signed chain as {@code NOTIFY} and verifies + filters locally (W8-4).
+ * components on {@code WATCH_PROGRESS} bookmarks (component-wise max-merge), and present the events as a
+ * per-key/per-shard-ordered stream (NEVER a cross-shard order). Catch-up reuses {@link SnapshotReassembler}
+ * keyed per {@code gid} (only the lagging shard snapshots; siblings keep tailing). {@code full_chain_verify}
+ * receives the verbatim signed chain as {@code NOTIFY} and verifies + filters locally.
  *
  * <p>Delivery is a single-subscriber {@link Flow.Publisher Flow.Publisher&lt;WatchEvent&gt;} with {@code request(n)}
- * backpressure gating reads (a slow subscriber parks the reader → the connection-level governor demotes it —
- * per-watch flow isolation is v2, W8-6); {@code CURSOR_ACK} is the connection-level scalar (the max applied
- * {@code S} across shards — at v1 static-N this is the single shard's S, W8-6). A blocking {@link #awaitCreated}
- * + {@code poll} facade serves the reference/conformance driver.
+ * backpressure gating reads (a slow subscriber parks the reader → the connection-level governor demotes it;
+ * there is no per-watch flow isolation yet); {@code CURSOR_ACK} is the connection-level scalar (the max
+ * applied {@code S} across shards — with a single static shard this is just that shard's S). A blocking
+ * {@link #awaitCreated} + {@code poll} facade serves the reference/conformance driver.
  */
 public final class WatchSession implements InboundFrameHandler, Flow.Publisher<WatchEvent> {
 
@@ -56,7 +56,7 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
 
     private final AtomicLong watchIdSeq = new AtomicLong(1);
     /** Mints the next watch_id. Own sequence when dedicated; the multiplex's shared sequence when shared, so
-     * watch_ids stay UNIQUE per connection across all hosted watches (W2-8 no-reuse). */
+     * watch_ids stay UNIQUE per connection across all hosted watches (no reuse). */
     private volatile java.util.function.LongSupplier watchIdMinter = watchIdSeq::getAndIncrement;
     private volatile long watchId;
     private volatile EdgeConnection connection;
@@ -64,8 +64,8 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
 
     // Termination routing. On a DEDICATED connection (the default) a per-watch terminal fails the whole
     // connection (its only watch) so the EdgeSession reconnect logic runs. On a SHARED connection the multiplex
-    // installs a per-watch terminator that ends only this watch and leaves the siblings streaming (W6-4), and
-    // resetCursorOnConnect forces from-now on every (re)connect (a shared drain has no independent resume, F10-1b).
+    // installs a per-watch terminator that ends only this watch and leaves the siblings streaming, and
+    // resetCursorOnConnect forces from-now on every (re)connect (a shared drain has no independent resume).
     private volatile java.util.function.Consumer<ConfigdException> onWatchTerminal = this::failConnection;
     private volatile java.util.function.LongConsumer onWatchIdAssigned = id -> {
     };
@@ -106,10 +106,6 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
         }
     }
 
-    // -----------------------------------------------------------------------
-    // public-ish surface (via the Watch handle)
-    // -----------------------------------------------------------------------
-
     /** The current live cursor vector (a snapshot). */
     public WatchCursor cursorVector() {
         return buildCursor();
@@ -123,7 +119,7 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
     /**
      * Completes exceptionally when this watch permanently ends — a per-watch reject, or its (dedicated)
      * connection giving up — and normally on {@link #close()}. Unlike a dedicated session's connection terminal,
-     * this fires for a watch terminated on a SHARED connection whose siblings keep streaming (W6-4).
+     * this fires for a watch terminated on a SHARED connection whose siblings keep streaming.
      */
     public java.util.concurrent.CompletableFuture<Void> watchTerminal() {
         return watchTerminal;
@@ -149,7 +145,7 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
         EdgeConnection c = connection;
         if (c != null) {
             try {
-                c.send(new EdgeFrame.WatchCancel(watchId), WIRE); // best-effort cancel (W5-8)
+                c.send(new EdgeFrame.WatchCancel(watchId), WIRE); // best-effort cancel
             } catch (IOException ignored) {
                 // the connection is going away anyway
             }
@@ -167,8 +163,8 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
 
     /**
      * Switches this watch to shared-connection mode: it (re)starts from-now on every (re)connect (no independent
-     * resume on a shared drain, §06 F10-1b) and routes its own terminals to {@code perWatchTerminator} — which
-     * ends only this watch and leaves the connection + sibling watches alive (W6-4) — instead of failing the
+     * resume on a shared drain) and routes its own terminals to {@code perWatchTerminator} — which
+     * ends only this watch and leaves the connection + sibling watches alive — instead of failing the
      * whole connection.
      */
     public void shareOn(java.util.function.Consumer<ConfigdException> perWatchTerminator,
@@ -190,7 +186,7 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
         failSubscriber(error);
     }
 
-    /** Re-creates this watch on the SAME connection (a shared-connection Gap/Stale re-bootstrap, W6-4). */
+    /** Re-creates this watch on the SAME connection (a shared-connection Gap/Stale re-bootstrap). */
     public void reBootstrapOnSameConnection(EdgeConnection conn) {
         forceRebootstrap = true;
         onConnected(conn);
@@ -199,10 +195,6 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
     public boolean isClosed() {
         return closed.get();
     }
-
-    // -----------------------------------------------------------------------
-    // reactive publisher
-    // -----------------------------------------------------------------------
 
     @Override
     public void subscribe(Flow.Subscriber<? super WatchEvent> sub) {
@@ -260,11 +252,7 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
         }
     }
 
-    // -----------------------------------------------------------------------
-    // connection lifecycle
-    // -----------------------------------------------------------------------
-
-    /** (Re)creates the watch on a freshly authenticated connection (F10-1a: fresh watch_id, saved cursor). */
+    /** (Re)creates the watch on a freshly authenticated connection (fresh watch_id, saved cursor). */
     public void onConnected(EdgeConnection conn) {
         this.connection = conn;
         conn.pinVersion(WIRE);
@@ -280,7 +268,7 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
             resume = WatchCursor.fromNow();
             flags |= EdgeFrame.WATCH_FLAG_WITH_INITIAL_SNAPSHOT;
         } else if (resetCursorOnConnect) {
-            // A shared-connection watch has no independent resume (F10-1b): always (re)start from-now, honoring
+            // A shared-connection watch has no independent resume: always (re)start from-now, honoring
             // the target's own flags (e.g. WITH_INITIAL_SNAPSHOT).
             cursor.clear();
             resume = WatchCursor.fromNow();
@@ -297,10 +285,6 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
         }
     }
 
-    // -----------------------------------------------------------------------
-    // inbound frames (reader thread)
-    // -----------------------------------------------------------------------
-
     @Override
     public void onFrame(EdgeFrame frame) {
         try {
@@ -313,7 +297,7 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
                 case EdgeFrame.WatchSnapshotChunk c -> reassemblerFor(c.gid()).chunk(
                         new EdgeFrame.SnapshotChunk(c.index(), c.bytes()));
                 case EdgeFrame.WatchSnapshotEnd e -> handleWatchSnapshotEnd(e);
-                case EdgeFrame.Notify n -> handleFullChainNotify(n); // full_chain_verify mode (W8-4)
+                case EdgeFrame.Notify n -> handleFullChainNotify(n); // full_chain_verify mode
                 default -> {
                     // Other frames (SUBSCRIBE_OK etc.) do not belong to the watch plane; ignore benignly.
                 }
@@ -362,12 +346,10 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
         }
     }
 
-    // -----------------------------------------------------------------------
-
     private void handleWatchCreated(EdgeFrame.WatchCreated wc) {
         for (EdgeFrame.ShardMode sm : wc.shards()) {
             cursor.putIfAbsent(sm.gid(), 0L); // record the covered shard set (from-now components at 0)
-            // A SNAPSHOT_FIRST shard will be caught up by a WATCH_SNAPSHOT_* substream (§5.8).
+            // A SNAPSHOT_FIRST shard will be caught up by a WATCH_SNAPSHOT_* substream.
         }
         if (!created.isDone()) {
             created.complete(null);
@@ -377,7 +359,7 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
     private void handleWatchEvent(EdgeFrame.WatchEvent we) {
         long known = cursor.getOrDefault(we.gid(), 0L);
         if (we.s() <= known) {
-            return; // at-least-once dedup by (gid, S) (W6-1)
+            return; // at-least-once dedup by (gid, S)
         }
         cursor.put(we.gid(), we.s());
         List<ConfigChange> changes = new ArrayList<>(we.changes().size());
@@ -392,7 +374,7 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
 
     private void handleWatchProgress(EdgeFrame.WatchProgress wp) {
         for (WatchCursor.Component c : wp.cursor().components()) {
-            cursor.merge(c.gid(), c.s(), Math::max); // advance idle components; never regress (W4-4)
+            cursor.merge(c.gid(), c.s(), Math::max); // advance idle components; never regress
         }
         ackAndPersist();
     }
@@ -421,7 +403,7 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
             ConfigDelta delta = notification.delta();
             verifier.verify(delta); // ChainVerificationException → failConnection (fail-closed)
             verifier.recordApplied(delta);
-            // Filter the verified chain to the watch target locally (W8-4); emit matching changes.
+            // Filter the verified chain to the watch target locally; emit matching changes.
             List<ConfigChange> matching = new ArrayList<>();
             for (ConfigMutation m : delta.mutations()) {
                 if (!target.matches(m.key())) {
@@ -432,7 +414,7 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
                     case ConfigMutation.Delete del -> ConfigChange.delete(del.key(), delta.toVersion());
                 });
             }
-            // The full-chain plane is single-group at v1 (gid 0); the notification seq is the applied S.
+            // The full-chain plane is single-group today (gid 0); the notification seq is the applied S.
             cursor.merge(0, notification.seq(), Math::max);
             if (!matching.isEmpty()) {
                 emit(new WatchEvent(0, notification.seq(), notification.commitTimestampMillis(), matching));
@@ -494,7 +476,7 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
         }
     }
 
-    /** Builds the wire cursor: components sorted by UNSIGNED gid ascending; empty ⇒ from-now (W3-5). */
+    /** Builds the wire cursor: components sorted by UNSIGNED gid ascending; empty ⇒ from-now. */
     private WatchCursor buildCursor() {
         List<WatchCursor.Component> components = new ArrayList<>(cursor.size());
         cursor.forEach((gid, s) -> components.add(new WatchCursor.Component(gid, s)));

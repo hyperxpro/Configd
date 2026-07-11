@@ -18,10 +18,6 @@ class ServerConfigTest {
     @TempDir
     Path tempDir;
 
-    // ========================================================================
-    // Parsing with all required arguments
-    // ========================================================================
-
     @Nested
     class AllRequiredArgs {
 
@@ -90,10 +86,6 @@ class ServerConfigTest {
         }
     }
 
-    // ========================================================================
-    // Missing required arguments
-    // ========================================================================
-
     @Nested
     class MissingRequiredArgs {
 
@@ -160,18 +152,14 @@ class ServerConfigTest {
         }
     }
 
-    // ========================================================================
-    // Default values
-    // ========================================================================
-
     @Nested
     class DefaultValues {
 
         @Test
         void defaultBindAddressIsLoopback() {
-            // B5: the default bind is loopback, not the wildcard 0.0.0.0. Binding an unauthenticated store
-            // to a public interface by default is the Redis/etcd "default-open" footgun; a real cluster
-            // sets --bind-address to a routable address on purpose.
+            // The default bind is loopback, not the wildcard 0.0.0.0: binding an unauthenticated store
+            // to a public interface by default is the classic "default-open" footgun (as seen in early
+            // Redis/etcd defaults); a real cluster sets --bind-address to a routable address on purpose.
             String[] args = {
                 "--node-id", "1",
                 "--data-dir", tempDir.toString(),
@@ -238,10 +226,6 @@ class ServerConfigTest {
         }
     }
 
-    // ========================================================================
-    // Optional arguments
-    // ========================================================================
-
     @Nested
     class OptionalArgs {
 
@@ -303,10 +287,6 @@ class ServerConfigTest {
         }
     }
 
-    // ========================================================================
-    // Invalid arguments
-    // ========================================================================
-
     @Nested
     class InvalidArgs {
 
@@ -346,10 +326,6 @@ class ServerConfigTest {
         }
     }
 
-    // ========================================================================
-    // Record equality / immutability
-    // ========================================================================
-
     @Test
     void configIsAValueType() {
         String[] args = {
@@ -365,12 +341,9 @@ class ServerConfigTest {
         assertEquals(a.hashCode(), b.hashCode());
     }
 
-    // ========================================================================
-    // ServerConfig.parsePeerAddresses was 0/15 lines. Exercise the
-    // "id=host:port,..." parser through the public parse() entry point: valid
-    // single/multi entries, surrounding whitespace, the empty case, and each
-    // malformed-input rejection branch.
-    // ========================================================================
+    // Exercises the "id=host:port,..." parser through the public parse() entry point: valid
+    // single/multi entries, surrounding whitespace, the empty case, and each malformed-input
+    // rejection branch.
 
     @Nested
     class PeerAddressParsing {
@@ -450,10 +423,6 @@ class ServerConfigTest {
                     "a non-numeric port must fail to parse");
         }
     }
-
-    // ========================================================================
-    // --edge-port
-    // ========================================================================
 
     @Nested
     class EdgePort {

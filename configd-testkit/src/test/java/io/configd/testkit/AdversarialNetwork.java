@@ -10,14 +10,13 @@ import java.util.random.RandomGenerator;
 import java.util.random.RandomGeneratorFactory;
 
 /**
- * Deterministic simulated network with the full adversarial fault set
- * (adversarial-sim-design section 2): seeded latency, drop windows, message
- * duplication, delay spikes, message reorder, and uni/bi-directional partitions.
+ * Deterministic simulated network with the full adversarial fault set: seeded latency, drop
+ * windows, message duplication, delay spikes, message reorder, and uni/bi-directional partitions.
  * <p>
  * It is a standalone network (not a subclass of the {@code final}
  * {@link SimulatedNetwork}) so the adversarial harness owns every source of
  * non-determinism. All randomness comes from a single seed-derived stream
- * ({@code mixSeed(seed, TAG_NET)}), so a run is byte-replayable by seed alone - 
+ * ({@code mixSeed(seed, TAG_NET)}), so a run is byte-replayable by seed alone -
  * the determinism invariant must continue to hold with all faults active.
  * <p>
  * <b>Determinism note.</b> Delivery is a {@link PriorityQueue} ordered first by
@@ -147,8 +146,8 @@ final class AdversarialNetwork {
     }
 
     /**
-     * Lifetime count of duplicated sends (diagnostic; the C5 dup-channel non-vacuity
-     * witness). Counting only - never consumes an RNG draw, so digests are untouched.
+     * Lifetime count of duplicated sends (diagnostic; proves the duplication path actually
+     * fires). Counting only - never consumes an RNG draw, so digests are untouched.
      */
     long dupCount() {
         return dupCount;

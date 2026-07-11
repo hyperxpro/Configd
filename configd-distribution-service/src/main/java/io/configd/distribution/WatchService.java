@@ -75,7 +75,7 @@ public final class WatchService {
         private final long id;
         private final String prefix;
         private final WatchListener listener;
-        private long cursor;  // mutable - updated in-place during dispatch
+        private long cursor;
 
         public Watch(long id, String prefix, WatchListener listener, long cursor) {
             if (id <= 0) throw new IllegalArgumentException("id must be positive: " + id);
@@ -252,10 +252,6 @@ public final class WatchService {
         return (w != null) ? w.cursor() : -1;
     }
 
-    // -----------------------------------------------------------------------
-    // Internal dispatch
-    // -----------------------------------------------------------------------
-
     private int dispatchEvent(WatchEvent event) {
         int dispatched = 0;
         Set<String> affectedKeys = event.affectedKeys();
@@ -293,12 +289,10 @@ public final class WatchService {
     private static List<ConfigMutation> filterByPrefix(
             List<ConfigMutation> mutations, String prefix, Set<String> affectedKeys) {
 
-        // Empty prefix matches all keys
         if (prefix.isEmpty()) {
             return mutations;
         }
 
-        // Quick check: does any affected key match?
         boolean anyMatch = false;
         for (String key : affectedKeys) {
             if (key.startsWith(prefix)) {
@@ -310,7 +304,6 @@ public final class WatchService {
             return List.of();
         }
 
-        // Filter individual mutations
         List<ConfigMutation> result = new ArrayList<>();
         for (ConfigMutation m : mutations) {
             String key = switch (m) {

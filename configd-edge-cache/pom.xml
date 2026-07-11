@@ -24,8 +24,8 @@
             <version>${project.version}</version>
         </dependency>
         <!--
-          F-0073: InvariantMonitor is used by StalenessTracker and
-          LocalConfigStore to emit INV-M1 / INV-S1 violations.
+          InvariantMonitor is used by StalenessTracker and LocalConfigStore to emit
+          monotonic-read / staleness-bound violations.
         -->
         <dependency>
             <groupId>io.configd</groupId>
@@ -33,13 +33,12 @@
             <version>${project.version}</version>
         </dependency>
         <!--
-          C2: EdgeClientCore consumes the C1 edge wire types (EdgeFrame,
-          EdgeSnapshotCodec, CommitNotification) from the distribution service.
-          No cycle: configd-distribution-service does NOT depend on
-          configd-edge-cache (verified — its deps are common/config-store/
-          transport/agrona/jctools only), so this edge→distribution edge is
-          acyclic. The transport-agnostic wire model carries no java.net/socket
-          types, so EdgeClientCore stays transport-free.
+          EdgeClientCore consumes the edge wire types (EdgeFrame, EdgeSnapshotCodec,
+          CommitNotification) from the distribution service. No cycle:
+          configd-distribution-service does NOT depend on configd-edge-cache (verified —
+          its deps are common/config-store/transport/agrona/jctools only), so this
+          edge→distribution edge is acyclic. The transport-agnostic wire model carries no
+          java.net/socket types, so EdgeClientCore stays transport-free.
         -->
         <dependency>
             <groupId>io.configd</groupId>
@@ -50,30 +49,29 @@
 
     <profiles>
         <!--
-          C2 (charter §4.1 / RR-087-class mutation discipline). Activated with the parent
-          `-Pmutation`. Scoped to the C2 edge data-plane classes this session built or
-          reworked so the score is not dragged down by pre-existing edge classes (RR-085
-          lesson: list targets explicitly, never a blanket package glob).
+          Mutation-testing discipline. Activated with the parent `-Pmutation`. Scoped
+          explicitly to this module's edge data-plane classes rather than a blanket package
+          glob, so the score is not dragged down by pre-existing edge classes with lower
+          coverage.
 
           targetClasses (held to 65):
-            EdgeClientCore        — the C2 transport-agnostic client session engine (NEW);
-                                    C3 added the gap/DISCONNECTED resubscribe directives +
-                                    the ADR-0040 poison wiring;
-            StalenessTracker      — the ADR-0039 frontier rework;
-            EdgeConfigClient      — the ADR-0038 storage filter + ADR-0039 frontier wiring;
-                                    C3 deleted the one-arg applyDelta (Finding 5) + servesKey;
-            PrefixStorageFilter   — the ADR-0038 storage-filter helper (NEW);
-            StrongReadKeyClass    — the shared strong-read predicate (NEW);
-            DeltaApplier          — ADR-0039 commit-timestamp offer; C3 deleted the
-                                    NO_COMMIT_TIMESTAMP local-clock fallback (Finding 5);
-            PoisonPillPolicy      — the ADR-0040 ladder (NEW, C3). PoisonPillDetector is
-                                    re-POINTED by it but its code is unchanged (its own
-                                    pre-existing tests keep covering it; not re-targeted).
+            EdgeClientCore        — the transport-agnostic client session engine, including
+                                    the gap/DISCONNECTED resubscribe directives and the
+                                    poison-pill wiring;
+            StalenessTracker      — the covered-frontier staleness measure;
+            EdgeConfigClient      — the storage filter + frontier wiring;
+            PrefixStorageFilter   — the storage-filter helper;
+            StrongReadKeyClass    — the shared strong-read predicate;
+            DeltaApplier          — the commit-timestamp-driven apply/gap logic;
+            PoisonPillPolicy      — the bounded-retry/quarantine/terminal ladder.
+                                    PoisonPillDetector is referenced by it but its own code
+                                    is unchanged, so it keeps its pre-existing tests and is
+                                    not itself a target.
 
           Pre-existing edge classes NOT raised here (LocalConfigStore, PrefixSubscription,
-          VersionCursor, EdgeMetrics) are out of this session's scope; their bars stay where
-          their own coverage put them. PIT glob `Foo*` does NOT recurse subpackages, but
-          io.configd.edge is flat, so the explicit class names suffice.
+          VersionCursor, EdgeMetrics) are out of scope; their bars stay where their own
+          coverage put them. PIT glob `Foo*` does NOT recurse subpackages, but io.configd.edge
+          is flat, so the explicit class names suffice.
         -->
         <profile>
             <id>mutation</id>

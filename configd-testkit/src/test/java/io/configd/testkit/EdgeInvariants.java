@@ -22,18 +22,17 @@ import java.util.function.IntPredicate;
  *
  * <h2>Safety invariants (throw)</h2>
  * <ul>
- *   <li><b>(a) Per-edge version monotonicity (contract section 3 INV-M1 / section 8
- *       {@code monotonic_read}).</b> Within an edge incarnation,
- *       {@link EdgeActor#currentVersion()} never decreases tick-to-tick. The
+ *   <li><b>(a) Per-edge version monotonicity ({@code monotonic_read}).</b> Within an edge
+ *       incarnation, {@link EdgeActor#currentVersion()} never decreases tick-to-tick. The
  *       read-side half - a cursor-bound read never returning a version below the
  *       cursor - is enforced by the test-mode {@code InvariantMonitor} wired into
  *       the edge's read {@code LocalConfigStore} (it throws inside
  *       {@link EdgeActor#get}). A crash resets the incarnation, after which a
  *       version drop to 0 is expected and not a violation.</li>
- *   <li><b>(b) No stale overwrite (contract section 5 INV-W1 / section 8 {@code per_key_order}).</b>
+ *   <li><b>(b) No stale overwrite ({@code per_key_order}).</b>
  *       Per edge, per key, the applied {@link VersionedValue#version()} never
  *       decreases across ticks within an incarnation (full-store diff per tick).</li>
- *   <li><b>(c) Snapshot - delta convergence (contract section 1 INV-L1 / section 4).</b> An
+ *   <li><b>(c) Snapshot - delta convergence.</b> An
  *       end-of-run check ({@link #finalCheck}): after a heal-all + drain window,
  *       every live edge's store content (key -> value bytes + version) byte-equals
  *       the CP leader's authoritative store.</li>
@@ -41,7 +40,7 @@ import java.util.function.IntPredicate;
  *
  * <h2>Liveness (record, never throw)</h2>
  * <ul>
- *   <li><b>(d) Eventual delivery bound (contract section 2 INV-S2).</b> For every
+ *   <li><b>(d) Eventual delivery bound.</b> For every
  *       {@link io.configd.distribution.CommitNotification} published at an edge's
  *       subscribed CP node at sim time T, a live + connected + non-lagging edge must
  *       observe it (cursor >= seq) by {@code T + BOUND_MS}. A miss is recorded into
@@ -54,7 +53,7 @@ import java.util.function.IntPredicate;
  */
 final class EdgeInvariants {
 
-    /** Default eventual-delivery bound (contract section 2 p99 propagation budget). */
+    /** Default eventual-delivery bound (the p99 propagation budget). */
     static final long BOUND_MS = 500;
 
     private final long seed;
@@ -213,11 +212,11 @@ final class EdgeInvariants {
                     if (eligible) {
                         activity.recordDeliveryViolation(o.seq, edgeId, o.publishedAtMs, lateness);
                     } else {
-                        // NOTE-1 (design review section C): an edge ineligible (crashed / lagging /
-                        // partitioned) EXACTLY at the deadline tick is excused for this seq.
-                        // Count it so excused-vs-delivered is observable - this keeps the
-                        // liveness checker honest (a high excused count under a should-deliver
-                        // schedule flags a possible fan-out bug) without making it throw.
+                        // An edge ineligible (crashed / lagging / partitioned) exactly at the
+                        // deadline tick is excused for this seq. Count it so excused-vs-delivered
+                        // is observable - this keeps the liveness checker honest (a high excused
+                        // count under a should-deliver schedule flags a possible fan-out bug)
+                        // without making it throw.
                         activity.recordExcusedAtDeadline();
                     }
                     // Drop eligible (recorded) AND ineligible (excused) edges so the
@@ -238,19 +237,18 @@ final class EdgeInvariants {
      * Throws {@link SimInvariants.SafetyViolation} with a precise diff on the first
      * divergence.
      *
-     * <h2>Convergence is over EFFECT (value bytes + store version), not per-key version
+     * <h2>Convergence is over effect (value bytes + store version), not per-key version
      * provenance</h2>
-     * Convergence is asserted on the <b>effect</b> the contract guarantees: the same key
-     * set, the same value bytes per key, and the same store version (section 4:
-     * "exactly-once over <em>effect</em>" - the edge observes every mutation's effect on the
-     * store). It deliberately does NOT require per-key {@link VersionedValue#version()}
-     * equality. Reason: a snapshot-recovered edge legitimately carries different per-key
-     * version stamps. The catch-up snapshot byte format carries no
-     * per-key versions; {@code ConfigStateMachine.restoreSnapshot} (and the edge's
-     * {@code EdgeSnapshotCodec}) therefore stamp every restored entry with the snapshot seq,
-     * exactly as a Raft {@code InstallSnapshot} does on a follower. So a key the leader last
-     * wrote at version 18, delivered to a snapshot-recovered edge inside a snapshot at seq
-     * 30, has per-key version 30 on the edge and 18 on the leader - identical value bytes,
+     * Convergence is asserted on the <b>effect</b> the system guarantees: the same key
+     * set, the same value bytes per key, and the same store version - exactly-once over
+     * <em>effect</em>, the edge observes every mutation's effect on the store. It deliberately
+     * does NOT require per-key {@link VersionedValue#version()} equality. Reason: a
+     * snapshot-recovered edge legitimately carries different per-key version stamps. The
+     * catch-up snapshot byte format carries no per-key versions; {@code ConfigStateMachine.restoreSnapshot}
+     * (and the edge's {@code EdgeSnapshotCodec}) therefore stamp every restored entry with the
+     * snapshot seq, exactly as a Raft {@code InstallSnapshot} does on a follower. So a key the
+     * leader last wrote at version 18, delivered to a snapshot-recovered edge inside a snapshot
+     * at seq 30, has per-key version 30 on the edge and 18 on the leader - identical value bytes,
      * identical store version, different provenance stamp. That divergence is inherent to
      * snapshot recovery and is NOT a data error; requiring per-key version equality would
      * make the invariant assert something the system (by design) does not

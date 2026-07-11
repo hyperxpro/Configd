@@ -8,10 +8,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 
 /**
- * DELIBERATELY-BROKEN {@link ShardMap} implementations for the multi-shard simulator (charter section 2), used
+ * DELIBERATELY-BROKEN {@link ShardMap} implementations for the multi-shard simulator, used
  * only to prove the new invariants are non-vacuous - a broken router must drive a RED (see
  * {@link MultiShardSimTest}). The CORRECT router the green tests route through is the PRODUCTION
- * {@link io.configd.replication.StaticShardMap} itself, so the sim judges the real C1 hash (not a stand-in).
+ * {@link io.configd.replication.StaticShardMap} itself, so the sim judges the real hash (not a stand-in).
  */
 final class ShardRouters {
 

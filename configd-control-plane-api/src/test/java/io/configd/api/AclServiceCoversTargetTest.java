@@ -22,15 +22,16 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Tests for the dormant whole-target authorization predicate {@link AclService#coversTarget} and its
+ * Tests for the whole-target authorization predicate {@link AclService#coversTarget} and its
  * watch floor {@link AclService#authorizesWatch}.
  * <p>
- * These two methods close the hole {@link AclService#isAllowed} documents at its INV-WATCH-READ floor: a
- * single-key check unions only a key's <b>ancestor</b> grants, so it cannot see a {@code READ}/{@code WATCH}
- * deny on a <b>descendant</b> of the key. {@code coversTarget} adds the missing <b>interior-DENY term</b>
- * ({@code D.prefix.startsWith(target)}) so a subtree/FULL watch can be authorized once at subscription with
- * whole-target coverage rather than per delivered key. Matching is the same literal {@code startsWith} the
- * rest of {@link AclService} uses (segment-awareness is deferred and pinned by test).
+ * These two methods close the hole {@link AclService#isAllowed} documents at its WATCH-requires-READ
+ * floor: a single-key check unions only a key's <b>ancestor</b> grants, so it cannot see a {@code READ}/
+ * {@code WATCH} deny on a <b>descendant</b> of the key. {@code coversTarget} adds the missing
+ * <b>interior-DENY term</b> ({@code D.prefix.startsWith(target)}) so a subtree/FULL watch can be
+ * authorized once at subscription with whole-target coverage rather than per delivered key. Matching is
+ * the same literal {@code startsWith} the rest of {@link AclService} uses (segment-awareness is deferred
+ * and pinned by test).
  * <p>
  * The rule collections here model the principal's <b>unioned</b> rule set (own union role union config)
  * that the watch-subscribe gate will assemble from the same sources {@code isAllowed} accumulates; the
@@ -39,7 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @DisplayName("AclService.coversTarget / authorizesWatch — whole-target watch authorization (dormant)")
 class AclServiceCoversTargetTest {
 
-    // --- helpers: a one-liner ALLOW/DENY rule at a literal prefix --------------------------------------
+    // Helpers: a one-liner ALLOW/DENY rule at a literal prefix.
 
     private static PolicyRule allow(String prefix, AclService.Permission... caps) {
         return new PolicyRule(prefix, Set.of(caps), Set.of());
@@ -49,9 +50,7 @@ class AclServiceCoversTargetTest {
         return new PolicyRule(prefix, Set.of(), Set.of(caps));
     }
 
-    // -----------------------------------------------------------------------
     // (1) Floor - a watch needs BOTH READ and WATCH over the whole target
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("WATCH floor — authorizesWatch requires both READ and WATCH coverage")
@@ -89,10 +88,8 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // (2) Interior DENY - THE CRUX: a deny strictly BELOW the target defeats whole-target coverage
-    //     (the exact case a single-key ancestor-only check cannot see)
-    // -----------------------------------------------------------------------
+    // Interior DENY - the crux: a deny strictly BELOW the target defeats whole-target coverage
+    // (the exact case a single-key ancestor-only check cannot see)
 
     @Nested
     @DisplayName("Interior DENY — the case a single-key ancestor-only check cannot catch")
@@ -140,9 +137,7 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // (3) Ancestor DENY - a deny at/above the target defeats coverage (today's check also catches this)
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("Ancestor DENY — deny at/above the target (the regression guard)")
@@ -163,9 +158,7 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // (4) Sub-target ALLOWs only - a union of grants strictly below the target cannot cover it
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("Sub-target ALLOWs only — cannot cover an unbounded subtree")
@@ -188,9 +181,7 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // (5) Positive - an ancestor-or-equal ALLOW with no intersecting DENY covers the subtree (and deep keys)
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("Positive — ancestor-or-equal ALLOW, no intersecting DENY")
@@ -211,9 +202,7 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // (6) FULL (target == "") - only the root principal covers it; any interior deny closes the bypass
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("FULL target (\"\") — root grant ∧ no cap-DENY anywhere")
@@ -257,9 +246,7 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // (7) Segment boundary - literal startsWith over-grants ALLOW, over-denies DENY
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("Segment boundary — DL-O3-02 literal-startsWith behavior (pinned, not fixed)")
@@ -292,9 +279,7 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // (8) Equal-prefix - the boundary of "ancestor-OR-equal"
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("Equal-prefix — ancestor-OR-EQUAL boundary")
@@ -310,17 +295,15 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // (9) Multi-source union - own union role union config folded into one flat rule list (what the gate produces)
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("Multi-source union — own ∪ role ∪ config (the gate's assembled rule set)")
     class MultiSourceUnion {
 
         /**
-         * Models the three sources {@code isAllowed} accumulates, folded into the one flat list PR-2's gate
-         * will assemble: own ALLOW {@code "a."} READ + role ALLOW {@code "a."} WATCH cover the subtree with
+         * Models the three sources {@code isAllowed} accumulates, folded into the one flat list the
+         * watch-subscribe gate assembles: own ALLOW {@code "a."} READ + role ALLOW {@code "a."} WATCH cover the subtree with
          * both caps -> watch authorized. Adding a config interior DENY {@code "a.secret."} READ then defeats
          * it -> watch rejected - proving deny-precedence composes across sources exactly as the union does.
          */
@@ -340,9 +323,7 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // (10) Default-deny - no ALLOW means no coverage
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("Default-deny — no matching ALLOW ⇒ not covered")
@@ -367,9 +348,7 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Null-arg guards - coversTarget validates all three args; authorizesWatch delegates to it
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("Null-arg guards")
@@ -401,9 +380,7 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Cross-capability hygiene - coverage of one cap does not manufacture another
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("Cross-capability hygiene — per-capability, no cross-conferral")
@@ -421,14 +398,12 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // (RT-1) RED-TEAM - differential fuzz against an INDEPENDENT per-key witness oracle.
-    //        This mechanizes the soundness proof: whole-target coverage is the universal lift of the
-    //        per-key (ancestor-only) isAllowed decision over EVERY key in the subtree. The oracle is
-    //        computed WITHOUT coversTarget's two-flag interior-term trick, so agreement across 200k random
-    //        rule sets is overwhelming evidence the predicate neither over-exposes (false TRUE = a denied
-    //        descendant slips through) nor over-rejects (false FALSE).
-    // -----------------------------------------------------------------------
+    // Red-team: differential fuzz against an independent per-key witness oracle.
+    // This mechanizes the soundness proof: whole-target coverage is the universal lift of the
+    // per-key (ancestor-only) isAllowed decision over EVERY key in the subtree. The oracle is
+    // computed WITHOUT coversTarget's two-flag interior-term trick, so agreement across 200k random
+    // rule sets is overwhelming evidence the predicate neither over-exposes (false TRUE = a denied
+    // descendant slips through) nor over-rejects (false FALSE).
 
     @Nested
     @DisplayName("Red-team — coversTarget ≡ ∀K∈subtree: per-key isAllowed (differential fuzz)")
@@ -533,9 +508,7 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // (RT-2) RED-TEAM - boundary PoCs the hand matrix leaves un-pinned.
-    // -----------------------------------------------------------------------
+    // Red-team: boundary PoCs the hand matrix leaves un-pinned.
 
     @Nested
     @DisplayName("Red-team — boundary PoCs (same-rule allow∩deny, deny==target, disjoint deny, null element)")
@@ -593,9 +566,7 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Review follow-ups - cheap completeness pins the lanes proposed (no-op rule; split-cap ancestors).
-    // -----------------------------------------------------------------------
+    // Two completeness pins: a no-op rule, and split-cap ancestors.
 
     @Nested
     @DisplayName("Review follow-ups — no-op rule + split-cap ancestors")

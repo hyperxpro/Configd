@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Gate 2a red-team: the {@code scopeId} cross-shard/scope-splice control, proven on real on-disk
+ * Red-team tests for the {@code scopeId} cross-shard/scope-splice control, proven on real on-disk
  * bytes in BOTH postures - keyed (HMAC-SHA-256, scopeId inside the MAC input) and encrypting
  * (AES-256-GCM, scopeId inside the AAD). Two distinct defenses are exercised separately:
  * <ul>
@@ -34,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       into a gid=0 shard) is refused because its authenticated scopeId announces its true shard; and</li>
  *   <li><b>unforgeable in place</b> - RE-STAMPING the scopeId to match the reader (and repairing every
  *       CRC so the byte layer accepts it) STILL fails, because scopeId is authenticated by the MAC/tag.
- *       This is the load-bearing "the assert is not the only defense" property (design §A1.2).</li>
+ *       The assert alone is not the only defense: the MAC/tag authenticates scopeId too.</li>
  * </ul>
  * Covers all three per-shard artifacts (WAL record, snapshot blob, {@code raft.persistent_state}),
  * plus the envelope version-downgrade refusal and the CRC-before-scope ordering.
@@ -50,9 +50,7 @@ class RaftLogScopeSpliceRedteamTest {
     private static final String WAL_FILE = "raft-log.wal";
     private static final String SNAP_FILE = "raft-log.snapshot.dat";
 
-    // ---------------------------------------------------------------------------------------------
-    // Attack 3 - cross-shard physical replay (the READER ASSERT catches an honest cross-shard copy).
-    // ---------------------------------------------------------------------------------------------
+    // Attack 3 - cross-shard physical replay (the reader assert catches an honest cross-shard copy).
 
     @Test
     void crossShardWalRecordRefused_hmac(@TempDir Path tempDir) {
@@ -87,7 +85,7 @@ class RaftLogScopeSpliceRedteamTest {
 
     private void assertCrossShardSnapshotRefused(Path tempDir, IntegrityEnvelope env) throws Exception {
         // Produce a foreign (gid=FOREIGN) snapshot blob in its OWN dir, so its anchor does not shadow
-        // the victim's - with the merge, a foreign anchor in the shared dir would itself refuse first.
+        // the victim's (a foreign anchor in the shared dir would itself refuse first).
         Path foreignDir = tempDir.resolve("foreign");
         Storage foreignStorage = Storage.file(foreignDir);
         new RaftLog(foreignStorage, env, FOREIGN_GID)
@@ -119,8 +117,8 @@ class RaftLogScopeSpliceRedteamTest {
 
     private void assertCrossShardStateRefused(Path tempDir, IntegrityEnvelope env) {
         Storage storage = Storage.file(tempDir);
-        // A foreign shard persists its term/vote into the MERGED anchor under scopeId=FOREIGN_GID
-        // (raft.persistent_state is gone; currentTerm/votedFor now live in the per-shard anchor).
+        // A foreign shard persists its term/vote into the shared anchor under scopeId=FOREIGN_GID;
+        // currentTerm/votedFor live in the per-shard anchor.
         RaftLog foreign = new RaftLog(storage, env, FOREIGN_GID);
         foreign.persistTermVote(3, 7); // writes the raft-anchor under scopeId=FOREIGN_GID
         foreign.closeAnchor();
@@ -134,12 +132,10 @@ class RaftLogScopeSpliceRedteamTest {
                 "a cross-shard raft-state (anchor) artifact must be refused on load, got: " + ex.getMessage());
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // Attack 4 - in-place scopeId FORGE ("unforgeable in place"). Re-stamp the foreign record's scopeId
-    // to the victim's gid so the reader assert PASSES, and repair every CRC so the byte layer accepts
+    // Attack 4 - in-place scopeId forge ("unforgeable in place"). Re-stamp the foreign record's scopeId
+    // to the victim's gid so the reader assert passes, and repair every CRC so the byte layer accepts
     // the frame - the record must STILL be refused, now by the MAC (HMAC) / GCM tag (encrypting),
     // because scopeId is authenticated. Proven on the WAL record and the snapshot blob, both postures.
-    // ---------------------------------------------------------------------------------------------
 
     @Test
     void inPlaceScopeForgeOnWalRecordStillRefused_hmac(@TempDir Path tempDir) throws Exception {
@@ -206,9 +202,7 @@ class RaftLogScopeSpliceRedteamTest {
                         + "'), got: " + ex.getMessage());
     }
 
-    // ---------------------------------------------------------------------------------------------
     // Attack 5 - envelope version / downgrade and the CRC-before-scope ordering.
-    // ---------------------------------------------------------------------------------------------
 
     /** A v2-layout envelope (formatVersion rolled 3 -> 2), CRC repaired, fed to a v3 reader => REFUSE. */
     @Test
@@ -253,9 +247,7 @@ class RaftLogScopeSpliceRedteamTest {
                         + ex.getMessage());
     }
 
-    // ---------------------------------------------------------------------------------------------
     // Posture builders.
-    // ---------------------------------------------------------------------------------------------
 
     /** Keyed HMAC-SHA-256 envelope with a fixed test key. */
     private static IntegrityEnvelope hmacEnvelope() {
@@ -272,9 +264,7 @@ class RaftLogScopeSpliceRedteamTest {
         return IntegrityEnvelope.encrypting(new SegmentKeyManager(root));
     }
 
-    // ---------------------------------------------------------------------------------------------
     // On-disk byte helpers (identical frame arithmetic to FileStorage).
-    // ---------------------------------------------------------------------------------------------
 
     private static byte[] entry(long index, long term, String command) {
         byte[] c = command.getBytes(StandardCharsets.UTF_8);

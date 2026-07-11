@@ -239,8 +239,6 @@ class RaftInboundMarshallingTest {
         }
     }
 
-    // ---- detectors -------------------------------------------------------------------------
-
     /** Shared concurrency sentinel: trips if more than one thread is inside an instrumented region. */
     private static final class Sentinel {
         private final AtomicInteger active = new AtomicInteger();

@@ -6,21 +6,21 @@ import io.configd.raft.TopologyDescriptor;
 import java.util.stream.IntStream;
 
 /**
- * The v1 {@link ShardMap}: a fixed set of {@code N} shards with
+ * The default {@link ShardMap}: a fixed set of {@code N} shards with
  * {@code shardFor = hash(scope, key) mod N}. Immutable, thread-safe, identical on every node.
  * N is a deploy-time constant; online resharding is out. {@link #epoch()} returns the deploy-time
- * {@link TopologyDescriptor} epoch (v1 = {@link TopologyDescriptor#INITIAL_EPOCH}); static-N never
- * bumps it, a future v2 dynamic map does.
+ * {@link TopologyDescriptor} epoch ({@link TopologyDescriptor#INITIAL_EPOCH}); static-N never
+ * bumps it, a future dynamic map would.
  *
  * <h2>Partitioning</h2>
  * All scopes share the single pool {@code [0, N)}. The {@link ConfigScope} is folded into the
  * hash, so it is a routing input (a future variant can give a scope its own dedicated pool
- * without changing this seam), but v1 spreads every scope across the shared pool. The hash
+ * without changing this seam), but today every scope spreads across the shared pool. The hash
  * (64-bit FNV-1a over the scope ordinal and the key's code units, then a SplitMix64 finalizer)
  * avalanches so the keyspace spreads evenly; {@link Math#floorMod} maps a negative hash to a
  * non-negative shard.
  *
- * <h2>Routing invariants (preserving the v1/v2 seam)</h2>
+ * <h2>Routing invariants (preserving the seam for a future dynamic map)</h2>
  * <ul>
  *   <li><b>Opaque, stable ids</b> - ids are exactly {@code [0, N)}; a key that hashes to
  *       {@code 0} is ordinary, never special-cased.</li>
@@ -43,7 +43,7 @@ public final class StaticShardMap implements ShardMap {
     private final long topologyEpoch;
 
     /**
-     * Creates a static shard map over {@code shardCount} groups at the v1 initial topology epoch
+     * Creates a static shard map over {@code shardCount} groups at the initial topology epoch
      * ({@link TopologyDescriptor#INITIAL_EPOCH}). The production boot path uses the
      * {@link #StaticShardMap(int, long)} overload with the epoch read from the deploy-time
      * {@code topology-descriptor.dat}; this convenience form is for the common single-epoch case

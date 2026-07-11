@@ -1,7 +1,17 @@
 # ADR-0008: Health-Mediated Progressive Config Rollout
 
 ## Status
-Accepted
+Not implemented as specified
+
+> **Note:** No health-mediated, protocol-level rollout gate exists. A committed config change fans
+> out to all subscribers as soon as it is committed and fanned out - there is no canary stage, no
+> percentage-based expansion, and no automatic rollback on health signals. `RolloutController`
+> (`configd-distribution-service/src/main/java/io/configd/distribution/RolloutController.java`) does
+> exist as a standalone staging state machine (`CANARY -> ONE_PERCENT -> TEN_PERCENT -> FIFTY_PERCENT
+> -> FULL`, soak timers, pause/resume/rollback) and `ConfigdServer` constructs and holds one, but
+> nothing on the write or fan-out path calls into it: no code consults its stage, fraction, or health
+> state to decide which edges receive a change. It is dead wiring, not a gate. The stage-diagram,
+> health-signal, and emergency-override mechanism described below was never built as specified.
 
 ## Context
 Three Cloudflare outages in 4 months (November 2025, December 2025, February 2026) share the same root pattern: config changes propagated globally in seconds with no staged rollout, no canary, no health-mediated deployment. Cloudflare's "Code Orange" initiative explicitly acknowledges this architectural gap.

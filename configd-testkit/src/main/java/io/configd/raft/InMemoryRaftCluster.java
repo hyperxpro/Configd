@@ -28,7 +28,7 @@ import java.util.random.RandomGenerator;
  *
  * <p><b>Scope honesty:</b> the transport and storage are in-memory; there is NO network
  * and NO fsync. The latency measured against this cluster is the in-process consensus CPU
- * cost - the {@code local_commit_component} of methodology section 2, never the cross-region total.
+ * cost - the {@code local_commit_component}, never the cross-region total.
  */
 public final class InMemoryRaftCluster {
 

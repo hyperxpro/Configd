@@ -19,8 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * simulation. The macro stress harness ({@code RaftNodeConcurrencyStressTest}) and the jcstress
  * micro-race prove the guard on a single node in isolation; this proves it on the <em>full sim
  * surface</em> - many nodes driven through a randomized schedule with the tripwire wired into the
- * same throwing {@link RaftNode.InvariantChecker} that already carries the in-node safety invariants
- * (threading-contract section 5.4).
+ * same throwing {@link RaftNode.InvariantChecker} that already carries the in-node safety invariants.
  *
  * <p>Two halves, mirroring the macro harness:
  * <ul>
@@ -32,8 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li><b>{@link #offDriveThreadAccessFailsTheSeed()}</b> - the injected race: once the sim has
  *       bound its owners, a {@code RaftNode} touched from a FOREIGN thread trips the tripwire, which
  *       the sim's throwing checker turns into a hard failure. This proves the sim's net actually
- *       catches an off-owner access; a net never shown to catch one is unproven (the S1
- *       vacuous-tests lesson).</li>
+ *       catches an off-owner access; a net never shown to catch one is unproven.</li>
  * </ul>
  */
 class OwnerThreadSimIntegrationTest {

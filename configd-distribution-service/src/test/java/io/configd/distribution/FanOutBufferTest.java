@@ -21,7 +21,6 @@ class FanOutBufferTest {
     private static final List<ConfigMutation> MUTATIONS = List.of(
             new ConfigMutation.Put("key", "val".getBytes()));
 
-    /** Helper - creates a delta spanning fromVersion -> toVersion. */
     private static ConfigDelta delta(long from, long to) {
         return new ConfigDelta(from, to, MUTATIONS);
     }
@@ -269,13 +268,11 @@ class FanOutBufferTest {
             int cap = 4;
             FanOutBuffer buf = new FanOutBuffer(cap);
 
-            // Fill to capacity + 2 to force eviction
             for (int i = 0; i < cap + 2; i++) {
                 buf.append(delta(i, i + 1));
             }
 
             assertEquals(cap, buf.size());
-            // Oldest should now be entry at index 2 (entries 0 and 1 evicted)
             assertEquals(2, buf.oldestVersion());
             assertEquals(cap + 2, buf.latestVersion());
         }
@@ -289,7 +286,6 @@ class FanOutBufferTest {
                 buf.append(delta(i, i + 1));
             }
 
-            // Entries 0-3 are evicted; entries 4-7 remain
             List<ConfigDelta> deltas = buf.deltasSince(0);
             assertEquals(4, deltas.size());
             assertEquals(4, deltas.get(0).fromVersion());
@@ -301,7 +297,6 @@ class FanOutBufferTest {
             int cap = 3;
             FanOutBuffer buf = new FanOutBuffer(cap);
 
-            // Wrap around multiple times
             for (int i = 0; i < 20; i++) {
                 buf.append(delta(i, i + 1));
             }
@@ -323,7 +318,6 @@ class FanOutBufferTest {
             }
             assertTrue(buf.canReplayFrom(0));
 
-            // One more append evicts entry 0
             buf.append(delta(cap, cap + 1));
             assertFalse(buf.canReplayFrom(0));
             assertTrue(buf.canReplayFrom(1));
@@ -338,7 +332,7 @@ class FanOutBufferTest {
         @BeforeEach
         void setUp() {
             buf = new FanOutBuffer(16);
-            // Append deltas: 0->1, 1->2, 2->3, 5->6, 10->11
+            // Deltas 0->1, 1->2, 2->3 are contiguous; 5->6 and 10->11 leave gaps in fromVersion.
             buf.append(delta(0, 1));
             buf.append(delta(1, 2));
             buf.append(delta(2, 3));
@@ -387,7 +381,6 @@ class FanOutBufferTest {
             AtomicBoolean writerFailed = new AtomicBoolean(false);
             CopyOnWriteArrayList<Throwable> errors = new CopyOnWriteArrayList<>();
 
-            // Writer thread
             Thread writer = new Thread(() -> {
                 try {
                     startLatch.await();
@@ -402,7 +395,6 @@ class FanOutBufferTest {
                 }
             }, "writer");
 
-            // Reader threads calling deltasSince
             List<Thread> readers = new ArrayList<>();
             for (int r = 0; r < readerCount; r++) {
                 String name = "reader-deltasSince-" + r;
@@ -411,12 +403,10 @@ class FanOutBufferTest {
                         startLatch.await();
                         while (!writeDone.await(0, TimeUnit.MILLISECONDS)) {
                             List<ConfigDelta> deltas = buf.deltasSince(0);
-                            // Verify each delta is structurally valid - no corrupt
-                            // data, no null fields, no impossible version pairs.
-                            // Note: strict ordering across the full list is NOT
-                            // guaranteed under concurrent writes because a reader
-                            // can observe a slot that was overwritten mid-iteration
-                            // (inherent to lock-free ring buffer design).
+                            // Only check structural validity here. Strict ordering across the
+                            // full list is not guaranteed under concurrent writes, because a
+                            // reader can observe a slot that was overwritten mid-iteration -
+                            // that's inherent to a lock-free ring buffer and not a bug.
                             for (ConfigDelta d : deltas) {
                                 if (d.toVersion() < d.fromVersion()) {
                                     throw new AssertionError(
@@ -432,7 +422,6 @@ class FanOutBufferTest {
                 readers.add(reader);
             }
 
-            // Reader threads calling latest
             for (int r = 0; r < readerCount; r++) {
                 String name = "reader-latest-" + r;
                 Thread reader = new Thread(() -> {
@@ -467,7 +456,6 @@ class FanOutBufferTest {
                     "concurrent errors: " + errors);
             assertFalse(writerFailed.get(), "writer thread failed");
 
-            // Final consistency checks
             assertEquals(totalWrites - 1, buf.latest().fromVersion());
             assertEquals(totalWrites, buf.latest().toVersion());
             assertEquals(capacity, buf.size());
@@ -496,7 +484,6 @@ class FanOutBufferTest {
                 }
             }, "writer");
 
-            // Readers that request deltas since a sliding version window
             List<Thread> readers = new ArrayList<>();
             for (int r = 0; r < 3; r++) {
                 Thread reader = new Thread(() -> {
@@ -505,7 +492,7 @@ class FanOutBufferTest {
                         long queryVersion = 0;
                         while (!writeDone.await(0, TimeUnit.MILLISECONDS)) {
                             List<ConfigDelta> deltas = buf.deltasSince(queryVersion);
-                            // All returned deltas should have fromVersion >= queryVersion
+                            // Every returned delta must have fromVersion >= queryVersion.
                             for (ConfigDelta d : deltas) {
                                 if (d.fromVersion() < queryVersion) {
                                     throw new AssertionError(
@@ -514,7 +501,6 @@ class FanOutBufferTest {
                                                     + d.fromVersion());
                                 }
                             }
-                            // Advance query version
                             if (!deltas.isEmpty()) {
                                 queryVersion = deltas.get(deltas.size() - 1).fromVersion();
                             }

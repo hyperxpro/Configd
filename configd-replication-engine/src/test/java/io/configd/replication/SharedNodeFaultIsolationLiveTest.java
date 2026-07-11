@@ -36,7 +36,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Live shared-node isolation sim. Runs N groups on a P&lt;N owner pool (the production shape - groups
  * SHARE owner threads) on the REAL {@link MultiRaftDriver} + {@link OwnerExecutorPool}, and proves
- * the isolation the independent-harness V sim could not: a real coupling leak is INJECTED and a
+ * the isolation an independent, non-live harness could not: a real coupling leak is INJECTED and a
  * per-group liveness witness goes RED, while a non-thread-blocking fault leaves siblings unharmed.
  *
  * <p>The {@code OwnerIsolationMultiOwnerTest} already proves the missed-hop isolation class (a
@@ -284,7 +284,7 @@ class SharedNodeFaultIsolationLiveTest {
         }
 
         assertNull(failure.get(), "no producer threw under shared-owner concurrency");
-        // S2/S4 per shard: strictly monotone applied sequence, only this shard's commands, real progress.
+        // Per shard: strictly monotone applied sequence, only this shard's commands, real progress.
         for (int gid : gids) {
             BlockableTrackingStateMachine sm = sms.get(gid);
             assertMonotoneAndIsolated(sm, gid);

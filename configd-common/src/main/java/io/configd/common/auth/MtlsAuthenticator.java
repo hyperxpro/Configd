@@ -11,13 +11,12 @@ import java.util.Set;
  *
  * <p>It does NOT verify the certificate chain: the {@link Credential.ClientCertificate} it receives MUST be
  * the peer chain the TLS stack already verified under client-cert-required. The identity is the leaf
- * certificate's Subject DN (RFC 2253), matching the edge's historical {@code getPeerPrincipal().getName()}.
+ * certificate's Subject DN (RFC 2253), matching the edge's {@code getPeerPrincipal().getName()}.
  * A certificate with no usable subject is {@link DenyReason#INVALID_CREDENTIAL} (fail closed). It has no
  * remote backend, so it never returns {@link AuthResult.Unavailable}.
  *
- * <p>Every verified certificate is granted the configured default roles ({@code configd.auth.mtls.roles},
- * empty by default - identity only, as the edge does today). Fine-grained DN-to-role mapping is a later
- * extension (the node-join authorization gate).
+ * <p>Every verified certificate is granted the same configured default roles ({@code configd.auth.mtls.roles},
+ * empty by default - identity only, as the edge does today); there is no fine-grained DN-to-role mapping.
  */
 public final class MtlsAuthenticator implements Authenticator {
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# C4 — 14-day shadow-traffic harness.
+# 14-day shadow-traffic harness.
 #
 # Runs production-shaped traffic against a candidate Configd cluster
 # while replaying the same traffic against a control cluster (the
@@ -11,11 +11,11 @@
 #   • no new ERROR-class log lines in candidate that don't appear in
 #     control
 #
-# Calendar-bounded — gap-closure §4 marks this YELLOW until two real
-# clusters have been brought up and a 14-day window has actually
-# elapsed. The harness MUST emit a measured-elapsed line so the GA
-# review records actual run duration without rounding up. Do not edit
-# the harness to claim a longer duration than was actually executed.
+# Calendar-bounded — this reports status=YELLOW until two real clusters
+# have been brought up and a 14-day window has actually elapsed. The
+# harness always emits a measured-elapsed line recording the actual run
+# duration — never edit it to claim a longer duration than was actually
+# executed.
 #
 # Usage:
 #   perf/shadow-14d.sh [--duration=<seconds>] [--seed=<int>] [--out=<dir>]

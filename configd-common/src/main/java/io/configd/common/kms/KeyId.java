@@ -32,8 +32,8 @@ public record KeyId(String providerType, String reference, int version) {
 
     @Override
     public String toString() {
-        // Non-secret identity: fully loggable. Mirrors the "provider:reference#term"
-        // shape used by the KMS-SPI research so operators can grep it in logs.
+        // Non-secret identity: fully loggable, in a "provider:reference#term" shape
+        // operators can grep in logs.
         return providerType + ":" + reference + "#" + version;
     }
 }

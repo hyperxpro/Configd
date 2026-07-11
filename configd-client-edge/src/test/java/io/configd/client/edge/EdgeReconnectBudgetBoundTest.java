@@ -18,8 +18,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Regression for the bounded-reconnect guarantee (§07 E4-2 / E7): an always-rejecting server accrues to the
- * budget and gives up rather than reconnecting forever. This closes a red-team finding (A-1): the ordinary
+ * Regression for the bounded-reconnect guarantee: an always-rejecting server accrues to the
+ * budget and gives up rather than reconnecting forever. This closes a red-team finding: the ordinary
  * attempt budget is reset by any positive frame (HEARTBEAT / SUBSCRIBE_OK), so a hostile or broken server could
  * emit ONE cheap frame per connection and then drop, resetting the budget every cycle and pinning the client in
  * an unbounded reconnect hot-loop (a self-inflicted DoS). The fix adds a second, markHealthy-independent bound:
@@ -78,8 +78,6 @@ class EdgeReconnectBudgetBoundTest {
             }
         }
     }
-
-    // -----------------------------------------------------------------------
 
     private static ConfigdClientConfig config(int port, KeyPair leader) {
         return ConfigdClientConfig.builder()

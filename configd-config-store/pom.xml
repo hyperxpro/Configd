@@ -36,14 +36,9 @@
 
     <profiles>
         <!--
-          B3 / RR-092: config-store mutation measurement. The module is already
-          above the 60 line (Session-1 71%); RR-092 closes specific point holes
-          (delete/applyBatch version-regression guards; decodeTrailer boundary
-          checks). This profile measures the whole store package and locks a 70
-          regression floor so a future change that re-opens those holes fails
-          the gate. Not one of the three charter §4.1 gate-2-enforced bars
-          (those are consensus-core 70/80 and distribution-service 65), but
-          wired so RR-092's gains are durable.
+          Mutation-testing profile for the config-store package: locks a 70% mutation-kill
+          threshold so a regression in the delete/applyBatch version guards or the
+          decodeTrailer boundary checks would fail this gate.
         -->
         <profile>
             <id>mutation</id>

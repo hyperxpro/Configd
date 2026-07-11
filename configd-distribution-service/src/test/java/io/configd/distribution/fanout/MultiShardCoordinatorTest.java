@@ -53,8 +53,6 @@ class MultiShardCoordinatorTest {
     private MutableSnapshot[] snaps;
     private FanOutConnectionDriver driver;
 
-    // ---- harness ------------------------------------------------------------
-
     private void setup(int shards, WatchAuthorizer auth) {
         setup(shards, auth, "edge-1", 64);
     }
@@ -110,10 +108,6 @@ class MultiShardCoordinatorTest {
         driver.sweep(now);
     }
 
-    // =====================================================================
-    // N=1 differential oracle (the byte-identity regression floor)
-    // =====================================================================
-
     @Test
     void nEquals1IsFrameIdenticalToTheReferenceTranslator() {
         // Drive the SAME subscribe + publishes + ticks through (A) the N=1 coordinator and
@@ -121,7 +115,6 @@ class MultiShardCoordinatorTest {
         // frame lists match, the N=1 coalescer is byte-identical to the incumbent veneer.
         WatchTarget full = new WatchTarget(0, EdgeFrame.WATCH_TARGET_FULL, "", false);
 
-        // (A) the coordinator
         setup(1, ALLOW);
         feed(fullCreate(1, WatchCursor.fromNow()));
         buffers[0].publish(put(1, "/k/a", "va"));
@@ -132,7 +125,6 @@ class MultiShardCoordinatorTest {
         feed(new EdgeFrame.WatchCancel(1L));
         List<EdgeFrame> coordinatorFrames = List.copyOf(out.sent());
 
-        // (B) the independent reference
         RecordingTransportSink refOut = new RecordingTransportSink();
         FanOutBuffer refBuf = new FanOutBuffer(64);
         FanOutSessionCore[] refHolder = new FanOutSessionCore[1];
@@ -152,17 +144,13 @@ class MultiShardCoordinatorTest {
 
         assertEquals(referenceFrames, coordinatorFrames,
                 "the N=1 coordinator emits frames identical to the independent single-shard translator");
-        // And concretely: WATCH_CREATED[ShardMode(0,...)], two WATCH_EVENT(gid=0), one WATCH_PROGRESS.
+        // The exact shape: one WATCH_CREATED naming shard 0, two WATCH_EVENT frames on gid 0.
         assertEquals(1, out.sentOfType(EdgeFrame.WatchCreated.class).size());
         assertEquals(1, out.sentOfType(EdgeFrame.WatchCreated.class).get(0).shards().size());
         assertEquals(0, out.sentOfType(EdgeFrame.WatchCreated.class).get(0).shards().get(0).gid());
         assertEquals(2, out.sentOfType(EdgeFrame.WatchEvent.class).size());
         assertTrue(out.sentOfType(EdgeFrame.WatchEvent.class).stream().allMatch(e -> e.gid() == 0));
     }
-
-    // =====================================================================
-    // completeness under coverage (a change on shard != 0 IS delivered)
-    // =====================================================================
 
     @Test
     void aChangeOnANonZeroShardIsDeliveredTaggedWithThatGid() {
@@ -176,10 +164,6 @@ class MultiShardCoordinatorTest {
         assertEquals(2, events.get(0).gid(), "tagged with the real shard gid=2, not a constant 0");
         assertEquals(1L, events.get(0).s());
     }
-
-    // =====================================================================
-    // a not-ready-at-subscribe leg is materialized, never omitted
-    // =====================================================================
 
     @Test
     void emptyShardLegIsMaterializedAndDeliversWhenDataArrives() {
@@ -199,10 +183,6 @@ class MultiShardCoordinatorTest {
         assertTrue(eventsFor(1L).stream().anyMatch(e -> e.gid() == 1),
                 "the late write on the initially-empty shard is delivered");
     }
-
-    // =====================================================================
-    // no silent partial: a lagging shard freezes its component, never truncates
-    // =====================================================================
 
     @Test
     void laggingShardComponentFreezesWhileServerNowAdvancesAndSiblingsDeliver() {
@@ -235,10 +215,6 @@ class MultiShardCoordinatorTest {
         assertFalse(teardowns.contains(ErrorCode.GAP_UNRECOVERABLE), "a frozen shard is never a truncation");
     }
 
-    // =====================================================================
-    // per-shard order preserved through the merge
-    // =====================================================================
-
     @Test
     void eachPerShardSubstreamIsContiguousAscendingInS() {
         setup(2, ALLOW);
@@ -257,10 +233,6 @@ class MultiShardCoordinatorTest {
         assertEquals(List.of(1L, 2L), shard1, "shard-1 substream contiguous ascending in S");
     }
 
-    // =====================================================================
-    // no cross-shard order (the tags separate the substreams; S is per-shard)
-    // =====================================================================
-
     @Test
     void theTagsSeparateSubstreamsAndSIsIncomparableAcrossShards() {
         setup(2, ALLOW);
@@ -270,18 +242,14 @@ class MultiShardCoordinatorTest {
         sweep();
 
         List<EdgeFrame.WatchEvent> events = eventsFor(1L);
-        // Both shards produced an S=1 event: the (gid, S) tag is the ONLY discriminator - S alone is
-        // NOT a cross-shard order (shard-0 S=1 and shard-1 S=1 name unrelated commits, W6-2a).
+        // Both shards produced an S=1 event: the (gid, S) tag is the only discriminator - S alone is
+        // not a cross-shard order (shard-0 S=1 and shard-1 S=1 name unrelated commits).
         assertEquals(2, events.size());
         assertTrue(events.stream().anyMatch(e -> e.gid() == 0 && e.s() == 1L));
         assertTrue(events.stream().anyMatch(e -> e.gid() == 1 && e.s() == 1L));
         long distinctGids = events.stream().map(EdgeFrame.WatchEvent::gid).distinct().count();
         assertEquals(2, distinctGids, "the two same-S events are told apart ONLY by their shard gid");
     }
-
-    // =====================================================================
-    // resume across a multi-shard reconnect (mixed TAIL / SNAPSHOT_FIRST, max-merge)
-    // =====================================================================
 
     @Test
     void resumeWithPartialVectorMixesTailAndSnapshotPerShard() {
@@ -311,10 +279,6 @@ class MultiShardCoordinatorTest {
         assertEquals(List.of(2L, 3L), shard1, "shard 1 tails from its resume component (max-merge never regresses)");
     }
 
-    // =====================================================================
-    // one whole-target decision; deny => zero leaks from any shard, whole-watch reject
-    // =====================================================================
-
     @Test
     void deniedWatchLeaksZeroFramesFromAnyShard() {
         setup(3, DENY);
@@ -333,10 +297,6 @@ class MultiShardCoordinatorTest {
         assertTrue(out.sentOfType(EdgeFrame.WatchSnapshotBegin.class).isEmpty());
         assertTrue(out.sentOfType(EdgeFrame.WatchCreated.class).isEmpty(), "no leg was even created");
     }
-
-    // =====================================================================
-    // a gid-spoofed cursor component fails closed; an in-range-irrelevant one is ignored
-    // =====================================================================
 
     @Test
     void cursorNamingAnOutOfRangeShardIsRejectedBadSubscribe() {
@@ -382,16 +342,12 @@ class MultiShardCoordinatorTest {
                 "a change on a shard the literal KEY path does not name is delivered (match-all fcv)");
     }
 
-    // =====================================================================
-    // A4 topology-epoch gate: a superseded cursor epoch => STALE_TOPOLOGY (re-hydrate)
-    // =====================================================================
-
     @Test
     void staleEpochCursorRejectedWithReHydrate() {
         setup(2, ALLOW);
-        // The coordinator is at the v1 initial epoch (1). A WATCH_CREATE whose cursor binds a superseded
-        // epoch (2) is refused STALE_TOPOLOGY (WATCH_CANCELED) - the etcd ErrCompacted model - so the
-        // client drops the cursor and re-hydrates. No shard leg is created; zero data frames.
+        // The coordinator starts at the initial topology epoch (1). A WATCH_CREATE whose cursor binds a
+        // superseded epoch (2) is refused STALE_TOPOLOGY (WATCH_CANCELED) - the etcd ErrCompacted model -
+        // so the client drops the cursor and re-hydrates. No shard leg is created; zero data frames.
         feed(fullCreate(1, WatchCursor.fromNow(2L)));
         assertEquals(1, out.sent().size());
         EdgeFrame.WatchCanceled cancel = (EdgeFrame.WatchCanceled) out.sent().get(0);
@@ -403,8 +359,8 @@ class MultiShardCoordinatorTest {
     @Test
     void matchingEpochCursorResumesNormally() {
         setup(2, ALLOW);
-        // The v1 initial epoch (1) matches the coordinator's epoch, so a resume cursor is admitted and
-        // the watch is created (the STALE_TOPOLOGY gate never fires at a single static epoch).
+        // The initial epoch (1) matches the coordinator's epoch, so a resume cursor is admitted and the
+        // watch is created (the STALE_TOPOLOGY gate never fires at a single static epoch).
         feed(fullCreate(1, WatchCursor.of(WatchCursor.INITIAL_TOPOLOGY_EPOCH, 0, 1)));
         assertEquals(2, created(1L).shards().size(), "a matching-epoch cursor resumes across both shards");
         assertTrue(out.sentOfType(EdgeFrame.WatchCanceled.class).isEmpty(), "no STALE_TOPOLOGY reject");
@@ -413,18 +369,14 @@ class MultiShardCoordinatorTest {
     @Test
     void staleEpochWinsOverGidSpoofReject() {
         setup(2, ALLOW);
-        // The resharding negative (2.9-9): a cursor from the OLD topology (epoch 2) whose components also
-        // name a gid outside the NEW shard set (gid 5 on a 2-shard cluster). The epoch gate is checked
-        // BEFORE the gid-spoof guard, so this is STALE_TOPOLOGY (re-hydrate), NOT the BAD_SUBSCRIBE
-        // gid-spoof reject - the client must re-resolve the whole topology, not patch one component.
+        // A resharding negative: a cursor from the old topology (epoch 2) whose components also name a
+        // gid outside the new shard set (gid 5 on a 2-shard cluster). The epoch gate is checked before
+        // the gid-spoof guard, so this is STALE_TOPOLOGY (re-hydrate), not the BAD_SUBSCRIBE gid-spoof
+        // reject - the client must re-resolve the whole topology, not patch one component.
         WatchCursor stale = new WatchCursor(2L, List.of(new WatchCursor.Component(5, 1)));
         feed(fullCreate(1, stale));
         assertEquals(ErrorCode.STALE_TOPOLOGY, ((EdgeFrame.WatchCanceled) out.sent().get(0)).code());
     }
-
-    // =====================================================================
-    // resume is a create for authz; revoke-then-resume => NOT_AUTHORIZED, zero frames
-    // =====================================================================
 
     @Test
     void resumeWithAValidCursorStillPassesTheGateAndIsDeniedIfRevoked() {
@@ -440,10 +392,6 @@ class MultiShardCoordinatorTest {
         assertEquals(ErrorCode.NOT_AUTHORIZED, ((EdgeFrame.WatchCanceled) out.sent().get(0)).code());
         assertTrue(out.sentOfType(EdgeFrame.WatchEvent.class).isEmpty(), "a resume cannot skip the gate");
     }
-
-    // =====================================================================
-    // revoke mid-stream cuts ALL covered legs atomically (W7-7 generalized to N shards)
-    // =====================================================================
 
     @Test
     void revocationCutsAllShardLegsAtomically() {
@@ -471,10 +419,6 @@ class MultiShardCoordinatorTest {
         assertTrue(eventsFor(1L).isEmpty(), "every shard leg stopped fanning out to the revoked watch");
     }
 
-    // =====================================================================
-    // per-shard Gap isolation: one shard SNAPSHOT_FIRSTs, siblings uninterrupted
-    // =====================================================================
-
     @Test
     void midStreamGapOnOneShardResnapshotsOnlyThatShard() {
         setup(2, ALLOW, "edge-1", 4); // tiny buffers
@@ -500,15 +444,12 @@ class MultiShardCoordinatorTest {
         assertEquals(List.of(1L, 2L), shard1, "shard 1 tails uninterrupted through shard 0's gap");
     }
 
-    // =====================================================================
-    // Re-homed - the W5-7 drained-cursor clamp on the coalesced WATCH_PROGRESS
-    // =====================================================================
-
     @Test
     void watchProgressComponentIsTheDrainedCursorNotTheRawTip() {
         // Shard 0's source runs its latestSeq (10) ahead of what readSince delivers (5). The progress
-        // component MUST carry the drained cursor (5), never the raw tip (10) - the W5-7 no-silent-gap
-        // clamp, now enforced by the coordinator reading core.cursor().
+        // component must carry the drained cursor (5), never the raw tip (10): the coordinator reads
+        // core.cursor(), not the source's latestSeq, so a fast-arriving commit is never advertised as
+        // delivered before the edge has actually drained it.
         this.n = 1;
         this.buffers = new FanOutBuffer[1];
         this.snaps = new MutableSnapshot[]{new MutableSnapshot()};
@@ -529,8 +470,6 @@ class MultiShardCoordinatorTest {
         assertEquals(5L, p.cursor().components().get(0).s(),
                 "WATCH_PROGRESS carries the drained cursor (5), not the raw latestSeq (10)");
     }
-
-    // ---- frame helpers ------------------------------------------------------
 
     private List<EdgeFrame.WatchEvent> eventsFor(long watchId) {
         return out.sentOfType(EdgeFrame.WatchEvent.class).stream().filter(e -> e.watchId() == watchId).toList();
@@ -558,8 +497,6 @@ class MultiShardCoordinatorTest {
         return FanOutConfig.defaults().heartbeatMs();
     }
 
-    // ---- frame builders -----------------------------------------------------
-
     private static EdgeFrame.WatchCreate fullCreate(long id, WatchCursor cursor) {
         return new EdgeFrame.WatchCreate(id, 0, EdgeFrame.WATCH_TARGET_FULL, new byte[0], cursor, 0);
     }
@@ -578,8 +515,6 @@ class MultiShardCoordinatorTest {
         return new CommitNotification(seq, 1_000L + seq, new ConfigDelta(seq - 1, seq,
                 List.of(new ConfigMutation.Put(key, val.getBytes(StandardCharsets.UTF_8)))));
     }
-
-    // ---- test doubles -------------------------------------------------------
 
     /** A mutable per-shard snapshot supplier (the replay floor for a shard's catch-up). */
     private static final class MutableSnapshot implements Supplier<ConfigSnapshot> {

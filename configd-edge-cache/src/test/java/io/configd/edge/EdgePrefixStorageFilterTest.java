@@ -58,10 +58,6 @@ class EdgePrefixStorageFilterTest {
         return new ConfigDelta(from, to, ms);
     }
 
-    // -----------------------------------------------------------------------
-    // Empty subscription = full store
-    // -----------------------------------------------------------------------
-
     @Nested
     class EmptySubscriptionIsFullStore {
 
@@ -76,10 +72,6 @@ class EdgePrefixStorageFilterTest {
             assertTrue(client.get("misc/c").found());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Prefix filter: matching stored, non-matching version-advances-only
-    // -----------------------------------------------------------------------
 
     @Nested
     class PrefixFilter {
@@ -126,10 +118,6 @@ class EdgePrefixStorageFilterTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Strong-read keys ALWAYS stored (store-and-fail-closed-serve)
-    // -----------------------------------------------------------------------
-
     @Nested
     class StrongReadKeysAlwaysStored {
 
@@ -153,10 +141,6 @@ class EdgePrefixStorageFilterTest {
             assertTrue(client.get("secure/acl").found());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Chain validation unaffected by filtering
-    // -----------------------------------------------------------------------
 
     @Nested
     class ChainValidationUnaffected {
@@ -195,10 +179,6 @@ class EdgePrefixStorageFilterTest {
             assertEquals(8, client.currentVersion());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Filter as a pure function (lockstep contract for the read-store mirror)
-    // -----------------------------------------------------------------------
 
     @Nested
     class FilterForStorageIsDeterministic {

@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-The system must store up to 10^9 config keys with versioned history, supporting 10K/s sustained writes and < 1ms p99 edge reads. General-purpose storage engines impose unacceptable tradeoffs at this scale: LMDB exhibits 1.5x-80x write amplification (the gap analysis), RocksDB's LSM compaction creates unpredictable latency spikes under 10x key growth (10^10 keys = 10x compaction pressure), and etcd's BoltDB hits an 8 GB ceiling with near-linear page allocation degradation (the gap analysis). The storage engine must support MVCC with configurable retention, concurrent reads during compaction, and off-heap operation to avoid GC pressure (the gap analysis).
+The system must store up to 10^9 config keys with versioned history, supporting 10K/s sustained writes and < 1ms p99 edge reads. General-purpose storage engines impose unacceptable tradeoffs at this scale: LMDB exhibits 1.5x-80x write amplification, RocksDB's LSM compaction creates unpredictable latency spikes under 10x key growth (10^10 keys = 10x compaction pressure), and etcd's BoltDB hits an 8 GB ceiling with near-linear page allocation degradation. The storage engine must support MVCC with configurable retention, concurrent reads during compaction, and off-heap operation to avoid GC pressure.
 
 ## Decision
 We build a **config-optimized storage engine** with three layers:

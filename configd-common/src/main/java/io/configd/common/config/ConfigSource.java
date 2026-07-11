@@ -134,8 +134,8 @@ public interface ConfigSource {
     }
 
     /**
-     * The set of defined keys that start with {@code prefix}. Used to enumerate repeated blocks (later
-     * gates: per-issuer / per-provider config). The prefix is matched literally against the dotted keys.
+     * The set of defined keys that start with {@code prefix}. Used to enumerate repeated blocks, such as
+     * per-issuer or per-provider configuration. The prefix is matched literally against the dotted keys.
      */
     Set<String> keysWithPrefix(String prefix);
 

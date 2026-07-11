@@ -25,9 +25,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Netty twin of {@code TcpRaftTransportDecodeDropTest}: the Netty consensus transport must count a
  * connection dropped at the frame-decode boundary. A corrupt frame trips {@code CorruptedFrameException}
- * in {@code RaftFrameDecoder}; the inbound handler's {@code exceptionCaught} previously did a bare
- * {@code ctx.close()} with no signal, so this proves the drop now increments
- * {@link RaftTransportMetrics#onInboundConnectionDropped()}. Plaintext (no mTLS fixture needed).
+ * in {@code RaftFrameDecoder}; this proves the inbound handler's {@code exceptionCaught} increments
+ * {@link RaftTransportMetrics#onInboundConnectionDropped()} rather than closing silently with no
+ * signal. Plaintext (no mTLS fixture needed).
  */
 @Timeout(30)
 class NettyRaftTransportDecodeDropTest {

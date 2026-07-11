@@ -41,7 +41,7 @@ write/delete `_acl/` to repair the situation — see
      not matching `roles/<role>` or `bindings/<principal>`.
    - **Reserved name** — a config policy tried to define role `admin` or bind
      principal `root` (both rejected by design; the un-carveable-root guard).
-   - **Delivered out-of-band** — write-time validation (Seam 2b) rejects most
+   - **Delivered out-of-band** — write-time validation rejects most
      malformed `_acl/` writes pre-commit with a 400, so a *committed* poison key
      most likely arrived via **snapshot install or WAL replay** (a key that
      pre-dates the write-time gate, or was installed wholesale).

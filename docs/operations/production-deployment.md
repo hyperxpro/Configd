@@ -51,12 +51,12 @@ java --enable-preview \
 | `--bind-address` | No | **`127.0.0.1`** | Default is **loopback**; a non-loopback bind while auth is OFF is refused (see `--allow-insecure-public-bind`) |
 | `--allow-insecure-public-bind` | No | (unset) | Explicit acknowledgement to bind a non-loopback interface with auth OFF (loudly warned); footgun-fix, not "auth required" |
 
-**Key system properties (`-D...`)** — not CLI flags:
+**Key system properties (`-D...`)** - not CLI flags:
 
 | Property | Default | Description |
 |----------|---------|-------------|
 | `configd.raft.shardCount` | `1` | Number of Raft shard groups (N); N=1 is byte-identical to non-sharded |
-| `configd.raft.autobalance.enabled` | `true` | Decentralized leadership auto-balance loop (N>1); `dryRun`/`intervalMs`/`jitterPct` also under `configd.raft.autobalance.*` |
+| `configd.raft.autobalance.enabled` | `true` | Decentralized leadership auto-balance loop (N>1); 30s cadence with 25% jitter and a 60s cooldown by default, also tunable under `configd.raft.autobalance.*` (`dryRun`, `intervalMs`, `jitterPct`, `cooldownMs`) |
 | `configd.write.maxInflightProposals` | ON (conservative) | Write-admission bound (429 + Retry-After when exceeded); `0` disables |
 | `configd.replay.enabled` | `false` | Opt-in replay guard (`X-Configd-Timestamp` + `X-Configd-Nonce`) |
 | `configd.raft.encryption.enabled` | `false` | Opt-in at-rest AES-256-GCM (`algId=2`); one-way door |
@@ -141,7 +141,6 @@ keytool -importcert -alias ca -keystore truststore.p12 -storetype PKCS12 \
 2. Replace certificate files on disk
 3. The server re-reads the certificate files from disk automatically, about every 60 seconds - no restart, signal, or endpoint is needed
 4. Connections using the old certificate will drain naturally
-5. See [`runbooks/cert-rotation.md`](runbooks/cert-rotation.md) for the full procedure
 
 ## Kubernetes Deployment
 
@@ -171,7 +170,7 @@ Key features of the k8s deployment:
 | Control plane availability | 99.999% | 30d |
 | Edge read availability | 99.9999% | 30d |
 
-Throughput is a capacity figure, not an SLO. Measured: a single Raft group commits about 800 writes/s, a single box plateaus near 1100 writes/s, and a 3-machine cluster reached about 1600 writes/s (near-linear 2.45x); no literal sustained 10,000/s has been run — the 10,000/s figure is a sharded, multi-machine aggregate target, not a single-cluster baseline (see the [measurement archive](../archive/measurement/)).
+Throughput is a capacity figure, not an SLO. Measured: a single Raft group commits about 800 writes/s, a single box plateaus near 1100 writes/s, and a 3-machine cluster reached about 1600 writes/s (near-linear 2.45x); no literal sustained 10,000/s has been run - the 10,000/s figure is a sharded, multi-machine aggregate target, not a single-cluster baseline (see the [measurement archive](../archive/measurement/)).
 
 ### Burn-Rate Alerts
 
@@ -191,12 +190,13 @@ The `BurnRateAlertEvaluator` computes multi-window burn rates:
 
 ## Troubleshooting
 
-See the operational runbooks in `runbooks/`:
-- `region-loss.md` - Region failure and recovery
-- `leader-stuck.md` - Stuck Raft leader
-- `reconfiguration-rollback.md` - Failed cluster membership change
-- `edge-catchup-storm.md` - Edge fleet reconnection storm
-- `poison-config.md` - Rollback a bad config push
-- `cert-rotation.md` - TLS certificate rotation
-- `write-freeze.md` - Emergency write freeze
-- `version-gap.md` - Edge version divergence
+See the incident runbooks in [`ops/runbooks/`](../../ops/runbooks/):
+- `raft-saturation.md` - stuck or wedged Raft leader, election livelock, apply backlog
+- `control-plane-down.md` - control-plane API unavailable
+- `disaster-recovery.md` - quorum loss and other cluster-wide recovery
+- `restore-from-snapshot.md` - rebuilding a node from a snapshot
+- `disk-full-fsync.md` - disk-full or fsync-stall conditions
+- `edge-catchup-storm.md` - edge fleet reconnection storm
+- `acl-policy-load.md` - a rejected or frozen `_acl/` policy load
+- `overload-shedding.md` - sustained write-admission shedding
+- `release.md` - rollback procedure

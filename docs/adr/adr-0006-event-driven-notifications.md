@@ -3,6 +3,17 @@
 ## Status
 Accepted
 
+> **Note:** Near-duplicate of / superseded by
+> [adr-0018-event-driven-notifications.md](adr-0018-event-driven-notifications.md), which restates
+> the same server-push decision in fuller form. Treat ADR-0018 as the reference.
+
+> **Note:** Not implemented as specified. The mechanism below is persistent gRPC bidirectional
+> streams; the codebase does not use gRPC anywhere (ADR-0010, ADR-0043). Config-change
+> notifications are actually served over a custom binary SUBSCRIBE protocol running on the Netty
+> transport (`configd-server/src/main/java/io/configd/server/fanout/`), documented in
+> `docs/rfc/driver-protocol/`. The subscription model (prefix-based, ordered, gap-detected,
+> resumable) is the real, shipped design; the wire protocol carrying it is not gRPC.
+
 ## Context
 Edge nodes and application clients need to be notified of config changes. Three models exist: one-shot watches (ZooKeeper), streaming watches (etcd), and polling/blocking queries (Consul). Each has documented failure modes at scale.
 
@@ -40,7 +51,7 @@ message SubscribeResponse {
 ```
 
 ### Fan-out Architecture
-- Control plane Raft leaders do NOT directly fan out to edge nodes.
+- Control plane Raft leaders do not directly fan out to edge nodes.
 - **Distribution service nodes** (non-voting Raft followers or dedicated relay nodes) subscribe to the Raft log and fan out to edge nodes.
 - Each distribution node handles up to 10K edge connections.
 - For 1M edge nodes: ~100 distribution nodes.

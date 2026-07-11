@@ -21,11 +21,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * <p>
  * The harness claims "same seed = same execution" (see {@link RaftSimulation}
  * and {@link ConsistencyPropertyTests}), but every RNG consumer must actually
- * be derived from the master seed for that to hold. Previously, the
- * per-node election RNG was constructed entropy-seeded
- * ({@code RandomGenerator.of("L64X128MixRandom")}), so election timeouts - and
- * therefore the whole election schedule - diverged run to run even at a fixed
- * seed. A failing seed was unreplayable.
+ * be derived from the master seed for that to hold: if any per-node RNG (e.g.
+ * the election-timeout RNG) were constructed independently of the seed, election
+ * timeouts - and therefore the whole election schedule - would diverge run to run
+ * even at a fixed seed, and a failing seed would be unreplayable.
  * <p>
  * This test runs the identical scenario twice in-process under the same seed,
  * folds the full per-tick observable state of every node (role, term, leader,

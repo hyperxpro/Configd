@@ -15,7 +15,7 @@ import java.util.Objects;
  * <ul>
  *   <li>a whole-store target - FULL, or any target carrying {@code full_chain_verify} (a flag
  *       independent of the target kind: it is authorized at root and matches every key) - scatters
- *       across every shard, {@link ShardMap#shardIds()}. This is checked FIRST, so a
+ *       across every shard, {@link ShardMap#shardIds()}. This is checked first, so a
  *       KEY+{@code full_chain_verify} target covers all shards rather than the single shard its
  *       literal path would hash to (matching {@link WatchTarget#isMatchAll()} /
  *       {@link WatchTarget#matches(String)});</li>
@@ -43,7 +43,7 @@ public final class ShardMapResolver implements ShardResolver {
     @Override
     public int[] coveredGids(WatchTarget target) {
         // A whole-store target (FULL, or any kind carrying full_chain_verify - authorized at root,
-        // matches every key) scatters to every shard. Checked FIRST so a KEY+full_chain_verify target
+        // matches every key) scatters to every shard. Checked first so a KEY+full_chain_verify target
         // - which matches all keys and is root-authorized - covers all shards, not just the single
         // shard its literal path hashes to (the coverage vector must agree with matches()/isMatchAll()).
         if (target.isMatchAll()) {

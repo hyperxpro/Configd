@@ -8,7 +8,7 @@ import java.util.zip.CRC32C;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Codec-strictness batch (Gate 2 Workstream D): WH-14 - the NOTIFY decoder enforces the same
+ * Codec-strictness batch: the NOTIFY decoder enforces the same
  * {@link EdgeFrameCodec#MAX_NOTIFY_BATCH_BYTES} payload-sum cap the encoder does, for canonical-encoding
  * parity. The over-cap batch cannot be produced by {@link EdgeFrameCodec#encode} (the encoder rejects it),
  * so the frame is hand-framed: the decode-side size gate fires on {@code p.remaining()} BEFORE any content
@@ -32,7 +32,7 @@ class EdgeFrameCodecStrictnessTest {
 
     @Test
     void notifyPayloadOverCapRejectedOnDecode() {
-        // WH-14: a NOTIFY payload one byte over the 256 KiB cap is rejected as FRAME_TOO_LARGE, matching
+        // A NOTIFY payload one byte over the 256 KiB cap is rejected as FRAME_TOO_LARGE, matching
         // the encode-side ceiling. Total frame (~256 KiB) is well under the 2 MiB frame cap, so this is
         // the NOTIFY sum cap firing, not the frame cap.
         byte[] payload = new byte[EdgeFrameCodec.MAX_NOTIFY_BATCH_BYTES + 1];
@@ -44,7 +44,7 @@ class EdgeFrameCodecStrictnessTest {
 
     @Test
     void notifyPayloadAtCapPassesTheSizeGate() {
-        // Boundary control: a payload of EXACTLY the cap does NOT trip the WH-14 size gate (remaining ==
+        // Boundary control: a payload of EXACTLY the cap does NOT trip the size gate (remaining ==
         // cap, not > cap). It fails LATER on content parsing (FRAME_CORRUPT), which proves the gate is
         // exactly `> MAX` and does not off-by-one-reject a maximal legitimate batch.
         byte[] payload = new byte[EdgeFrameCodec.MAX_NOTIFY_BATCH_BYTES];

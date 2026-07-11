@@ -118,7 +118,8 @@ length-prefixed fields — is **normative in [`06-wire-framing.md`](06-wire-fram
 `auth_bearer.bin` / `auth_basic.bin` / `refresh_auth_bearer.bin`). The two edge auth paths **compose**:
 
 - a **verified client certificate** authenticates at the **TLS handshake** — **no `AUTH` frame**, byte-identical
-  to a pre-auth-arc mTLS driver (AU2-4 mTLS row); the cert Subject DN is the authoritative identity (AU3-2);
+  to an mTLS driver from before authentication was added (AU2-4 mTLS row); the cert Subject DN is the
+  authoritative identity (AU3-2);
 - a **certificate-less** driver **MUST** authenticate with an `AUTH` frame **before any business frame** (the
   connection-level lifecycle is AU4-4…AU4-7).
 
@@ -135,7 +136,8 @@ requires the TLS-secured edge transport.)
 
 **AU3-5 (the interior is mTLS-only; a driver never joins it).** The Raft consensus interior (node ↔ node) is a
 **non-driver** surface (§06 §13): a configd **driver** never opens a Raft connection. Stated for model
-completeness — and because the auth arc strengthened it — the interior authenticates by **mTLS only**
+completeness — and because adding authentication strengthened this guarantee — the interior authenticates by
+**mTLS only**
 (`setNeedClientAuth(true)` on both interior transports); there is **no** token / `AUTH`-frame path to consensus
 (the interior message set carries **no** credential-bearing frame). A node's membership identity is a
 **certificate marker**: by default the Subject-DN **CN** (RDN mode; the RDN is configurable via
@@ -178,7 +180,8 @@ presenting a credential.
 
 These clauses are the **connection-level** contract for a **certificate-less** edge driver (the token/basic
 path of AU3-3). An **mTLS** edge driver authenticates at the handshake (AU4-1) and skips them entirely — it is
-byte-identical to a pre-auth-arc client. The wire bytes are §06 §6A; these are the **rules**.
+byte-identical to a client from before authentication was added. The wire bytes are §06 §6A; these are the
+**rules**.
 
 **AU4-4 (authenticate first — a single pre-auth `AUTH`).** On a token/basic edge, a certificate-less driver
 **MUST** send **exactly one** `AUTH` frame as its **first routed frame**, before any

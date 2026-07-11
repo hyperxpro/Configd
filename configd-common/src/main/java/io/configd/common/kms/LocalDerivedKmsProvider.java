@@ -10,7 +10,7 @@ import java.util.Objects;
 /**
  * The zero-dependency default {@link KmsProvider}: it DERIVES the per-node root key
  * from the already-loaded cluster signing key via HKDF, rather than sealing it under
- * an external KEK. This is the encryption research's "B-minimal" key-management rung.
+ * an external KEK.
  *
  * <pre>
  *   RootKey = HKDF-SHA256(IKM = signing-key encoding,
@@ -37,7 +37,7 @@ import java.util.Objects;
  * The encryption root shares fate with the signing key: a signing-key leak makes
  * at-rest data decryptable. The marginal loss is bounded (a signing-key leak already
  * lets an attacker forge committed state), and the trade buys zero new dependencies.
- * The same D-1 co-location guard the integrity key relies on (the signing key must
+ * The same co-location guard the integrity key relies on (the signing key must
  * live OUTSIDE the data directory) protects this root key too. There is no
  * independent encryption-key rotation for {@code local} - rotating the encryption
  * root means rotating the signing key. Graduate to a cloud/HSM provider when off-host

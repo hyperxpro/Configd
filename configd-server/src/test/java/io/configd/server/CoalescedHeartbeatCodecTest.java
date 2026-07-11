@@ -32,8 +32,6 @@ class CoalescedHeartbeatCodecTest {
         return new AppendEntriesRequest(term, LEADER, prevIdx, prevTerm, List.of(), commit);
     }
 
-    // ---- round-trip ----
-
     @Test
     void roundTripPreservesEveryGroupsHeartbeat() {
         Map<Integer, AppendEntriesRequest> in = new LinkedHashMap<>();
@@ -79,8 +77,6 @@ class CoalescedHeartbeatCodecTest {
                 "demux replay order must match send order (deterministic)");
     }
 
-    // ---- encode rejects ----
-
     @Test
     void encodeRejectsEmptyMap() {
         assertThrows(IllegalArgumentException.class,
@@ -107,8 +103,6 @@ class CoalescedHeartbeatCodecTest {
                 () -> RaftMessageCodec.encodeCoalescedHeartbeat(in),
                 "only empty heartbeats may be coalesced — a non-empty AE must be rejected");
     }
-
-    // ---- decode rejects (adversarial) ----
 
     private static FrameCodec.Frame coalescedFrame(byte[] payload) {
         return new FrameCodec.Frame(MessageType.RAFT_COALESCED_HEARTBEAT, 0, 0L, payload);

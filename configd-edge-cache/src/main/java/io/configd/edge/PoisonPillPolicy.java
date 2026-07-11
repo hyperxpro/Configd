@@ -243,8 +243,6 @@ public final class PoisonPillPolicy {
         }
     }
 
-    // --- deterministic reads (tests / sim / the metrics pump) ---
-
     /** Total apply/snapshot failure retries observed. */
     public long retries() {
         return retries;

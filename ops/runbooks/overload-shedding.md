@@ -5,7 +5,7 @@
 **Severity:** warn
 
 The control plane is shedding writes. The bounded proposal queue
-(`maxPendingProposals = 1024`, RR-110 / D-1) is full, so the leader is
+(`maxPendingProposals = 1024`) is full, so the leader is
 answering new writes with `429 Overloaded` + `Retry-After: 1` instead of
 unbounded-queueing them. This is correct back-pressure, not a fault — but
 sustained shedding means write demand exceeds commit throughput.
@@ -34,8 +34,8 @@ sustained shedding means write demand exceeds commit throughput.
 2. **Is commit throughput the bottleneck, or apply?** Same dashboard,
    **"Raft apply backlog"** panel (`configd_raft_pending_apply_entries`).
    - Backlog ~0 but shedding → writers simply exceed commit rate
-     (box ceiling ~125–172 commits/s, M-9). Scale writers/cores or rate-
-     limit the offending namespace.
+     (measured box ceiling ~125–172 commits/s). Scale writers/cores or
+     rate-limit the offending namespace.
    - Backlog climbing → apply is the bottleneck; cross to
      [raft-saturation.md](raft-saturation.md).
 3. **Is this a fan-out / reconnect storm driving the box?** `Configd Data
@@ -53,11 +53,11 @@ sustained shedding means write demand exceeds commit throughput.
 1. **If a single caller / namespace is flooding:** rate-limit it at the
    API gateway. The 429 + `Retry-After: 1` is already telling well-behaved
    clients to back off; the offender is one ignoring it. Do **not** raise
-   `maxPendingProposals` — the bound is the back-pressure (RR-110).
+   `maxPendingProposals` — the bound is the back-pressure.
 2. **If demand is legitimately above box throughput:** the only lever is
    capacity. The commit rate is bounded by the leader's fsync + replicate
-   path on this hardware; add cores / faster disk and re-measure
-   (S7.5 M-9/M-10 confirm the real ceiling). There is no horizontal write
+   path on this hardware; add cores / faster disk and re-measure the real
+   ceiling under production load. There is no horizontal write
    scaling — Raft commits are single-leader.
 3. **If a reconnect storm is the driver:** follow
    [edge-catchup-storm.md](edge-catchup-storm.md) — the bounded per-session
@@ -65,7 +65,7 @@ sustained shedding means write demand exceeds commit throughput.
    restarts in waves widens the herd.
 4. **Do not** disable the bounded queue or the 429 path to "let writes
    through". An unbounded queue converts a clean shed into an OOM
-   (the box-OOM seen in the S5 soak, RR-112).
+   (the box-OOM seen in an earlier soak run).
 
 ## Verification
 
@@ -97,6 +97,6 @@ saturates the queue (`maxPendingProposals = 3`) and asserts
 
 ## Related
 
-- RR-110 / D-1 — bounded proposal queue + 429 + Retry-After contract.
+- Bounded proposal queue + 429 + Retry-After contract.
 - `HttpApiServer` `WriteResult.Overloaded` → `429 + Retry-After: 1`.
 - [raft-saturation.md](raft-saturation.md), [edge-catchup-storm.md](edge-catchup-storm.md)

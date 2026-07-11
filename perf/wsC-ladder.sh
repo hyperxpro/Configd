@@ -1,38 +1,38 @@
 #!/usr/bin/env bash
-# =============================================================================
-# wsC-ladder.sh — Multi-Raft Workstream C: re-threaded SINGLE-GROUP throughput
-#                 ceiling (decides multi-Raft v1-vs-v2).
-# -----------------------------------------------------------------------------
-# Measures the HONEST sustained write-throughput knee of the re-threaded single
-# Raft group (Phase 0: owner-executor pool + coalesced heartbeats; ADR-0043
-# Netty consensus wire) and compares it to the §7.5 ~800/s baseline measured on
-# the SAME instance type (m6id.4xlarge). The delta is attributable to Phase 0's
-# re-threading (hardware held constant); the transport is forced + verified so
-# the io_uring axis (Phase V: ~2× worse for consensus) cannot confound it.
+# wsC-ladder.sh — re-threaded single-Raft-group throughput ceiling (decides
+#                 whether a single group's throughput is enough or sharding
+#                 is needed).
 #
-# Derived from perf/s75-throughput.sh (the §7.5 harness) — SAME cluster launch
-# (3 co-located nodes, shared pre-generated signing key, data+WAL on /mnt/nvme,
-# ZGC 4g heaps), SAME open-loop CO-corrected OpenLoopWriteDriver, SAME per-phase
-# iostat/mpstat/pidstat instrumentation. The ONE change: it climbs a rate LADDER
-# with a FRESH cluster per rate (a collapsed cluster from a high rate must not
-# poison the next point — §7.5 §C did this), reading configd_raft_elections_total
-# per rate as the direct heartbeat-starvation signal.
+# Measures the honest sustained write-throughput knee of the re-threaded
+# single Raft group (owner-executor pool + coalesced heartbeats; ADR-0043
+# Netty consensus wire) and compares it to an ~800/s baseline previously
+# measured on the same instance type (m6id.4xlarge). The delta is
+# attributable to the re-threading (hardware held constant); the transport
+# is forced + verified so the io_uring axis (previously measured ~2x worse
+# for consensus) cannot confound it.
+#
+# Derived from perf/s75-throughput.sh — same cluster launch (3 co-located
+# nodes, shared pre-generated signing key, data+WAL on /mnt/nvme, ZGC 4g
+# heaps), same open-loop CO-corrected OpenLoopWriteDriver, same per-phase
+# iostat/mpstat/pidstat instrumentation. The one change: it climbs a rate
+# ladder with a fresh cluster per rate (a collapsed cluster from a high rate
+# must not poison the next point), reading configd_raft_elections_total per
+# rate as the direct heartbeat-starvation signal.
 #
 #   Usage:  perf/wsC-ladder.sh [outdir]
-#   Env:    WSC_RATES   (default "200 400 600 800 1000 1200 2000 4000 8000")  — the §7.5 ladder
-#           WSC_DUR     (default 15)    per-rate run seconds (§7.5 used 15)
-#           WSC_CONC    (default 256)   driver concurrency (§7.5 used 256)
-#           WSC_VALBYTES(default 512)   value size  (§7.5 used 512B)
+#   Env:    WSC_RATES   (default "200 400 600 800 1000 1200 2000 4000 8000")
+#           WSC_DUR     (default 15)    per-rate run seconds
+#           WSC_CONC    (default 256)   driver concurrency
+#           WSC_VALBYTES(default 512)   value size
 #           WSC_HEAP    (default "-Xmx4g -Xms4g")   per-node heap
-#           WSC_GC      (default "-XX:+UseZGC")     ADR-0041 generational ZGC
+#           WSC_GC      (default "-XX:+UseZGC")     generational ZGC
 #           WSC_TRANSPORT (default epoll)  forced consensus tier (epoll|nio|io_uring)
 #           WSC_JVM_EXTRA (default "")   extra per-node JVM flags, e.g.
 #                          "-Dconfigd.write.maxInflightProposals=16"  (admission axis)
 #                          "-Dconfigd.raft.ownerPoolSize=4"           (no effect at 1 group)
-#           WSC_BASE    (default /mnt/nvme/run/wsc-<pid>)   data+WAL root (MUST be /mnt/nvme)
-#           WSC_DRYRUN  (default 0)      1 = dev-box smoke (skip /mnt/nvme assert; NOT a measurement)
+#           WSC_BASE    (default /mnt/nvme/run/wsc-<pid>)   data+WAL root (must be /mnt/nvme)
+#           WSC_DRYRUN  (default 0)      1 = dev-box smoke (skip /mnt/nvme assert; not a measurement)
 #           CONFIGD_JAR (shaded server jar)   CONFIGD_BENCH (benchmarks.jar)
-# =============================================================================
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JAR="${CONFIGD_JAR:-$(ls "$ROOT"/configd-server/target/configd-server-*.jar 2>/dev/null | grep -v original- | head -1)}"
@@ -68,7 +68,7 @@ if [ "$DRYRUN" != "1" ]; then
   case "$BASE" in /mnt/nvme/*) : ;; *) fail "WSC_BASE must be under /mnt/nvme (got $BASE) — the fsync-honest path" ;; esac
 fi
 mkdir -p "$BASE" "$OUT"
-SIGNKEY="$BASE/cluster-signing-key.bin"   # shared, OUTSIDE every node data dir (D-1-safe)
+SIGNKEY="$BASE/cluster-signing-key.bin"   # shared, OUTSIDE every node data dir (required by the fail-closed key guard)
 
 api()      { echo "127.0.0.1:$((API_BASE + $1))"; }
 nvme_dev() { df --output=source /mnt/nvme 2>/dev/null | tail -1 | xargs -r basename || lsblk -no NAME / | head -1; }
@@ -92,7 +92,7 @@ launch_node() {
 launch_cluster() {
   PIDS=()
   # Pre-generate the shared signing key by launching node 1 alone (the loadOrCreate
-  # exists()-then-CREATE_NEW race crashes simultaneous first-boot — §7.5 D-1), then 2,3 LOAD it.
+  # exists()-then-CREATE_NEW race crashes a simultaneous first boot), then 2 and 3 load it.
   launch_node 1
   local keyok=0
   for i in $(seq 1 40); do
@@ -171,7 +171,6 @@ stop_samplers() { for pid in "${SAMPLERS[@]:-}"; do kill "$pid" 2>/dev/null; don
 
 driver() { java $GCFLAGS -Xmx2g --enable-preview -cp "$BENCH" io.configd.bench.OpenLoopWriteDriver "$@" 2>&1 | grep -v "WARNING\|Unsafe\|sun.misc\|native-access"; }
 
-# ----------------------------------------------------------------------------
 LADDER="$OUT/ladder.tsv"
 echo -e "offered\tachieved\telections\tcode_200\tcode_503\tcode_504\tcode_429\trejected_bp\tp50_us\tp99_us\tp999_us\tstate" > "$LADDER"
 echo "[wsC] jar=$JAR"
@@ -196,7 +195,6 @@ for RATE in $RATES; do
   e1=$(read_elections)
   curl -s --max-time 3 "http://$(api "$L")/metrics" 2>/dev/null > "$OUT/rate-$RATE.metrics.txt"
 
-  # parse the driver output
   ach=$(grep ATRATE-RESULT "$RAW" | sed -n 's/.*achieved_commit_rate=\([0-9]*\).*/\1/p')
   rej=$(grep ATRATE-RESULT "$RAW" | sed -n 's/.*rejected_backpressure=\([0-9]*\).*/\1/p')
   st=$(grep ATRATE-STATUS "$RAW" | sed 's/ATRATE-STATUS //')

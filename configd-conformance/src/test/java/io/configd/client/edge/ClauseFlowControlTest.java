@@ -40,25 +40,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Runner II (client-conforms) for the §06 F10 connection-lifecycle + flow-control clauses: the client's
- * reaction to the server's flow-control signals (the non-fatal {@code DEMOTED_TO_CATCHUP} notice vs the
- * terminal {@code QUARANTINED} teardown), its mandatory {@code CURSOR_ACK} progress, the single-shared-drain
- * refuse-to-share footgun (F10-1b), a reconnect that keeps only the cursor and mints a fresh {@code watch_id}
- * (F10-1a), the snapshot-first re-bootstrap (F10-1c), the token-edge AUTH-before-business ordering (F10-1e),
- * the eager first-frame send / do-not-idle (F10-1d), the silent-close-is-retryable-not-a-protocol-error
- * distinction (F10-2), and the own-bounded-backoff-not-reconnect-storm reaction to a QUARANTINED teardown
- * (F10-4). Each drives the reference client against the scriptable {@link MockEdgeServer} and asserts the
- * wire-visible reaction the RFC pins — never a token reference to the clause id.
+ * Client-conforms tests for the connection-lifecycle and flow-control behaviors: the client's reaction to
+ * the server's flow-control signals (the non-fatal {@code DEMOTED_TO_CATCHUP} notice vs the terminal
+ * {@code QUARANTINED} teardown), its mandatory {@code CURSOR_ACK} progress, the single-shared-drain
+ * refuse-to-share, a reconnect that keeps only the cursor and mints a fresh {@code watch_id}, the
+ * snapshot-first re-bootstrap on a stale resume, the token-edge AUTH-before-business-frame ordering, the
+ * eager first-frame send on connect, the silent-close-is-retryable-not-a-protocol-error distinction, and the
+ * client's own bounded backoff (not a reconnect storm) after a QUARANTINED teardown. Each test drives the
+ * reference client against the scriptable {@link MockEdgeServer} and asserts the wire-visible reaction, not
+ * just that a clause tag exists.
  *
- * <p>Not client-wire-observable (so not here): the aggregate in-flight ceiling (F10-2a, an operator sizing
- * note). For F10-4 only the deterministic client residue is asserted — the client honors quarantine via its
- * OWN bounded backoff (no reconnect-storm), never by machine-parsing the untrusted server cooldown (§07 E6);
- * the identity-stateful cross-reconnect refusal and the cooldown DURATION are server-side / timing.
+ * <p>Not asserted here: the aggregate in-flight ceiling (an operator sizing concern, not client-observable).
+ * The QUARANTINED-backoff test only asserts the deterministic client residue: the client never machine-parses
+ * the untrusted server cooldown text; the identity-stateful cross-reconnect refusal and the cooldown duration
+ * are server-side / timing concerns and are not asserted here.
  */
 @Timeout(30)
 class ClauseFlowControlTest {
-
-    // ---- F10-3: DEMOTED_TO_CATCHUP is a non-fatal mode switch; QUARANTINED is a hard teardown ----
 
     @Test
     @Tag("clause:F10-3")
@@ -67,7 +65,7 @@ class ClauseFlowControlTest {
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
             // The session in-flight / outbound queue backed up: the server demotes rather than closing.
             conn.send(new EdgeFrame.ErrorClose(ErrorCode.DEMOTED_TO_CATCHUP, "slow reader; switching to catch-up"));
-            conn.parkUntilClosed(); // keep the socket open — a non-fatal demotion does NOT close the connection
+            conn.parkUntilClosed(); // keep the socket open -- a non-fatal demotion does NOT close the connection
         })) {
             EdgeConnection conn = new EdgeConnection(
                     new ServerAddress("127.0.0.1", server.port()), null, HostileServerLimits.defaults(),
@@ -96,7 +94,6 @@ class ClauseFlowControlTest {
                     new InboundFrameHandler() {
                     }, "flowctl-quarantine-reader");
             conn.connect();
-            // Continued flow-control pressure escalates from DEMOTED to a QUARANTINED teardown (F10-3 tail).
             ExecutionException ee = assertThrows(ExecutionException.class,
                     () -> conn.closedFuture().get(10, TimeUnit.SECONDS));
             QuarantinedException ex = assertInstanceOf(QuarantinedException.class, ee.getCause());
@@ -118,15 +115,13 @@ class ClauseFlowControlTest {
                 Watch watch = client.watch(WatchTarget.key("/k"), WatchOptions.defaults());
                 collect(watch);
                 watch.awaitCreated(Duration.ofSeconds(10));
-                // Flow-control is mandatory (F10-3): after applying the event at S=7 the client MUST advance and
-                // ack its cursor, so the server sees progress and never demotes it for ack-lag.
+                // Flow control is mandatory: after applying the event at S=7 the client must advance and ack
+                // its cursor, so the server sees progress and is never tempted to demote it for ack lag.
                 await("the client acked its applied cursor (CURSOR_ACK seq=7)", () -> server.received().stream()
                         .anyMatch(f -> f instanceof EdgeFrame.CursorAck ack && ack.seq() == 7L));
             }
         }
     }
-
-    // ---- F10-1b: the single shared drain — a cursored watch cannot ride a shared connection ----
 
     @Test
     @Tag("clause:F10-1b")
@@ -139,9 +134,9 @@ class ClauseFlowControlTest {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(trustedConfig(server.port()))) {
                 Watch host = client.watch(WatchTarget.key("/a"), WatchOptions.defaults());
                 host.awaitCreated(Duration.ofSeconds(10));
-                // v1 fan-out is one shared drain per connection: only the first watch's cursor positions it, so
-                // a second INDEPENDENTLY-RESUMED watch would silently lose every event between its cursor and
-                // the live frontier. The client refuses the share LOUDLY rather than dropping the resume.
+                // Fan-out is one shared drain per connection: only the first watch's cursor positions it, so
+                // a second independently-resumed watch would silently lose every event between its cursor and
+                // the live frontier. The client refuses the share loudly rather than dropping the resume.
                 IllegalStateException ex = assertThrows(IllegalStateException.class, () ->
                         client.watch(WatchTarget.key("/b"),
                                 WatchOptions.defaults().resume(WatchCursor.of(0, 5)).shareConnectionOf(host)));
@@ -149,8 +144,6 @@ class ClauseFlowControlTest {
             }
         }
     }
-
-    // ---- F10-1 / F10-1a: reconnect keeps only the cursor; a fresh watch_id is minted (no session token) ----
 
     @Test
     @Tag("clause:F10-1")
@@ -178,8 +171,6 @@ class ClauseFlowControlTest {
         }
     }
 
-    // ---- F10-1c: a stale resume gets a snapshot-first re-bootstrap, not a tail ----
-
     @Test
     @Tag("clause:F10-1c")
     void clientHandlesASnapshotFirstReBootstrap() throws Exception {
@@ -187,7 +178,7 @@ class ClauseFlowControlTest {
         var tail = StreamFixtures.signedPut(leader, 5, 6, 1, "c", "3");
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
             conn.readFrame(); // SUBSCRIBE
-            // A stale/too-old resume ⇒ the server serves a full snapshot (mode=1), not an incremental tail.
+            // A stale or too-old resume: the server serves a full snapshot (mode=1), not an incremental tail.
             conn.send(new EdgeFrame.SubscribeOk(6L, EdgeFrame.Mode.SNAPSHOT_FIRST));
             for (EdgeFrame f : StreamFixtures.snapshotFrames(5, StreamFixtures.entries("a", "1", "b", "2"), 8)) {
                 conn.send(f);
@@ -204,14 +195,12 @@ class ClauseFlowControlTest {
         }
     }
 
-    // ---- F10-1e: on a token edge the AUTH (0x04) precedes the first business frame ----
-
     @Test
     @Tag("clause:F10-1e")
     void tokenEdgeSendsAuthBeforeAnyBusinessFrame() throws Exception {
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            conn.readFrame();                            // the AUTH — the first routed frame on a token edge
-            conn.send(new EdgeFrame.Heartbeat(0L, 1L));  // a positive liveness confirmation ⇒ authenticated
+            conn.readFrame();                            // the AUTH -- the first routed frame on a token edge
+            conn.send(new EdgeFrame.Heartbeat(0L, 1L));  // a positive liveness confirmation, so authenticated
             conn.parkUntilClosed();
         })) {
             ConfigdClientConfig config = tokenConfig(server.port(), tokens("golden-token"));
@@ -225,8 +214,6 @@ class ClauseFlowControlTest {
         }
     }
 
-    // ---- F10-1d: the first routed frame is sent EAGERLY on connect (do not idle a just-opened connection) ----
-
     @Test
     @Tag("clause:F10-1d")
     void firstRoutedFrameIsSentEagerlyOnConnectNotIdled() throws Exception {
@@ -237,7 +224,7 @@ class ClauseFlowControlTest {
         })) {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(trustedConfig(server.port()))) {
                 // No Flow.Subscriber is attached and no poll is issued: the client MUST still send its first
-                // routed frame (the WATCH_CREATE) EAGERLY on connect — it does not idle a just-opened connection
+                // routed frame (the WATCH_CREATE) EAGERLY on connect -- it does not idle a just-opened connection
                 // waiting for consumer demand. awaitCreated can only complete once the server has RECEIVED that
                 // WATCH_CREATE and replied, so a green awaitCreated with an empty subscriber proves the eager send.
                 Watch watch = client.watch(WatchTarget.key("/k"), WatchOptions.defaults());
@@ -249,8 +236,6 @@ class ClauseFlowControlTest {
         }
     }
 
-    // ---- F10-2: a silent, code-less close is a RETRYABLE capacity condition, not a protocol error ----
-
     @Test
     @Tag("clause:F10-2")
     void silentCloseIsRetryableAndDistinctFromAFrameBearingReject() throws Exception {
@@ -258,7 +243,7 @@ class ClauseFlowControlTest {
         // refusal: the client MUST classify it as a routine capacity/transport condition (a retryable
         // UnavailableException, which the reconnect policy retries with backoff), NEVER a ProtocolViolationException.
         try (MockEdgeServer silent = MockEdgeServer.startPlaintext(conn -> {
-            // return immediately: the mock closes the socket with no bytes sent — a code-less disconnect
+            // return immediately: the mock closes the socket with no bytes sent -- a code-less disconnect
         })) {
             EdgeConnection conn = new EdgeConnection(
                     new ServerAddress("127.0.0.1", silent.port()), null, HostileServerLimits.defaults(),
@@ -275,7 +260,7 @@ class ClauseFlowControlTest {
         }
 
         // Contrast: a frame-bearing per-connection reject (BAD_SUBSCRIBE) is a DISTINCT, code-classified terminal
-        // — the driver must tell the two apart (retry the silent one; do not retry-storm the frame-bearing one).
+        // -- the driver must tell the two apart (retry the silent one; do not retry-storm the frame-bearing one).
         try (MockEdgeServer rejecting = MockEdgeServer.startPlaintext(conn ->
                 conn.send(new EdgeFrame.ErrorClose(ErrorCode.BAD_SUBSCRIBE, "malformed subscription")))) {
             EdgeConnection conn = new EdgeConnection(
@@ -291,19 +276,16 @@ class ClauseFlowControlTest {
         }
     }
 
-    // ---- F10-4: after a QUARANTINED teardown the client backs off with its OWN bounded policy (no storm) ----
-
     @Test
     @Tag("clause:F10-4")
     void quarantinedTriggersOwnBoundedBackoffNotAReconnectStorm() throws Exception {
-        // The deterministic, non-timing client residue of F10-4: on a QUARANTINED teardown the client reconnects
-        // through its OWN bounded RetryPolicy — it MUST NOT machine-parse the server cooldown (§07 E6; the
-        // untrusted diagnostic is never interpreted) and MUST NOT instant-reconnect-storm. A server that
-        // QUARANTINEs on EVERY connection with no positive frame never resets the budget, so the client makes
-        // exactly (initial + maxAttempts) attempts and then gives up — bounded, not an unbounded loop. The
-        // give-up's root cause is the QUARANTINED terminal (so this is F10-4, not a generic retryable). The
-        // identity-stateful cross-reconnect refusal and the cooldown DURATION are server-side / timing and are
-        // deliberately NOT asserted here; the connection-fatal reaction itself is F10-3.
+        // The deterministic, non-timing residue asserted here: on a QUARANTINED teardown the client reconnects
+        // through its own bounded RetryPolicy. It must not machine-parse the server's cooldown text (the
+        // diagnostic is untrusted and never interpreted) and must not instant-reconnect-storm. A server that
+        // quarantines on every connection with no positive frame never resets the budget, so the client makes
+        // exactly (initial + maxAttempts) attempts and then gives up -- bounded, not an unbounded loop, and the
+        // give-up's root cause is the QUARANTINED terminal. The identity-stateful cross-reconnect refusal and
+        // the cooldown duration are server-side / timing concerns and are deliberately not asserted here.
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
             conn.readFrame();
             conn.send(new EdgeFrame.ErrorClose(ErrorCode.QUARANTINED, "quarantined; cooldown 30s"));
@@ -330,11 +312,9 @@ class ClauseFlowControlTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // helpers (mirrored verbatim from the Gate-1..3 edge tests these re-express)
-    // -----------------------------------------------------------------------
+    // helpers (mirrored from the edge tests this class re-expresses as client-conforms assertions)
 
-    /** Sends a server→client frame on the 0x02 watch wire (the connection the client pinned via WATCH_CREATE). */
+    /** Sends a server-to-client frame on the 0x02 watch wire (the connection the client pinned via WATCH_CREATE). */
     private static void w(MockEdgeServer.Conn conn, EdgeFrame frame) throws IOException {
         conn.send(frame, EdgeFrameCodec.EDGE_WIRE_VERSION_V2);
     }

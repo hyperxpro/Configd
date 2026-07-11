@@ -25,8 +25,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Drives {@link NodeAnchorService#enforceNodeAnchor} (the boot cross-check + first-boot mint) and the
  * periodic refresher directly, without standing up a whole server - the same pattern
  * {@code ShardCountConfigTest} uses for {@code enforceTopologyDescriptor}. Covers: first-boot mint,
- * clean second boot, topology rollback (epoch / N), audit-head reach vs truncation (+ the R-e tail),
- * the R-f shard-wipe REFUSE, forward-advance accept-forward (no false refuse), and the refresh advance.
+ * clean second boot, topology rollback (epoch / N), audit-head reach vs truncation (plus the
+ * un-anchored tail), the shard-wipe REFUSE, forward-advance accept-forward (no false refuse), and the
+ * refresh advance.
  */
 class NodeAnchorBootTest {
 
@@ -75,7 +76,7 @@ class NodeAnchorBootTest {
     @Test
     void firstBootWithAllShardsFreshMintsAndDoesNotTripTheWipeBranch(@TempDir Path dir) {
         // First node boot: the node-anchor is ABSENT and EVERY shard bootstraps FRESH together (all
-        // lastDurableIndex 0). The R-f wipe branch requires the node-anchor to EXIST, so an absent
+        // lastDurableIndex 0). The wipe-detection branch requires the node-anchor to EXIST, so an absent
         // node-anchor takes the mint path - it must NEVER be mistaken for a wipe. This is the boundary
         // that separates "brand-new node" from "an initialized node whose shard was wiped".
         IntegrityEnvelope env = keyed();
@@ -129,12 +130,12 @@ class NodeAnchorBootTest {
     void shardWipedToFreshRefuses_Rf(@TempDir Path dir) {
         // FULL wipe: shard 1's raft-anchor + WAL + snapshot all deleted, so it boots FRESH (anchor
         // ABSENT, head reset to 0). The node-anchor EXISTS (node was initialized) => digest differs AND
-        // a shard is FRESH => the R-f wipe signature => REFUSE.
+        // a shard is FRESH => the wipe signature => REFUSE.
         //
         // The PARTIAL wipe (anchor deleted but WAL/snapshot intact => the shard dir is NON-empty) never
-        // reaches this digest branch: Gate 3a's per-shard presence gate (RaftLog.recoverWithAnchor)
-        // throws "anchor was deleted" during buildRaftGroup, so the bring-up loop fails BEFORE
-        // enforceNodeAnchor runs. Proven by RaftAnchorRecoveryTest.deletedAnchorOverNonEmptyShardRefuses.
+        // reaches this digest branch: RaftLog's per-shard presence gate (recoverWithAnchor) throws
+        // "anchor was deleted" during buildRaftGroup, so the bring-up loop fails BEFORE enforceNodeAnchor
+        // runs. Proven by RaftAnchorRecoveryTest.deletedAnchorOverNonEmptyShardRefuses.
         IntegrityEnvelope env = keyed();
         mint(dir, env, EPOCH, 2, durable(2, 100, 200), null);
 
@@ -170,10 +171,11 @@ class NodeAnchorBootTest {
 
     @Test
     void n1CrashRestartUnderLoadAcceptForward_NoBrickOnLegalCrash(@TempDir Path dir) {
-        // THE load-bearing case (the one the literal "any digest change => REFUSE" would brick). At the
+        // THE load-bearing case (the one a literal "any digest change => REFUSE" would brick). At the
         // N=1 default, the single shard's lastDurableIndex advances between node-anchor ticks; a crash
-        // restart recomputes a DIFFERENT digest with NO shard FRESH. It is a legal crash (§1: never
-        // brick on a legal crash) => must accept-forward and PROCEED, never REFUSE.
+        // restart recomputes a DIFFERENT digest with NO shard FRESH. This is a legal crash, so it must
+        // accept-forward and PROCEED, never REFUSE - a boot cross-check must never brick a healthy node
+        // for having simply made progress.
         IntegrityEnvelope env = keyed();
         mint(dir, env, EPOCH, 1, durable(1, 100), null); // last tick anchored head = 100
 
@@ -204,7 +206,7 @@ class NodeAnchorBootTest {
         assertTrue(ex.getMessage().contains("both slots invalid"), ex.getMessage());
     }
 
-    // ------------------------------------------------------------------ audit head (§A1.6)
+    // audit head
 
     private static AuditLog newAuditLog(Storage storage) {
         byte[] auditKey = new byte[32];
@@ -225,7 +227,7 @@ class NodeAnchorBootTest {
         Map<Integer, Long> boot = durable(1, 10);
         mint(dir, env, EPOCH, 1, boot, auditLog); // anchors head = 3rd record
 
-        // Two more records land AFTER the anchor (the un-anchored tail, residual R-e).
+        // Two more records land AFTER the anchor (the un-anchored tail).
         auditLog.record("bob", "DELETE", "k9", "committed");
         auditLog.record("bob", "PUT", "k10", "committed");
 
@@ -261,7 +263,7 @@ class NodeAnchorBootTest {
         assertTrue(ex.getMessage().contains("audit-head"), ex.getMessage());
     }
 
-    // ------------------------------------------------------------------ periodic refresh
+    // periodic refresh
 
     @Test
     void periodicRefreshAdvancesTheAnchorOnTheCadence(@TempDir Path dir) {

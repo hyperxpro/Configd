@@ -16,10 +16,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class HamtMapTest {
 
-    // -----------------------------------------------------------------------
-    // Basic operations
-    // -----------------------------------------------------------------------
-
     @Nested
     class BasicOperations {
 
@@ -114,10 +110,6 @@ class HamtMapTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Structural sharing
-    // -----------------------------------------------------------------------
-
     @Nested
     class StructuralSharing {
 
@@ -129,11 +121,9 @@ class HamtMapTest {
 
             HamtMap<String, String> modified = original.put("c", "3");
 
-            // Original unchanged
             assertEquals(2, original.size());
             assertNull(original.get("c"));
 
-            // Modified has all three
             assertEquals(3, modified.size());
             assertEquals("1", modified.get("a"));
             assertEquals("2", modified.get("b"));
@@ -148,11 +138,9 @@ class HamtMapTest {
 
             HamtMap<String, String> modified = original.remove("a");
 
-            // Original unchanged
             assertEquals(2, original.size());
             assertEquals("1", original.get("a"));
 
-            // Modified lacks "a"
             assertEquals(1, modified.size());
             assertNull(modified.get("a"));
             assertEquals("2", modified.get("b"));
@@ -173,10 +161,6 @@ class HamtMapTest {
             assertNull(v2.get("extra"));
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Hash collision handling
-    // -----------------------------------------------------------------------
 
     @Nested
     class HashCollisions {
@@ -254,10 +238,6 @@ class HamtMapTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // forEach
-    // -----------------------------------------------------------------------
-
     @Nested
     class ForEach {
 
@@ -284,10 +264,6 @@ class HamtMapTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Large dataset
-    // -----------------------------------------------------------------------
-
     @Nested
     class LargeDataset {
 
@@ -296,25 +272,21 @@ class HamtMapTest {
             int count = 100_000;
             HamtMap<String, Integer> map = HamtMap.empty();
 
-            // Insert
             for (int i = 0; i < count; i++) {
                 map = map.put("key-" + i, i);
             }
             assertEquals(count, map.size());
 
-            // Verify all present
             for (int i = 0; i < count; i++) {
                 assertEquals(i, map.get("key-" + i), "Missing key-" + i);
             }
 
-            // Remove half
             HamtMap<String, Integer> reduced = map;
             for (int i = 0; i < count; i += 2) {
                 reduced = reduced.remove("key-" + i);
             }
             assertEquals(count / 2, reduced.size());
 
-            // Verify remaining
             for (int i = 0; i < count; i++) {
                 if (i % 2 == 0) {
                     assertNull(reduced.get("key-" + i));
@@ -323,7 +295,6 @@ class HamtMapTest {
                 }
             }
 
-            // Original still intact
             assertEquals(count, map.size());
         }
 
@@ -341,10 +312,6 @@ class HamtMapTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // ArrayNode promotion/demotion
-    // -----------------------------------------------------------------------
-
     @Nested
     class ArrayNodeTransitions {
 
@@ -358,7 +325,6 @@ class HamtMapTest {
             }
             assertEquals(32, map.size());
 
-            // Verify all accessible
             for (int i = 0; i < 32; i++) {
                 assertEquals("v" + i, map.get(i));
             }
@@ -369,16 +335,11 @@ class HamtMapTest {
             }
             assertEquals(8, map.size());
 
-            // Remaining still accessible
             for (int i = 24; i < 32; i++) {
                 assertEquals("v" + i, map.get(i));
             }
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Concurrent read safety (immutability guarantees)
-    // -----------------------------------------------------------------------
 
     @Nested
     class ConcurrentReadSafety {

@@ -13,9 +13,8 @@
 #     for each entry:
 #         [4-byte key length][key bytes][4-byte value length][value bytes]
 #
-# There are no explicit magic bytes in the on-disk format (this is a known
-# gap, tracked as PA-2021 / "snapshot file header" in
-# docs/review/iter-001/release-skeptic.md). This script therefore validates
+# The 12-byte header itself carries no magic bytes (only the TLV trailer at
+# the end of the file does, per ADR-0028). This script therefore validates
 # the snapshot by:
 #   1. file existence + non-empty + readable
 #   2. file size >= 12 bytes (the fixed header) and
@@ -33,9 +32,9 @@
 #     waits for pods to terminate, copies the snapshot into the data dir
 #     (operator-supplied; reference Job pattern documented in
 #     ops/runbooks/restore-from-snapshot.md Step 3), runs the conformance
-#     check, then scales back up to the original replica count. iter-2
-#     H-001 closure: removed the legacy `systemctl stop configd.service`
-#     path; the only reference deployment is K8s.
+#     check, then scales back up to the original replica count. The legacy
+#     `systemctl stop configd.service` path has been removed; the only
+#     reference deployment is K8s.
 #
 # Exit codes:
 #   0  success (or successful dry-run)
@@ -225,10 +224,10 @@ fi
 # -----------------------------------------------------------------------------
 # Step 2 — scale the StatefulSet down before we touch the data volumes.
 #
-# H-001 closure: this replaces the legacy `systemctl stop configd.service`
-# call. The reference deployment is K8s; the StatefulSet is the unit of
-# lifecycle. We scale to 0, then wait for pods to terminate, *before* any
-# downstream destructive PVC operation runs.
+# This replaces the legacy `systemctl stop configd.service` call. The
+# reference deployment is K8s; the StatefulSet is the unit of lifecycle.
+# We scale to 0, then wait for pods to terminate, *before* any downstream
+# destructive PVC operation runs.
 # -----------------------------------------------------------------------------
 log "step 2: scaling StatefulSet $NAMESPACE/$STATEFULSET to 0 replicas"
 

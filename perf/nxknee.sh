@@ -1,30 +1,29 @@
 #!/usr/bin/env bash
-# =============================================================================
-# nxknee.sh — Multi-Raft N×knee: AGGREGATE write-throughput scaling vs shard
+# nxknee.sh — multi-Raft N x knee: aggregate write-throughput scaling vs shard
 #             count N (the horizontal-scale claim, measured on metal).
-# -----------------------------------------------------------------------------
+#
 # Derived from perf/wsC-ladder.sh (single-group knee) with the multi-Raft
-# generalisation. Two design points make an N-group measurement HONEST:
+# generalisation. Two design points make an N-group measurement honest:
 #
 #   (1) -Dconfigd.raft.shardCount=N on all three nodes (StaticShardMap routes
 #       (scope,key)->shard; the driver's ~1M distinct keys spread ~uniformly
-#       over N groups). NO --edge-port, so the N>1 edge fail-closed guard never
+#       over N groups). No --edge-port, so the N>1 edge fail-closed guard never
 #       trips — this is the write/consensus plane.
 #
-#   (2) REALISTIC, SYMMETRIC election timeouts (the as-built 150/300/50 ms
-#       defaults) on all three nodes, so the N groups' leaders SCATTER naturally
+#   (2) Realistic, symmetric election timeouts (the as-built 150/300/50 ms
+#       defaults) on all three nodes, so the N groups' leaders scatter naturally
 #       across the nodes — exactly how multi-Raft balances leadership in
-#       production. We do NOT pin leaders with timeout asymmetry: that was tried
-#       and REJECTED — a short leader timeout + long follower timeout makes the
-#       leader fragile at the knee AND prevents failover, so the group goes
+#       production. We do not pin leaders with timeout asymmetry: that was tried
+#       and rejected — a short leader timeout plus a long follower timeout makes
+#       the leader fragile at the knee and prevents failover, so the group goes
 #       leaderless and the measured knee is an artefact, not the real one.
 #
-#   To drive a scattered-leader cluster, the load generator is the SHARD-AWARE
+#   To drive a scattered-leader cluster, the load generator is the shard-aware
 #   ShardAwareWriteDriver: it replicates StaticShardMap.shardFor and keeps a
-#   PER-SHARD leader pointer (learned from X-Leader-Hint), so every PUT lands on
+#   per-shard leader pointer (learned from X-Leader-Hint), so every PUT lands on
 #   the node that leads that key's shard — the production sharded-client pattern.
-#   Aggregate throughput = sum across all N shards' leaders on the 3-node box;
-#   the knee is where the box's 16 vCPU / shared NVMe fsync saturate.
+#   Aggregate throughput is the sum across all N shards' leaders on the 3-node
+#   box; the knee is where the box's 16 vCPU / shared NVMe fsync saturate.
 #
 #   Usage:  perf/nxknee.sh <N> [outdir]
 #   Env:    NXK_RATES (default auto ~N*800/s ladder)  NXK_DUR (default 20)
@@ -32,7 +31,6 @@
 #           NXK_HEAP (default "-Xmx4g -Xms4g")  NXK_GC (default ZGC)
 #           NXK_TRANSPORT (default epoll)  NXK_BASE (default /mnt/nvme/run/...)
 #           NXK_DRYRUN (default 0)  CONFIGD_JAR / CONFIGD_BENCH / NXK_SIGNKEY
-# =============================================================================
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JAR="${CONFIGD_JAR:-$(ls "$ROOT"/configd-server/target/configd-server-*.jar 2>/dev/null | grep -v original- | head -1)}"
@@ -152,7 +150,6 @@ stop_samplers() { for pid in "${SAMPLERS[@]:-}"; do kill "$pid" 2>/dev/null; don
 # Shard-aware open-loop driver (routes each key to its shard's leader).
 driver() { java $GCFLAGS -Xmx2g --enable-preview -cp "$BENCH" io.configd.bench.ShardAwareWriteDriver "$@" 2>&1 | grep -v "WARNING\|Unsafe\|sun.misc\|native-access"; }
 
-# ----------------------------------------------------------------------------
 LADDER="$OUT/ladder.tsv"
 echo -e "N\toffered\tachieved\telections\tcode_200\tcode_503\tcode_504\tcode_429\tretargets\tleader_dist\tp50_us\tp99_us\tp999_us\tstate" > "$LADDER"
 echo "[nxk] N=$N jar=$JAR transport=$TRANSPORT heap=$HEAP dur=${DUR}s conc=$CONC val=${VALBYTES}B"

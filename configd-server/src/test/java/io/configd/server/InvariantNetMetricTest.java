@@ -20,8 +20,8 @@ import org.junit.jupiter.api.io.TempDir;
 /**
  * The runtime invariant safety net must be ON in a RUNNING server (not NOOP) AND
  * observable - a real invariant violation must increment a NAMED counter visible in the live
- * Prometheus {@code /metrics} exposition. "A net that fires into an unwatched log is the NOOP we
- * just removed."
+ * Prometheus {@code /metrics} exposition. A net that fires into an unwatched log is no better
+ * than NOOP.
  *
  * <p>Discrimination: reverting the {@link ConfigdServer} wiring back to {@code InvariantChecker.NOOP}
  * leaves the counter absent (value 0) and this test fails.
@@ -50,11 +50,11 @@ class InvariantNetMetricTest {
             // Establish key "k" at version 1.
             sm.apply(1L, 1L, CommandCodec.encodePut("k", new byte[]{1}));
 
-            // Inject the precondition a real corruption (e.g. a sequence-counter rewind under the
-            // pre-A1 W-2 race, or a snapshot-restore bug) would create: rewind the counter so the
-            // next PUT to "k" computes a version <= the existing version. The invariant DETECTION,
-            // metric increment, and Prometheus exposition that follow are all the REAL production
-            // path through the wired checker - only the precondition is injected.
+            // Inject the precondition a real corruption (e.g. a sequence-counter rewind from a stale
+            // non-volatile read racing the apply thread, or a snapshot-restore bug) would create:
+            // rewind the counter so the next PUT to "k" computes a version <= the existing version.
+            // The invariant detection, metric increment, and Prometheus exposition that follow are
+            // all the REAL production path through the wired checker - only the precondition is injected.
             Field scf = ConfigStateMachine.class.getDeclaredField("sequenceCounter");
             scf.setAccessible(true);
             scf.setLong(sm, 0L);
@@ -83,7 +83,7 @@ class InvariantNetMetricTest {
 
     /** Scrapes the running server's /metrics endpoint (public in the minimal, no-auth config). */
     private static String scrapeMetrics(ConfigdServer server) throws Exception {
-        // Admin server is now Netty; the public bound-port accessor is transport-agnostic.
+        // Admin server is Netty-based; the public bound-port accessor is transport-agnostic.
         int port = server.apiPort();
 
         HttpResponse<String> resp = HttpClient.newHttpClient().send(

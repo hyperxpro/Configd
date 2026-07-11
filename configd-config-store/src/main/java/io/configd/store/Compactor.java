@@ -67,10 +67,6 @@ public final class Compactor {
         this(DEFAULT_RETENTION_COUNT);
     }
 
-    // -----------------------------------------------------------------------
-    // Snapshot management
-    // -----------------------------------------------------------------------
-
     /**
      * Adds a snapshot to the history. If a snapshot with the same version
      * already exists, it is replaced.
@@ -121,10 +117,6 @@ public final class Compactor {
         return history.size();
     }
 
-    // -----------------------------------------------------------------------
-    // Compaction
-    // -----------------------------------------------------------------------
-
     /**
      * Removes snapshots beyond the retention window.
      * <p>
@@ -153,10 +145,6 @@ public final class Compactor {
         }
         return removed;
     }
-
-    // -----------------------------------------------------------------------
-    // Configuration
-    // -----------------------------------------------------------------------
 
     /** Returns the configured retention count. */
     public int retentionCount() {

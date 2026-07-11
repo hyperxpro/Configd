@@ -65,7 +65,6 @@ class SubscriberOverflowDemotionTest {
         assertEquals(ErrorCode.DEMOTED_TO_CATCHUP, notices.get(0).code());
         assertEquals(DemotionEvent.REASON_QUEUE_OVERFLOW, notices.get(0).message());
 
-        // Cursor evidence + metric + structured event.
         assertEquals(1, metrics.demotions);
         assertEquals(DemotionEvent.REASON_QUEUE_OVERFLOW, metrics.lastDemotionReason);
         assertEquals(1, events.size());

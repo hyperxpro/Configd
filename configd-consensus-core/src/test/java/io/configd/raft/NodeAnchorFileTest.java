@@ -213,7 +213,6 @@ class NodeAnchorFileTest {
         reopened.close();
     }
 
-    /** Flips one byte at the given file offset (a torn/tamper simulation). */
     private static void corruptByte(Path dir, int offset) throws Exception {
         Path file = dir.resolve(NodeAnchorFile.NODE_ANCHOR_FILE_NAME);
         byte[] bytes = Files.readAllBytes(file);

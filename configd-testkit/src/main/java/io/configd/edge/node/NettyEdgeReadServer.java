@@ -41,18 +41,18 @@ import java.nio.charset.StandardCharsets;
 import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 
 /**
- * BEST-NETTY edge read-serving HTTP/1.1 server - the "Netty done properly" side of the
- * edge-read head-to-head (surface 2). It serves the <b>same response</b> as the production
+ * Best-Netty edge read-serving HTTP/1.1 server - the "Netty done properly" side of the
+ * edge-read head-to-head. It serves the same response as the production
  * {@link EdgeHttpServer} 200/404 read path - same {@link EdgeClientCore} read, same
  * {@code X-Configd-Cursor}/{@code X-Configd-Version}/{@code Content-Type} headers, same
- * {@link EdgeNodeMetrics} accounting - so the <em>only</em> difference between the two servers
+ * {@link EdgeNodeMetrics} accounting - so the only difference between the two servers
  * is the HTTP transport shell (JDK {@code com.sun.net.httpserver} vs this Netty pipeline). That
  * isolates exactly the contested transport-shell allocation.
  *
  * <p>Strongest-Netty build per {@code docs/jdk-vs-netty/netty42-api.md}: 4.2
  * {@code MultiThreadIoEventLoopGroup} + {@code Epoll}/{@code Nio} {@code IoHandler} factory,
  * {@code PooledByteBufAllocator.DEFAULT}, {@code HttpServerCodec} with a hand-rolled handler
- * (NO {@code HttpObjectAggregator} on the hot path), pooled response buffer, keep-alive honored,
+ * (no {@code HttpObjectAggregator} on the hot path), pooled response buffer, keep-alive honored,
  * {@code voidPromise} writes, flush on {@code channelReadComplete}. Worker threads pinned to 2
  * (the 2-vCPU box).
  */

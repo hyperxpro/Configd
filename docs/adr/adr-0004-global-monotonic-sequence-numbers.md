@@ -3,6 +3,12 @@
 ## Status
 Accepted
 
+> **Note:** Amended by [adr-0035-hlc-reconciliation.md](adr-0035-hlc-reconciliation.md): the
+> per-entry HLC timestamp promised in the Decision below is reconciled there to a measurable
+> staleness definition, because no per-entry HLC field exists in the production log entry. The
+> core decision here (per-group monotonic sequence number; reject per-key versions and vector
+> clocks) stands unchanged.
+
 ## Context
 The system needs a versioning scheme for config entries that supports: gap detection at edge nodes, monotonic read enforcement, total ordering within a key, and efficient fan-out subscription. Three options were analyzed: global monotonic sequence number, per-key version, and vector clocks.
 
@@ -17,10 +23,10 @@ Edge nodes track `last_applied_seq` per subscribed Raft group. Gap detection is 
 - **CockroachDB HLC:** Hybrid Logical Clocks for cross-node ordering without TrueTime hardware.
 
 ## Reasoning
-### Option 1: Global monotonic sequence number (CHOSEN)
+### Option 1: Global monotonic sequence number (chosen)
 - **Pro:** Simple. One comparison determines ordering. Gap detection trivial. Fits single-source-of-truth model. No per-key overhead (critical for 10^9 key ceiling). Fan-out subscription is position-based (like Kafka consumer groups).
 - **Con:** Sequence is per Raft group, not globally unique across groups. Cross-group ordering requires HLC fallback.
-- **Impact on section 0.1 targets:** At 10K writes/s, sequence numbers increment at 10K/s - 64-bit counter won't overflow for ~58 million years.
+- **Headroom:** At 10K writes/s, sequence numbers increment at 10K/s - a 64-bit counter won't overflow for ~58 million years.
 
 ### Option 2: Per-key version
 - **Pro:** More granular. Enables per-key conflict detection.

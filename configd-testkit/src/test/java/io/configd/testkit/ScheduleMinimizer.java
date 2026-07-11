@@ -5,13 +5,13 @@ import java.util.List;
 import java.util.function.Predicate;
 
 /**
- * Delta-debugging (ddmin) schedule minimizer for a failing adversarial seed
- * (adversarial-sim-design section 5). Because the seed fully determines the schedule,
- * "minimize the seed" is meaningless; instead we expand the seed once into its
- * concrete {@link AdversarialSchedule} and greedily reduce the fault-event and
+ * Delta-debugging (ddmin) schedule minimizer for a failing adversarial seed.
+ * Because the seed fully determines the schedule, "minimize the seed" is
+ * meaningless; instead we expand the seed once into its concrete
+ * {@link AdversarialSchedule} and greedily reduce the fault-event and
  * client-op lists, keeping a removal iff the failure still reproduces. The result
- * is a minimal, standalone, replayable schedule that REDs without seed expansion - 
- * stable even if {@code mixSeed} derivation later changes.
+ * is a minimal, standalone, replayable schedule that still fails without expanding
+ * the seed - stable even if {@code mixSeed} derivation later changes.
  * <p>
  * The reduction is the classic monotone greedy ddmin specialization (remove one
  * element at a time until a fixpoint), which is sufficient and predictable here;

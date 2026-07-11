@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - **Java 25** (Amazon Corretto or Eclipse Temurin recommended). Configd targets Java 25 and builds
-  with `--enable-preview` (ADR-0022); a later LTS migration is planned.
+  with `--enable-preview` (ADR-0022).
 - **Maven** -- the wrapper (`./mvnw`, Apache Maven 3.9.9) is included, so no global install is needed.
 
 ## Build from source
@@ -77,7 +77,7 @@ configd/
 ## Run a server
 
 Configd ships a real control-plane server (`io.configd.server.ConfigdServer`) and a standalone edge
-reader (`io.configd.edge.node.EdgeNodeMain`) -- it is no longer library-only.
+reader (`io.configd.edge.node.EdgeNodeMain`).
 
 The easiest way to bring up a small cluster is the Compose topology under `deploy/compose/` (three
 control-plane nodes plus edge readers, wired with mTLS); see [Docker](Docker.md).
@@ -101,7 +101,7 @@ admin API, and `--edge-port` (7070) is the edge fan-out. Liveness and readiness 
 `/health/live` and `/health/ready`; Prometheus metrics at `/metrics`; the config API under
 `/v1/config`.
 
-Enable security before production. v1 is secure-by-config, not secure-by-default: set `--auth-token`,
+Enable security before production. Configd is secure-by-config, not secure-by-default: set `--auth-token`,
 configure TLS (`--tls-cert`/`--tls-key`/`--tls-trust-store`), and enable the audit log and replay
 protection. Each control is off by default and logs a loud warning when off. See
 [`../operations/operator-runsheet.md`](../operations/operator-runsheet.md) and

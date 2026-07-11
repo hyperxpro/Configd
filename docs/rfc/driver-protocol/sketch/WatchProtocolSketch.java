@@ -39,7 +39,7 @@ public final class WatchProtocolSketch {
     // §5.1 / W5-1 — FrameType code additions (the next free edge code is 0x0A).
     // The existing edge frames (0x01..0x09) are unchanged (W1-3) and not modeled
     // here; only the §2 additions are. WATCH_SNAPSHOT_* (0x10..0x12) reuse the
-    // RR-102 chunked-catch-up mechanism plus a (watch_id, gid) multiplex tag (W5-3).
+    // chunked snapshot catch-up mechanism plus a (watch_id, gid) multiplex tag (W5-3).
     // -------------------------------------------------------------------------
     public enum WatchFrameType {
         WATCH_CREATE(0x0A),          // client -> server
@@ -218,7 +218,7 @@ public final class WatchProtocolSketch {
      * The `flags` byte (W5-4a) is modeled as three booleans:
      *   bit0=fullChainVerify, bit1=prevValue, bit2=withInitialSnapshot.
      * `withInitialSnapshot` is the ONLY way to request existing state; cursor 0
-     * ALONE means "from now per shard", NOT "replay" (W3-4 / W5-5 / CR-M1).
+     * ALONE means "from now per shard", NOT "replay" (W3-4 / W5-5).
      */
     public record WatchCreate(long watchId, Scope scope, WatchTargetKind targetKind,
                               String path, WatchCursor cursor,
@@ -360,7 +360,7 @@ public final class WatchProtocolSketch {
         // (g) a malformed (descending-gid) cursor is rejected on decode (W3-5 ordering invariant).
         require(rejectsDescendingGid(), "decode rejects non-ascending gid order");
 
-        // (h) the with_initial_snapshot flag (bit2, W5-4a/CR-M1) is the ONLY way to request existing
+        // (h) the with_initial_snapshot flag (bit2, W5-4a) is the ONLY way to request existing
         //     state; cursor 0 alone is "from now" (W3-4). A FULL target carries an empty path (W5-4).
         WatchCreate full = new WatchCreate(7L, Scope.GLOBAL, WatchTargetKind.FULL, "",
                 WatchCursor.fromNow(), /*fullChainVerify*/ true, /*prevValue*/ false,

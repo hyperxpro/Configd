@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * The seed-derived {@link AdversarialSchedule} must be a pure function of the
  * master seed: same seed => identical fault + workload event lists; different seeds
  * => different lists (the schedule is not vacuously constant). This is the
- * foundation that makes a failing seed replayable and shrinkable (section 5 ddmin).
+ * foundation that makes a failing seed replayable and shrinkable (ddmin).
  */
 class AdversarialScheduleDeterminismTest {
 

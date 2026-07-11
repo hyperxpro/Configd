@@ -37,7 +37,7 @@ public final class WalContainer {
      */
     public static final int WAL_FILE_MAGIC = 0x5257_4C46;
 
-    /** Container format version. Bumping it is a controlled, frozen-format action. */
+    /** Container format version. Bumping it is a controlled, compatibility-breaking action. */
     static final byte FILE_VERSION = 1;
 
     /**

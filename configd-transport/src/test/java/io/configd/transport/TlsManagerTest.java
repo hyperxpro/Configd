@@ -74,9 +74,7 @@ class TlsManagerTest {
         assertEquals(0, rc, "Command failed: " + command[0]);
     }
 
-    // -----------------------------------------------------------------------
     // Construction
-    // -----------------------------------------------------------------------
 
     @Test
     void createsSslContextFromSelfSignedCerts() throws Exception {
@@ -96,9 +94,7 @@ class TlsManagerTest {
         assertNotNull(manager.currentContext());
     }
 
-    // -----------------------------------------------------------------------
     // Reload
-    // -----------------------------------------------------------------------
 
     @Test
     void reloadProducesNewContext() throws Exception {
@@ -172,9 +168,7 @@ class TlsManagerTest {
                 "Each reload must produce a distinct SSLContext");
     }
 
-    // -----------------------------------------------------------------------
     // Error handling
-    // -----------------------------------------------------------------------
 
     @Test
     void constructorWithMissingFileThrows() {
@@ -190,9 +184,7 @@ class TlsManagerTest {
         assertThrows(NullPointerException.class, () -> new TlsManager(null));
     }
 
-    // -----------------------------------------------------------------------
     // TlsConfig record
-    // -----------------------------------------------------------------------
 
     @Test
     void tlsConfigMtlsFactory() {

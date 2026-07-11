@@ -1,14 +1,14 @@
-# Drive-to-green Gate 7 final measurement (release SHA eb9b293)
+# Release-commit measurement (release SHA eb9b293)
 
-The capstone measurement of the drive-to-green arc, run on the release commit
-`eb9b2932d7bf78e138b905132fc4f440283c6f71` (post-Gate-6 main). One c6i.2xlarge box
-(8 vCPU, ap-south-1) built the release SHA and ran three measurements sequentially, then
-was terminated and API-verified clean.
+The final pre-release measurement, run on the release commit
+`eb9b2932d7bf78e138b905132fc4f440283c6f71`. One c6i.2xlarge box (8 vCPU, ap-south-1) built
+the release SHA and ran three measurements sequentially, then was terminated and
+API-verified clean.
 
-## C3 - faulted linearizability on the release SHA: GREEN
+## Faulted linearizability on the release SHA: GREEN
 
-The definitive C3 (the go/no-go condition) run on the shipped bytes. With the Gate 4
-harness fix in main, the live multi-process fault-injected matrix runs green:
+This is the definitive linearizability run on the shipped bytes. With the signing-key
+co-location fix now in main, the live multi-process fault-injected matrix runs green:
 
 | n | seed | verdict | faults | ops |
 |---|------|---------|--------|-----|
@@ -22,13 +22,13 @@ harness fix in main, the live multi-process fault-injected matrix runs green:
 | 5 | 2004 | LINEARIZABLE | 5 | 799 |
 
 `GATE (iii)+(iv) PASS` - every seed LINEARIZABLE with faults active, reproducibility
-byte-identical. Log: `c3-faulted-linz-release-sha-GREEN.log`. Condition C3 is closed on
-the release SHA.
+byte-identical. Log: `c3-faulted-linz-release-sha-GREEN.log`. This closes the
+linearizability requirement on the release SHA.
 
-## INV-S2 - edge staleness under load: PASS (bound met with large margin)
+## Staleness bound under load: PASS (bound met with large margin)
 
-Re-run with the Gate 4.5 fix (the spurious gap-quarantine is gone). The staleness
-distribution meets the INV-S2 bound (p99 < 500 ms, p9999 < 2 s) decisively:
+Re-run now that the spurious gap-quarantine bug is fixed. The staleness distribution
+meets the bound (p99 < 500 ms, p9999 < 2 s) decisively:
 
 - 4 edges, 500 w/s, 180 s window, 7200 samples (CLEAN): p50 8 ms, p99 24 ms, p999 107 ms,
   p9999 117 ms, max 117 ms.
@@ -38,13 +38,13 @@ distribution meets the INV-S2 bound (p99 < 500 ms, p9999 < 2 s) decisively:
 The p99 bound (< 500 ms) is met with a ~20-38x margin; the p9999 bound (< 2 s) with a
 ~9-17x margin. Even the single-run maxima (117 ms, 232 ms) are under the p99 bound.
 
-Methodology note (honest): sustained multi-edge runs on this single co-resident box
-(server + load + N edges + samplers on 8 vCPU) occasionally starve an edge JVM long
-enough to genuinely lag several seconds - a co-location artifact, not a product
-steady-state figure. A faithful deep-tail (p9999) measurement at high multi-edge density
-wants dedicated edge hardware (edges on their own hosts). The clean per-edge steady-state
-distributions above are the representative result; the mechanism and the bound are
-validated. Result summary: `inv-s2-definitive-result.txt`.
+Methodology note: sustained multi-edge runs on this single co-resident box (server + load
++ N edges + samplers on 8 vCPU) occasionally starve an edge JVM long enough to genuinely
+lag several seconds - a co-location artifact, not a product steady-state figure. A
+faithful deep-tail (p9999) measurement at high multi-edge density wants dedicated edge
+hardware (edges on their own hosts). The clean per-edge steady-state distributions above
+are the representative result; the mechanism and the bound are validated. Result summary:
+`inv-s2-definitive-result.txt`.
 
 ## Encryption at rest - write-path overhead (ON vs OFF): low, tail-weighted
 

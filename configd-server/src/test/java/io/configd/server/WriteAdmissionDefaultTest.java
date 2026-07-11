@@ -21,12 +21,12 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * B6 (Class-B): write-admission control is ON by default at a conservative tuned value, so the store
- * protects itself from a write flood out of the box. Two proofs:
+ * Write-admission control is on by default at a conservative tuned value, so the store protects itself
+ * from a write flood out of the box. Two proofs:
  * <ol>
  *   <li>the default is on (a positive, tuned cap), and</li>
- *   <li>with the DEFAULT config (no {@code -D} override) a full cap of concurrent in-flight proposals is
- *       admitted WITHOUT shedding, and one more beyond the cap is shed as {@code Overloaded} (HTTP 429).</li>
+ *   <li>with the default config (no {@code -D} override) a full cap of concurrent in-flight proposals is
+ *       admitted without shedding, and one more beyond the cap is shed as {@code Overloaded} (HTTP 429).</li>
  * </ol>
  * "Normal load unaffected" is also proven for free by the rest of the reactor: every existing write-path
  * test runs under this default cap and stays green (no legitimate write sheds - the cap is ~1000x the
@@ -52,13 +52,13 @@ class WriteAdmissionDefaultTest {
     @Test
     void defaultCapAdmitsAFullCapThenShedsBeyondIt() throws Exception {
         String saved = System.getProperty(OVERRIDE);
-        System.clearProperty(OVERRIDE); // exercise the DEFAULT cap, not an override
+        System.clearProperty(OVERRIDE); // exercise the default cap, not an override
 
         final int cap = ConfigdServer.DEFAULT_MAX_INFLIGHT_PROPOSALS;
-        // Signalled once per ADMITTED proposal (the holding executor receives the task only after a permit
+        // Signalled once per admitted proposal (the holding executor receives the task only after a permit
         // is acquired). Reaching zero means all `cap` permits are held.
         CountDownLatch admitted = new CountDownLatch(cap);
-        Executor holding = task -> admitted.countDown(); // acquire signalled; task DROPPED -> future never completes
+        Executor holding = task -> admitted.countDown(); // acquire signalled; task dropped, so the future never completes
         // Never actually invoked: the holding executor drops the task, so propose()/getGroup() are unreached.
         MultiRaftDriver driver = new MultiRaftDriver(NodeId.of(0), Clock.system());
         ConfigdMetrics metrics = new ConfigdMetrics(new MetricsRegistry(), () -> 0L);
@@ -80,7 +80,7 @@ class WriteAdmissionDefaultTest {
                     "a full cap (" + cap + ") of concurrent writes must be admitted WITHOUT shedding");
 
             // The cap is now full and no permit is released (tasks dropped, long deadline). The next write
-            // must shed as Overloaded (-> HTTP 429) on the calling thread, before any executor task.
+            // must shed as Overloaded (HTTP 429) on the calling thread, before any executor task.
             ConfigWriteService.ProposeCommitResult shed =
                     proposer.propose(ConfigScope.GLOBAL, List.of("k"), new byte[]{1});
             assertInstanceOf(ConfigWriteService.ProposeCommitResult.Overloaded.class, shed,

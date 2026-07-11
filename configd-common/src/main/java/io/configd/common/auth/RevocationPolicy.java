@@ -24,12 +24,12 @@ import io.configd.common.config.ConfigSource;
  * </ol>
  * So the foot-gun is unreachable for the interior <b>by construction</b> (the interior has no responder in
  * its path), regardless of responder health. {@link #exemptInterNode} defaults {@code true}; an operator
- * who sets it {@code false} re-arms the foot-gun and MUST be warned loudly (the interior is still never
- * wired to a checker in v1, so the flag exists to make the invariant explicit and auditable).
+ * who sets it {@code false} re-arms the foot-gun and MUST be warned loudly (the interior is never wired to
+ * a checker, so the flag exists to make the invariant explicit and auditable).
  */
 public record RevocationPolicy(RevocationMode mode, boolean exemptInterNode, long responderTimeoutMs) {
 
-    /** The safe default: OFF (no online check, byte-identical to the pre-Gate-5 edge), interior exempt. */
+    /** The safe default: OFF (no online check), interior exempt. */
     public static final RevocationPolicy OFF = new RevocationPolicy(RevocationMode.OFF, true, 3_000L);
 
     public RevocationPolicy {
@@ -41,8 +41,7 @@ public record RevocationPolicy(RevocationMode mode, boolean exemptInterNode, lon
 
     /**
      * Builds the policy from {@link ConfigSource}, fail-closed (an unrecognized mode name fails the boot).
-     * Absent keys fall back to {@link #OFF}, so an unconfigured deployment does no online revocation and is
-     * byte-identical to before.
+     * Absent keys fall back to {@link #OFF}, so an unconfigured deployment does no online revocation.
      */
     public static RevocationPolicy fromConfig(ConfigSource cfg) {
         RevocationMode mode = cfg.getString("configd.auth.revocation.mode")

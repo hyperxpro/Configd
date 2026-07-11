@@ -34,31 +34,23 @@ import static org.junit.jupiter.api.Assertions.*;
  * Integration tests for {@link ConfigdServer}.
  * <p>
  * Each test uses a temporary data directory that is cleaned up automatically.
- * All server tests are guarded by a 60-second timeout to prevent hangs (raised from 10s for the
- * credit-throttling 2-vCPU box - see the note on the {@code @Timeout} annotation below).
+ * All server tests carry a 60-second timeout: a cold-JVM server boot does real CPU work (class-load,
+ * Netty/TLS init, Raft groups, HTTP, snapshot replay), and on a CPU-credit-throttled box that can take
+ * far longer than usual, so a short timeout would flake rather than catch a real hang.
  * The API port is set to 0 (ephemeral) so tests can run in parallel without
  * port conflicts.
  */
-// Hang ceiling raised 10s -> 60s (2026-06-27, pre-EC2 cleanup). This 2-vCPU box credit-throttles, and a
-// cold-JVM server boot does real CPU work (class-load, Netty/TLS init, Raft groups, HTTP, snapshot replay).
-// Measured robust at 16-burner oversubscription (serverStartsAndStopsCleanly 3/3 PASS, boot method << 10s),
-// but true credit-exhaustion is more severe than burner-oversubscription (it cuts total CPU, not just
-// shares it), which is the documented boot-timeout risk. 60s is generous headroom that prevents a
-// boot false-fail without masking a real hang; fast wiring tests are unaffected and keytool-heavy tests
-// (e.g. find0050) keep their own larger method-level @Timeout overrides.
 @Timeout(60)
 class ConfigdServerTest {
 
     @TempDir
     Path tempDir;
 
-    // Keytool subprocess spawning (3 per TLS test) dominates the
-    // find0050 runtime and starves under CPU-credit throttling, blowing the
-    // class-level @Timeout(10). Generate the keystore/truststore/cert exactly
-    // ONCE for the whole class in @BeforeAll and reuse the cached paths from
-    // the timed test body. The class-level @Timeout(10) still guards the many
-    // fast lifecycle/wiring tests; the keytool-driven find0050 carries its own
-    // generous hang-detection budget via a method-level @Timeout override.
+    // Keytool subprocess spawning (3 per TLS test) is the dominant cost in the keytool-heavy test and
+    // starves under CPU-credit throttling, so the keystore/truststore/cert are generated exactly once
+    // for the whole class here in @BeforeAll and reused from the timed test body. The class-level
+    // timeout still guards the many fast lifecycle/wiring tests; the keytool-driven test keeps its own
+    // larger method-level @Timeout override for its hang-detection budget.
     private static Path tlsFixtureDir;
     private static Path keyStorePath;
     private static Path trustStorePath;
@@ -123,10 +115,6 @@ class ConfigdServerTest {
         });
     }
 
-    // ========================================================================
-    // Start / stop lifecycle
-    // ========================================================================
-
     @Test
     void serverStartsAndStopsCleanly() {
         ServerConfig config = minimalConfig(tempDir);
@@ -159,14 +147,9 @@ class ConfigdServerTest {
         ServerConfig config = minimalConfig(tempDir);
         ConfigdServer server = ConfigdServer.start(config);
 
-        // Calling shutdown multiple times should not throw
         server.shutdown();
         server.shutdown();
     }
-
-    // ========================================================================
-    // File storage verification
-    // ========================================================================
 
     @Test
     void raftLogUsesFileStorage() throws Exception {
@@ -174,14 +157,12 @@ class ConfigdServerTest {
         ServerConfig config = minimalConfig(dataDir);
         ConfigdServer server = ConfigdServer.start(config);
 
-        // Verify the data directory was created and the server initialized
-        // FileStorage -- the directory itself being present confirms that
-        // Storage.file(dataDir) was invoked during startup.
+        // The directory being present confirms Storage.file(dataDir) was invoked during startup.
         assertTrue(Files.isDirectory(dataDir),
             "Data directory should be created by FileStorage");
 
-        // Write directly through a FileStorage instance on the same directory
-        // to prove the directory is writable and that .dat files appear as expected.
+        // Write directly through a FileStorage instance on the same directory to prove it is
+        // writable and that .dat files appear as expected.
         var storage = io.configd.common.Storage.file(dataDir);
         storage.put("test-key", new byte[]{1, 2, 3});
 
@@ -195,21 +176,16 @@ class ConfigdServerTest {
         server.shutdown();
     }
 
-    // ========================================================================
-    // Restart resilience
-    // ========================================================================
-
     @Test
     void serverSurvivesRestart() throws Exception {
         Path dataDir = tempDir.resolve("restart-test");
 
-        // First start
         ServerConfig config = minimalConfig(dataDir);
         ConfigdServer server1 = ConfigdServer.start(config);
         Thread.sleep(200); // let ticks run
         server1.shutdown();
 
-        // Second start with the same data directory -- should not throw
+        // Restart with the same data directory must not throw.
         ConfigdServer server2 = ConfigdServer.start(config);
         assertNotNull(server2);
         assertNotNull(server2.driver());
@@ -219,7 +195,6 @@ class ConfigdServerTest {
 
     @Test
     void serverStartsWithExistingDataDir() throws IOException {
-        // Pre-create the data directory with some content
         Files.createDirectories(tempDir.resolve("existing"));
         Files.writeString(tempDir.resolve("existing").resolve("dummy.txt"), "hello");
 
@@ -228,10 +203,6 @@ class ConfigdServerTest {
         assertNotNull(server);
         server.shutdown();
     }
-
-    // ========================================================================
-    // Config is accessible after start
-    // ========================================================================
 
     @Test
     void configIsAccessibleAfterStart() {
@@ -244,10 +215,6 @@ class ConfigdServerTest {
         server.shutdown();
     }
 
-    // ========================================================================
-    // Distribution layer wiring
-    // ========================================================================
-
     @Test
     void distributionLayerIsWiredAfterStart() {
         ServerConfig config = minimalConfig(tempDir);
@@ -259,9 +226,8 @@ class ConfigdServerTest {
         assertNotNull(server.plumtreeNode(), "PlumtreeNode must be wired");
         assertNotNull(server.hyParViewOverlay(), "HyParViewOverlay must be wired");
         assertNotNull(server.subscriptionManager(), "SubscriptionManager must be wired");
-        // C4: SlowConsumerPolicy (the pre-session orphan this assert used to "cover") is
-        // DELETED - superseded by SlowConsumerGovernor, which is wired inside the
-        // --edge-port FanOutServer branch and exercised by the FanOutServer policy tests.
+        // SlowConsumerGovernor (not SlowConsumerPolicy) enforces backpressure; it is wired inside the
+        // --edge-port FanOutServer branch, not here, and is exercised by the FanOutServer policy tests.
         assertNotNull(server.rolloutController(), "RolloutController must be wired");
 
         server.shutdown();
@@ -275,7 +241,6 @@ class ConfigdServerTest {
         assertTrue(server.fanOutBuffer().isEmpty(),
                 "FanOutBuffer should start empty");
 
-        // Apply a PUT command through the state machine
         byte[] command = CommandCodec.encodePut("test.key", new byte[]{1, 2, 3});
         server.stateMachine().apply(1, 1, command);
 
@@ -299,7 +264,6 @@ class ConfigdServerTest {
         AtomicInteger notifyCount = new AtomicInteger(0);
         server.watchService().register("test.", event -> notifyCount.incrementAndGet());
 
-        // Apply a PUT command
         byte[] command = CommandCodec.encodePut("test.key", new byte[]{42});
         server.stateMachine().apply(1, 1, command);
 
@@ -334,46 +298,34 @@ class ConfigdServerTest {
         ServerConfig config = minimalConfig(tempDir);
         ConfigdServer server = ConfigdServer.start(config);
 
-        // Simulate a peer joining through HyParView
         NodeId peer = NodeId.of(10);
         server.hyParViewOverlay().receiveJoin(peer);
 
-        // Verify the peer was propagated to PlumtreeNode's eager set
         assertTrue(server.plumtreeNode().eagerPeers().contains(peer),
                 "Plumtree should have the peer as eager after HyParView join");
 
         server.shutdown();
     }
 
-    // ========================================================================
-    // FIND-0005: Tick loop must survive exceptions
-    // ========================================================================
-
     /**
-     * Regression test for FIND-0005: the tick loop must continue
-     * running after a routed-message task throws. The OLD body of this test only
-     * slept twice and asserted {@code assertNotNull(server.driver())} - it never
-     * injected an exception, so it could not see the zombie-tick regression and
-     * gave the swallow path zero observation.
+     * The tick loop must keep running after a routed-message task throws.
      * <p>
-     * This rewrite injects a throwable through the REAL inbound seam
+     * This injects a throwable through the real inbound seam
      * ({@link ConfigdServer#raftInboundHandler}) - a routed message whose
      * {@code routeMessage -> node.handleMessage -> transport.send} throws - on the
-     * SAME single-thread Raft/tick executor that also runs a fixed-rate tick task,
+     * same single-thread Raft/tick executor that also runs a fixed-rate tick task,
      * and asserts:
      * <ol>
-     *   <li><b>First observation of the swallow:</b> the throwable does
-     *       NOT propagate to the caller - the inbound handler has no try/catch, so
-     *       the {@code routeMessage} exception is captured into the
+     *   <li>The throwable does NOT propagate to the caller: the inbound handler has no
+     *       try/catch, so the {@code routeMessage} exception is captured into the
      *       {@code ScheduledThreadPoolExecutor}'s discarded Future (the disk-failing
-     *       follower goes mute, no ack/log/metric). We assert the inbound
-     *       {@code accept} returns normally.</li>
-     *   <li><b>FIND-0005 (the named property):</b> the separately-scheduled
-     *       fixed-rate tick task KEEPS RUNNING after the routed task threw - its
-     *       counter advances past where it stood at injection time. (An STPE
-     *       cancels a task that throws in ITS OWN run; a one-shot {@code execute}
-     *       throwing must not cancel the independent {@code scheduleAtFixedRate}
-     *       tick task - the zombie-tick property.)</li>
+     *       follower goes mute, no ack/log/metric). The inbound {@code accept} must
+     *       return normally.</li>
+     *   <li>The separately-scheduled fixed-rate tick task keeps running after the routed
+     *       task threw: its counter advances past where it stood at injection time. An
+     *       STPE cancels a task that throws in its own run, but a one-shot {@code execute}
+     *       throwing must not cancel the independent {@code scheduleAtFixedRate} tick task
+     *       - the zombie-tick property this test guards against.</li>
      * </ol>
      */
     @Test
@@ -385,9 +337,9 @@ class ConfigdServerTest {
             return t;
         });
         try {
-            // A single-node leader whose transport THROWS on send. Routing a
-            // stale-term AppendEntries to a leader makes it reply via transport.send
-            // -> the send throws -> routeMessage -> handleMessage throws.
+            // A single-node leader whose transport throws on send. Routing a stale-term AppendEntries
+            // to a leader makes it reply via transport.send -> the send throws -> routeMessage ->
+            // handleMessage throws.
             var sendException = new RuntimeException("simulated disk/transport failure on the route path");
             io.configd.raft.RaftTransport throwingTransport = (target, message) -> { throw sendException; };
             io.configd.raft.StateMachine sm = new io.configd.raft.StateMachine() {
@@ -403,13 +355,12 @@ class ConfigdServerTest {
             var driver = new io.configd.replication.MultiRaftDriver(NodeId.of(1), io.configd.common.Clock.system());
             driver.addGroup(GROUP, node);
 
-            // The REAL production inbound seam (no try/catch around routeMessage).
+            // The production inbound seam (no try/catch around routeMessage).
             var inbound = ConfigdServer.raftInboundHandler(driver, GROUP, raftExecutor);
 
-            // A fixed-rate tick task on the SAME executor - the thing FIND-0005 is
-            // about. Use a latch-based liveness signal so the assertions are
-            // DETERMINISTIC (await with a generous timeout) rather than racing a
-            // wall-clock sleep, which is flaky under load / JaCoCo instrumentation.
+            // A fixed-rate tick task on the same executor - the property under test. A latch-based
+            // liveness signal keeps the assertions deterministic (await with a generous timeout)
+            // rather than racing a wall-clock sleep, which is flaky under load / JaCoCo instrumentation.
             AtomicInteger tickCount = new AtomicInteger();
             java.util.concurrent.atomic.AtomicReference<java.util.concurrent.CountDownLatch> tickLatch =
                     new java.util.concurrent.atomic.AtomicReference<>(new java.util.concurrent.CountDownLatch(1));
@@ -423,20 +374,19 @@ class ConfigdServerTest {
                         "the fixed-rate tick task must run before injection");
                 int beforeInjection = tickCount.get();
 
-                // Arm a fresh latch so we can await a tick AFTER the injection.
+                // Arm a fresh latch to await a tick after the injection.
                 tickLatch.set(new java.util.concurrent.CountDownLatch(1));
 
-                // Inject through routeMessage. A stale-term (0) AppendEntries
-                // to a leader triggers a reply via the throwing transport, so
-                // routeMessage throws - the inbound handler must NOT propagate it.
+                // Inject through routeMessage. A stale-term (0) AppendEntries to a leader triggers a
+                // reply via the throwing transport, so routeMessage throws - the inbound handler must
+                // not propagate it.
                 var poison = new io.configd.raft.AppendEntriesRequest(0L, NodeId.of(2), 0L, 0L, List.of(), 0L);
                 assertDoesNotThrow(() -> inbound.accept(NodeId.of(2), poison),
                         "RR-008: the inbound handler swallows the routeMessage throwable (no propagation "
                                 + "to the caller) — the bug is exactly this silent swallow; here we OBSERVE it");
 
-                // FIND-0005: the tick task must keep advancing AFTER the routed task
-                // threw - a dead tick loop is the zombie-tick regression. Await a
-                // post-injection tick deterministically.
+                // The tick task must keep advancing after the routed task threw - a dead tick loop is
+                // the zombie-tick regression. Await a post-injection tick deterministically.
                 assertTrue(tickLatch.get().await(10, java.util.concurrent.TimeUnit.SECONDS),
                         "FIND-0005: the fixed-rate tick task must keep running after a routed-message task "
                                 + "threw — a dead tick loop is the zombie-tick regression");
@@ -450,34 +400,25 @@ class ConfigdServerTest {
         }
     }
 
-    // ========================================================================
-    // FIND-0009: Linearizable read must wait for ReadIndex confirmation
-    // ========================================================================
-
     /**
-     * Regression test for F-0009: the linearizable read protocol must actually
-     * wait for leadership confirmation before serving reads.
+     * The linearizable read protocol must actually wait for leadership confirmation before serving
+     * reads.
      * <p>
-     * Before the fix, the LeadershipConfirmer was wired as
-     * {@code () -> raftNode.readIndex() >= 0} - this starts the ReadIndex
-     * protocol but never waits for heartbeat confirmation or state machine
-     * catch-up, making it a stale read.
-     * <p>
-     * After the fix, the confirmer dispatches readIndex() to the tick thread,
+     * A confirmer wired as {@code () -> raftNode.readIndex() >= 0} would be insufficient: it starts
+     * the ReadIndex protocol but never waits for heartbeat confirmation or state machine catch-up, so
+     * it could serve a stale read. The correct confirmer dispatches readIndex() to the tick thread,
      * then polls isReadReady() until confirmed or timeout (150ms).
      * <p>
-     * This test reproduces the issue at the component level: it creates a
-     * RaftNode that is NOT an elected leader (3-node cluster, no transport),
-     * puts data directly into the config store, then constructs a
-     * ConfigReadService with a confirmer that uses readIndex() - the same
-     * code path the server uses. The linearizable read must return null
-     * (= not leader) rather than serving stale data.
+     * This test reproduces the scenario at the component level: it creates a RaftNode that is NOT an
+     * elected leader (3-node cluster, no transport), puts data directly into the config store, then
+     * constructs a ConfigReadService with a confirmer that uses readIndex() - the same code path the
+     * server uses. The linearizable read must return null (not leader) rather than serving stale data.
      */
     @Test
     void linearizableReadReturnsNullWhenNotLeader() throws Exception {
         Path dataDir = tempDir.resolve("linearizable-read-test");
 
-        // Build the same components the server builds, but without HTTP
+        // Build the same components the server builds, but without HTTP.
         Storage storage = Storage.file(dataDir);
         VersionedConfigStore configStore = new VersionedConfigStore();
         ConfigStateMachine stateMachine = new ConfigStateMachine(configStore);
@@ -497,14 +438,14 @@ class ConfigdServerTest {
         assertTrue(configStore.get("read.key").found(),
                 "Store should have the key for this test to be meaningful");
 
-        // Let some ticks run so the election timeout fires, but the node
-        // stays FOLLOWER/CANDIDATE (never becomes LEADER without peers).
+        // Let ticks run so the election timeout fires; the node stays FOLLOWER/CANDIDATE (no peers to
+        // win a majority).
         for (int i = 0; i < 300; i++) {
             raftNode.tick();
         }
 
-        // Wire a ConfigReadService with a confirmer that uses readIndex(),
-        // matching the FIXED server wiring (checks readIndex() + isReadReady()).
+        // Wire a ConfigReadService with a confirmer that uses readIndex(), matching the production
+        // server wiring (checks readIndex() + isReadReady()).
         ConfigReadService.ConfigReader reader = new ConfigReadService.ConfigReader() {
             @Override public ReadResult get(String key) { return configStore.get(key); }
             @Override public ReadResult get(String key, long minVersion) { return configStore.get(key, minVersion); }
@@ -512,11 +453,10 @@ class ConfigdServerTest {
             @Override public long currentVersion() { return configStore.currentVersion(); }
         };
 
-        // F-0021 fix: the confirmer now mirrors the production server wiring
-        // (F-0022 single-future / F-0023 three-executor pattern). All
-        // RaftNode ReadIndex-state calls (readIndex, isReadReady,
-        // completeRead, whenReadReady) go through a single-threaded tick
-        // executor, preserving the F-0010 invariant that ReadIndexState is
+        // The confirmer mirrors the production server wiring (single-future,
+        // three-executor pattern). All RaftNode ReadIndex-state calls (readIndex,
+        // isReadReady, completeRead, whenReadReady) go through a single-threaded
+        // tick executor, preserving the invariant that ReadIndexState is
         // tick-thread-only.
         java.util.concurrent.ScheduledExecutorService testTickExecutor =
                 java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
@@ -524,6 +464,9 @@ class ConfigdServerTest {
                     t.setDaemon(true);
                     return t;
                 });
+        // The confirmer mirrors the production server wiring: all RaftNode ReadIndex-state calls
+        // (readIndex, isReadReady, completeRead, whenReadReady) go through a single-threaded tick
+        // executor, preserving the invariant that ReadIndexState is tick-thread-only.
         try {
         ConfigReadService readService = new ConfigReadService(reader, (scope, key) -> {
             java.util.concurrent.CompletableFuture<Boolean> result =
@@ -560,13 +503,9 @@ class ConfigdServerTest {
             }
         });
 
-        // The linearizable read must return null (not leader).
-        // Before the fix: the buggy confirmer was () -> raftNode.readIndex() >= 0
-        // which would start the ReadIndex protocol, get -1 (not leader), and
-        // return false. But the deeper issue was that if the node WERE a candidate
-        // or just-elected leader, readIndex() could return >= 0 before the
-        // heartbeat quorum was confirmed, making it a stale read.
-        // The key behavioral test: when not leader, linearizableRead returns null.
+        // The read must return null when not leader. A confirmer that only checks readIndex() >= 0
+        // would also be wrong for a candidate or just-elected leader: readIndex() can return >= 0
+        // before the heartbeat quorum is confirmed, which would still be a stale read.
         ReadResult result = readService.linearizableRead("read.key");
         assertNull(result,
                 "linearizableRead must return null when the node is not the confirmed leader. "
@@ -576,15 +515,12 @@ class ConfigdServerTest {
         }
     }
 
-    // ========================================================================
-    // F-0022 regression: <= 1 CompletableFuture allocated per linearizable read
-    // (plus the optional timeout-path cleanup dispatch), no poll-loop allocations.
-    // ========================================================================
-
+    // A linearizable read must allocate at most one CompletableFuture (plus, on the timeout path, one
+    // cleanup dispatch) - no poll-loop allocation per iteration.
     @Test
     void linearizableReadAllocatesAtMostOneFuturePerRead(@TempDir Path tmp) throws Exception {
-        // Arrange: RaftNode + direct ConfigReadService wiring that mirrors
-        // ConfigdServer's F-0022 dispatch (single-future completion-driven).
+        // RaftNode + direct ConfigReadService wiring that mirrors the production server's
+        // single-future, completion-driven dispatch.
         Storage storage = Storage.file(tmp);
         var clock = io.configd.common.Clock.system();
         java.security.KeyPairGenerator kpg = java.security.KeyPairGenerator.getInstance("Ed25519");
@@ -629,7 +565,6 @@ class ConfigdServerTest {
         AtomicInteger futuresAllocated = new AtomicInteger(0);
 
         ConfigReadService readService = new ConfigReadService(reader, (scope, key) -> {
-            // Count the single allocation in the F-0022 path.
             futuresAllocated.incrementAndGet();
             java.util.concurrent.CompletableFuture<Boolean> result =
                     new java.util.concurrent.CompletableFuture<>();
@@ -676,11 +611,8 @@ class ConfigdServerTest {
         }
     }
 
-    // ========================================================================
-    // F-0023 regression: TLS reload executor is isolated from tick executor.
-    // A slow (500ms) TLS reload MUST NOT delay the 10ms tick loop.
-    // ========================================================================
-
+    // The TLS reload executor must stay isolated from the tick executor: a slow (500ms) TLS reload
+    // must not delay the 10ms tick loop.
     @Test
     void tlsReloadDoesNotBlockTickLoop() throws Exception {
         java.util.concurrent.ScheduledExecutorService tick =
@@ -731,33 +663,25 @@ class ConfigdServerTest {
         }
     }
 
-    // ========================================================================
-    // F-0050 regression: TcpRaftTransport must receive a non-null TlsManager
-    // when TLS is configured AND peer addresses are provided.
-    // ========================================================================
-
     /**
-     * F-0050 regression (unit-level): the TcpRaftTransport constructor must
-     * retain the TlsManager passed in, and expose it via tlsManager(). This
-     * is the primitive on which the ConfigdServer fail-closed check depends:
-     * {@code config.tlsEnabled() && tcpTransport.tlsManager() == null}
-     * -> refuse to start. If the getter ever stops reflecting the constructor
-     * argument, the fail-closed guard silently becomes a no-op.
+     * The TcpRaftTransport constructor must retain the TlsManager passed in, and expose it via
+     * tlsManager(). This is the primitive the ConfigdServer fail-closed check depends on:
+     * {@code config.tlsEnabled() && tcpTransport.tlsManager() == null} -> refuse to start. If the
+     * getter ever stops reflecting the constructor argument, the fail-closed guard silently becomes a
+     * no-op.
      */
-    // Generous hang-detection budget (120s), not a performance
-    // assertion. The expensive keytool keystore generation is hoisted to
-    // @BeforeAll (cached in keyStorePath/trustStorePath/certFile), so the
-    // timed body here only constructs a TlsManager/TcpRaftTransport and reads
-    // a getter. The class-level @Timeout(10) is overridden for this single
-    // keytool-adjacent test so CPU-credit throttling cannot flake it.
+    // 120s is a generous hang-detection budget, not a performance assertion. The expensive keytool
+    // keystore generation is hoisted to @BeforeAll (cached in keyStorePath/trustStorePath/certFile), so
+    // the timed body here only constructs a TlsManager/TcpRaftTransport and reads a getter. The
+    // class-level timeout is overridden for this keytool-adjacent test so CPU-credit throttling cannot
+    // flake it.
     @Test
     @Timeout(120)
     void find0050_tcpRaftTransportExposesTlsManagerGetter() throws Exception {
-        // Build a TlsManager backed by the cached keystore (non-empty
-        // password, the same style TlsManagerTest uses). We avoid the
-        // ConfigdServer.start path here specifically because that path
-        // hardcodes an empty keystore password (TlsConfig.mtls); the getter we
-        // want to exercise works regardless of password policy.
+        // Build a TlsManager backed by the cached keystore (non-empty password, the same style
+        // TlsManagerTest uses). We avoid the ConfigdServer.start path here specifically because that
+        // path hardcodes an empty keystore password (TlsConfig.mtls); the getter we want to exercise
+        // works regardless of password policy.
         io.configd.transport.TlsConfig tlsConfig = new io.configd.transport.TlsConfig(
                 certFile, keyStorePath, trustStorePath, true,
                 java.util.List.of("TLS_AES_256_GCM_SHA384"),
@@ -782,16 +706,14 @@ class ConfigdServerTest {
     }
 
     /**
-     * F-0050 regression (source-level): the ConfigdServer production boot
-     * path must fail-closed when TLS is configured but the transport ends
-     * up with a null TlsManager. Verified by a grep-level guard on the
-     * source file so future refactors that silently drop the argument are
-     * caught at CI time, without requiring a full TLS stack in tests.
+     * The ConfigdServer production boot path must fail-closed when TLS is configured but the
+     * transport ends up with a null TlsManager. Verified by a grep-level guard on the source file so
+     * a future refactor that silently drops the argument is caught at CI time, without requiring a
+     * full TLS stack in tests.
      */
     @Test
     void find0050_configdServerFailClosedCheckIsPresent() throws Exception {
-        // Resolve the main source file from either the module or repo root
-        // invocation of `mvn test`.
+        // Resolve the main source file from either the module or repo root invocation of `mvn test`.
         Path source = Path.of(System.getProperty("user.dir"),
                 "src/main/java/io/configd/server/ConfigdServer.java");
         if (!Files.exists(source)) {
@@ -808,19 +730,10 @@ class ConfigdServerTest {
                         + "tlsManager; grep anchor missing.");
     }
 
-    // ========================================================================
-    // The tick loop must trigger Raft-LOG compaction, else
-    // compaction is unreachable in the wired server and the WAL grows forever.
-    // Source-level guard (the find0050 pattern): a future refactor that drops the
-    // driver.maybeCompactOwner(...) call is caught at CI time without a multi-hour soak.
-    //
-    // The call is now the PER-OWNER form driver.maybeCompactOwner(owner, ...)
-    // scheduled on each owner thread (the per-owner form already replaced the legacy driver.maybeCompact() with
-    // maybeCompactOwner(0, ...)). This anchor is re-pointed at the REAL call signature - the previous
-    // "driver.maybeCompact(" anchor was being satisfied by an incidental comment, not the wiring, so
-    // it was partly vacuous; matching "driver.maybeCompactOwner(owner," asserts the actual code call.
-    // ========================================================================
-
+    // Source-level guard: without driver.maybeCompactOwner(owner, ...) wired into the tick loop,
+    // compaction is unreachable and the WAL grows for the life of the process. Matching the exact
+    // per-owner call signature (not just "maybeCompact(") keeps this anchor from being satisfied by an
+    // incidental comment instead of the real wiring.
     @Test
     void rr005_raftLogCompactionTriggerIsWiredInTickLoop() throws Exception {
         Path source = Path.of(System.getProperty("user.dir"),
@@ -845,11 +758,7 @@ class ConfigdServerTest {
         assertEquals(0, rc, "keytool failed: " + command[0]);
     }
 
-    // ========================================================================
-    // F-0054 regression: the effective write rate limit must match the
-    // documented envelope (10k/s base rate, 10k burst).
-    // ========================================================================
-
+    // The effective write rate limit must match the documented envelope: 10k/s base rate, 10k burst.
     @Test
     void find0054_writeRateLimiterAtDocumentedEnvelope() {
         // Reproduce the production wiring exactly.
@@ -868,11 +777,8 @@ class ConfigdServerTest {
                 "F-0054: configured sustained rate must equal the 10k/s documented default");
     }
 
-    // ========================================================================
-    // F-0055 regression: /metrics must reject unauthenticated calls when
-    // auth is configured, while /health endpoints stay public.
-    // ========================================================================
-
+    // /metrics must reject unauthenticated calls when auth is configured, while /health endpoints stay
+    // public.
     @Test
     void find0055_metricsRequiresAuthWhenAuthConfigured() throws Exception {
         io.configd.observability.MetricsRegistry registry = new io.configd.observability.MetricsRegistry();
@@ -881,7 +787,6 @@ class ConfigdServerTest {
         io.configd.api.HealthService healthService = new io.configd.api.HealthService();
         io.configd.store.VersionedConfigStore configStore = new io.configd.store.VersionedConfigStore();
 
-        // AuthInterceptor configured (auth is ON).
         final String token = "secret-token";
         io.configd.api.AuthInterceptor auth = new io.configd.api.AuthInterceptor(t ->
                 token.equals(t)
@@ -902,7 +807,6 @@ class ConfigdServerTest {
 
             java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
 
-            // Unauthenticated /metrics must return 401
             java.net.http.HttpResponse<String> unauth = client.send(
                     java.net.http.HttpRequest.newBuilder()
                             .uri(java.net.URI.create("http://127.0.0.1:" + port + "/metrics"))
@@ -911,7 +815,6 @@ class ConfigdServerTest {
             assertEquals(401, unauth.statusCode(),
                     "F-0055: /metrics must return 401 without auth header");
 
-            // Authenticated /metrics must return 200
             java.net.http.HttpResponse<String> authed = client.send(
                     java.net.http.HttpRequest.newBuilder()
                             .uri(java.net.URI.create("http://127.0.0.1:" + port + "/metrics"))
@@ -921,7 +824,6 @@ class ConfigdServerTest {
             assertEquals(200, authed.statusCode(),
                     "F-0055: /metrics must return 200 with a valid bearer token");
 
-            // Health endpoints must remain public (no auth) - probes must work.
             java.net.http.HttpResponse<String> live = client.send(
                     java.net.http.HttpRequest.newBuilder()
                             .uri(java.net.URI.create("http://127.0.0.1:" + port + "/health/live"))
@@ -934,11 +836,8 @@ class ConfigdServerTest {
         }
     }
 
-    // ========================================================================
-    // F-0056 regression: maven-jar-plugin must be explicitly pinned in the
-    // parent pom.xml pluginManagement so builds are reproducible.
-    // ========================================================================
-
+    // maven-jar-plugin must be explicitly pinned in the parent pom.xml pluginManagement so builds are
+    // reproducible.
     @Test
     void find0056_mavenJarPluginIsPinned() throws Exception {
         Path pom = Path.of(System.getProperty("user.dir")).getParent().resolve("pom.xml");

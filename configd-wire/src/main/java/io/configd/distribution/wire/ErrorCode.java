@@ -66,11 +66,11 @@ public enum ErrorCode {
     /**
      * The resume token's bound {@code topologyEpoch} does not match the server's current
      * {@code ShardMap.epoch()} - the whole topology generation the cursor/SUBSCRIBE belongs to is
-     * superseded (a frozen-format A4 addition). Distinct from {@link #GAP_UNRECOVERABLE} ("data fell
+     * superseded. Distinct from {@link #GAP_UNRECOVERABLE} ("data fell
      * off retention" - resume from an earlier position): {@code STALE_TOPOLOGY} means "drop the cursor
      * and fully re-hydrate from scratch" (the etcd {@code ErrCompacted} model). Delivered as a
      * {@link EdgeFrame.WatchCanceled} per-watch terminal for a watch, or an {@link EdgeFrame.ErrorClose}
-     * for a legacy SUBSCRIBE. At v1 static-N (one deploy-time epoch) it never fires - byte-identical
+     * for a legacy SUBSCRIBE. At static-N (one deploy-time epoch) it never fires - byte-identical
      * behavior.
      */
     STALE_TOPOLOGY(12),
@@ -80,8 +80,8 @@ public enum ErrorCode {
      * {@link EdgeFrame.RefreshAuth} extended it, or a {@code REFRESH_AUTH} presented an unacceptable
      * fresh credential). Distinct from {@link #AUTH_FAIL} (the 401-class first-credential failure) so a
      * client can tell "your session aged out, re-authenticate" from "your credential was never valid".
-     * Delivered as an {@link EdgeFrame.ErrorClose}. (Gate 3 arms expiry only on the token path via a
-     * default TTL; certificate {@code notAfter} enforcement is the unified-expiry gate's deliverable.)
+     * Delivered as an {@link EdgeFrame.ErrorClose}. (Only the token path enforces expiry today, via a
+     * default TTL; certificate {@code notAfter} enforcement is not yet wired.)
      */
     CREDENTIAL_EXPIRED(13);
 

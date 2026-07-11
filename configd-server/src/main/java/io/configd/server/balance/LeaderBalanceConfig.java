@@ -3,8 +3,8 @@ package io.configd.server.balance;
 import io.configd.common.config.ConfigSource;
 
 /**
- * Tunables for the decentralized leadership auto-balance loop, read once at boot through the
- * Gate-1 {@link ConfigSource} so they compose with the arc's config layering (system properties over
+ * Tunables for the decentralized leadership auto-balance loop, read once at boot through
+ * {@link ConfigSource} so they compose with the existing config layering (system properties over
  * environment over an optional YAML file) and fail closed on a malformed value rather than silently
  * falling back to a default.
  *

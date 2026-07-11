@@ -13,9 +13,9 @@
     <artifactId>configd-jcstress</artifactId>
 
     <!--
-      B6 / RR-011: jcstress concurrency race-testing harness for the lock-free /
+      jcstress concurrency race-testing harness for the lock-free /
       single-writer-multi-reader structures (VersionedConfigStore, HamtMap,
-      FanOutBuffer) and the RR-002 TcpRaftTransport per-peer shared state.
+      FanOutBuffer) and the TcpRaftTransport per-peer shared state.
 
       jcstress is structured exactly like JMH (see configd-testkit): the
       @JCStressTest classes live in src/MAIN/java so they can be bundled into an

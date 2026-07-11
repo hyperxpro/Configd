@@ -16,8 +16,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Verifies the {@code configd.raft.autobalance.*} tunables: defaults (on-by-default with the documented
- * dampening), that values are read through the Gate-1 {@link ConfigSource}, and that the record's
- * validation and the source's typed accessors both fail closed on garbage.
+ * dampening), that values are read through {@link ConfigSource}, and that the record's validation and
+ * the source's typed accessors both fail closed on garbage.
  */
 class LeaderBalanceConfigTest {
 

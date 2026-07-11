@@ -16,9 +16,7 @@
       The edge (watch / fan-out / streaming) plane of the reference client: the Configd entry facade,
       the ConfigdEdgeClient, the EdgeConnection state machine over a blocking SSLSocket with one reader
       thread, and the AuthLifecycle (the four auth modes as the client presents them). Depends only on
-      configd-client-core (transitively wire/common/transport) — no server, no Netty. The reactive watch
-      streams and the subscribe/hydrate path are later gates; this module carries the connection + auth
-      lifecycle.
+      configd-client-core (transitively wire/common/transport) — no server, no Netty.
     -->
     <dependencies>
         <dependency>

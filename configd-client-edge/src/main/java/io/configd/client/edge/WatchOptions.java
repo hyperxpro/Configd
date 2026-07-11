@@ -10,14 +10,14 @@ import java.util.Optional;
  *
  * @param resumeFrom     an explicit resume cursor vector, or empty to resume from the persisted cursor (or
  *                       from-now if none). A from-now watch starts at each shard's current {@code S} and
- *                       delivers only future changes (W3-4) — request {@code WITH_INITIAL_SNAPSHOT} on the
+ *                       delivers only future changes — request {@code WITH_INITIAL_SNAPSHOT} on the
  *                       target to also get the existing state.
  * @param persistenceKey the {@code CursorStore} key under which the evolving cursor vector is saved for durable
  *                       resume across restarts, or empty for an ephemeral (non-persisted) watch.
- * @param shareConnectionOf an existing watch whose connection this new watch should share (§06 W6-4). Only two
+ * @param shareConnectionOf an existing watch whose connection this new watch should share. Only two
  *                       <b>from-now</b> watches may share a connection; a cursored / persisted watch requested to
- *                       share is refused with an {@link IllegalStateException} (W8-6a) because a shared drain has
- *                       a single position and cannot honour an independent resume (F10-1b). Empty ⇒ the default:
+ *                       share is refused with an {@link IllegalStateException} because a shared drain has
+ *                       a single position and cannot honour an independent resume. Empty ⇒ the default:
  *                       a dedicated connection.
  */
 public record WatchOptions(Optional<WatchCursor> resumeFrom, Optional<String> persistenceKey,
@@ -44,7 +44,7 @@ public record WatchOptions(Optional<WatchCursor> resumeFrom, Optional<String> pe
         return new WatchOptions(Optional.of(cursor), persistenceKey, shareConnectionOf);
     }
 
-    /** Share {@code other}'s connection (both must be from-now, else the watch() call is refused, W8-6a). */
+    /** Share {@code other}'s connection (both must be from-now, else the watch() call is refused). */
     public WatchOptions shareConnectionOf(Watch other) {
         return new WatchOptions(resumeFrom, persistenceKey, Optional.of(other));
     }

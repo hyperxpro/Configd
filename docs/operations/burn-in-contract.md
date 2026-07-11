@@ -1,10 +1,8 @@
-# Configd v1 - First-30-Days Burn-In Contract
+# First-30-Days Burn-In Contract
 
-> **Status: Ready for operator adoption.** This document defines the first-30-days operating posture
-> for Configd v1. It is a posture the operator *adopts and operates*; the reliability engineer
-> produces the document, the operator owns the rotation, the ratification, and the exit call. See the
-> v1 readiness review (`docs/archive/readiness/v1-go-no-go-2026-07-01.md`, section 0 and section 5.1)
-> for the context behind this contract.
+> **Status: ready for operator adoption.** This document defines the first-30-days operating posture
+> for a new Configd deployment. It is a posture the operator *adopts and operates*: the reliability
+> engineer produces the document, the operator owns the rotation and the exit call.
 >
 > **Docs-only.** Nothing here modifies production code. Every threshold below is grounded in a
 > measured EC2 baseline and cites the source doc; every metric name is verified in code and cited to
@@ -15,9 +13,9 @@
 
 ## 1. Why this contract exists (the honest empirical envelope)
 
-v1's stability evidence is a **6-hour soak - not 30 days, not 24 hours.** The prior 24 h attempt
+Configd's stability evidence to date is a **6-hour soak - not 30 days, not 24 hours.** A prior attempt
 OOM'd at **3.45 h** (box capacity on that run, *not* a leak; the clean-code soak reached
-the full 6 h flat). So v1 does **not** ship with a claim of proven 30-day stability. It ships with a
+the full 6 h flat). So Configd does **not** ship with a claim of proven 30-day stability. It ships with a
 **heightened first-30-days posture**: tighter alert thresholds than steady-state, a daily
 error-budget review, predefined rollback triggers, and a named on-call - held until a clean 30-day
 production window converts "6 h + heightened watch" into "30-day proven."
@@ -43,8 +41,8 @@ production window converts "6 h + heightened watch" into "30-day proven."
 | DR topology | Drills ran on the **single-box, 3-co-located-node** topology. Cross-machine failover adds network RTT to the 372 ms gap; the *correctness* (no loss, bounded election) is topology-independent and the cross-box consensus path was separately exercised in run 2. |
 | Throughput | **No literal 10 k/s sustained and no 100 k burst** has ever run. Single-cluster max measured = 1607 w/s @ 3 machines; 10 k/s is a sharded-aggregate target, path-proven not number-captured. |
 | WAN | **No cross-region / WAN** measurement. Single-region by design; both runs same-AZ. |
-| Leadership | **Auto-balanced (on by default at N>1), but the 2.45x was measured under MANUAL placement.** `LeaderBalanceLoop` sheds an over-owned leader per cycle; the ADMIN `transfer-leadership` route is wired. The balancer is built + E2E-tested, **not yet load-measured at scale** — do not claim it proven at the 2.45x number. Transfer-on-graceful-shutdown remains a follow-up. |
-| Alert values | The `ops/alerts/` thresholds are **PROPOSED / design-set, not calibrated** against production SLO (register 7.12). Calibrating them is a burn-in *exit* deliverable. |
+| Leadership | **Auto-balanced (on by default at N>1), but the 2.45x was measured under MANUAL placement.** `LeaderBalanceLoop` sheds an over-owned leader per cycle; the ADMIN `transfer-leadership` route is wired. The balancer is built + E2E-tested, **not yet load-measured at scale** - do not claim it proven at the 2.45x number. Transfer-on-graceful-shutdown remains a follow-up. |
+| Alert values | The `ops/alerts/` thresholds are **PROPOSED / design-set, not calibrated** against production SLO. Calibrating them is a burn-in *exit* deliverable. |
 
 > **Baseline caveat that shapes every absolute number below.** The soak resource baselines (FD,
 > threads, RSS) were captured on **3 co-located JVMs on one box** and are reported as *totals* across
@@ -79,16 +77,16 @@ table (section 6). Series carry no app-level `instance`/`cluster` labels - those
 | **Write shed / rejection** | **0 rejected** of 9,000 at 300 w/s (`04-soak.md`); knee ~656-800 w/s | `rate(configd_write_rejected_overloaded_total[5m]) > 1` for 5m **WARN** (existing `ConfigdWriteOverloadShedding`); in burn-in, **any** sustained shed is investigated and correlated with the election rate. | 0-reject baseline sits well below the knee. Sustained shed **+** rising elections = offered load nearing the churn knee -> shard the keyspace or shed upstream. |
 | **Commit p99 latency drift** | p50 **~2.2-2.5 ms**, p99 **~3-6 ms**, no drift (`04-soak.md`); SLO le = 150 ms (`configd-slo-alerts.yaml`) | `histogram_quantile(0.99, sum by (le)(rate(configd_write_commit_seconds_bucket[5m]))) > 0.025` for 10m **WARN** (NEW, tighter than the 150 ms burn-rate). Keep the existing fast/slow burn PAGES on le = 0.150. | 25 ms is 4-8x the 3-6 ms baseline but still **6x inside** the 150 ms SLO - an early-warning of commit-pipeline drift long before the SLO budget burns. |
 | **Per-node CPU (backstop only)** | N=3 knee **~62 %/box** (~38 % idle) (`02-scaling-curve.md`, `04-verdict.md`); single-group churn ceiling hit at **~20 % CPU** (`01-nxknee.md`) | Node/container CPU **> 85 %** sustained **WARN** (backstop). | **Do not use CPU as the throughput early-warning** - the cluster saturates (churns) at 20-62 % CPU, well below any CPU alarm. 85 % is a genuine-hardware-saturation backstop *above* the measured 62 % knee. **FLAG:** not an app series; node/container exporter. |
-| **Raft apply backlog / follower lag** | Apply backlog ~0 steady-state; recovery RTO 4.2 s / 5.9 s (`02-dr-drills.md`) | `max(configd_raft_pending_apply_entries) > 5000` for 5m (existing `ConfigdRaftApplyBacklog`); per-shard `raft_shard_apply_lag_<gid>` rising-and-not-recovering; **`raft_shard_replication_lag_max_<gid>`** (the per-follower replication-lag gauge) rising-and-not-recovering. | A leader that commits but cannot apply, or a follower that never catches up, shows here. **Updated (Gate-2):** the per-follower replication-lag gauge `raft_shard_replication_lag_max_<gid>` now exists — it is the real follower-wedge signal this row previously lacked, no longer a proxy-only. |
+| **Raft apply backlog / follower lag** | Apply backlog ~0 steady-state; recovery RTO 4.2 s / 5.9 s (`02-dr-drills.md`) | `max(configd_raft_pending_apply_entries) > 5000` for 5m (existing `ConfigdRaftApplyBacklog`); per-shard `raft_shard_apply_lag_<gid>` rising-and-not-recovering; **`raft_shard_replication_lag_max_<gid>`** (the per-follower replication-lag gauge) rising-and-not-recovering. | A leader that commits but cannot apply, or a follower that never catches up, shows here. The per-follower replication-lag gauge `raft_shard_replication_lag_max_<gid>` is the real follower-wedge signal here, not a proxy. |
 
 ### 2C. The correctness / security / snapshot / edge class
 
 | Signal | Measured baseline (source) | Heightened alarm | Rationale |
 |---|---|---|---|
-| **Snapshot size + chunked-transfer health** | Chunked InstallSnapshot (per-chunk cap 4 MiB = `MAX_SNAPSHOT_CHUNK_BYTES`, default chunk 1 MiB) lifts the old total-state ceiling; the follower reassembles in heap under a fail-closed `configd.raft.maxReassembledSnapshotBytes` cap (default 512 MiB) — an over-cap reassembly is refused (drop partial, `SEVERE` log, no OOM/corruption), leaving that follower out of quorum until the cap is raised | (a) `configd_snapshot_bytes` gauge — track snapshot size vs the per-chunk cap and the reassembly cap (this is the size gauge the burn-in contract asked for); (b) `raft_shard_snapshot_reassembly_refused_<gid>` and `raft_shard_snapshot_chunk_send_rejected_<gid>` — **any increase = PAGE**; (c) existing `ConfigdSnapshotInstallStalled` `increase(configd_snapshot_install_failed_total[15m]) >= 3`; (d) `raft_shard_replication_lag_max_<gid>` as the follower-wedge proxy. | **Updated (Gate-2):** the snapshot-size gauge and the reassembly-refused / chunk-send-rejected counters this row previously said were **missing now exist** — detection is no longer log-watch-only. The `SEVERE` reassembly-refusal log still fires and is now metric-backed. |
+| **Snapshot size + chunked-transfer health** | Chunked InstallSnapshot (per-chunk cap 4 MiB = `MAX_SNAPSHOT_CHUNK_BYTES`, default chunk 1 MiB) lifts the old total-state ceiling; the follower reassembles in heap under a fail-closed `configd.raft.maxReassembledSnapshotBytes` cap (default 512 MiB) - an over-cap reassembly is refused (drop partial, `SEVERE` log, no OOM/corruption), leaving that follower out of quorum until the cap is raised | (a) `configd_snapshot_bytes` gauge - track snapshot size vs the per-chunk cap and the reassembly cap; (b) `raft_shard_snapshot_reassembly_refused_<gid>` and `raft_shard_snapshot_chunk_send_rejected_<gid>` - **any increase = PAGE**; (c) existing `ConfigdSnapshotInstallStalled` `increase(configd_snapshot_install_failed_total[15m]) >= 3`; (d) `raft_shard_replication_lag_max_<gid>` as the follower-wedge proxy. | The snapshot-size gauge and the reassembly-refused / chunk-send-rejected counters are real metrics - detection is not log-watch-only. The `SEVERE` reassembly-refusal log still fires alongside them. |
 | **ACL policy load failed** | Healthy = 0 (`configd.acl.policy.load.failed`, `ConfigdMetrics.java:90`) | `increase(configd_acl_policy_load_failed_total[15m]) >= 1` for 5m **WARN** (existing `ConfigdAclPolicyLoadFailed`) -> investigate immediately; if it persists while `configd_acl_policy_reload_total` does **not** advance, last-good is frozen (poison key) -> escalate to the rollback check (section 3). | A failed load = an `_acl/` update **silently did not apply**; the loader fails closed to last-good, so clients see no error. A poison key delivered via snapshot/replay **freezes every subsequent policy update** until removed -> security drift. |
-| **Leadership distribution (N>1 only)** | 2.45x **requires** 1-leader-per-box (`02-scaling-curve.md`); leaders can "sweep" onto one node; **2-1-0 tolerated** (1628 w/s) (`05-leadership-placement.md`) | Alarm if `max(raft_node_leader_count) - min(raft_node_leader_count)` stays imbalanced across several balancer cycles (base cadence 30 s) - e.g. one node leads **all** N groups while another leads **0** (a sweep the balancer has not corrected). | **FLAG:** only material at **N>1** - v1 default is N=1, so dormant unless sharded. The built-in `LeaderBalanceLoop` (on by default, sheds one over-owned leader per cycle) normally corrects drift automatically; the alarm catches a **stuck** imbalance the balancer failed to fix. Response: a manual `transfer-leadership` (the route is wired) or a rolling restart. Robust to 2-1-0; a persistent full sweep forfeits the horizontal benefit until corrected. |
-| **Edge staleness** | Contract section 2 state boundaries: CURRENT->STALE **500 ms**, STALE->DEGRADED **5 s** (the degraded alert fires earlier, at 2 s); prior p99 reference **255 ms** (`configd-slo-alerts.yaml` comment) | Existing `ConfigdEdgeStalenessWarn` `max(edge_staleness_ms) > 500` for 2m / `ConfigdEdgeStalenessDegraded` `> 2000` for 1m; watch `configd_edge_staleness_violation_total` increments and `edge_staleness_implausible_total` (clock skew, existing `ConfigdClockSkewSuspected`). | The 500 ms and 5 s state boundaries are **contract-defined, not empirical** (the 2 s degraded alert is a tighter operational threshold). **FLAG:** edge staleness was **not re-measured under load** in either EC2 run (both were write-plane) - the 255 ms baseline is a prior reference. Burn-in must **capture the real production edge-staleness distribution** to calibrate (this is a direct input to closing register section 7.12). |
+| **Leadership distribution (N>1 only)** | 2.45x **requires** 1-leader-per-box (`02-scaling-curve.md`); leaders can "sweep" onto one node; **2-1-0 tolerated** (1628 w/s) (`05-leadership-placement.md`) | Alarm if `max(raft_node_leader_count) - min(raft_node_leader_count)` stays imbalanced across several balancer cycles (base cadence 30 s) - e.g. one node leads **all** N groups while another leads **0** (a sweep the balancer has not corrected). | **FLAG:** only material at **N>1** - the default is N=1, so dormant unless sharded. The built-in `LeaderBalanceLoop` (on by default, sheds one over-owned leader per cycle) normally corrects drift automatically; the alarm catches a **stuck** imbalance the balancer failed to fix. Response: a manual `transfer-leadership` (the route is wired) or a rolling restart. Robust to 2-1-0; a persistent full sweep forfeits the horizontal benefit until corrected. |
+| **Edge staleness** | Contract section 2 state boundaries: CURRENT->STALE **500 ms**, STALE->DEGRADED **5 s** (the degraded alert fires earlier, at 2 s); prior p99 reference **255 ms** (`configd-slo-alerts.yaml` comment) | Existing `ConfigdEdgeStalenessWarn` `max(edge_staleness_ms) > 500` for 2m / `ConfigdEdgeStalenessDegraded` `> 2000` for 1m; watch `configd_edge_staleness_violation_total` increments and `edge_staleness_implausible_total` (clock skew, existing `ConfigdClockSkewSuspected`). | The 500 ms and 5 s state boundaries are **contract-defined, not empirical** (the 2 s degraded alert is a tighter operational threshold). **FLAG:** edge staleness was **not re-measured under load** in either EC2 run (both were write-plane) - the 255 ms baseline is a prior reference. Burn-in must **capture the real production edge-staleness distribution** to calibrate the alert thresholds against it. |
 | **Correctness invariants** | 0 violations expected (`invariant.violation.*`, `InvariantMonitor.java:43,234`; consistency-contract section 8 INV-M1 / INV-S1) | Any `increase(invariant_violation_monotonic_read_total) > 0` or `invariant_violation_staleness_bound_total > 0` = **correctness-drift INVESTIGATION** (not a standalone page); a confirmed violation under normal operation = rollback-consideration (section 3). | These bridge the two data-plane consistency invariants into metrics. A real violation means the consistency contract itself is breaking - the highest-severity class of drift. |
 | **Control-plane write availability** | SLO **99.999 %** over 30 min (existing `ConfigdControlPlaneAvailability`) | Keep as-is (page). In burn-in, review the burn against budget **daily** (section 4). | The denominator is failed+total so a full outage still pages (no NaN). This is the top-line control-plane SLO for the daily error-budget review. |
 
@@ -149,7 +147,7 @@ a **snapshot-size-bytes gauge** and a **per-follower matchIndex-lag gauge** - th
 contract can only watch by proxy or by log today (section 2C snapshot row, section 6). File these as the first
 burn-in follow-ups; they do not block the ship.
 
-### Exit criteria - when v1 is declared "stable"
+### Exit criteria - when the deployment is declared "stable"
 
 The burn-in contract **relaxes** when **all** of the following hold over a **clean, continuous
 30-day production window**:
@@ -165,25 +163,19 @@ On exit:
 - The **heightened thresholds relax to steady-state** (the tightened commit-p99, election, and
   leak-drift warns return to the SLO-native values).
 - The **PROPOSED alert values are recalibrated** against the now-measured production SLO distribution
-  - **this closes register 7.12** ("threshold VALUES are design-set, not calibrated"). In particular:
+  (the thresholds were design-set, not calibrated, until this point). In particular:
   set the FD/thread absolute backstops from the observed **per-instance** floors (not the 3-JVM soak
   totals), and set the edge-staleness thresholds from the captured production distribution rather than
-  the S5 reference.
+  the prior reference number.
 - The **empirical envelope claim upgrades** from "6 h soak + heightened watch" to "30-day production
-  window observed" - which is precisely what the 6 h soak could not assert, and is the substance of
-  what C4 buys.
+  window observed" - which is precisely what the 6 h soak could not assert.
 
-Until then, v1 runs **under this contract**.
+Until then, the deployment runs **under this contract**.
 
 ---
 
 ## 5. Cross-links
 
-- **`docs/archive/readiness/v1-go-no-go-2026-07-01.md`** - the v1 readiness review (dated 2026-07-01): section 0
-  (the ship context), section 3 (the empirical verdict every threshold is grounded in), section 5.1 (the
-  operability caveats). Note: two caveats that review lists have since been **closed** — leadership is now
-  auto-balanced (on by default) and the 4 MiB snapshot ceiling is lifted by chunked transfer; the
-  alert-thresholds-not-calibrated caveat remains (a burn-in *exit* deliverable).
 - **`docs/operations/operator-runsheet.md`** - the secure-by-config release gates (Auth, mTLS, Audit,
   Replay, Signing-key, Strong-reads) an operator verifies before a node is production-ready. This
   contract is the *production* first-30-days posture that runs **after** those gates pass.
@@ -204,10 +196,9 @@ Until then, v1 runs **under this contract**.
   fires/stays-quiet proof `ops/alerts/configd-slo-alerts.test.yaml`).
 - **Runbook responses:** `ops/runbooks/` (`release.md`, `resource-leak.md`, `raft-saturation.md`,
   `overload-shedding.md`, `snapshot-install.md`, `acl-policy-load.md`, `control-plane-down.md`,
-  `disaster-recovery.md`, `restore-from-snapshot.md`) and `docs/operations/runbooks/` (`leader-stuck.md`,
-  `write-freeze.md`, `cert-rotation.md`).
-- **`docs/operations/known-limitations.md`** - the "Snapshot transfer: chunked" section (the follower-lag
-  and reassembly-refusal signals this contract now watches via the Gate-2 metrics, no longer by proxy).
+  `disaster-recovery.md`, `restore-from-snapshot.md`).
+- **[`deployer-must-know.md`](deployer-must-know.md) section 4** - the chunked-snapshot mechanics (the
+  follower-lag and reassembly-refusal signals this contract watches are no longer a log-watch-only proxy).
 
 ---
 
@@ -242,25 +233,21 @@ Registry names are dot-separated; the Prometheus exporter sanitizes dots to unde
 | `invariant_violation_staleness_bound_total` | counter | `InvariantMonitor.java:43` + `:234`; name `:122` | INV-S1 |
 
 **Snapshot cap constant (verified):** `MAX_SNAPSHOT_BLOB_LEN = 4 * 1024 * 1024` (4 MiB) -
-`configd-server/src/main/java/io/configd/server/RaftMessageCodec.java:88` - is now a **per-chunk** ceiling
+`configd-server/src/main/java/io/configd/server/RaftMessageCodec.java:88` - is a **per-chunk** ceiling
 under chunked InstallSnapshot (`RaftNode.MAX_SNAPSHOT_CHUNK_BYTES`, default chunk 1 MiB), not a total-state
 ceiling. A large snapshot streams as ordered chunks; the follower reassembles in heap under the fail-closed
-`configd.raft.maxReassembledSnapshotBytes` cap (default 512 MiB). The old leader-side ">4 MiB total drop"
-(stderr `snapshot too large for v1 wire`) **no longer exists** — that string is gone from source. Health is
-now metric-backed: `configd_snapshot_bytes`, `raft_shard_snapshot_reassembly_refused_<gid>`,
-`raft_shard_snapshot_chunk_send_rejected_<gid>`. Matches `docs/operations/known-limitations.md` §"Snapshot
-transfer: chunked".
+`configd.raft.maxReassembledSnapshotBytes` cap (default 512 MiB). Health is metric-backed:
+`configd_snapshot_bytes`, `raft_shard_snapshot_reassembly_refused_<gid>`,
+`raft_shard_snapshot_chunk_send_rejected_<gid>`. See
+[`deployer-must-know.md` section 4](deployer-must-know.md).
 
-**New app-emitted series (Gate-2 observability arc — replace the earlier "no series / log-watch only" guidance):**
-- **`configd_snapshot_bytes`** (gauge) — snapshot size vs the per-chunk / reassembly caps (the snapshot-bytes
-  gauge this contract asked for 3×).
-- **`raft_shard_replication_lag_max_<gid>`** (gauge) — the per-follower replication-lag / wedge signal
-  (replaces the `matchIndex`-lag-by-proxy guidance).
+**App-emitted series this contract relies on:**
+- **`configd_snapshot_bytes`** (gauge) - snapshot size vs the per-chunk / reassembly caps.
+- **`raft_shard_replication_lag_max_<gid>`** (gauge) - the per-follower replication-lag / wedge signal.
 - **`raft_shard_snapshot_reassembly_refused_<gid>`**, **`raft_shard_snapshot_chunk_send_rejected_<gid>`**,
   **`raft_shard_append_send_rejected_<gid>`** (per-shard counters).
 - **`configd_raft_transport_frames_dropped`**, **`configd_raft_transport_inbound_connections_refused`**,
-  **`configd_raft_transport_connection_decode_dropped_total`** (transport-drop counters — the encoder-drop
-  observability this contract flagged).
+  **`configd_raft_transport_connection_decode_dropped_total`** (transport-drop counters).
 - **`configd_http_request_rejected_bad_request_total`** / **`..._payload_too_large_total`** (HTTP admission).
 
 **Signals still with NO app-emitted series (watch via the node/container exporter):**

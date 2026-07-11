@@ -95,7 +95,7 @@ class WatchAuthzGateContractTest {
                 allow("other.", Permission.WATCH));
         assertOrderInvariant(covered, true, r -> AclService.authorizesWatch(r, "svc."));
 
-        // Add an interior READ deny -> the whole-subtree watch is no longer authorized (READ ∧ WATCH floor),
+        // Add an interior READ deny -> the whole-subtree watch is no longer authorized (READ and WATCH floor),
         // still order-independent.
         List<PolicyRule> carved = new ArrayList<>(covered);
         carved.add(deny("svc.internal.", Permission.READ));
@@ -104,7 +104,7 @@ class WatchAuthzGateContractTest {
 
     @Test
     void fullAndFullChainVerifyMapToRootAndDependOnAWholeStoreGrant() {
-        // A root-scope READ ∧ WATCH grant authorizes FULL and full_chain_verify (effective target "").
+        // A root-scope READ and WATCH grant authorizes FULL and full_chain_verify (effective target "").
         AclService rootGranted = new AclService();
         rootGranted.grant("", "rooty", EnumSet.of(Permission.READ, Permission.WATCH));
         AclServiceWatchAuthorizer rootAuthz = new AclServiceWatchAuthorizer(rootGranted);

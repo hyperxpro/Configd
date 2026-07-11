@@ -8,9 +8,9 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * D-1 (P1) fail-closed: the cluster signing key must not be co-located inside the data directory it
- * protects (PA-2021 - the at-rest integrity key is derived from it; a storage-tampering adversary who
- * can read the co-located key forges a valid MAC). Default behavior is to REFUSE TO START; the
+ * Fail-closed: the cluster signing key must not be co-located inside the data directory it
+ * protects, since the at-rest integrity key is derived from it - a storage-tampering adversary who
+ * can read the co-located key can forge a valid MAC. Default behavior is to REFUSE TO START; the
  * {@code configd.security.allowColocatedSigningKey} opt-out downgrades to a warning for dev/test.
  * <p>
  * The module-wide surefire opt-out (parent pom) lets the OTHER server-boot tests run with the

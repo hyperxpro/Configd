@@ -10,8 +10,8 @@ import java.lang.management.ManagementFactory;
 import java.util.zip.CRC32C;
 
 /**
- * Definitively names what the encode-only {@code nettyBestSendPooled} 160 B/op is (the verdict had
- * two contradictory unverified guesses). Replicates that JMH leg exactly - pooled direct
+ * Pins down what the encode-only {@code nettyBestSendPooled} 160 B/op actually is, where there were
+ * two competing, unverified theories for its source. Replicates that JMH leg exactly - pooled direct
  * {@code ByteBuf} per op, encode, read-back, release, single thread - under two CRC strategies so a
  * JFR allocation profile can attribute the bytes:
  *   mode=nio       -> CRC via out.nioBuffer(...)         (what the JMH leg / NettyWireEncoders uses)

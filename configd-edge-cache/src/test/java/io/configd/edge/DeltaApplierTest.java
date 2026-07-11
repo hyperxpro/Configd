@@ -80,10 +80,6 @@ class DeltaApplierTest {
         return new ConfigSnapshot(data, version, version);
     }
 
-    // -----------------------------------------------------------------------
-    // Successful application
-    // -----------------------------------------------------------------------
-
     @Nested
     class SuccessfulApplication {
 
@@ -115,10 +111,6 @@ class DeltaApplierTest {
             assertFalse(applier.pendingGap());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Gap detection
-    // -----------------------------------------------------------------------
 
     @Nested
     class GapDetection {
@@ -192,10 +184,6 @@ class DeltaApplierTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Stale delta detection
-    // -----------------------------------------------------------------------
-
     @Nested
     class StaleDeltaDetection {
 
@@ -229,10 +217,6 @@ class DeltaApplierTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Initial state
-    // -----------------------------------------------------------------------
-
     @Nested
     class InitialState {
 
@@ -254,10 +238,6 @@ class DeltaApplierTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Null safety
-    // -----------------------------------------------------------------------
-
     @Nested
     class NullSafety {
 
@@ -271,10 +251,6 @@ class DeltaApplierTest {
             assertThrows(NullPointerException.class, () -> applier.offer(null, clock.currentTimeMillis()));
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Signature verification
-    // -----------------------------------------------------------------------
 
     @Nested
     class SignatureVerification {
@@ -293,7 +269,7 @@ class DeltaApplierTest {
          * Helper: builds a leader-signed delta at a real epoch ({@code > 0}), signing the same
          * {@link ConfigDelta#signingPayload()} the edge verifier reconstructs - canonical
          * mutations, the version position ({@code fromVersion}, {@code toVersion}), the epoch,
-         * and the nonce (ADR-0045). Production never emits a signed epoch-0 delta.
+         * and the nonce. Production never emits a signed epoch-0 delta.
          */
         private ConfigDelta signedDelta(long fromV, long toV, List<ConfigMutation> mutations,
                                         long epoch) throws Exception {
@@ -336,7 +312,7 @@ class DeltaApplierTest {
 
         @Test
         void signedDeltaWithEpochZeroIsRejected() throws Exception {
-            // Defense-in-depth (ADR-0045): the leader always signs with epoch > 0, so a
+            // Defense-in-depth: the leader always signs with epoch > 0, so a
             // signature carried on an epoch-0 delta is not a shape production emits. The edge
             // rejects it rather than fall back to the legacy batch-only verification form.
             ConfigSigner verifier = new ConfigSigner(keyPair.getPublic());
@@ -356,10 +332,10 @@ class DeltaApplierTest {
 
         @Test
         void rewrittenVersionPositionFailsVerification() throws Exception {
-            // Red-team regression (ADR-0045): the version position is inside the signature, so a
+            // Red-team regression: the version position is inside the signature, so a
             // relay that rewrites fromVersion/toVersion to splice a delta out of the chain
-            // breaks verification (the property the anti-suppression claim used to lean on TLS
-            // for; ADR-0045).
+            // breaks verification (the anti-suppression property that used to lean on TLS
+            // for this).
             ConfigSigner verifier = new ConfigSigner(keyPair.getPublic());
             DeltaApplier verifyingApplier = new DeltaApplier(client, verifier);
 
@@ -415,7 +391,7 @@ class DeltaApplierTest {
 
         @Test
         void noVerifierAllowsUnsignedDeltas() {
-            // The default applier (no verifier) should work as before
+            // The default applier (no verifier) accepts unsigned deltas.
             ConfigDelta delta = new ConfigDelta(0, 1, List.of(
                     new ConfigMutation.Put("key", bytes("value"))
             ));
@@ -427,10 +403,10 @@ class DeltaApplierTest {
         }
 
         /**
-         * Regression test for FIND-0004: a single-mutation delta signed by
-         * ConfigStateMachine must verify at the edge via DeltaApplier.
-         * Before the fix, single PUTs were signed as [0x01][...] on the leader
-         * but verified as [0x03][1][0x01][...] on the edge, causing mismatch.
+         * Regression test: a single-mutation delta signed by ConfigStateMachine must verify
+         * at the edge via DeltaApplier. A single PUT is signed as {@code [0x01][...]} by the
+         * leader; verifying it as {@code [0x03][1][0x01][...]} (batch-of-one encoding) instead
+         * would mismatch and reject a legitimate delta.
          */
         @Test
         void find0004_singleMutationSignedByLeaderVerifiesAtEdge() throws Exception {
@@ -474,14 +450,10 @@ class DeltaApplierTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Epoch persistence across process restart
-    // -----------------------------------------------------------------------
-
     /**
-     * Before the epoch sidecar, the highest-seen-epoch counter lived only in memory,
-     * so a process restart let an attacker re-deliver an older leader-signed delta
-     * with a smaller epoch and have it accepted as fresh. The sidecar closes this gap.
+     * Without the epoch sidecar, the highest-seen-epoch counter would live only in memory,
+     * so a process restart would let an attacker re-deliver an older leader-signed delta with
+     * a smaller epoch and have it accepted as fresh. The sidecar closes this gap.
      */
     @Nested
     class EpochPersistence {

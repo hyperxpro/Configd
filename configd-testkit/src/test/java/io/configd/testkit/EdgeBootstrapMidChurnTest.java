@@ -14,9 +14,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Draft section 2: a zero-state edge bootstraps
- * while the CP LEADER is killed MID-TRANSFER, writes continuing on the re-elected
- * cluster. Three legs:
+ * A zero-state edge bootstraps while the CP LEADER is killed MID-TRANSFER, writes
+ * continuing on the re-elected cluster. Three legs:
  * <ul>
  *   <li><b>Leader killed, source healthy (the production-shaped case):</b> the joiner
  *       subscribes to a FOLLOWER; the cluster leader dies while the joiner's transfer is
@@ -35,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  *       bootstraps it from the (healthy, repaired) follower to full convergence.</li>
  * </ul>
  *
- * <h2>CP finding surfaced by this test (REGISTERED, out of C5 scope to fix)</h2>
+ * <h2>CP finding surfaced by this test (out of scope for this test to fix)</h2>
  * A deposed-then-healed leader NEVER catches up within any sim timescale (observed: 10k
  * quiet ticks, still at its isolation-time version): {@code RaftNode.inflightCount} is
  * incremented per send (sendAppendEntries/sendInstallSnapshot), decremented ONLY by
@@ -45,8 +44,8 @@ import static org.junit.jupiter.api.Assertions.fail;
  * consensus kernel is CP-owner territory with its own verification regime; this test
  * quarantines the dependency instead of drive-by-patching it.
  *
- * <h2>Deviation from the draft's sketch, named</h2>
- * The draft's "edge resubscribes to ANOTHER node" re-homing is multi-endpoint failover - 
+ * <h2>Scope, named</h2>
+ * "Edge resubscribes to ANOTHER node" re-homing is multi-endpoint failover -
  * the edge PROCESS shell's job, proven over real sockets by {@code EdgeFailoverTest}
  * (configd-edge-node); the sim pins the mid-churn bootstrap safety/convergence claims on
  * the fixed-subscription topology. "Kill" follows the {@link EdgeLeaderKillScenarioTest}
@@ -210,10 +209,6 @@ class EdgeBootstrapMidChurnTest {
         assertTrue(joiner.snapshotsApplied() >= 1,
                 "the joiner was bootstrapped by the self-healing re-sent transfer");
     }
-
-    // -----------------------------------------------------------------------
-    // Helpers (the EdgeBootstrapUnderSustainedWritesTest discipline)
-    // -----------------------------------------------------------------------
 
     /** A CP node that is neither the (old) leader nor the excluded node. */
     private static int pickFollower(EdgeFanOutSim sim, int leader, int exclude) {

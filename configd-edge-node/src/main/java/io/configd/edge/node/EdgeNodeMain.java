@@ -126,8 +126,8 @@ public final class EdgeNodeMain {
         MetricsRegistry registry = new MetricsRegistry();
         // JVM/process runtime gauges on the edge process (runtime board + leak alerts).
         io.configd.observability.JvmMetrics.bind(registry);
-        // Fail-open production monitor (the ConfigdServer policy): an invariant violation
-        // increments invariant.violation.* and keeps serving — never throws in-process.
+        // Fail-open, matching the control plane: an invariant violation increments
+        // invariant.violation.* and keeps serving -- never throws in-process.
         InvariantMonitor invariantMonitor = new InvariantMonitor(registry, false);
         EdgeNodeMetrics metrics = new EdgeNodeMetrics(registry);
 
@@ -153,11 +153,11 @@ public final class EdgeNodeMain {
         }
         metrics.bind(core);
 
-        // The edge-read HTTP surface is served by Netty (io_uring to Epoll to NIO selected at start),
-        // replacing the JDK HttpServer. Byte-identical responses (both adapters delegate to
-        // EdgeReadHandler) at 8.7x less server-side allocation.
-        // Publish the edge-read histogram bucket schedule so configd_edge_read_seconds renders
-        // the le buckets (0.001 / 0.005) the edge-read burn-rate alert queries.
+        // Netty serves the edge-read HTTP surface (io_uring, falling back to Epoll then NIO);
+        // responses are byte-identical to EdgeHttpServer's since both delegate to
+        // EdgeReadHandler, at much less server-side allocation. The histogram bucket schedule
+        // is published here so configd_edge_read_seconds carries the le buckets (0.001 / 0.005)
+        // the edge-read burn-rate alert queries.
         NettyEdgeHttpServer httpServer = new NettyEdgeHttpServer(config.apiPort(), core,
                 StrongReadKeyClass.DEFAULT,
                 new PrometheusExporter(registry,
@@ -189,7 +189,7 @@ public final class EdgeNodeMain {
         }
     }
 
-    /** System property that opts a prefix-scoped edge into server-side filtering (ADR-0045). */
+    /** System property that opts a prefix-scoped edge into server-side filtering. */
     static final String ACCEPT_FILTERED_PROP = "configd.edge.accept_filtered";
 
     /**
@@ -235,7 +235,6 @@ public final class EdgeNodeMain {
         return metricsRegistry;
     }
 
-    /** The parsed configuration. */
     public EdgeNodeConfig config() {
         return config;
     }

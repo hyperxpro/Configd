@@ -20,13 +20,11 @@ class RaftLogWalTest {
     void appendedEntriesAreRecoveredAfterRestart(@TempDir Path tempDir) {
         Storage storage = Storage.file(tempDir);
 
-        // Append entries in the first RaftLog instance
         RaftLog log1 = new RaftLog(storage);
         log1.append(new LogEntry(1, 1, "cmd-1".getBytes(StandardCharsets.UTF_8)));
         log1.append(new LogEntry(2, 1, "cmd-2".getBytes(StandardCharsets.UTF_8)));
         log1.append(new LogEntry(3, 2, "cmd-3".getBytes(StandardCharsets.UTF_8)));
 
-        // Simulate restart: create a new RaftLog with the same storage
         RaftLog log2 = new RaftLog(storage);
 
         assertEquals(3, log2.size());
@@ -56,7 +54,6 @@ class RaftLogWalTest {
     void truncationIsRecoveredAfterRestart(@TempDir Path tempDir) {
         Storage storage = Storage.file(tempDir);
 
-        // Append 5 entries, then truncate from index 3
         RaftLog log1 = new RaftLog(storage);
         log1.append(new LogEntry(1, 1, "a".getBytes(StandardCharsets.UTF_8)));
         log1.append(new LogEntry(2, 1, "b".getBytes(StandardCharsets.UTF_8)));
@@ -67,7 +64,6 @@ class RaftLogWalTest {
         log1.truncateFrom(3);
         assertEquals(2, log1.lastIndex());
 
-        // Simulate restart
         RaftLog log2 = new RaftLog(storage);
 
         assertEquals(2, log2.size());
@@ -82,7 +78,6 @@ class RaftLogWalTest {
     void appendAfterTruncationIsRecoveredCorrectly(@TempDir Path tempDir) {
         Storage storage = Storage.file(tempDir);
 
-        // Append, truncate, then append new entries
         RaftLog log1 = new RaftLog(storage);
         log1.append(new LogEntry(1, 1, "x".getBytes(StandardCharsets.UTF_8)));
         log1.append(new LogEntry(2, 1, "y".getBytes(StandardCharsets.UTF_8)));
@@ -92,7 +87,6 @@ class RaftLogWalTest {
         log1.append(new LogEntry(2, 2, "y2".getBytes(StandardCharsets.UTF_8)));
         log1.append(new LogEntry(3, 2, "z2".getBytes(StandardCharsets.UTF_8)));
 
-        // Simulate restart
         RaftLog log2 = new RaftLog(storage);
 
         assertEquals(3, log2.size());
@@ -113,7 +107,6 @@ class RaftLogWalTest {
     void emptyLogRecovery(@TempDir Path tempDir) {
         Storage storage = Storage.file(tempDir);
 
-        // Create and immediately "restart"
         new RaftLog(storage);
         RaftLog log2 = new RaftLog(storage);
 
@@ -125,7 +118,6 @@ class RaftLogWalTest {
     void compactionRecoveryInfersSnapshotIndex(@TempDir Path tempDir) {
         Storage storage = Storage.file(tempDir);
 
-        // Append 5 entries, compact through index 3
         RaftLog log1 = new RaftLog(storage);
         log1.append(new LogEntry(1, 1, "a".getBytes(StandardCharsets.UTF_8)));
         log1.append(new LogEntry(2, 1, "b".getBytes(StandardCharsets.UTF_8)));
@@ -139,7 +131,6 @@ class RaftLogWalTest {
         assertEquals(5, log1.lastIndex());
         assertEquals(2, log1.size()); // entries 4 and 5 remain
 
-        // Simulate restart
         RaftLog log2 = new RaftLog(storage);
 
         // snapshotIndex should be inferred from first entry (index 4 -> snapshotIndex = 3)
@@ -148,7 +139,7 @@ class RaftLogWalTest {
         assertEquals(5, log2.lastIndex());
         assertEquals(2, log2.size());
 
-        // Verify entries are accessible with correct offset arithmetic
+        // entries are accessible with correct offset arithmetic
         assertNull(log2.entryAt(3)); // compacted
         LogEntry e4 = log2.entryAt(4);
         assertNotNull(e4);
@@ -172,7 +163,6 @@ class RaftLogWalTest {
     void compactionRecoveryAllowsSubsequentAppend(@TempDir Path tempDir) {
         Storage storage = Storage.file(tempDir);
 
-        // Append, compact, restart, then append more
         RaftLog log1 = new RaftLog(storage);
         log1.append(new LogEntry(1, 1, "a".getBytes(StandardCharsets.UTF_8)));
         log1.append(new LogEntry(2, 1, "b".getBytes(StandardCharsets.UTF_8)));
@@ -183,12 +173,10 @@ class RaftLogWalTest {
         assertEquals(2, log2.snapshotIndex());
         assertEquals(3, log2.lastIndex());
 
-        // Append new entry after recovery
         log2.append(new LogEntry(4, 2, "d".getBytes(StandardCharsets.UTF_8)));
         assertEquals(4, log2.lastIndex());
         assertEquals(2, log2.lastTerm());
 
-        // Restart again to verify the new entry persisted
         RaftLog log3 = new RaftLog(storage);
         assertEquals(2, log3.snapshotIndex());
         assertEquals(4, log3.lastIndex());
@@ -200,7 +188,6 @@ class RaftLogWalTest {
     void doubleCompactionRecovery(@TempDir Path tempDir) {
         Storage storage = Storage.file(tempDir);
 
-        // Append entries, compact, append more, compact again, restart
         RaftLog log1 = new RaftLog(storage);
         log1.append(new LogEntry(1, 1, "a".getBytes(StandardCharsets.UTF_8)));
         log1.append(new LogEntry(2, 1, "b".getBytes(StandardCharsets.UTF_8)));
@@ -216,7 +203,6 @@ class RaftLogWalTest {
         assertEquals(5, log1.lastIndex());
         assertEquals(1, log1.size()); // only entry 5 remains
 
-        // Simulate restart
         RaftLog log2 = new RaftLog(storage);
 
         assertEquals(4, log2.snapshotIndex());
@@ -231,7 +217,6 @@ class RaftLogWalTest {
     void fullCompactionRecovery(@TempDir Path tempDir) {
         Storage storage = Storage.file(tempDir);
 
-        // Append and compact everything
         RaftLog log1 = new RaftLog(storage);
         log1.append(new LogEntry(1, 1, "a".getBytes(StandardCharsets.UTF_8)));
         log1.append(new LogEntry(2, 2, "b".getBytes(StandardCharsets.UTF_8)));
@@ -240,7 +225,7 @@ class RaftLogWalTest {
         assertEquals(2, log1.snapshotIndex());
         assertEquals(0, log1.size()); // all entries compacted
 
-        // Simulate restart - empty WAL, but metadata contains snapshotIndex+snapshotTerm
+        // restart from an empty WAL - metadata still carries snapshotIndex/snapshotTerm
         RaftLog log2 = new RaftLog(storage);
 
         // snapshotIndex and snapshotTerm recovered from metadata even with empty WAL
@@ -259,7 +244,6 @@ class RaftLogWalTest {
     void truncationAfterCompactionRecovery(@TempDir Path tempDir) {
         Storage storage = Storage.file(tempDir);
 
-        // Append 5 entries, compact through 2, restart
         RaftLog log1 = new RaftLog(storage);
         log1.append(new LogEntry(1, 1, "a".getBytes(StandardCharsets.UTF_8)));
         log1.append(new LogEntry(2, 1, "b".getBytes(StandardCharsets.UTF_8)));
@@ -272,16 +256,14 @@ class RaftLogWalTest {
         assertEquals(2, log2.snapshotIndex());
         assertEquals(5, log2.lastIndex());
 
-        // Truncate from index 4 (simulating conflict resolution)
+        // truncate from index 4, simulating conflict resolution
         log2.truncateFrom(4);
         assertEquals(3, log2.lastIndex());
         assertEquals(1, log2.size()); // only entry 3 remains
 
-        // Append replacement entries
         log2.append(new LogEntry(4, 3, "d2".getBytes(StandardCharsets.UTF_8)));
         assertEquals(4, log2.lastIndex());
 
-        // Restart again to verify truncation + append persisted correctly
         RaftLog log3 = new RaftLog(storage);
         assertEquals(2, log3.snapshotIndex());
         assertEquals(4, log3.lastIndex());
@@ -291,17 +273,14 @@ class RaftLogWalTest {
     }
 
     /**
-     * Regression: truncateFrom() must persist correctly so that
-     * a new RaftLog created from the same storage directory recovers the
-     * truncated state.
+     * truncateFrom() must persist correctly so that a new RaftLog created from the
+     * same storage directory recovers the truncated state.
      * <p>
-     * Before the fix, truncateFrom() called rewriteWal() which uses renameLog()
-     * but did not fsync the directory afterward. On Linux ext4, a crash after
-     * renameLog() but before directory metadata sync could lose the truncation,
-     * leaving stale entries that violate the log matching property on recovery.
-     * <p>
-     * After the fix, storage.sync() is called after rewriteWal() in truncateFrom(),
-     * ensuring the directory rename is durable.
+     * truncateFrom() rewrites the WAL via rewriteWal(), which uses renameLog(); on
+     * Linux ext4 a crash after the rename but before a directory metadata sync can
+     * lose the truncation, leaving stale entries that violate the log matching
+     * property on recovery. storage.sync() after rewriteWal() makes the directory
+     * rename durable.
      * <p>
      * This test verifies the behavioral outcome: after truncateFrom() on a
      * WAL-backed RaftLog, creating a new RaftLog from the same storage directory
@@ -311,7 +290,6 @@ class RaftLogWalTest {
     void truncateFromPersistsDurablyAcrossRestart(@TempDir Path tempDir) {
         Storage storage = Storage.file(tempDir);
 
-        // Append 5 entries across two terms
         RaftLog log1 = new RaftLog(storage);
         log1.append(new LogEntry(1, 1, "alpha".getBytes(StandardCharsets.UTF_8)));
         log1.append(new LogEntry(2, 1, "bravo".getBytes(StandardCharsets.UTF_8)));
@@ -322,7 +300,7 @@ class RaftLogWalTest {
         assertEquals(5, log1.lastIndex());
         assertEquals(5, log1.size());
 
-        // Truncate from index 3 - entries 3, 4, 5 are removed
+        // entries 3, 4, 5 are removed
         log1.truncateFrom(3);
         assertEquals(2, log1.lastIndex());
         assertEquals(2, log1.size());
@@ -332,9 +310,8 @@ class RaftLogWalTest {
         assertNull(log1.entryAt(4), "Entry 4 should be gone after truncation");
         assertNull(log1.entryAt(5), "Entry 5 should be gone after truncation");
 
-        // Simulate restart: create a new RaftLog backed by the same storage.
-        // The directory fsync was missing after rewriteWal().
-        // This test verifies the truncated state is recovered correctly.
+        // Restart: the truncated state must recover correctly - this is what the
+        // directory fsync after rewriteWal() guarantees.
         RaftLog log2 = new RaftLog(storage);
 
         assertEquals(2, log2.lastIndex(),
@@ -343,7 +320,6 @@ class RaftLogWalTest {
                 "Recovered log must have exactly 2 entries");
         assertEquals(1, log2.lastTerm());
 
-        // Verify the surviving entries are intact
         LogEntry e1 = log2.entryAt(1);
         assertNotNull(e1);
         assertEquals(1, e1.index());
@@ -356,7 +332,6 @@ class RaftLogWalTest {
         assertEquals(1, e2.term());
         assertArrayEquals("bravo".getBytes(StandardCharsets.UTF_8), e2.command());
 
-        // Verify truncated entries are NOT present after recovery
         assertNull(log2.entryAt(3),
                 "Entry 3 must not be recovered after truncateFrom(3)");
         assertNull(log2.entryAt(4),
@@ -364,12 +339,10 @@ class RaftLogWalTest {
         assertNull(log2.entryAt(5),
                 "Entry 5 must not be recovered after truncateFrom(3)");
 
-        // Verify we can append new entries at the truncation point after recovery
         log2.append(new LogEntry(3, 3, "charlie2".getBytes(StandardCharsets.UTF_8)));
         assertEquals(3, log2.lastIndex());
         assertEquals(3, log2.lastTerm());
 
-        // Third restart to verify the new entry after truncation was also persisted
         RaftLog log3 = new RaftLog(storage);
         assertEquals(3, log3.lastIndex());
         assertEquals(3, log3.size());
@@ -380,13 +353,11 @@ class RaftLogWalTest {
     }
 
     /**
-     * C-101 regression: when {@code Storage.appendToLog} throws
-     * (ENOSPC, IOException), the in-memory entries list MUST NOT be mutated.
-     * Otherwise the leader has a volatile entry that followers may have
-     * fsync'd durably - a leader crash immediately after returning would lose
-     * a committed entry on the leader's state machine. Pre-fix ordering was
-     * {@code entries.add(entry); storage.appendToLog(...);} - this test would
-     * have asserted {@code lastIndex() == 1} after the throw.
+     * When {@code Storage.appendToLog} throws (ENOSPC, IOException), the in-memory
+     * entries list must not be mutated. Otherwise the leader has a volatile entry
+     * that followers may have fsync'd durably - a leader crash immediately after
+     * returning would lose a committed entry on the leader's state machine, so the
+     * storage append must happen before the in-memory list is updated.
      */
     @Test
     void appendThrowsBeforeListMutationOnStorageFailure() {

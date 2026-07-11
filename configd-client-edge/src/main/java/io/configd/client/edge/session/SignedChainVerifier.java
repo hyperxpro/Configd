@@ -11,7 +11,7 @@ import java.security.SignatureException;
 import java.util.Objects;
 
 /**
- * Verifies the signed delta chain the client applies (OV7 / §04), in one of two operator-chosen modes:
+ * Verifies the signed delta chain the client applies, in one of two operator-chosen modes:
  *
  * <ul>
  *   <li><b>VERIFY</b> (a leader public key configured — the production default): a verifier is <b>always</b>

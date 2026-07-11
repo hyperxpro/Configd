@@ -11,7 +11,7 @@ import java.nio.file.Path;
 import java.security.KeyStore;
 
 /**
- * Generates the PKCS12 key/trust material the §06 F9 TLS tests need, via {@code keytool} (the same approach as
+ * Generates the PKCS12 key/trust material the TLS tests need, via {@code keytool} (the same approach as
  * {@code TlsManagerTest}) — no test-scope crypto dependency. It mints a CA-less self-signed set: a server cert
  * with SAN {@code localhost} (so {@code HTTPS} endpoint identification passes), a "bad" server cert whose SAN
  * is a different host (so endpoint identification fails), and a client cert for mTLS. Trust stores are
@@ -74,8 +74,6 @@ final class CertFixtures {
     ClientTls clientTrustOnly() throws Exception {
         return ClientTls.trustOnly(clientTrust, PASSWORD);
     }
-
-    // -----------------------------------------------------------------------
 
     private static void genKeyPair(Path keystore, String alias, String dname, String san) throws Exception {
         var cmd = new java.util.ArrayList<>(java.util.List.of(

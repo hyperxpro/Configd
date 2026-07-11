@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The unified {@link Configd} facade (the configd-client aggregator) vends BOTH plane clients over one shared
  * config + scheduler and closes them on {@link Configd#close()}: {@link Configd#edge()} against a real loopback
  * edge server (the reused {@code MockEdgeServer} fixture) and {@link Configd#http()} against a real loopback
- * HTTP server. This is the relocated Gate-1 facade test, extended for the Gate-4 HTTP plane.
+ * HTTP server.
  */
 @Timeout(30)
 class ConfigdFacadeTest {

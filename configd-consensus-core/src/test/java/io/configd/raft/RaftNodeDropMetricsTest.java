@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Proves the previously-silent outbound codec-reject drop tallies move when their condition occurs and
+ * Proves the outbound codec-reject drop tallies move when their condition occurs and
  * that the value surfaces through {@link RaftMetrics} (the snapshot the server per-shard gauges read).
  * The drop fires when {@code transport.send} throws {@link IllegalArgumentException} - in production the
  * wire codec rejecting an oversized AppendEntries or an over-cap InstallSnapshot chunk. Here a transport

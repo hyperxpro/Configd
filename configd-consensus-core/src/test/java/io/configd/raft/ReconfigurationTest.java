@@ -29,8 +29,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class ReconfigurationTest {
 
-    // Test infrastructure
-
     static final class TestTransport implements RaftTransport {
         private final List<SentMessage> messages = new ArrayList<>();
 
@@ -136,7 +134,6 @@ class ReconfigurationTest {
             return node;
         }
 
-        /** Ticks a node past its election timeout to start an election. */
         void triggerElectionTimeout(NodeId id) {
             RaftNode node = nodes.get(id);
             for (int i = 0; i < 301; i++) {
@@ -195,7 +192,7 @@ class ReconfigurationTest {
                 RaftNode node = e.getValue();
                 if (node.role() == RaftRole.LEADER) {
                     NodeId prev = leaderByTerm.put(node.currentTerm(), e.getKey());
-                    if (prev != null) return false; // two leaders in the same term
+                    if (prev != null) return false;
                 }
             }
             return true;
@@ -272,8 +269,6 @@ class ReconfigurationTest {
         }
     }
 
-    // Precondition tests
-
     @Nested
     class Preconditions {
 
@@ -286,12 +281,9 @@ class ReconfigurationTest {
 
         @Test
         void rejectsConfigChangeBeforeNoopCommitted() {
-            // De-vacuated: the OLD body asserted the
-            // OPPOSITE of the test's name - it elected a leader, let the no-op
-            // commit, and then asserted proposeConfigChange SUCCEEDS. This now
-            // actually pins the precondition: a leader whose current-term no-op
-            // is NOT yet committed MUST reject a config change (Ongaro,
-            // raft-dev 2015 - the single-server reconfig bug guard).
+            // Pins the precondition: a leader whose current-term no-op is not yet
+            // committed must reject a config change (Ongaro, raft-dev 2015 - the
+            // single-server reconfig bug guard).
             TestCluster cluster = new TestCluster(3);
             NodeId leaderId = NodeId.of(1);
             RaftNode leader = cluster.nodes.get(leaderId);
@@ -314,8 +306,7 @@ class ReconfigurationTest {
             assertTrue(leader.log().commitIndex() < 1,
                     "no-op must be uncommitted at this point");
 
-            // Precondition violated -> config change REJECTED (this is what the
-            // test name promises).
+            // Precondition violated -> config change rejected.
             assertFalse(leader.proposeConfigChange(
                             Set.of(NodeId.of(1), NodeId.of(2), NodeId.of(3), NodeId.of(4))),
                     "config change before the no-op commits must be rejected");
@@ -340,11 +331,9 @@ class ReconfigurationTest {
             RaftNode leader = cluster.findLeader();
             assertNotNull(leader);
 
-            // First config change accepted
             assertTrue(leader.proposeConfigChange(
                     Set.of(NodeId.of(1), NodeId.of(2), NodeId.of(3), NodeId.of(4))));
 
-            // Second config change rejected while first is pending
             assertFalse(leader.proposeConfigChange(
                     Set.of(NodeId.of(1), NodeId.of(2), NodeId.of(3), NodeId.of(5))));
         }
@@ -361,8 +350,6 @@ class ReconfigurationTest {
         }
     }
 
-    // Joint consensus transition tests
-
     @Nested
     class JointConsensusTransition {
 
@@ -373,14 +360,11 @@ class ReconfigurationTest {
             RaftNode leader = cluster.findLeader();
             assertNotNull(leader);
 
-            // Before config change: simple config
             assertFalse(leader.clusterConfig().isJoint());
 
-            // Propose adding node 4
             assertTrue(leader.proposeConfigChange(
                     Set.of(NodeId.of(1), NodeId.of(2), NodeId.of(3), NodeId.of(4))));
 
-            // After proposing: joint config
             assertTrue(leader.clusterConfig().isJoint());
             assertEquals(Set.of(NodeId.of(1), NodeId.of(2), NodeId.of(3)),
                     leader.clusterConfig().voters());
@@ -401,20 +385,14 @@ class ReconfigurationTest {
         }
     }
 
-    // Safety invariant tests
-
     @Nested
     class SafetyInvariants {
 
         @Test
         void configChangePreservedAcrossElections() {
-            // De-vacuated: the OLD body proposed a NORMAL
-            // command (new byte[]{42}) and never changed membership nor ran an
-            // election - it tested neither the "config change" nor the "across
-            // elections" its name promises. This now performs a REAL membership
-            // change (3->4), drives the FULL joint->final transition to
-            // commitment, then forces a leadership change and asserts the new
-            // leader still serves the 4-voter config.
+            // Performs a real membership change (3 -> 4 nodes), drives the full
+            // joint->final transition to commitment, then forces a leadership
+            // change and asserts the new leader still serves the 4-voter config.
             TestCluster cluster = new TestCluster(3);
             NodeId n1 = NodeId.of(1), n2 = NodeId.of(2), n3 = NodeId.of(3), n4 = NodeId.of(4);
 
@@ -449,7 +427,6 @@ class ReconfigurationTest {
                     "the preserved config must be the completed simple 4-voter config");
             assertEquals(Set.of(n1, n2, n3, n4), newLeader.clusterConfig().voters(),
                     "the committed membership change must survive the leadership change");
-            // Committed entries are preserved (no committed index regressed).
             assertTrue(newLeader.log().commitIndex() >= committedBefore - 1,
                     "committed entries must not be lost across the election");
         }
@@ -467,13 +444,6 @@ class ReconfigurationTest {
             }
         }
     }
-
-    // In-sim end-to-end joint-consensus verification
-    //
-    // The register flagged a 46% mutation score on the reconfig path and that
-    // no test ever completed a joint->final transition. These drive
-    // the full membership change to commitment, with a leadership change DURING
-    // the joint phase, and exercise recomputeConfigFromLog across a restart.
 
     @Nested
     class JointConsensusEndToEnd {
@@ -538,12 +508,9 @@ class ReconfigurationTest {
             cluster.deliverAllMessages(20);
             long committedBefore = leader.log().commitIndex();
 
-            // Enter joint. Capture the joint entry's index so we can deliver
-            // EXACTLY until C_old,new commits - and isolate the leader while a
-            // SURVIVOR is still in the joint phase (the
-            // old body delivered 30 rounds, by which point the transition had
-            // already finalized, so the election never actually happened "during
-            // the joint phase").
+            // Enter joint. Capture the joint entry's index so delivery can stop
+            // exactly when C_old,new commits, isolating the leader while a survivor
+            // is still in the joint phase.
             assertTrue(leader.proposeConfigChange(Set.of(n1, n2, n3, n4)));
             assertTrue(leader.clusterConfig().isJoint());
             long jointIndex = leader.log().lastIndex(); // the C_old,new entry
@@ -561,11 +528,10 @@ class ReconfigurationTest {
             }
             assertTrue(jointCommitted, "C_old,new must commit so the new leader inherits it");
 
-            // THE PINNED CLAIM: at the isolation point, a survivor we will elect is
-            // STILL in the joint phase (its in-memory config has not yet adopted
-            // C_new). This is what makes the subsequent election a "during joint
-            // phase" election. (The old leader has already moved to C_new in-memory,
-            // which is why the review found asserting isJoint() on n1 was wrong.)
+            // At the isolation point, the survivor to be elected is still in the
+            // joint phase (its in-memory config has not yet adopted C_new): this is
+            // what makes the election happen during the joint phase. The old leader
+            // has already moved to C_new in-memory, so isJoint() would not hold there.
             assertTrue(cluster.nodes.get(n2).clusterConfig().isJoint(),
                     "RR-018: the survivor n2 must still be MID-JOINT before the isolation — "
                             + "this is the 'leader election DURING the joint phase' the test name claims");
@@ -588,16 +554,12 @@ class ReconfigurationTest {
                     "committed entries from before the election must be preserved");
         }
 
-        // Reconfiguration under fault:
-        //
-        // Tests prove the POSITIVE dual-majority path: a
-        // dual-majority survivor set elects mid-joint and finalizes
-        // (leaderElectionDuringJointPhaseStillCompletesTheChange). What no test
-        // pinned is the historically-deadly NEGATIVE property - that a single
-        // majority (old-only or new-only) CANNOT elect during the joint phase -
-        // and the restart cell that recovers the JOINT (not just the final)
-        // config. Both are added here with mutation-revert captures under
-        // docs/session-4/experiments/joint-consensus-election-safety.md.
+        // leaderElectionDuringJointPhaseStillCompletesTheChange proves the positive
+        // dual-majority path: a dual-majority survivor set elects mid-joint and
+        // finalizes. The tests below pin the historically-deadly negative property -
+        // that a single majority (old-only or new-only) cannot elect during the joint
+        // phase - plus the restart cell that recovers the JOINT (not just the final)
+        // config. See docs/session-4/experiments/joint-consensus-election-safety.md.
         @Test
         void oldMajorityAloneCannotElectDuringJointPhase_splitBrainPrevention() {
             // The split-brain test for joint consensus. Membership change
@@ -610,7 +572,7 @@ class ReconfigurationTest {
             // {1,2,3} elect a leader under old-only rules while {3,4,5} could
             // independently elect under new-only rules: two leaders committing in
             // overlapping terms == split brain == lost acked writes. The
-            // dual-majority isQuorum gate (PreVote, vote, becomeLeader INV-1) must
+            // dual-majority isQuorum gate (PreVote, vote, becomeLeader) must
             // REFUSE: with only {1,2,3} reachable, NO leader may emerge.
             //
             // Oracle: no leader among {1,2,3} during the joint phase; the cluster

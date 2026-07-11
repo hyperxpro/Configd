@@ -21,14 +21,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The catch-up protocol selection for a resubscribing edge: the gap is resolved
- * server-side - "gap &lt; window: stream deltas; gap &gt; window: chunked snapshot, then
- * stream deltas from the snapshot point". The window IS the boundary ring's retention (the
- * replay horizon); the resubscribe-with-cursor path (a fresh SUBSCRIBE carrying the edge's
- * cursor) is exactly how a gap recovery re-enters this decision without a new wire surface.
+ * server-side. A gap smaller than the window streams deltas; a gap larger than the window
+ * sends a chunked snapshot, then streams deltas from the snapshot point. The window is the
+ * retention of the boundary ring, the replay horizon; the resubscribe-with-cursor path, a
+ * fresh SUBSCRIBE carrying the cursor of the edge, is exactly how a gap recovery re-enters
+ * this decision without a new wire surface.
  *
- * <p>The small-gap replay streams retained {@link CommitNotification}s from the ring (the
- * hot-path cache over the durable log), and the beyond-window path replays
- * SNAPSHOT-EQUIVALENT state - deliberately not a historical WAL scan.
+ * <p>The small-gap replay streams retained {@link CommitNotification}s from the ring, the
+ * hot-path cache over the durable log, and the beyond-window path replays
+ * snapshot-equivalent state, deliberately not a historical WAL scan.
  */
 class CatchUpProtocolTest {
 
@@ -62,7 +63,8 @@ class CatchUpProtocolTest {
         for (int i = 1; i <= 10; i++) {
             commit(buffer, "k" + i, "v" + i);
         }
-        // The edge gapped at cursor 4; seqs 5..10 are all retained - gap < window.
+        // The edge gapped at cursor 4; seqs 5 through 10 are all retained, so the gap is
+        // smaller than the window.
         FanOutSessionCore s = resubscribe(buffer, 4, FanOutConfig.defaults());
         assertEquals(EdgeFrame.Mode.TAIL,
                 sink.sentOfType(EdgeFrame.SubscribeOk.class).get(0).mode());
@@ -90,8 +92,9 @@ class CatchUpProtocolTest {
             // 64-byte values so the snapshot body genuinely spans multiple 64-byte chunks.
             commit(buffer, "k" + (i % 4), ("v" + i).repeat(20));
         }
-        // cursor 5 is far beyond the horizon (oldest retained is 23) - gap > window.
-        // Small chunk size so the transfer is genuinely multi-chunk at test scale.
+        // cursor 5 is far beyond the horizon (oldest retained is 23), so the gap is larger
+        // than the window. Small chunk size so the transfer is genuinely multi-chunk at
+        // test scale.
         FanOutConfig cfg = new FanOutConfig(64, 80, 64, 262_144, 8_192L, 250L, 5L, 64);
         FanOutSessionCore s = resubscribe(buffer, 5, cfg);
         assertEquals(EdgeFrame.Mode.SNAPSHOT_FIRST,
@@ -109,7 +112,8 @@ class CatchUpProtocolTest {
         assertEquals(1, sink.sentOfType(EdgeFrame.SnapshotEnd.class).size());
         assertEquals(30L, s.cursor(), "deltas resume from the snapshot point");
 
-        // Post-snapshot writes stream as deltas with seq > snapshot point - contiguous.
+        // Post-snapshot writes stream as deltas with seq greater than the snapshot point,
+        // contiguous.
         commit(buffer, "post", "p1");
         sink.clear();
         clock.advance(10);

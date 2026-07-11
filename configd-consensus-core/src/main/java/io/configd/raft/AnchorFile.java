@@ -13,11 +13,11 @@ import java.util.Objects;
 import static io.configd.raft.RaftArtifactMagic.ANCHOR_MAGIC;
 
 /**
- * The per-shard {@code raft-anchor}: a dual-slot, authenticated, anti-rollback anchor that
- * carries the merged Raft durability state ({@link AnchorRecord}). It replaces two removed
- * artifacts - {@code raft.persistent_state} and the bare {@code raft-log.snapshot-meta} - and
- * adds the durable-head high-water mark ({@code lastDurableIndex}) that lets recovery detect a
- * committed-and-acked entry vanishing (the {@code W < A} refuse).
+ * The per-shard {@code raft-anchor}: a dual-slot, authenticated, anti-rollback anchor that carries
+ * the Raft durability state ({@link AnchorRecord}) - formerly split across
+ * {@code raft.persistent_state} and the bare {@code raft-log.snapshot-meta} - plus the durable-head
+ * high-water mark ({@code lastDurableIndex}) that lets recovery detect a committed-and-acked entry
+ * vanishing (the {@code W < A} refuse).
  *
  * <p><b>File layout (frozen §2.4).</b>
  * <pre>

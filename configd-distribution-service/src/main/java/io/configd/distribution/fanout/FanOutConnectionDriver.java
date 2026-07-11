@@ -38,7 +38,7 @@ import java.util.logging.Logger;
  *   <li><b>Cert-identity binding</b> ({@link #bindIdentity}): over mTLS the verified client-cert
  *       principal is authoritative and the wire {@code edgeId} is advisory; plaintext uses the wire
  *       {@code edgeId}. The transport supplies only the verified principal. The same
- *       {@code edgeIdentity} is the watch-authorization principal (W8-6).</li>
+ *       {@code edgeIdentity} is the watch-authorization principal.</li>
  *   <li><b>Admission</b> at SUBSCRIBE: authorize the whole-store feed (whole-store READ via the
  *       optional {@link WatchAuthorizer}; deny -> {@link ErrorCode#NOT_AUTHORIZED} teardown with zero
  *       data frames; a {@code null} authorizer admits it as an auth-off deployment), then the governor
@@ -50,8 +50,8 @@ import java.util.logging.Logger;
  *       connection on the first {@code WATCH_CREATE}, which materializes one {@link FanOutSessionCore}
  *       for <b>every</b> shard in {@code allGids} (each with its own gid-stamped
  *       {@link WatchMultiplexSink} and {@link FilteringReplaySource}). {@code WATCH_CREATE} is
- *       validated (path grammar, W2-4), <b>authorized</b> via the optional {@link WatchAuthorizer} SPI
- *       <b>once over the whole logical target before any shard leg streams a byte</b> - a single
+ *       validated against the path grammar, <b>authorized</b> via the optional {@link WatchAuthorizer}
+ *       SPI <b>once over the whole logical target before any shard leg streams a byte</b> - a single
  *       indivisible whole-target decision, all N legs served or none, fail-closed when the authorizer
  *       is absent/unauthenticated/throwing - then registered. The
  *       first authorized watch seeds all N cores; each shard's decorator translates that core's
@@ -67,11 +67,11 @@ import java.util.logging.Logger;
  *       through a concurrent queue.</li>
  * </ul>
  *
- * <p><b>The v1 shared-fate boundary (W8-6 / W10-8).</b> The N shard cores share one connection-level
+ * <p><b>The shared-fate boundary.</b> The N shard cores share one connection-level
  * {@code CURSOR_ACK} scalar (broadcast to every core) and one {@link SlowConsumerGovernor} fate: a
  * single slow/greedy shard substream can demote its siblings (cross-shard head-of-line blocking). The
  * min-frontier makes the lag visible (the lagging component freezes while {@code server_now}
- * advances); per-shard flow control is the named v2 extension W10-8. The per-shard cores make that
+ * advances); per-shard flow control does not exist yet. The per-shard cores make that
  * later isolation a localized change.
  *
  * <p>The transport provides a {@link TransportSink} (its bounded outbound), the verified edge
@@ -117,11 +117,11 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
 
     /**
      * The server's current topology epoch ({@code ShardMap.epoch()}, from the authenticated
-     * {@code topology-descriptor.dat}; v1 = {@link WatchCursor#INITIAL_TOPOLOGY_EPOCH}). Every
-     * inbound resume token (WATCH_CREATE cursor / legacy SUBSCRIBE) is checked against it (A4): a
+     * {@code topology-descriptor.dat}; defaults to {@link WatchCursor#INITIAL_TOPOLOGY_EPOCH}). Every
+     * inbound resume token (WATCH_CREATE cursor / legacy SUBSCRIBE) is checked against it: a
      * mismatch is {@link ErrorCode#STALE_TOPOLOGY} (the client must re-hydrate), and every outbound
      * cursor (WATCH_PROGRESS / a WATCH_CANCELED oldest) is stamped with it. Static-N never changes it,
-     * so at v1 the check is always satisfied - byte-identical behavior.
+     * so the check is currently always satisfied - byte-identical behavior.
      */
     private final long topologyEpoch;
 
@@ -162,19 +162,19 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
     /** gid -> that shard's translating decorator (one per core, over the shared transport sink). */
     private final Map<Integer, WatchMultiplexSink> sinks = new LinkedHashMap<>();
 
-    /** gid -> that shard's snapshot filter (narrows the drain-owner watch's catch-up, W5-10/W7-4). */
+    /** gid -> that shard's snapshot filter (narrows the drain-owner watch's catch-up to its target). */
     private final Map<Integer, FilteringReplaySource> filteringReplaySources = new LinkedHashMap<>();
 
     /**
      * Max simultaneously-live watches per connection - bounds the live registry against a
-     * {@code WATCH_CREATE} flood from one authenticated connection (W8-6 abuse control).
+     * {@code WATCH_CREATE} flood from one authenticated connection.
      * Package-private so the boundary test drives the enforcement at the real value.
      */
     static final int MAX_LIVE_WATCHES_PER_CONNECTION = 1024;
 
     /**
      * Max distinct {@code watch_id}s per connection lifetime - bounds the never-shrinking no-reuse
-     * budget ({@code everUsed}; W2-8). A connection that exhausts it must reconnect to reset.
+     * budget ({@code everUsed}). A connection that exhausts it must reconnect to reset.
      * Package-private so the boundary test drives the enforcement at the real value.
      */
     static final int MAX_WATCH_IDS_PER_CONNECTION = 16_384;
@@ -202,7 +202,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
 
     /**
      * Session-thread-only: the {@link WatchAuthorizer#policyVersion() policy version} the connection's
-     * live watches were last (re-)authorized at - the bounded-revocation cursor (W7-7).
+     * live watches were last (re-)authorized at - the bounded-revocation cursor.
      * Initialized at the first watch create; the session loop re-authorizes all live watches whenever
      * the authorizer's version advances past this, then updates it. {@code Long.MIN_VALUE} until the
      * first watch (no watch connection => no re-auth).
@@ -234,7 +234,8 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
     // Session-thread-only governor-feed state.
     private long lastAckSeen;
     private boolean aboveWarn;
-    // MIN_VALUE sentinel compared with `>=` directly, NEVER by subtraction (the C4-A overflow bug).
+    // MIN_VALUE sentinel compared with `>=` directly, never by subtraction (subtracting from it
+    // near Long.MIN_VALUE overflows).
     private long nextGovernorEvalMillis = Long.MIN_VALUE;
 
     /** Back-compat constructor (no watch capability): delegates with a {@code null} authorizer. */
@@ -275,7 +276,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
      * @param allGids       the connection's shard set, ascending (StaticShardMap: {@code [0, N)})
      * @param shardResolver resolves a watch target to its covered shard set (target-driven coverage)
      * @param topologyEpoch the server's current topology epoch ({@code ShardMap.epoch()}); every resume
-     *                      token is checked/stamped against it (A4). Must be non-zero (0 reserved-illegal)
+     *                      token is checked/stamped against it. Must be non-zero (0 reserved-illegal)
      * @param authorizer    the authorization gate (W7), or {@code null} when no principal model is wired
      */
     public FanOutConnectionDriver(Map<Integer, CommitNotificationSource> sources,
@@ -366,9 +367,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
         return cores.get(primaryGid);
     }
 
-    // -----------------------------------------------------------------------
-    // Inbound routing (reader thread) - NEVER touches the cores/registry directly
-    // -----------------------------------------------------------------------
+    // Inbound routing (reader thread) - never touches the cores/registry directly.
 
     /**
      * Routes one decoded inbound frame from the transport. The first frame decides the connection
@@ -388,12 +387,12 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
 
     private void routeFirstFrame(EdgeFrame frame) {
         if (frame instanceof EdgeFrame.Subscribe sub) {
-            // A4 topology-epoch gate (etcd ErrCompacted model): a SUBSCRIBE resume token bound to a
+            // Topology-epoch gate (etcd ErrCompacted model): a SUBSCRIBE resume token bound to a
             // superseded topology generation is refused STALE_TOPOLOGY (ERROR_CLOSE) - the client's
             // only correct recovery is to drop the cursor and fully re-hydrate. Checked FIRST so a
             // stale token yields STALE_TOPOLOGY (re-hydrate) rather than the N>1 partial-view
-            // BAD_SUBSCRIBE below. Epoch 0 is already FRAME_CORRUPT at decode. At v1 static-N (one
-            // deploy-time epoch) this never fires - byte-identical.
+            // BAD_SUBSCRIBE below. Epoch 0 is already FRAME_CORRUPT at decode. Under the current
+            // static-N topology (one deploy-time epoch) this never fires - byte-identical.
             if (sub.topologyEpoch() != topologyEpoch) {
                 teardownHook.accept(ErrorCode.STALE_TOPOLOGY,
                         "SUBSCRIBE resume token is from a superseded topology epoch "
@@ -431,7 +430,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
             // the outbound version is 0x02 and the core's frames are translated; the other shard
             // decorators are flipped as they are materialized on the session thread.
             connType = ConnType.WATCH;
-            // Admit BEFORE any watch (W8-6): refuse a QUARANTINED/UNHEALTHY identity and set the
+            // Admit BEFORE any watch: refuse a QUARANTINED/UNHEALTHY identity and set the
             // governor identity so the slow-consumer ladder covers this connection. A reconnect storm
             // cannot dodge its cooldown by dialing WATCH_CREATE-first.
             if (!admitWatchConnection()) {
@@ -498,7 +497,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
     }
 
     /**
-     * Admission for a WATCH-first connection (W8-6). Sets the governor identity (the cert-DN
+     * Admission for a WATCH-first connection. Sets the governor identity (the cert-DN
      * principal) so the slow-consumer demotion-to-quarantine ladder covers watch connections, and
      * refuses a QUARANTINED/UNHEALTHY identity before any watch is created. ALLOW and
      * ALLOW_FORCE_SNAPSHOT both proceed - a watch's catch-up is governed per-watch by the cursor
@@ -536,9 +535,9 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
             case EdgeFrame.WatchCreate create -> sessionCommands.add(() -> handleWatchCreate(create));
             case EdgeFrame.WatchCancel cancel -> sessionCommands.add(() -> handleWatchCancel(cancel));
             // CURSOR_ACK is the connection-level flow-control scalar shared by all watches AND all
-            // shards (W8-6): broadcast it to every shard core (W10-8 defers per-(watch,shard) acks).
+            // shards: broadcast it to every shard core (per-(watch,shard) acks do not exist yet).
             case EdgeFrame.CursorAck ack -> sessionCommands.add(() -> broadcastCursorAck(ack.seq()));
-            // SUBSCRIBE cannot be mixed onto a watch connection (W5-12 keeps the two distinct).
+            // SUBSCRIBE cannot be mixed onto a watch connection - the two are kept distinct.
             case EdgeFrame.Subscribe ignored -> teardownHook.accept(ErrorCode.PROTOCOL_VIOLATION,
                     "cannot mix SUBSCRIBE on a watch connection");
             default -> teardownHook.accept(ErrorCode.PROTOCOL_VIOLATION,
@@ -560,20 +559,18 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
                 wire.resumeCursor(), wire.failoverResumeCursor(), edgeIdentity, wire.acceptsFiltered());
     }
 
-    // -----------------------------------------------------------------------
-    // Watch handling (session thread - via posted commands; registry-confining)
-    // -----------------------------------------------------------------------
+    // Watch handling (session thread - via posted commands; registry-confining).
 
     /**
      * Handles one {@code WATCH_CREATE} on the session thread. The order is load-bearing for the
      * security contract - one whole-target authorization decision, all N shard legs served or none:
      * <ol>
-     *   <li><b>validate</b> the target (path grammar / scope+kind range, W2-4) -> {@code BAD_SUBSCRIBE}
+     *   <li><b>validate</b> the target (path grammar, scope+kind range) -> {@code BAD_SUBSCRIBE}
      *       on a malformed target;</li>
-     *   <li><b>authorize</b> the WHOLE target ONCE (W7) -> {@code NOT_AUTHORIZED} on deny, fail-closed
-     *       (null/unauthenticated/throwing authorizer all deny). <b>No data frame precedes a reject</b>
-     *       (W7-5): NO shard core is seeded/tailed until every check passes;</li>
-     *   <li><b>reject id-reuse</b> (W2-8) -> {@code BAD_SUBSCRIBE}; a {@code watch_id} is never
+     *   <li><b>authorize</b> the WHOLE target ONCE -> {@code NOT_AUTHORIZED} on deny, fail-closed
+     *       (null/unauthenticated/throwing authorizer all deny). <b>No data frame precedes a reject</b>:
+     *       NO shard core is seeded/tailed until every check passes;</li>
+     *   <li><b>reject id-reuse</b> -> {@code BAD_SUBSCRIBE}; a {@code watch_id} is never
      *       reused;</li>
      *   <li><b>reject a gid-spoofed cursor</b>: a cursor component naming a gid not in the shard
      *       set -> {@code BAD_SUBSCRIBE} (fail-closed); an in-range but irrelevant component is ignored
@@ -598,13 +595,13 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
         WatchTarget target = new WatchTarget(create.scope(), create.targetKind(), path,
                 create.fullChainVerify());
 
-        // Snapshot the policy version BEFORE the authorize gate (W7-7 seed correctness): the gate
-        // below authorizes against a snapshot at version >= this, so seeding lastReauthVersion from
-        // this read guarantees any LATER revoking reload (version > the gate's snapshot) is caught by
-        // re-auth. Reading it AFTER authorize would let a reload that lands in the
-        // authorize->seed window seed past its own revocation, so the first watch would never be
-        // re-checked until the next reload (a narrow but unbounded W7-7 miss). 0 when no authorizer
-        // (the create is then rejected below, so the value is unused).
+        // Snapshot the policy version BEFORE the authorize gate: the gate below authorizes against a
+        // snapshot at version >= this, so seeding lastReauthVersion from this read guarantees any
+        // LATER revoking reload (version > the gate's snapshot) is caught by re-auth. Reading it AFTER
+        // authorize would let a reload that lands in the authorize->seed window seed past its own
+        // revocation, so the first watch would never be re-checked until the next reload (a narrow but
+        // unbounded miss). 0 when no authorizer (the create is then rejected below, so the value is
+        // unused).
         long versionAtCreate = (authorizer != null) ? authorizer.policyVersion() : 0L;
 
         // (2) AUTHORIZE the whole target ONCE - the security crux. Zero data frames, and NO shard leg
@@ -615,14 +612,14 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
             return;
         }
 
-        // (3) reject id-reuse (W2-8) - a watch_id is never reused (live OR canceled)
+        // (3) reject id-reuse - a watch_id is never reused (live OR canceled)
         if (watchRegistry.isUsed(watchId)) {
             rejectWatch(watchId, ErrorCode.BAD_SUBSCRIBE,
                     "watch_id already used on this connection (no reuse, W2-8): " + watchId);
             return;
         }
 
-        // (3b) per-connection watch caps (W8-6 abuse control) - bound the live registry and the
+        // (3b) per-connection watch caps (abuse control) - bound the live registry and the
         // never-shrinking no-reuse budget so one authenticated connection cannot exhaust edge memory
         // with a WATCH_CREATE flood.
         if (watchRegistry.liveCount() >= MAX_LIVE_WATCHES_PER_CONNECTION) {
@@ -637,12 +634,13 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
             return;
         }
 
-        // (3b-topology) A4 topology-epoch gate (etcd ErrCompacted model): a cursor bound to a
+        // (3b-topology) Topology-epoch gate (etcd ErrCompacted model): a cursor bound to a
         // superseded topology generation is refused STALE_TOPOLOGY (WATCH_CANCELED) - the client must
         // drop the cursor and re-hydrate. Checked BEFORE the gid-spoof guard so a resharding cursor (a
         // cursor from the OLD topology, whose gids may also be out of the new shard set) yields
         // STALE_TOPOLOGY, not the BAD_SUBSCRIBE gid-spoof reject. Epoch 0 is already FRAME_CORRUPT at
-        // decode. At v1 static-N (one deploy-time epoch) this never fires - byte-identical.
+        // decode. Under the current static-N topology (one deploy-time epoch) this never fires -
+        // byte-identical.
         if (create.cursor().topologyEpoch() != topologyEpoch) {
             rejectWatch(watchId, ErrorCode.STALE_TOPOLOGY,
                     "watch cursor is from a superseded topology epoch "
@@ -673,17 +671,18 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
                 startCursorS(create.cursor(), primaryGid), create.flags()));
         if (!coreSubscribed) {
             coreSubscribed = true;
-            // Seed the bounded-revocation cursor (W7-7) from the version read BEFORE the authorize
-            // gate (<= the version the gate authorized against), so any later revoking reload advances
-            // past it and triggers re-auth. The authorizer is non-null here (the watch passed the gate).
+            // Seed the bounded-revocation cursor from the version read BEFORE the authorize
+            // gate (at or before the version the gate authorized against), so any later revoking
+            // reload advances past it and triggers re-auth. The authorizer is non-null here (the watch
+            // passed the gate).
             lastReauthVersion = versionAtCreate;
             materializeAllCores();
             seedAllCores(create, target, coveredGids);
             emitCoalescedWatchCreated(watchId, coveredGids);
         } else {
-            // A subsequent watch rides the shared per-shard drains (W8-6): acknowledge immediately,
+            // A subsequent watch rides the shared per-shard drains: acknowledge immediately,
             // TAIL from the current per-shard frontier over its covered shards. Independent resume
-            // positions need a separate connection (the v1 single-shared-drain boundary).
+            // positions need a separate connection (the single-shared-drain boundary).
             emitSubsequentWatchCreated(watchId, coveredGids);
         }
     }
@@ -715,10 +714,10 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
             FanOutSessionCore core = cores.get(g);
             boolean covered = contains(coveredGids, g);
             // The drain-owner's target is BOTH this shard's snapshot content filter
-            // (FilteringReplaySource, W5-10/W7-4 - a narrow watch never receives the whole store) AND
-            // its WATCH_SNAPSHOT_* tag. A non-covered shard seeds from its tip (TAIL) and so does not
+            // (FilteringReplaySource - a narrow watch never receives the whole store) AND its
+            // WATCH_SNAPSHOT_* tag. A non-covered shard seeds from its tip (TAIL) and so does not
             // snapshot at subscribe; its rare later re-snapshot is filtered to the drain-owner target
-            // and empty for a key not on that shard (the v1 shared-drain boundary, per-shard).
+            // and empty for a key not on that shard (the shared-drain boundary, per-shard).
             filteringReplaySources.get(g).setTarget(firstTarget);
             sinks.get(g).setSnapshotOwner(create.watchId());
             long coreCursor = coreCursorFor(create, g, covered);
@@ -727,14 +726,14 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
     }
 
     /**
-     * Maps the first watch's request to one shard's core-subscribe cursor (W3-4):
+     * Maps the first watch's request to one shard's core-subscribe cursor:
      * <ul>
      *   <li>a shard NOT covered by this watch => TAIL from its current tip (ready for a later scatter
      *       watch; no snapshot);</li>
      *   <li>{@code with_initial_snapshot} => 0 => the covered shard SNAPSHOT_FIRSTs (per-shard, NOT a
-     *       consistent cut, W5-4b);</li>
+     *       consistent cut);</li>
      *   <li>from-now (demuxed component 0, no flag) => TAIL from that shard's frontier - 0 means "from
-     *       now per shard", NOT "replay all" (W3-4);</li>
+     *       now per shard", NOT "replay all";</li>
      *   <li>resume (demuxed component > 0) => TAIL if in-window, else a per-shard SNAPSHOT_FIRST.</li>
      * </ul>
      */
@@ -787,8 +786,8 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
     }
 
     /**
-     * Handles one {@code WATCH_CANCEL} on the session thread (W5-8). Deregisters the watch (its id
-     * stays burned in {@code everUsed} - no reuse, W2-8) and acknowledges it with a per-watch
+     * Handles one {@code WATCH_CANCEL} on the session thread. Deregisters the watch (its id
+     * stays burned in {@code everUsed} - no reuse) and acknowledges it with a per-watch
      * terminal. Because the registry is shared by every shard decorator, one removal instantly stops
      * all N shard legs fanning out to it (multiplex isolation - the connection and sibling watches are
      * unaffected). Canceling an unknown / already-canceled id is a no-op.
@@ -796,16 +795,16 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
     private void handleWatchCancel(EdgeFrame.WatchCancel cancel) {
         WatchRegistry.WatchEntry removed = watchRegistry.cancel(cancel.watchId());
         if (removed != null) {
-            // Orderly per-watch close. The closed ErrorCode taxonomy has no dedicated "canceled"
-            // code; SERVER_SHUTDOWN (9) is the orderly-close code (a CANCELED code is a v2 taxonomy
-            // addition). The connection and other watches survive.
+            // Orderly per-watch close. The ErrorCode taxonomy has no dedicated "canceled" code, so
+            // SERVER_SHUTDOWN (9) doubles as the orderly-close code here. The connection and other
+            // watches survive.
             transportSink.offer(new EdgeFrame.WatchCanceled(
                     cancel.watchId(), ErrorCode.SERVER_SHUTDOWN, null, "canceled"));
         }
     }
 
     /**
-     * The bounded-revocation tick step (W7-7): re-authorizes the connection's live watches iff
+     * The bounded-revocation tick step: re-authorizes the connection's live watches iff
      * the authorizer's {@link WatchAuthorizer#policyVersion() policy version} has advanced since the
      * last check, then records the new version. A single volatile-acquire comparison on the common
      * (unchanged-policy) path. Runs only for a watch connection ({@code coreSubscribed} => a non-null
@@ -825,8 +824,8 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
 
     /**
      * Re-authorizes every live watch against the CURRENT ACL state and force-closes -
-     * {@code WATCH_CANCELED(NOT_AUTHORIZED)}, which a driver treats as terminal and does not retry
-     * (W7-6) - any whose principal no longer holds {@code READ ∧ WATCH} over its whole target. One
+     * {@code WATCH_CANCELED(NOT_AUTHORIZED)}, which a driver treats as terminal and does not retry -
+     * any whose principal no longer holds {@code READ ∧ WATCH} over its whole target. One
      * logical re-check per watch cuts all N of its shard legs atomically (the registry removal stops
      * every shard decorator fanning out to it). The connection and surviving watches are unaffected
      * (multiplex isolation). Called by {@link #maybeReauthorizeWatches} ONLY when the policy version
@@ -894,7 +893,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
 
     /**
      * The resume seq one shard's drain starts from: the component whose {@code gid == g}, or 0 for
-     * "from now for that shard" (W3-4) when the vector has no component for {@code g}. At {@code N = 1}
+     * "from now for that shard" when the vector has no component for {@code g}. At {@code N = 1}
      * with {@code g = 0} this is the single-shard single-component demux.
      */
     private static long startCursorS(WatchCursor cursor, int g) {
@@ -934,9 +933,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
         return false;
     }
 
-    // -----------------------------------------------------------------------
-    // WatchMultiplexSink.Coordinator - the cross-shard coalescing seam (session thread)
-    // -----------------------------------------------------------------------
+    // WatchMultiplexSink.Coordinator - the cross-shard coalescing seam (session thread).
 
     @Override
     public void onShardCreated(int gid, long latestSeq, EdgeFrame.Mode mode) {
@@ -956,18 +953,18 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
 
     /**
      * Emits ONE coalesced {@code WATCH_PROGRESS} per live watch: an N-component vector over the
-     * watch's covered shards, each component that shard's DRAINED cursor (the W5-7 no-silent-gap
+     * watch's covered shards, each component that shard's DRAINED cursor (the no-silent-gap
      * clamp is structural - the component IS the drained cursor, never the raw buffer tip). An
      * idle-but-healthy shard's component advances over non-matching commits (the core drains the whole
      * shard); a lagging shard's freezes while {@code server_now} advances - quiet distinguishable from
-     * lagging (§6). A refused offer is the shared-fate backpressure (W8-6): return false so the
+     * lagging. A refused offer is the shared-fate backpressure: return false so the
      * triggering core reads it as transport-gone (the prior close-on-refused-heartbeat behavior).
      */
     private boolean emitCoalescedProgress(long serverNowMillis) {
         for (WatchRegistry.WatchEntry e : watchRegistry.liveEntries()) {
             WatchCursor cursor = progressVector(e.coveredGids());
             if (!transportSink.offer(new EdgeFrame.WatchProgress(e.watchId(), cursor, serverNowMillis))) {
-                return false; // shared-fate backpressure (W8-6)
+                return false; // shared-fate backpressure
             }
         }
         return true;
@@ -980,20 +977,18 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
             long drainedS = Math.max(0L, cores.get(g).cursor());
             comps.add(new WatchCursor.Component(g, drainedS));
         }
-        // Stamp the server's current topology epoch (A4) so the client can detect a superseded cursor.
+        // Stamp the server's current topology epoch so the client can detect a superseded cursor.
         return new WatchCursor(topologyEpoch, comps);
     }
 
-    /** Broadcasts one connection-level {@code CURSOR_ACK} to every shard core (W8-6 shared scalar). */
+    /** Broadcasts one connection-level {@code CURSOR_ACK} to every shard core (shared scalar). */
     private void broadcastCursorAck(long seq) {
         for (FanOutSessionCore core : cores.values()) {
             core.onCursorAck(seq);
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Demotion listener (session thread, inside a core's demote callback)
-    // -----------------------------------------------------------------------
+    // Demotion listener (session thread, inside a core's demote callback).
 
     private void onDemotionEvent(DemotionEvent event) {
         String id = governorIdentity;
@@ -1011,9 +1006,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Session loop (session thread)
-    // -----------------------------------------------------------------------
+    // Session loop (session thread).
 
     /**
      * Drives the session - drain inbound commands, sweep the shard cores, feed the governor, run the
@@ -1061,7 +1054,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
                     }
                 }
 
-                // Bounded watch revocation (W7-7) - the version-gated re-auth tick step.
+                // Bounded watch revocation - the version-gated re-auth tick step.
                 maybeReauthorizeWatches();
 
                 boolean madeProgress = drainedCommand

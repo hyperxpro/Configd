@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The edge fan-out prefix-filter posture flag ({@code configd.edge.fanout.filter}) resolves on/off
- * and fails LOUD on any other value - never a silent default (ADR-0045).
+ * and fails LOUD on any other value - never a silent default.
  */
 class EdgeFilterPostureTest {
 

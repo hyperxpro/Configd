@@ -47,7 +47,7 @@ class KeyringCodecTest {
         return r;
     }
 
-    // ---- round trip -------------------------------------------------------------------------
+    // Round trip.
 
     @Test
     void wrapUnwrapRoot_roundTrips_andBodyRoundTrips() {
@@ -63,7 +63,7 @@ class KeyringCodecTest {
         assertEquals(1, decoded.entries().size());
     }
 
-    // ---- ATTACK 4: a wrapped root cannot be replayed into another term / node -----------------
+    // A wrapped root cannot be replayed into another term or node.
 
     @Test
     void wrappedRoot_replayedIntoDifferentTerm_failsAad() {
@@ -93,7 +93,7 @@ class KeyringCodecTest {
                 () -> KeyringCodec.unwrapRoot(kek((byte) 0x31), NODE_A, KeyringCodec.KEYRING_FORMAT_VERSION, e1));
     }
 
-    // ---- ATTACK 5: unknown wrapAlgId / term 0 / bad version fail closed -----------------------
+    // Unknown wrapAlgId, term 0, and a bad version all fail closed.
 
     @Test
     void unknownWrapAlgId_failsClosed() {
@@ -147,7 +147,7 @@ class KeyringCodecTest {
         assertThrows(IntegrityException.class, () -> KeyringCodec.decodeBody(body));
     }
 
-    // ---- matrix 16: outer MAC over the WHOLE body defeats strip/swap/add/truncate -------------
+    // The outer MAC covers the whole body, defeating strip/swap/add/truncate.
 
     @Test
     void outerMac_bodyTamper_failsClosed() {
@@ -174,7 +174,7 @@ class KeyringCodecTest {
                 "the outer MAC covers activeTerm + entryCount + every entry - a strip fails loud");
     }
 
-    // ---- ATTACK 5: slot overflow REFUSES loudly ---------------------------------------------
+    // Slot overflow refuses loudly.
 
     @Test
     void slotOverflow_bootstrapRefusesLoudly() {

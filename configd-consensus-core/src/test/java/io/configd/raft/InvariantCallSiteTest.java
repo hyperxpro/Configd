@@ -12,23 +12,21 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Guards against removal of the PRODUCTION {@code invariantChecker.check(...)}
+ * Guards against removal of the production {@code invariantChecker.check(...)}
  * call sites.
  * <p>
- * The existing {@link AssertionTwinFiringTest} verifies each twin's EXPRESSION
+ * The existing {@link AssertionTwinFiringTest} verifies each twin's expression
  * is correctly phrased by forcing the condition false through a synthetic seam
  * ({@code fireInNodeTwinForTest}). That proves the check would fire on a real
- * violation, but it does NOT traverse the production call site, so deleting the
- * production {@code check(...)} call leaves it green (the documented gap was that no test triggered real call sites).
+ * violation, but it does not traverse the production call site, so deleting the
+ * production {@code check(...)} call would leave it green.
  * <p>
- * This test closes that gap with a checker that records EVERY {@code check(name,
+ * This test closes that gap with a checker that records every {@code check(name,
  * ...)} invocation regardless of condition, then drives the real protocol paths
  * (apply, election, follower append, reconfig) and asserts the production code
- * actually CALLED each named check. A {@code VoidMethodCall} removal of any of
- * those calls makes the recorded set miss that name -> this test fails. Unlike
- * the fail-on-false mutants (several of which are genuine equivalents because the
- * condition is true by construction), the call-REMOVAL mutant is killable here:
- * the observable is "the call happened", not "the condition was false".
+ * actually called each named check. Removing any of those calls makes the
+ * recorded set miss that name, so this test fails - the observable here is
+ * "the call happened", not "the condition was false".
  * Deterministic, in-process, no sleeps.
  */
 class InvariantCallSiteTest {
@@ -76,7 +74,6 @@ class InvariantCallSiteTest {
     void becomeLeaderInvokesElectionSafetyAndLeaderCompleteness() {
         ObservingChecker checker = new ObservingChecker();
         singleNodeLeader(checker); // election runs becomeLeader()
-        // Kills the VoidMethodCall removals of these two checks in becomeLeader().
         assertTrue(checker.observed("election_safety"),
                 "becomeLeader must invoke the election_safety check");
         assertTrue(checker.observed("leader_completeness"),
@@ -93,7 +90,6 @@ class InvariantCallSiteTest {
         // A real user proposal commits + applies inline on the single-node path,
         // traversing the production applyCommitted() check calls.
         assertEquals(ProposalResult.ACCEPTED, node.propose(new byte[]{1, 2, 3}).result());
-        // Kills the VoidMethodCall removals of these two checks in applyCommitted().
         assertTrue(checker.observed("version_monotonicity"),
                 "applyCommitted must invoke the version_monotonicity check on each apply");
         assertTrue(checker.observed("state_machine_safety"),
@@ -111,7 +107,6 @@ class InvariantCallSiteTest {
         // A non-empty AppendEntries batch reaches the log_matching check.
         follower.handleMessage(new AppendEntriesRequest(1, N2, 0, 0,
                 List.of(new LogEntry(1, 1, new byte[]{1})), 0));
-        // Kills the VoidMethodCall removal of the log_matching check.
         assertTrue(checker.observed("log_matching"),
                 "a non-empty follower append must invoke the log_matching check");
     }
@@ -125,7 +120,6 @@ class InvariantCallSiteTest {
         RaftNode leader = singleNodeLeader(checker); // no-op commits instantly
         checker.clear();
         assertTrue(leader.proposeConfigChange(Set.of(N1, N2)));
-        // Kills the VoidMethodCall removals of the three reconfig checks.
         assertTrue(checker.observed("single_server_invariant"),
                 "proposeConfigChange must invoke single_server_invariant");
         assertTrue(checker.observed("no_op_before_reconfig"),
@@ -145,7 +139,6 @@ class InvariantCallSiteTest {
         cluster.electFirst();
         checker.clear();
         cluster.step(150); // >= 2 heartbeat intervals with quorum - the per-peer loop runs
-        // Kills the VoidMethodCall removal of the inflight_window_progress check.
         assertTrue(checker.observed("inflight_window_progress"),
                 "a leader heartbeat must invoke the inflight_window_progress check per peer");
     }

@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Mechanism test (charter section 3 V2) for the synthetic propagation probe
+ * Mechanism test for the synthetic propagation probe
  * ({@link PropagationProbe}) and its OBSERVER-ONLY {@link EdgeFanOutSim} seam.
  *
  * <p>Three properties, all under <b>logical</b> time so assertions are EXACT (no
@@ -38,12 +38,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       into the latency distribution.</li>
  *   <li><b>Observer-only determinism.</b> Running the {@link EdgeSimDeterminismTest}
  *       scenario WITH a probe attached produces a byte-identical digest to running it
- *       WITHOUT one - proof that the probe seam perturbs nothing (charter "observer-only").</li>
+ *       WITHOUT one - proof that the probe seam perturbs nothing (observer-only).</li>
  * </ol>
  *
  * <p>Staleness sample = {@code visibleTs - publishTs} where {@code publishTs} is the
- * leader-assigned commit timestamp (commit-timestamp spec section 2) and {@code visibleTs} is the edge's
- * logical apply time - contract section 2 staleness invariant.
+ * leader-assigned commit timestamp and {@code visibleTs} is the edge's logical apply time
+ * (the staleness invariant).
  */
 class ProbeMechanismTest {
 
@@ -57,10 +57,6 @@ class ProbeMechanismTest {
     private static final long D_A2 = 50;
     private static final long D_B1 = 499;
     private static final long D_B2 = 501;
-
-    // -----------------------------------------------------------------------
-    // (1) constructed distribution - EXACT percentiles/counts across two edges
-    // -----------------------------------------------------------------------
 
     @Test
     void probeReproducesConstructedStalenessDistributionExactly() {
@@ -118,7 +114,7 @@ class ProbeMechanismTest {
                                 + " max=501 unit=ms"),
                 "global summary line must report the exact constructed stats:\n" + summary);
 
-        // Evidence record: the sim-mode (logical-time) report (charter section 3 V2 deliverable 5).
+        // Evidence record: the sim-mode (logical-time) report.
         System.out.println("=== Configd propagation probe — SIM MODE (logical time) ===");
         System.out.println("constructed staleness distribution: edge-100={+10ms,+50ms} "
                 + "edge-101={+499ms,+501ms}; logical time → exact, no tolerance bands.");
@@ -127,10 +123,6 @@ class ProbeMechanismTest {
         System.out.println();
         System.out.print(probe.report());
     }
-
-    // -----------------------------------------------------------------------
-    // (2) unmatched counting - visible-without-published
-    // -----------------------------------------------------------------------
 
     @Test
     void unmatchedVisibleSeqIsCountedAndKeptOutOfTheDistribution() {
@@ -152,15 +144,11 @@ class ProbeMechanismTest {
                 "the report must surface unmatched counts");
     }
 
-    // -----------------------------------------------------------------------
-    // (2b) the PROBE-HISTOGRAM report-format contract (checklist item
-    //      "propagation probe histograms"). The staleness DISTRIBUTION is
-    //      deliberately not a registry series; this line format IS the contract
-    //      charter step (d) and CI grep for in both live modes. Asserted here - 
-    //      not in EdgeMetricsContractTest (configd-edge-node) - because
-    //      configd-testkit depends on configd-edge-node, so the probe cannot be
-    //      referenced from that module without a dependency cycle.
-    // -----------------------------------------------------------------------
+    // (2b) the PROBE-HISTOGRAM report format. The staleness distribution is deliberately not
+    // a registry series; this line format is what a human or script greps for in both live
+    // modes. Asserted here, not in EdgeMetricsContractTest (configd-edge-node), because
+    // configd-testkit depends on configd-edge-node, so the probe cannot be referenced from
+    // that module without a dependency cycle.
 
     @Test
     void reportEmitsOneGreppableProbeHistogramLinePerScope() {
@@ -177,16 +165,12 @@ class ProbeMechanismTest {
         assertTrue(report.contains(
                         "PROBE-HISTOGRAM: scope=observer-9 count=1 p50=250 p99=250 p999=250 max=250 unit=ms"),
                 "per-observer summary line malformed or missing:\n" + report);
-        // The global aggregate line - the exact form step (d)'s
+        // The global aggregate line - the exact form a
         // `grep "PROBE-HISTOGRAM: scope=global"` keys on.
         assertTrue(report.contains("PROBE-HISTOGRAM: scope=global count=2 "),
                 "global summary line malformed or missing:\n" + report);
         assertTrue(report.contains(" unit=ms"), "unit suffix missing:\n" + report);
     }
-
-    // -----------------------------------------------------------------------
-    // (3) observer-only: identical determinism digest with and without a probe
-    // -----------------------------------------------------------------------
 
     @Test
     void attachingAProbeDoesNotChangeTheDeterminismDigest() {
@@ -211,9 +195,7 @@ class ProbeMechanismTest {
                 "the recordPublished seam must fire from the FanOutBuffer listener under workload");
     }
 
-    // -----------------------------------------------------------------------
     // helpers
-    // -----------------------------------------------------------------------
 
     /** The AdversarialSim/EdgeFanOutSim epoch: the sim clock before any tick advances it. */
     private static final long EPOCH_MS = 1_700_000_000_000L;

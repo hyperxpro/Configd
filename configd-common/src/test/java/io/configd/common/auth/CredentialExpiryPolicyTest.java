@@ -28,8 +28,6 @@ class CredentialExpiryPolicyTest {
         };
     }
 
-    // ---- the refresh window: fraction clamped between floor and ceil ----
-
     @Test
     void tokenWindowUsesFractionInsideTheBand() {
         CredentialExpiryPolicy p = CredentialExpiryPolicy.DEFAULTS; // token 0.20, floor 30s, ceil 5m
@@ -60,8 +58,6 @@ class CredentialExpiryPolicyTest {
         assertEquals(30_000L, p.tokenRefreshWindowMs(-1L), "negative lifetime -> floor");
     }
 
-    // ---- the server close deadline: expiresAt + leeway, saturating ----
-
     @Test
     void closeDeadlineAddsLeeway() {
         CredentialExpiryPolicy p = CredentialExpiryPolicy.DEFAULTS; // leeway 60s
@@ -74,8 +70,6 @@ class CredentialExpiryPolicyTest {
         assertEquals(Long.MAX_VALUE, p.serverCloseDeadlineMillis(Long.MAX_VALUE - 5),
                 "a far-future notAfter + leeway must saturate, never wrap negative");
     }
-
-    // ---- fromConfig: defaults + fail-closed ----
 
     @Test
     void fromConfigDefaultsMatchTheFinding() {

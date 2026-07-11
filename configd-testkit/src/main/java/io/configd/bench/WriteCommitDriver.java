@@ -28,27 +28,26 @@ import java.util.concurrent.ThreadLocalRandom;
  *       and the JVM's own GC accounting so the comparison is allocation-rate / GC-pause
  *       distribution / throughput per collector. Closed-loop is correct here because we
  *       are NOT reporting a latency percentile - only allocation/GC/throughput, for which
- *       coordinated omission does not apply (methodology section 3b: "A closed-loop driver MAY be
- *       used to find the saturation throughput").</li>
+ *       coordinated omission does not apply.</li>
  *   <li><b>{@code commit-latency}</b> - measure the per-commit CPU cost of the local
  *       quorum (propose -> append -> in-memory replicate -> commit -> apply) as an HdrHistogram
- *       SampleTime-style distribution. This is the {@code local_commit_component} of
- *       methodology section 2's cross-region model. <b>No real network, no fsync</b> (in-memory
- *       transport + in-memory storage) - the number is the in-process consensus CPU cost,
- *       stated as such (LOCAL-VERIFIED for the local component only).</li>
+ *       SampleTime-style distribution. This is the {@code local_commit_component} of the
+ *       cross-region latency model (local component + network RTT). <b>No real network, no
+ *       fsync</b> (in-memory transport + in-memory storage) - the number is the in-process
+ *       consensus CPU cost only, and is reported as such.</li>
  * </ul>
  *
  * <h2>Why this is not the tick-driven JMH benchmark</h2>
  * {@link RaftCommitBenchmark} ticks a fixed number of times per op and uses a no-op state
  * machine; it is ideal for the GC pause character but under-drives allocation (few GCs per
  * fork). This driver runs a real apply and a tight real-time loop, so allocation accumulates
- * and the GC log carries a populated pause distribution - the methodology's "no
- * ZGC-because-low-pause without the pause histogram" requirement.
+ * and the GC log carries a populated pause distribution: a "low pause" claim for a collector
+ * is never accepted without an actual pause histogram behind it.
  *
  * <h2>Cross-region note</h2>
  * This driver measures ONLY the local component. The cross-region total is
- * {@code local_commit_component + RTT(quorum)} per methodology section 2 and is computed in the
- * result doc, labelled {@code PENDING real-hardware confirmation}.
+ * {@code local_commit_component + RTT(quorum)}; confirming that number needs a real
+ * multi-region deployment, which this in-memory harness cannot provide.
  *
  * <h2>Invocation</h2>
  * <pre>
@@ -77,9 +76,7 @@ public final class WriteCommitDriver {
         }
     }
 
-    // ------------------------------------------------------------------
     // bakeoff: closed-loop allocation generator (collector comparison)
-    // ------------------------------------------------------------------
     private static void bakeoff(String[] args) {
         int clusterSize = args.length > 1 ? Integer.parseInt(args[1]) : 3;
         int durationSec = args.length > 2 ? Integer.parseInt(args[2]) : 30;
@@ -127,9 +124,7 @@ public final class WriteCommitDriver {
         System.out.printf("BAKEOFF-NOTE allocation+GC-pause distribution come from the -Xlog:gc* log; this line is the throughput half of the per-collector table.%n");
     }
 
-    // ------------------------------------------------------------------
     // commit-latency: per-op HdrHistogram of the local quorum-commit cost
-    // ------------------------------------------------------------------
     private static void commitLatency(String[] args) {
         int clusterSize = args.length > 1 ? Integer.parseInt(args[1]) : 3;
         int warmupOps = args.length > 2 ? Integer.parseInt(args[2]) : 100_000;
@@ -167,10 +162,6 @@ public final class WriteCommitDriver {
         printHistogramMicros(h);
     }
 
-    // ------------------------------------------------------------------
-    // shared helpers
-    // ------------------------------------------------------------------
-
     /** Encode a real PUT command and drive it to commit (decode + HAMT apply on every node). */
     private static void driveOneCommit(InMemoryRaftCluster cluster, RaftNode leader, String key, byte[] value) {
         byte[] cmd = CommandCodec.encodePut(key, value);
@@ -194,7 +185,7 @@ public final class WriteCommitDriver {
                 h.getValueAtPercentile(99.99) / 1000.0,
                 h.getMaxValue() / 1000.0,
                 h.getMean() / 1000.0);
-        // Tail-bin sample counts (methodology section 3a: a thin tail is low-confidence).
+        // Tail-bin sample counts: a thin tail (few samples above p999/p9999) is low-confidence.
         long n = h.getTotalCount();
         long above999 = countAbovePercentile(h, 99.9);
         long above9999 = countAbovePercentile(h, 99.99);

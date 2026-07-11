@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * Charter hard-rule 5 for the edge-read surface: the strongest-Netty {@link NettyEdgeReadServer}
+ * The edge-read surface's equivalence rule: the strongest-Netty {@link NettyEdgeReadServer}
  * must serve the read path <b>equivalently</b> to the production JDK {@link EdgeHttpServer} - same
  * status, same body bytes, same {@code X-Configd-*} headers - across hit / not-subscribed /
  * strong-read / cursor-behind. A Netty server that is faster but serves a different (or wrong)

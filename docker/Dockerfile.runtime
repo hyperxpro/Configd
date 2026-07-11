@@ -1,10 +1,7 @@
-# ---------------------------------------------------------------------------
-# Configd — Minimal Runtime Image
+# Configd -- Minimal Runtime Image
 #
 # Multi-stage build: compile with JDK 25, package into a minimal JRE image.
-# ---------------------------------------------------------------------------
 
-# ========================== Stage 1: Build ==================================
 FROM eclipse-temurin:25-jdk-noble AS builder
 
 RUN apt-get update && apt-get install -y maven && rm -rf /var/lib/apt/lists/*
@@ -40,7 +37,6 @@ RUN mkdir -p /staging/libs && \
         -not -name 'original-*' \
         -exec cp {} /staging/libs/ \;
 
-# ========================== Stage 2: Runtime ================================
 FROM eclipse-temurin:25-jre-noble
 
 LABEL maintainer="configd"
@@ -62,16 +58,16 @@ USER configd
 
 HEALTHCHECK --interval=10s --timeout=3s CMD curl -f http://localhost:8080/health/live || exit 1
 
-# Notes (C6 audit, session-3):
-#  - -XX:+ZGenerational was REMOVED in JDK 24 (generational ZGC is the only ZGC);
-#    passing it on JDK 25 only produces an "Ignoring option" warning — dropped.
+# Notes:
+#  - -XX:+ZGenerational was removed in JDK 24 (generational ZGC is the only ZGC);
+#    passing it on JDK 25 only produces an "Ignoring option" warning -- dropped.
 #  - The original -Xms512m/-Xmx2g default was unrealistic for multi-JVM test
 #    topologies (the gate box is 2-vCPU/7.7GB); heap is now a MaxRAMPercentage
 #    default so `docker run -m` sizes it, and remains overridable via JAVA_OPTS.
-#  - This image's default process is the CONTROL-PLANE server. The edge node
+#  - This image's default process is the control-plane server. The edge node
 #    (configd-edge-node shaded jar, main io.configd.edge.node.EdgeNodeMain) is
-#    also in /app/libs — override the entrypoint to run it. The C6 E2E topology
-#    uses the purpose-built slim images in deploy/compose/ instead.
+#    also in /app/libs -- override the entrypoint to run it. The purpose-built
+#    slim images in deploy/compose/ run the edge node directly instead.
 ENTRYPOINT ["java", "--enable-preview", \
     "-XX:+UseZGC", \
     "-XX:MaxRAMPercentage=50.0", \

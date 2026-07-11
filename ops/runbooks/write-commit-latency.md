@@ -104,6 +104,6 @@ fault clears.
 
 ## Related
 
-- `docs/decisions/adr-0001-embedded-raft-consensus.md` — commit pipeline.
+- `docs/adr/adr-0001-embedded-raft-consensus.md` — commit pipeline.
 - [raft-saturation.md](raft-saturation.md), [disk-full-fsync.md](disk-full-fsync.md),
   [control-plane-down.md](control-plane-down.md), [overload-shedding.md](overload-shedding.md)

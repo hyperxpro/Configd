@@ -14,7 +14,7 @@ import java.util.Optional;
  * resume-persistence policies. Built via {@link #builder()}; validated at build so a misconfiguration fails
  * fast rather than at first connect.
  *
- * <p><b>TLS is required in production</b> (§06 F9-1). A configuration with no {@link ClientTls} is rejected
+ * <p><b>TLS is required in production.</b> A configuration with no {@link ClientTls} is rejected
  * unless the caller explicitly opts into {@code allowPlaintext} — a test-only escape hatch, never a silent
  * downgrade. The credential source is optional: present ⇒ a token/basic edge; absent with a client certificate
  * ⇒ mTLS; absent without ⇒ no-auth.
@@ -213,7 +213,7 @@ public final class ConfigdClientConfig {
             return this;
         }
 
-        /** Opt into a test-only plaintext transport (no TLS). Never use in production (§06 F9-1). */
+        /** Opt into a test-only plaintext transport (no TLS). Never use in production. */
         public Builder allowPlaintext(boolean allowPlaintext) {
             this.allowPlaintext = allowPlaintext;
             return this;

@@ -5,9 +5,9 @@ import java.util.List;
 
 /**
  * Shared slow-consumer test probe: a {@link FanOutSessionMetrics} that counts the
- * slow-consumer policy series plus a {@link SlowConsumerGovernor.TransitionEvent} recorder,
- * so every test asserts BOTH halves of the contract ("each transition: a metric, a structured
- * log event") against the same run.
+ * slow-consumer policy series plus a {@link SlowConsumerGovernor.TransitionEvent}
+ * recorder, so every test asserts both halves of the contract, that each transition
+ * produces both a metric and a structured log event, against the same run.
  */
 final class RecordingPolicyProbe implements FanOutSessionMetrics {
 
@@ -37,7 +37,7 @@ final class RecordingPolicyProbe implements FanOutSessionMetrics {
         return transitions.get(transitions.size() - 1);
     }
 
-    // --- Fan-out series (unused by the governor; required by the interface) ---
+    // Fan-out series: unused by the governor, but required by the interface.
 
     @Override public void onNotifyBatch(int n, int bytes) { }
     @Override public void onQueueDepth(int depth) { }
@@ -46,8 +46,6 @@ final class RecordingPolicyProbe implements FanOutSessionMetrics {
     @Override public void onSnapshotTransfer() { }
     @Override public void onHeartbeat() { }
     @Override public void onSessionClosed(String reason) { }
-
-    // --- Slow-consumer series ---
 
     @Override public void onSlowTransition() {
         slowTransitions++;

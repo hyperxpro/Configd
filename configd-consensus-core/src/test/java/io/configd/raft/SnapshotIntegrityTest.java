@@ -231,8 +231,6 @@ class SnapshotIntegrityTest {
         assertEquals("2", sm2.snapshotState().get("b"));
     }
 
-    // Helpers
-
     private static void flipFirst(byte[] data, byte from, byte to) {
         for (int i = 0; i < data.length; i++) {
             if (data[i] == from) {

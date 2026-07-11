@@ -1,9 +1,9 @@
-# ADR-0016: SWIM/Lifeguard Membership Protocol (Gossip for Discovery, NOT Data)
+# ADR-0016: SWIM/Lifeguard Membership Protocol (Gossip for Discovery, Not Data)
 
 ## Status
 Not Implemented
 
-> **Note (2026-04-14, Verification Phase V8):** SWIM/Lifeguard membership is
+> **Note (2026-04-14):** SWIM/Lifeguard membership is
 > not implemented in the codebase. The current system uses HyParView overlay
 > (`HyParViewOverlay.java`) for Plumtree gossip topology management and
 > standard Raft membership (`ClusterConfig.java`, joint consensus) for
@@ -14,10 +14,10 @@ Not Implemented
 > adequate functionality for the current deployment scale.
 
 ## Context
-The system requires a membership protocol for peer discovery and health monitoring among Raft voter nodes and distribution service nodes. Consul's experience demonstrates the dangers of using gossip for both membership AND data propagation: convergence at 5,000 agents takes 10-30 seconds for failure detection, and migrating 44K clients took 2 hours for state convergence (the gap analysis). Cross-pollinated gossip (overlapping IP ranges) caused raft commit times of tens of seconds and leader loops up to 15 seconds (Consul issue #5309). The system must detect node failures within seconds while supporting 10K+ Raft voters and distribution nodes across all regions.
+The system requires a membership protocol for peer discovery and health monitoring among Raft voter nodes and distribution service nodes. Consul's experience demonstrates the dangers of using gossip for both membership and data propagation: convergence at 5,000 agents takes 10-30 seconds for failure detection, and migrating 44K clients took 2 hours for state convergence. Cross-pollinated gossip (overlapping IP ranges) caused raft commit times of tens of seconds and leader loops up to 15 seconds (Consul issue #5309). The system must detect node failures within seconds while supporting 10K+ Raft voters and distribution nodes across all regions.
 
 ## Decision
-We adopt **SWIM (Scalable Weakly-consistent Infection-style Process Group Membership)** with **Lifeguard extensions** (HashiCorp, 2018) for membership management with a strict architectural boundary: **gossip is used ONLY for peer discovery and health monitoring, NEVER for config data propagation**.
+We adopt **SWIM (Scalable Weakly-consistent Infection-style Process Group Membership)** with **Lifeguard extensions** (HashiCorp, 2018) for membership management with a strict architectural boundary: gossip is used only for peer discovery and health monitoring, never for config data propagation.
 
 ### Gossip Scope (What SWIM Manages)
 1. **Peer discovery:** New Raft voter or distribution node announces itself via SWIM join. Existing members learn about it through infection-style dissemination.
@@ -25,10 +25,10 @@ We adopt **SWIM (Scalable Weakly-consistent Infection-style Process Group Member
 3. **Metadata dissemination:** Small metadata only - node ID, region, tier (core/regional/edge), Raft group membership, load metrics. Maximum metadata size: 512 bytes per node.
 4. **Topology changes:** Region joins/leaves, distribution node scaling events.
 
-### What SWIM Does NOT Manage
-- **Config data propagation:** Handled by Plumtree + gRPC streams (ADR-0011). Config payloads (1 KB - 1 MB) are NEVER piggybacked on gossip messages.
+### What SWIM Does Not Manage
+- **Config data propagation:** Handled by Plumtree + gRPC streams (ADR-0011). Config payloads (1 KB - 1 MB) are never piggybacked on gossip messages.
 - **Raft log replication:** Handled by Raft AppendEntries over Netty (ADR-0010).
-- **Edge node membership:** Edges are NOT gossip participants. Edge liveness tracked by distribution nodes via gRPC stream heartbeats.
+- **Edge node membership:** Edges are not gossip participants. Edge liveness tracked by distribution nodes via gRPC stream heartbeats.
 
 ### SWIM Protocol Parameters
 - **Probe interval:** 1 second (time between successive probes of random members).
@@ -49,12 +49,12 @@ SWIM probes test network reachability. The system supplements with:
 - **Memory pressure:** Heap usage > 90% triggers write rejection. Reported via gossip metadata.
 - **Raft health:** Raft heartbeat failures, log apply lag > 5,000 entries, snapshot transfer stalls. Reported via gossip metadata.
 
-A node is considered healthy only if ALL dimensions are healthy. Any single dimension DEGRADED triggers a composite health downgrade.
+A node is considered healthy only if all dimensions are healthy. Any single dimension in a DEGRADED state triggers a composite health downgrade.
 
 ## Influenced by
 - **SWIM (Das et al., DSN 2002):** O(1) message complexity per probe period per member. Infection-style dissemination achieves O(log N) propagation time. Membership changes detected within O(log N) protocol periods with high probability.
 - **Lifeguard (HashiCorp, 2018):** Reduces SWIM false positive rate by 50x while accelerating true positive detection by 20x. Local health awareness prevents cascade from self-induced failures.
-- **Consul (anti-pattern for data gossip):** Demonstrates that using gossip for data propagation creates convergence problems at 5K+ nodes. 44K-client migration took 2 hours. Config updates are NOT suitable for gossip piggybacking.
+- **Consul (anti-pattern for data gossip):** Demonstrates that using gossip for data propagation creates convergence problems at 5K+ nodes. 44K-client migration took 2 hours. Config updates are not suitable for gossip piggybacking.
 - **CockroachDB Liveness:** Raft heartbeats plus node liveness records. Multi-signal health monitoring for gray failure detection.
 
 ## Reasoning
@@ -63,7 +63,7 @@ A node is considered healthy only if ALL dimensions are healthy. Any single dime
 Serf (HashiCorp) implements SWIM + user event broadcasting + query/response. The user event and query features encourage using gossip for data propagation - exactly the anti-pattern we avoid. We use only the membership/failure detection core of SWIM, not the event broadcast layer.
 
 ### Why not Raft heartbeats alone for failure detection?
-Raft heartbeats detect failure of Raft peers within a Raft group. But the system has multiple Raft groups, distribution nodes, and administrative nodes that are NOT members of any Raft group. SWIM provides a uniform failure detection mechanism across all node types. Additionally, Raft heartbeats only test the Raft communication path - a node can be Raft-reachable but data-plane-unhealthy (gray failure).
+Raft heartbeats detect failure of Raft peers within a Raft group. But the system has multiple Raft groups, distribution nodes, and administrative nodes that are not members of any Raft group. SWIM provides a uniform failure detection mechanism across all node types. Additionally, Raft heartbeats only test the Raft communication path - a node can be Raft-reachable but data-plane-unhealthy (gray failure).
 
 ### Why not ZooKeeper-style ephemeral nodes for membership?
 This would reintroduce the external coordination dependency that ADR-0001 explicitly rejected. It would also create a circular dependency: the membership system depends on ZooKeeper, which itself needs membership management.
@@ -71,7 +71,7 @@ This would reintroduce the external coordination dependency that ADR-0001 explic
 ### Why strict separation of gossip and data?
 Consul's experience at 5K+ nodes shows that gossip convergence time grows with data volume piggybacked on membership messages. Config payloads (1 KB - 1 MB) would dominate gossip bandwidth, slowing failure detection. SWIM's O(1) per-probe message complexity depends on small, bounded message sizes. Piggybacking config data breaks this bound and converts O(1) to O(payload_size) per probe.
 
-### Edge nodes are NOT gossip participants
+### Edge nodes are not gossip participants
 At 1M edge nodes, SWIM's probe interval would generate 1M probes/second. Even with optimizations, this is 1.4 GB/s of probe traffic (1400 bytes x 1M). Edges are discovery-passive: distribution nodes track edge liveness via gRPC stream heartbeats (ADR-0013). This limits SWIM membership to ~100-1000 infrastructure nodes (Raft voters + distribution nodes), where probe overhead is negligible.
 
 ## Rejected Alternatives

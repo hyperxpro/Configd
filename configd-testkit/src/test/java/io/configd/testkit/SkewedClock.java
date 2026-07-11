@@ -3,8 +3,8 @@ package io.configd.testkit;
 import io.configd.common.Clock;
 
 /**
- * A {@link Clock} view offset by a fixed per-node skew (adversarial-sim-design section 2,
- * clock-skew fault). Wraps the shared simulated time source and adds a constant
+ * A {@link Clock} view offset by a fixed per-node skew (the clock-skew fault). Wraps
+ * the shared simulated time source and adds a constant
  * {@code offsetMs}, modelling a node whose wall clock disagrees with its peers.
  * <p>
  * <b>Scope note (honest correction to the design).</b> {@code RaftNode} does NOT

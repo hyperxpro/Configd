@@ -22,11 +22,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The server-side prefix-filtering drain proofs (ADR-0045): a filtered session
- * delivers only the matching (plus strong-read) deltas, advances its cursor over the full
- * scanned range, and tells the edge the covered-through position with a cursor-advance
- * HEARTBEAT. Uses the same real {@link FanOutBuffer} / {@link RecordingTransportSink} /
- * {@link FakeClock} harness as {@link FanOutSessionCoreTest}.
+ * The server-side prefix-filtering drain proofs: a filtered session delivers only the matching
+ * (plus strong-read) deltas, advances its cursor over the full scanned range, and tells the edge
+ * the covered-through position with a cursor-advance HEARTBEAT. Uses the same real
+ * {@link FanOutBuffer} / {@link RecordingTransportSink} / {@link FakeClock} harness as
+ * {@link FanOutSessionCoreTest}.
  */
 class FanOutSessionCorePrefixFilterTest {
 
@@ -90,8 +90,6 @@ class FanOutSessionCorePrefixFilterTest {
         return n;
     }
 
-    // (a) f-fraction egress: an edge subscribing to a fraction f receives ~f of the deltas.
-
     @Test
     void subscribingToFractionReceivesApproxFraction() {
         FanOutBuffer buffer = new FanOutBuffer(64);
@@ -115,8 +113,6 @@ class FanOutSessionCorePrefixFilterTest {
         assertEquals(n, s.cursor(), "the cursor advances over the FULL scanned range");
     }
 
-    // (c) full-store subscription under flag ON is inert (no filtering).
-
     @Test
     void filterInertForFullStore() {
         FanOutBuffer buffer = new FanOutBuffer(32);
@@ -133,8 +129,6 @@ class FanOutSessionCorePrefixFilterTest {
         assertEquals(6, deliveredNotifications(), "a full-store session delivers every delta");
         assertEquals(0, metrics.filtered);
     }
-
-    // Strong-read keys are always shipped, regardless of the edge's prefix set.
 
     @Test
     void strongReadKeyAlwaysShipped() {
@@ -156,8 +150,6 @@ class FanOutSessionCorePrefixFilterTest {
         assertEquals(3, s.cursor());
     }
 
-    // A trailing filtered range advances the cursor and is signalled by a cursor-advance HEARTBEAT.
-
     @Test
     void trailingFilteredRangeEmitsCursorAdvanceHeartbeat() {
         FanOutBuffer buffer = new FanOutBuffer(16);
@@ -178,8 +170,6 @@ class FanOutSessionCorePrefixFilterTest {
         assertEquals(3L, s.cursor());
     }
 
-    // A drain pass that matches nothing still advances the cursor and heartbeats once.
-
     @Test
     void allFilteredOutStillAdvancesCursorWithOneHeartbeat() {
         FanOutBuffer buffer = new FanOutBuffer(16);
@@ -198,9 +188,9 @@ class FanOutSessionCorePrefixFilterTest {
         assertEquals(5, metrics.filtered);
     }
 
-    // A large filtered burst advances the covered-S past the ack-lag threshold in one pass, but must
-    // NOT demote a caught-up edge: ack-lag charges only DELIVERED-but-unacked seqs, not the covered-S
-    // advance the edge acks wholesale on the heartbeat (F2 regression).
+    // A large filtered burst can advance the covered-S past the ack-lag threshold in one pass; this
+    // must not demote an edge that is otherwise caught up. Ack-lag must charge only
+    // delivered-but-unacked seqs, not the covered-S advance the edge acks wholesale on the heartbeat.
     @Test
     void largeFilteredBurstDoesNotDemoteOnAckLag() {
         FanOutBuffer buffer = new FanOutBuffer(16384);
@@ -219,8 +209,8 @@ class FanOutSessionCorePrefixFilterTest {
                 "a filtered burst must not demote the caught-up edge");
         assertEquals(9500L, s.cursor(), "the covered-S advanced past the ack-lag threshold");
 
-        // The NEXT tick runs the ack-lag check at the top against the covered-S=9500 vs ack=0: with the
-        // fix it charges only the 50 delivered-but-unacked seqs (< 8192), so still no demote.
+        // The next tick runs the ack-lag check again against covered-S=9500 vs ack=0: it charges only
+        // the 50 delivered-but-unacked seqs (< 8192), so there is still no demotion.
         s.tick(clock.currentTimeMillis());
         assertEquals(FanOutSessionCore.SessionState.STREAMING, s.state(),
                 "ack-lag charges only delivered-but-unacked seqs, not the covered-S advance");

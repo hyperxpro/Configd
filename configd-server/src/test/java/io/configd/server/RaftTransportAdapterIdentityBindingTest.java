@@ -19,13 +19,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 /**
- * Red-team tests for the WH-08/09 <b>in-body</b> identity binding in {@link RaftTransportAdapter}: a
- * decoded {@code leaderId}/{@code candidateId} that differs from the transport-authenticated sender
- * must be dropped (not dispatched) and counted, but only when the allow-list is enforced. A control is
- * verified only by a test that performs the attack.
+ * Adversarial tests for the <b>in-body</b> identity binding in {@link RaftTransportAdapter}: a decoded
+ * {@code leaderId}/{@code candidateId} that differs from the transport-authenticated sender must be
+ * dropped (not dispatched) and counted, but only when the allow-list is enforced. Each control case is
+ * verified by a companion test that actually performs the attack.
  *
  * <p>Drives the adapter through a fake {@link RaftTransport} that captures the registered handler and
- * lets the test inject inbound {@code (from, frame)} pairs directly - so the check is exercised without
+ * lets the test inject inbound {@code (from, frame)} pairs directly, so the check is exercised without
  * a live socket or TLS.
  */
 class RaftTransportAdapterIdentityBindingTest {
@@ -114,9 +114,9 @@ class RaftTransportAdapterIdentityBindingTest {
 
     @Test
     void coalescedHeartbeatForgedLeaderIdIsDroppedAndCountedWhenEnforced() {
-        // C1 (WH-08/09 coalesced path): a coalesced HB from Node-1 that bundles an HONEST group
-        // (leader Node-1) AND a FORGED group (leader Node-9). The whole frame is dropped and counted -
-        // not even the honest entry slips through - because the sender may only speak for itself.
+        // A coalesced heartbeat from Node-1 that bundles an honest group (leader Node-1) and a forged
+        // group (leader Node-9). The whole frame is dropped and counted - not even the honest entry
+        // slips through - because the sender may only speak for itself.
         CapturingTransport transport = new CapturingTransport();
         AtomicInteger rejections = new AtomicInteger();
         RaftTransportAdapter adapter = new RaftTransportAdapter(transport, 0, true, counting(rejections));
@@ -174,8 +174,8 @@ class RaftTransportAdapterIdentityBindingTest {
         AtomicInteger dispatched = new AtomicInteger();
         adapter.registerInboundHandler((from, gid, message) -> dispatched.incrementAndGet());
 
-        // Same forged frame as the enforced case - but with no allow-list it is dispatched as before
-        // (legacy behaviour: existing cluster tests stay green).
+        // The same forged frame as the enforced case, but with no allow-list configured it is
+        // dispatched (the legacy behavior existing cluster tests rely on).
         transport.inject(NodeId.of(1), appendEntriesFrom(NodeId.of(9)));
 
         assertEquals(1, dispatched.get(),

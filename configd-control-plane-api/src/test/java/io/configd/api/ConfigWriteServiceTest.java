@@ -13,11 +13,6 @@ import static org.junit.jupiter.api.Assertions.*;
  * applied-mutation sequence (NOT a free-running local proposalId), and the
  * failure variants Lost / Indeterminate are distinguishable from both success
  * and from NotLeader / Overloaded.
- * <p>
- * (The previous tests pinned the defect - {@code Accepted(proposalId)} returned
- * at local append, with {@code proposalIdsIncrement} asserting a local
- * AtomicLong. Those tests were updated, not weakened: they pinned the bug, not a
- * discriminating property.)
  */
 class ConfigWriteServiceTest {
 

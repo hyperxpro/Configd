@@ -55,12 +55,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Gate 3 mTLS-on-a-token-edge byte-identity: with token auth CONFIGURED (so the edge is
+ * mTLS-on-a-token-edge byte-identity: with token auth CONFIGURED (so the edge is
  * {@code wantClientAuth}), a client that presents a trusted certificate still authenticates at the TLS
  * handshake - it sends NO {@code AUTH} frame, its identity is the cert Subject DN, and NO active token
- * expiry is armed for it. This is the operator-D1 invariant that the token frame is purely additive:
- * certificate clients behave exactly as they did on the pre-token mTLS-required edge. Proven on both
- * transports.
+ * expiry is armed for it. The token frame is purely additive: certificate clients behave exactly as
+ * they did on an mTLS-required edge with no token support at all. Proven on both transports.
  */
 @Timeout(180)
 class EdgeTokenAuthMtlsTest {
@@ -157,10 +156,6 @@ class EdgeTokenAuthMtlsTest {
         certPathIsHandshakeAuthedWithNoExpiry(true);
     }
 
-    // -----------------------------------------------------------------------
-    // fixtures
-    // -----------------------------------------------------------------------
-
     private static AuthenticatorChain mtlsAndBearerChain() {
         // A MIXED edge chain: it accepts BOTH a handshake client certificate (mtls) AND a token (bearer).
         // The cert path is authenticated only when 'mtls' is in the chain (a token-only edge must not
@@ -219,10 +214,6 @@ class EdgeTokenAuthMtlsTest {
         replayState.set(new ConfigSnapshot(data, s, 0L));
         buffer.publish(new CommitNotification(s, 0L, delta));
     }
-
-    // -----------------------------------------------------------------------
-    // wire + TLS helpers
-    // -----------------------------------------------------------------------
 
     private static EdgeFrame readUntil(EdgeProtocolClient edge, Class<? extends EdgeFrame> type)
             throws IOException {

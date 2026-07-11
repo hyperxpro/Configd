@@ -32,24 +32,21 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * S6/WS-A KEYSTONE - proves the control-plane SLO metric series are RECORDED with real data when
- * their real paths execute, closing the S1 "9 SLO metrics hardwired to zero" defect that survived
- * the F5/H-001 closure (which built the <em>registration</em> but never the <em>wire-up</em>: every
- * record handle was dead and the raft-pending gauge was literally {@code () -> 0L}).
+ * Proves the control-plane SLO metric series are RECORDED with real data when their real paths
+ * execute: registering a metric is not enough if the record handle is never wired to the code path
+ * that should call it (e.g. a gauge supplier hardwired to {@code () -> 0L}).
  *
  * <p>Unlike {@code ConfigdMetricsTest} (which records samples directly onto the metric handles),
  * each test here drives the REAL production seam - the commit-confirmed {@code raftProposer} and the
  * {@code ConfigStateMachine} apply path wired through {@link ServerStateMachineMetrics} - then scrapes
  * via a production-configured {@link PrometheusExporter} (with {@code histogramSchedules()}, so the
  * {@code _bucket{le=...}} series the burn-rate alerts query actually render) and asserts the series
- * moved off zero. Several methods double as the "alert fires when its condition is injected" tests
- * required by the charter (availability -> write_commit_failed; 429-rate -> write_rejected_overloaded).
+ * moved off zero. Several methods double as "alert fires when its condition is injected" tests
+ * (availability -> write_commit_failed; 429-rate -> write_rejected_overloaded).
  */
 class MetricsWiringContractTest {
 
     private static final int GROUP = 0;
-
-    // ---- helpers ----------------------------------------------------------
 
     private static ScheduledExecutorService raftExecutor() {
         return Executors.newSingleThreadScheduledExecutor(r -> {
@@ -85,7 +82,7 @@ class MetricsWiringContractTest {
 
     /**
      * A 3-node leader that can NEVER commit a client write (no peer acks delivered), built by
-     * injecting the pre-vote + real-vote grants on the exec thread (R-01). Mirrors the established
+     * injecting the pre-vote + real-vote grants on the exec thread. Mirrors the established
      * pattern in {@code RaftNodeTest.proposalRejectedWhenOverloaded}.
      */
     private static RaftNode forcedUncommittableLeader(ScheduledExecutorService exec, int maxPending)
@@ -111,8 +108,6 @@ class MetricsWiringContractTest {
         driver.addGroup(GROUP, node);
         return driver;
     }
-
-    // ---- the real-path contract tests ------------------------------------
 
     @Test
     void committedWriteRecordsCommitLatencyTotalAndApplyDuration() throws Exception {
@@ -140,8 +135,8 @@ class MetricsWiringContractTest {
                     "a confirmed commit must increment write_commit_total");
             assertTrue(seriesValue(scrape, "configd_write_commit_seconds_count") >= 1.0,
                     "end-to-end commit latency must be recorded (write_commit_seconds)");
-            // The exact bucket series the WriteCommitFastBurn alert queries MUST render (proves the
-            // exporter was given histogramSchedules - the third blind-dashboard defect this closes).
+            // The exact bucket series the WriteCommitFastBurn alert queries must render (proves the
+            // exporter was given histogramSchedules).
             assertTrue(scrape.contains("configd_write_commit_seconds_bucket{le=\"0.150\"}"),
                     "the le=0.150 bucket the burn-rate alert queries must be emitted:\n" + scrape);
             assertTrue(seriesValue(scrape, "configd_apply_seconds_count") >= 1.0,
@@ -187,7 +182,7 @@ class MetricsWiringContractTest {
             MetricsRegistry registry = new MetricsRegistry();
             ConfigdMetrics metrics = new ConfigdMetrics(registry, () -> 0L);
             RaftNode leader = forcedUncommittableLeader(exec, 3); // maxPendingProposals = 3
-            // Pre-fill the queue to the bound on the exec thread (R-01): no-op@1 + 2 accepted = 3.
+            // Pre-fill the queue to the bound on the exec thread: no-op@1 + 2 accepted = 3.
             exec.submit(() -> {
                 leader.propose(new byte[]{1});
                 leader.propose(new byte[]{2});
@@ -207,7 +202,7 @@ class MetricsWiringContractTest {
 
     @Test
     void laggingLeaderMovesReplicationLagMaxShardGauge() throws Exception {
-        // A8: the per-shard replication-lag gauge (the follower-stuck / snapshot-wedge proxy) must render
+        // The per-shard replication-lag gauge (the follower-stuck / snapshot-wedge proxy) must render
         // AND move off zero when a leader outruns its followers. Drives the REAL registerPerShardMetrics
         // path over a leader whose peers never ack.
         ScheduledExecutorService exec = raftExecutor();
@@ -235,7 +230,7 @@ class MetricsWiringContractTest {
 
     @Test
     void snapshotProducesSnapshotBytesGauge() {
-        // A7: the last-snapshot-size gauge must render at 0 on the first scrape and equal the byte length
+        // The last-snapshot-size gauge must render at 0 on the first scrape and equal the byte length
         // of the snapshot the state machine produces (driven through the ServerStateMachineMetrics bridge).
         MetricsRegistry registry = new MetricsRegistry();
         ConfigdMetrics metrics = new ConfigdMetrics(registry, () -> 0L);
@@ -254,8 +249,8 @@ class MetricsWiringContractTest {
 
     @Test
     void connectionDecodeDropBridgeIncrementsCounter() {
-        // A6 (bridge half): the transport's decode-desync sink must surface as the control-plane counter.
-        // The transport-side call is proven on the real wire in the transport modules' decode-drop tests.
+        // The transport's decode-desync sink must surface as the control-plane counter. The
+        // transport-side call is proven on the real wire in the transport modules' decode-drop tests.
         MetricsRegistry registry = new MetricsRegistry();
         ConfigdMetrics metrics = new ConfigdMetrics(registry, () -> 0L);
         assertEquals(0.0, seriesValue(scrape(registry), "configd_raft_transport_connection_decode_dropped_total"),
@@ -270,7 +265,7 @@ class MetricsWiringContractTest {
     @Test
     void gaugesAndElectionsCounterAreNotHardwiredToZero() {
         // Proves the raft_pending_apply_entries gauge reads its supplier (NOT the old () -> 0L), and
-        // the elections counter + subscription gauge render real values - the dashboard panels 4/5/6.
+        // the elections counter + subscription gauge render real values.
         MetricsRegistry registry = new MetricsRegistry();
         AtomicLong pendingApply = new AtomicLong(42);
         ConfigdMetrics metrics = new ConfigdMetrics(registry, pendingApply::get);

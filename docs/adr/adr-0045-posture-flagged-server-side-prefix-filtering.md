@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-07-02
-- **Interacts with:** ADR-0038 (signed-chain streaming, no coalescing - this ADR relaxes leg (b) under a posture flag and preserves leg (a)), ADR-0030 (centralized write + async full fan-out topology), ADR-0034 (edge boundary: contiguous signed deltas or GAP), F-0052 (per-delta Ed25519 + epoch/nonce replay protection). Grounded in `docs/archive/investigation/edge-fanout-efficiency-2026-07-02.md`.
+- **Interacts with:** ADR-0038 (signed-chain streaming, no coalescing - this ADR relaxes leg (b) under a posture flag and preserves leg (a)), ADR-0030 (centralized write + async full fan-out topology), ADR-0034 (edge boundary: contiguous signed deltas or GAP), and the per-delta Ed25519 signature with epoch/nonce replay protection that authenticates each delta. Grounded in `docs/archive/investigation/edge-fanout-efficiency-2026-07-02.md`.
 
 ## Context
 
@@ -10,10 +10,10 @@ The edge SUBSCRIBE plane streams the **verbatim, leader-signed delta chain to ev
 
 ADR-0038 forbids server-side prefix filtering. Its rule has two legs:
 
-- **Leg (a) - no coalescing.** Collapsing signed deltas produces bytes the leader never signed, breaking per-delta Ed25519 verification. This is a HARD, trust-independent authenticity requirement.
+- **Leg (a) - no coalescing.** Collapsing signed deltas produces bytes the leader never signed, breaking per-delta Ed25519 verification. This is a hard, trust-independent authenticity requirement.
 - **Leg (b) - no prefix filtering (suppression-detectability).** A relay-asserted skip is not leader-signed, so a compromised/buggy relay could silently suppress arbitrary keys. **This leg depends on the relay being untrusted.**
 
-The efficiency investigation established that v1 is a **trusted, operator-run, mTLS-both-ends, single-hop** deployment where the fan-out relay and the signer are the **same in-process entity**. The Plumtree/HyParView untrusted-relay tier that leg (b) defends against is constructed but dormant (`broadcast()` is never on the data path). The **watch plane already ships server-side filtering under exactly this trust model** (`WatchMultiplexSink` + `FilteringReplaySource`, dropping the signed chain and trusting the server). The full-chain SUBSCRIBE plane is the outlier.
+The efficiency investigation established that Configd today is deployed as a **trusted, operator-run, mTLS-both-ends, single-hop** system, where the fan-out relay and the signer are the **same in-process entity**. The Plumtree/HyParView untrusted-relay tier that leg (b) defends against is constructed but dormant (`broadcast()` is never on the data path). The **watch plane already ships server-side filtering under exactly this trust model** (`WatchMultiplexSink` + `FilteringReplaySource`, dropping the signed chain and trusting the server). The full-chain SUBSCRIBE plane is the outlier.
 
 A load-bearing structural fact reframed the crypto question: **the signature covered only `mutations || epoch || nonce`, not the version position** (`fromVersion`/`toVersion`/`seq`). So today's anti-suppression property actually leaned on TLS, not the signature - a key-less relay terminating TLS could drop a delta and rewrite the next `fromVersion` undetectably.
 
@@ -48,18 +48,18 @@ Filtering is active for a session iff the server posture is on AND the edge adve
 
 ### Wire
 
-A new `EDGE_WIRE_VERSION_V3 = 0x03` carries the two new fields (SUBSCRIBE `acceptsFiltered`, SUBSCRIBE_OK `filtered`), appended only under 0x03; the 0x01/0x02 golden images are unchanged. A 0x03 SUBSCRIBE to an old server fails LOUD as `BAD_WIRE_VERSION`. See RFC section 06. The cursor-advance mechanism reuses the existing HEARTBEAT frame (no new frame type, no NOTIFY change).
+A new `EDGE_WIRE_VERSION_V3 = 0x03` carries the two new fields (SUBSCRIBE `acceptsFiltered`, SUBSCRIBE_OK `filtered`), appended only under 0x03; the 0x01/0x02 golden images are unchanged. A 0x03 SUBSCRIBE to an old server fails loud as `BAD_WIRE_VERSION`. See the driver-protocol RFC's wire-framing section (06-wire-framing.md). The cursor-advance mechanism reuses the existing HEARTBEAT frame (no new frame type, no NOTIFY change).
 
 ## Consequences
 
 - **Egress relief.** For a narrow subscription (f = 1%) filtering is a ~100x egress reduction on the binding ceiling (E x W -> E x f x W). It does not help the all-edges-want-everything case, which only the (un-built) distribution tree addresses.
-- **Suppression-detectability downgrades from cryptographic to operational within the co-located mTLS domain.** A well-formed suppression of a matching delta behind a correct covered-S is NOT edge-detectable under Track 1 - the documented trusted-server boundary. A genuine data-loss gap (ring eviction) is still detected **server-side** (`readSince` -> GAP -> demote -> snapshot, unchanged) and healed by a re-snapshot; a **delivered `NOTIFY` whose position regresses below the applied version** IS detected edge-side (the forward-only gap check) and triggers resync. A **regressed covered-S on the HEARTBEAT is safely ignored** - the edge advances its covered cursor monotonically and never regresses it. See `docs/operations/known-limitations.md`.
-- **Guardrail.** The moment a separate distribution tier or edge-to-edge forwarding is deployed, the untrusted-relay adversary becomes real and the no-suppression guarantee must be restored - set the posture off, or build the v2 hardening. ADR-0038 leg (b) is marked "relaxed-by-posture, see ADR-0045."
-- **v2 upgrade path (deferred, gated on a real untrusted tier):** leader-signed per-range Merkle skip-evidence (ADR-0038's own named path), a multi-month chain redesign. Track 0 (position signing) is a prerequisite for it and is landed now.
-- **Lockstep upgrade.** A 0x03 edge requires a 0x03 server; an old edge to a new server stays 0x01 (legacy). Pre-v1-tag, so acceptable; no silent-downgrade window is offered by design.
+- **Suppression-detectability downgrades from cryptographic to operational within the co-located mTLS domain.** A well-formed suppression of a matching delta behind a correct covered-S is not edge-detectable under Track 1 - the documented trusted-server boundary. A genuine data-loss gap (ring eviction) is still detected **server-side** (`readSince` -> GAP -> demote -> snapshot, unchanged) and healed by a re-snapshot; a **delivered `NOTIFY` whose position regresses below the applied version** is detected edge-side (the forward-only gap check) and triggers resync. A **regressed covered-S on the HEARTBEAT is safely ignored** - the edge advances its covered cursor monotonically and never regresses it. See `docs/operations/known-limitations.md`.
+- **Guardrail.** The moment a separate distribution tier or edge-to-edge forwarding is deployed, the untrusted-relay adversary becomes real and the no-suppression guarantee must be restored - set the posture off, or build the stronger hardening described next. ADR-0038 leg (b) is marked "relaxed-by-posture, see ADR-0045."
+- **Future hardening path (not built, gated on a real untrusted tier):** leader-signed per-range Merkle skip-evidence (ADR-0038's own named path), a multi-month chain redesign. Track 0 (position signing) is a prerequisite for it and is landed now.
+- **Lockstep upgrade.** A 0x03 edge requires a 0x03 server; an old edge to a new server stays on 0x01 (legacy) rather than silently downgrading - no silent-downgrade window is offered by design.
 
 ## Alternatives considered
 
 - **Leave the rule as-is (full chain to every edge).** Rejected: it is the exact binding-egress problem the investigation quantified, and it keeps the SUBSCRIBE plane inconsistent with the already-shipped watch plane's trust model.
 - **Fan-out-signed skip markers.** Theater - the fan-out tier holds no key, and if it did, the filtering party certifying "I filtered nothing" proves nothing.
-- **Leader-signed Merkle skip-evidence now (v2 path).** Over-engineering against an adversary that does not exist in v1 - exactly the BIP-37 -> BIP-158 mistake the industry unwound. Deferred, gated on an actually-deployed untrusted tier.
+- **Leader-signed Merkle skip-evidence now.** Over-engineering against an adversary that does not exist in today's deployment - exactly the BIP-37 -> BIP-158 mistake the industry unwound. Not built; gated on an actually-deployed untrusted tier.

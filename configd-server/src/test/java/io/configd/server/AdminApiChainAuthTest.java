@@ -34,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 /**
  * The SPI authenticator chain wired into the HTTP control plane through {@link AdminApiHandler}: HTTP Basic
- * resolution, the authenticated-but-unauthorized 403, the missing/invalid 401, and the new
+ * resolution, the authenticated-but-unauthorized 403, the missing/invalid 401, and the
  * Unavailable -&gt; 503 outcome. Driven directly against the decision core (as
  * {@link ReservedPrefixAdminGateTest} does), with the chain supplied via the SPI constructor.
  */
@@ -103,8 +103,6 @@ class AdminApiChainAuthTest {
                 .status();
     }
 
-    // ---- HTTP Basic via the chain ----------------------------------------------------------------
-
     @Test
     void basicChainResolvesAuthnAndAuthz() throws Exception {
         String aliceHash = BasicAuthPasswords.hash("wonderland".toCharArray());
@@ -133,8 +131,6 @@ class AdminApiChainAuthTest {
         assertNotEquals(403, readStatus);
     }
 
-    // ---- Unavailable -> 503 ----------------------------------------------------------------------
-
     @Test
     void unavailableAuthenticatorMapsTo503() throws Exception {
         Authenticator down = new Authenticator() {
@@ -148,8 +144,6 @@ class AdminApiChainAuthTest {
         assertEquals(503, status(h, "GET", "app.x", basic("u", "p"), null));
         assertEquals(503, status(h, "PUT", "app.x", basic("u", "p"), "v"));
     }
-
-    // ---- mTLS chain over HTTP has no client cert to extract -> 401 (fail-closed) ------------------
 
     @Test
     void mtlsChainOverHttpWithoutClientCertIs401() throws Exception {

@@ -96,7 +96,7 @@ class FrameCodecEpochReservationTest {
 
     @Test
     void v2DiffersFromV1OnlyByVersionAndReservedEpoch() {
-        // Canonical v1 append_entries fixture (pre-Seam-F golden bytes).
+        // Canonical v1 append_entries fixture (golden bytes).
         byte[] canonicalV1 = hex("0000001a0101010203040a0b0c0d0e0f1011deadbeef19b5b90b");
         byte[] v2 = FrameCodec.encode(MessageType.APPEND_ENTRIES, GROUP_ID, TERM, PAYLOAD);
         assertArrayEquals(canonicalV1, downgradeV2ToV1(v2),

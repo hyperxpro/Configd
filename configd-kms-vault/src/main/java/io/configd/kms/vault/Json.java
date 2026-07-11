@@ -20,8 +20,6 @@ final class Json {
     private Json() {
     }
 
-    // -------- writing (requests) --------
-
     /**
      * Builds a flat JSON object from alternating key/value pairs. String values are JSON-escaped; Number and
      * Boolean values are emitted bare; a {@code null} value is skipped (Vault treats absent == default).
@@ -75,8 +73,6 @@ final class Json {
         }
         sb.append('"');
     }
-
-    // -------- reading (responses) --------
 
     /** Parses a JSON document into Map/List/String/Double/Boolean/null. Throws on malformed input. */
     static Object parse(String text) {

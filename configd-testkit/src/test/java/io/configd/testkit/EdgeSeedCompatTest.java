@@ -15,14 +15,14 @@ import java.util.HexFormat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * The load-bearing non-perturbation guarantee (charter "reuse, never fork"): the
+ * The load-bearing non-perturbation guarantee ("reuse, never fork"): the
  * edge machinery must NOT change the control-plane execution. For three fixed
  * seeds this captures the CP-side digest of a plain {@link AdversarialSim} and
  * asserts it is <b>byte-identical</b> to the CP-side digest of an
  * {@link EdgeFanOutSim} with (a) 0 edges and (b) 3 edges + {@link StreamDriver#NONE}.
  * <p>
  * If this passes, the per-CP-node {@link io.configd.distribution.FanOutBuffer}
- * listener wiring, the second {@link AdversarialNetwork} (seeded from a NEW mixSeed
+ * listener wiring, the second {@link AdversarialNetwork} (seeded from a distinct mixSeed
  * tag), and the edge fault sub-stream provably do not perturb the committed
  * 507-seed adversarial gate set - the existing gate stays valid unchanged.
  */

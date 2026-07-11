@@ -7,7 +7,7 @@ import java.util.function.Predicate;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Verifies the ddmin schedule minimizer (design section 5): given a failing schedule and a
+ * Verifies the ddmin schedule minimizer: given a failing schedule and a
  * failure predicate, it reduces to a strictly smaller, 1-minimal schedule that still
  * fails, and emits a standalone replayable artifact.
  * <p>

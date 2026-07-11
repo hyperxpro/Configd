@@ -65,10 +65,6 @@ class HeartbeatCoalescingTest {
         return new AppendEntriesRequest(term, LOCAL, 0L, 0L, List.of(LogEntry.noop(1L, term)), 0L);
     }
 
-    // ------------------------------------------------------------------------
-    // Test doubles
-    // ------------------------------------------------------------------------
-
     /** Counts how many coalesced messages (sendCoalesced calls) each peer receives, and the group count. */
     private static final class CountingDrain implements CoalescedHeartbeatTransport {
         final Map<NodeId, Integer> calls = new LinkedHashMap<>();
@@ -109,10 +105,6 @@ class HeartbeatCoalescingTest {
             drain.sendCoalesced(e.getKey(), e.getValue());
         }
     }
-
-    // ------------------------------------------------------------------------
-    // Proof 1 - flat in group count
-    // ------------------------------------------------------------------------
 
     @Test
     void heartbeatCount_isFlatInGroupCount_throughDecorator() {
@@ -167,10 +159,6 @@ class HeartbeatCoalescingTest {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // Decorator behaviour - what is and is NOT coalesced
-    // ------------------------------------------------------------------------
-
     @Test
     void decorator_coalescesOnlyEmptyAppendEntriesInsideTheWindow() {
         HeartbeatCoalescer hc = new HeartbeatCoalescer();
@@ -199,10 +187,6 @@ class HeartbeatCoalescingTest {
         unbound.send(PEER_A, emptyHeartbeat(1));
         assertEquals(4, delegate.total.get());
     }
-
-    // ------------------------------------------------------------------------
-    // Proof 3 - demux round-trip through the real driver
-    // ------------------------------------------------------------------------
 
     @Test
     @Timeout(30)
@@ -248,10 +232,6 @@ class HeartbeatCoalescingTest {
 
         pool.shutdown();
     }
-
-    // ------------------------------------------------------------------------
-    // Driver orchestration - tickOwner with coalescing enabled is inert for a peerless leader
-    // ------------------------------------------------------------------------
 
     @Test
     @Timeout(30)

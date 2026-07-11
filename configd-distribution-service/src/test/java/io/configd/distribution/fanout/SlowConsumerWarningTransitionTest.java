@@ -20,7 +20,8 @@ class SlowConsumerWarningTransitionTest {
     private static final long T0 = 1_700_000_000_000L;
 
     private static SlowConsumerPolicyConfig config() {
-        // queueWarnWindowMs = 10_000 (">10 s" sustained window), everything else defaults.
+        // queueWarnWindowMs is 10_000, a sustained window of more than 10 seconds;
+        // everything else defaults.
         return SlowConsumerPolicyConfig.defaults();
     }
 
@@ -64,7 +65,7 @@ class SlowConsumerWarningTransitionTest {
         governor.evaluate(EDGE, T0 + 10_000);
         assertEquals(ConsumerState.SLOW, governor.state(EDGE));
 
-        // The queue drains below warn - the "ack progress resumes" exit.
+        // The queue drains below warn, the ack-progress-resumes exit.
         governor.onQueuePressure(EDGE, false, 50L, 50L, T0 + 12_000);
         assertEquals(ConsumerState.HEALTHY, governor.state(EDGE));
         SlowConsumerGovernor.TransitionEvent event = probe.lastTransition();
@@ -121,8 +122,8 @@ class SlowConsumerWarningTransitionTest {
 
     @Test
     void epochZeroAnchorsTheWarnWindowCorrectly() {
-        // Time-0 anchor exactness: warnSinceMillis == 0 is a VALID anchor (the sentinel
-        // is -1, not 0) and a repeat signal must not re-anchor it.
+        // Time-0 anchor exactness: warnSinceMillis equal to 0 is a valid anchor, since the
+        // sentinel is -1, not 0, and a repeat signal must not re-anchor it.
         RecordingPolicyProbe probe = new RecordingPolicyProbe();
         SlowConsumerGovernor governor =
                 new SlowConsumerGovernor(config(), probe, probe::onTransition);

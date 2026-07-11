@@ -99,7 +99,7 @@ public final class FanOutServer implements FanOutEndpoint {
 
     /**
      * System property: the pre-SUBSCRIBE first-frame deadline (ms) for an admitted (post-mTLS)
-     * edge connection (WH-11). Mirrors {@code configd.raft.inboundReadTimeoutMs}; the slow-loris
+     * edge connection. Mirrors {@code configd.raft.inboundReadTimeoutMs}; the slow-loris
      * test sets a short value.
      */
     public static final String FIRST_FRAME_DEADLINE_PROP = "configd.edge.firstFrameDeadlineMs";
@@ -122,14 +122,13 @@ public final class FanOutServer implements FanOutEndpoint {
         return Integer.getInteger(FIRST_FRAME_DEADLINE_PROP, DEFAULT_FIRST_FRAME_DEADLINE_MS);
     }
 
-    /** Named config: per-connection outbound transport queue depth (frames). Design section 4. */
+    /** Named config: per-connection outbound transport queue depth (frames). */
     public static final int DEFAULT_TRANSPORT_QUEUE_FRAMES = 64;
 
     /**
-     * Named config {@code edge.fanout.transport.maxSessions} (hard rule 4: no unbounded
-     * designs): maximum concurrently accepted edge connections, INCLUDING connections
-     * still mid-handshake (the bound is applied BEFORE the handshake, so half-open
-     * slowloris connections cannot exhaust file descriptors / virtual threads).
+     * Named config {@code edge.fanout.transport.maxSessions}: maximum concurrently accepted edge
+     * connections, INCLUDING connections still mid-handshake (the bound is applied BEFORE the
+     * handshake, so half-open slowloris connections cannot exhaust file descriptors / virtual threads).
      * Refusals are counted on {@code edge_fanout_sessions_refused_total}.
      */
     public static final int DEFAULT_MAX_SESSIONS = 1_024;
@@ -147,7 +146,7 @@ public final class FanOutServer implements FanOutEndpoint {
     private final int[] allGids;
     /** Resolves a watch target to its covered shard set; {@link #SINGLE_SHARD} for the single-shard ctors. */
     private final ShardResolver shardResolver;
-    /** The server's topology epoch ({@code ShardMap.epoch()}), threaded into every session driver (A4). */
+    /** The server's topology epoch ({@code ShardMap.epoch()}), threaded into every session driver. */
     private final long topologyEpoch;
     private final FanOutConfig config;
     private final int transportQueueFrames;
@@ -223,10 +222,10 @@ public final class FanOutServer implements FanOutEndpoint {
     }
 
     /**
-     * Full constructor with an explicit {@link SlowConsumerGovernor} (C4): the
-     * per-identity slow-consumer policy consulted at SUBSCRIBE (quarantine/unhealthy
-     * refusal, forced snapshot-first readmission) and fed by the per-session demotion /
-     * ack-progress / queue-pressure signals. The delegating constructors build one with
+     * Full constructor with an explicit {@link SlowConsumerGovernor}: the per-identity
+     * slow-consumer policy consulted at SUBSCRIBE (quarantine/unhealthy refusal, forced
+     * snapshot-first readmission) and fed by the per-session demotion / ack-progress /
+     * queue-pressure signals. The delegating constructors build one with
      * {@link SlowConsumerPolicyConfig#defaults()}.
      */
     public FanOutServer(InetSocketAddress bindAddress,
@@ -333,7 +332,7 @@ public final class FanOutServer implements FanOutEndpoint {
                 : null;
     }
 
-    /** The slow-consumer governor this endpoint enforces (C4; for tests/diagnostics). */
+    /** The slow-consumer governor this endpoint enforces (for tests/diagnostics). */
     public SlowConsumerGovernor governor() {
         return governor;
     }
@@ -374,17 +373,12 @@ public final class FanOutServer implements FanOutEndpoint {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Accept loop
-    // -----------------------------------------------------------------------
-
     private void acceptLoop() {
         while (running.get()) {
             try {
                 Socket socket = serverSocket.accept();
-                // Admission bound BEFORE the handshake (hard rule 4): beyond
-                // maxSessions the socket is closed immediately - half-open
-                // handshakes count, so they cannot exhaust fds/threads.
+                // Admission bound BEFORE the handshake: beyond maxSessions the socket is closed
+                // immediately - half-open handshakes count, so they cannot exhaust fds/threads.
                 if (liveSockets.size() >= maxSessions) {
                     metrics.onSessionRefused();
                     closeQuietly(socket);
@@ -489,10 +483,6 @@ public final class FanOutServer implements FanOutEndpoint {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Cert identity binding
-    // -----------------------------------------------------------------------
-
     /**
      * Resolves the AUTHORITATIVE edge identity for a connection.
      *
@@ -523,10 +513,7 @@ public final class FanOutServer implements FanOutEndpoint {
         return "plaintext";
     }
 
-    // -----------------------------------------------------------------------
-    // Server socket creation (mirrors TcpRaftTransport.createServerSocket)
-    // -----------------------------------------------------------------------
-
+    // Mirrors TcpRaftTransport.createServerSocket.
     private ServerSocket createServerSocket() throws IOException {
         if (tlsManager != null) {
             SSLServerSocketFactory factory = tlsManager.currentContext().getServerSocketFactory();
@@ -563,14 +550,10 @@ public final class FanOutServer implements FanOutEndpoint {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Per-connection state machine
-    // -----------------------------------------------------------------------
-
     /**
      * One edge subscriber connection: owns the socket, the reader / writer / session virtual
      * threads, and the bounded outbound queue. All session logic - inbound routing, cert-identity
-     * binding, C4 admission, the tick + governor-feed loop, demotion handling - lives in the shared
+     * binding, admission, the tick + governor-feed loop, demotion handling - lives in the shared
      * {@link FanOutConnectionDriver}, identical to the Netty fan-out transport's. This
      * class is the JDK-socket <em>body</em>; the driver is the transport-agnostic <em>brain</em>.
      */
@@ -684,24 +667,22 @@ public final class FanOutServer implements FanOutEndpoint {
             sessionThread.start();
         }
 
-        // ---- reader thread (decode only; routing is the driver's, never touches the session) ----
-
+        // Reader thread: decode only. Routing is the driver's; it never touches the session directly.
         private void readerLoop() {
             try {
                 DataInputStream in = new DataInputStream(socket.getInputStream());
-                // WH-11 (C3): ABSOLUTE pre-SUBSCRIBE first-frame deadline. A per-read soTimeout is
-                // evadable by a slow-loris that dribbles >=1 byte per window - each partial read resets
-                // the timer, so the deadline never fires; an absolute wall-clock budget is not evadable.
-                // readFrame re-arms the socket timeout to the REMAINING budget before EVERY underlying
-                // read until the first frame is routed (see readBounded), and aborts with a
-                // SocketTimeoutException once the budget is exhausted regardless of dribbles. A peer
-                // that completed mTLS (or connected in plaintext) then stalls - sending nothing OR
-                // dribbling forever - is reaped, instead of parking a reader thread + FD + cumulator
-                // until the OS reaps it. DISARMED (deadline 0, soTimeout 0) once the first routed frame
-                // arrives (an established subscriber is idle by design; liveness rides the HEARTBEAT).
-                // The deadline is DISARMED (deadline 0, soTimeout 0) once the first BUSINESS frame is
-                // routed - not the first frame - so a token connection stays bounded across BOTH its
-                // pre-auth AUTH window and (after re-arm on auth) its pre-SUBSCRIBE window.
+                // ABSOLUTE pre-SUBSCRIBE first-frame deadline. A per-read soTimeout is evadable by a
+                // slow-loris that dribbles >=1 byte per window - each partial read resets the timer, so
+                // the deadline never fires; an absolute wall-clock budget is not evadable. readFrame
+                // re-arms the socket timeout to the REMAINING budget before EVERY underlying read until
+                // the first frame is routed (see readBounded), and aborts with a SocketTimeoutException
+                // once the budget is exhausted regardless of dribbles. A peer that completed mTLS (or
+                // connected in plaintext) then stalls - sending nothing OR dribbling forever - is reaped,
+                // instead of parking a reader thread + FD + cumulator until the OS reaps it. The deadline
+                // is DISARMED (deadline 0, soTimeout 0) once the first BUSINESS frame is routed - not the
+                // first frame - so a token connection stays bounded across BOTH its pre-auth AUTH window
+                // and (after re-arm on auth) its pre-SUBSCRIBE window; an established subscriber is idle
+                // by design and its liveness rides the HEARTBEAT.
                 long deadlineNanos =
                         System.nanoTime() + (long) firstFrameDeadlineMs() * 1_000_000L;
                 while (alive.get() && running.get()) {
@@ -743,9 +724,9 @@ public final class FanOutServer implements FanOutEndpoint {
                     routeBusinessFrame(frame);
                 }
             } catch (SocketTimeoutException e) {
-                // WH-11: the first-frame deadline elapsed with no (complete) routed frame - a
-                // slow-loris. Reaped + counted; the deadline is disarmed after the first frame,
-                // so a post-SUBSCRIBE idle subscriber never reaches here.
+                // The first-frame deadline elapsed with no (complete) routed frame - a slow-loris.
+                // Reaped + counted; the deadline is disarmed after the first frame, so a
+                // post-SUBSCRIBE idle subscriber never reaches here.
                 metrics.onFirstFrameTimeout();
                 close(ErrorCode.PROTOCOL_VIOLATION, "pre-SUBSCRIBE first-frame deadline elapsed");
             } catch (EdgeFrameCodec.CodecException e) {
@@ -761,7 +742,7 @@ public final class FanOutServer implements FanOutEndpoint {
         /**
          * Routes a business frame to the session, flipping the outbound wire version on the FIRST such
          * frame: a WATCH_CREATE-first connection stamps 0x02 (the client decodes the server's WATCH_*
-         * frames); a 0x03-stamped SUBSCRIBE stamps 0x03 (the ADR-0045 filtered-fan-out confirm); a plain
+         * frames); a 0x03-stamped SUBSCRIBE stamps 0x03 (the filtered-fan-out confirm); a plain
          * 0x01 SUBSCRIBE stays 0x01 (byte-identical). On a token connection the first business frame
          * arrives after the AUTH, so the flip is decoupled from the pre-auth first-frame deadline.
          */
@@ -815,7 +796,7 @@ public final class FanOutServer implements FanOutEndpoint {
         /**
          * Handles an AUTH-family control frame on an already-authenticated token connection: a
          * REFRESH_AUTH re-resolves the credential and re-arms the expiry (CREDENTIAL_EXPIRED on any
-         * non-acceptance); a stray AUTH is a PROTOCOL_VIOLATION. The identity is not re-bound in v1.
+         * non-acceptance); a stray AUTH is a PROTOCOL_VIOLATION. A refresh never re-binds the identity.
          */
         private void handlePostAuthControl(EdgeFrame frame) {
             if (frame instanceof EdgeFrame.RefreshAuth refresh) {
@@ -869,7 +850,7 @@ public final class FanOutServer implements FanOutEndpoint {
         /**
          * Arms the mTLS cert-{@code notAfter} expiry one-shot for a cert connection: a fired task tears the
          * connection down {@code CREDENTIAL_EXPIRED} (a reconnect signal - a cert cannot refresh in-band).
-         * {@link AuthState#NO_EXPIRY} (enforcement off) arms nothing - byte-identical to Gate 3.
+         * {@link AuthState#NO_EXPIRY} (enforcement off) arms nothing.
          */
         private void armCertExpiry() {
             if (certCloseDeadlineMillis == AuthState.NO_EXPIRY) {
@@ -906,7 +887,7 @@ public final class FanOutServer implements FanOutEndpoint {
          * @param deadlineNanos the ABSOLUTE first-frame deadline ({@link System#nanoTime()} basis), or
          *                      {@code 0} to read unbounded (post-first-frame, disarmed). When non-zero
          *                      every underlying read is bounded to the REMAINING budget so a byte-per-
-         *                      window slow-loris cannot reset the deadline (WH-11 / C3).
+         *                      window slow-loris cannot reset the deadline.
          */
         private EdgeFrame readFrame(DataInputStream in, long deadlineNanos) throws IOException {
             byte[] header4 = new byte[4];
@@ -920,7 +901,7 @@ public final class FanOutServer implements FanOutEndpoint {
                     return null; // partial length prefix then EOF: treat as a clean stream end
                 }
             } else {
-                // Disarmed steady-state read (byte-identical to the pre-C3 path): block indefinitely.
+                // Disarmed steady-state read: block indefinitely.
                 int length;
                 try {
                     length = in.readInt();
@@ -954,7 +935,7 @@ public final class FanOutServer implements FanOutEndpoint {
                 in.readFully(frameBytes, 4, total - 4);
             }
             if (EdgeFrameCodec.peekVersion(frameBytes) == EdgeFrameCodec.EDGE_WIRE_VERSION_V4) {
-                // Auth-phase frame (AU3-3): version-pin EXEMPT. Decode under 0x04 (only AUTH/REFRESH_AUTH
+                // Auth-phase frame: version-pin EXEMPT. Decode under 0x04 (only AUTH/REFRESH_AUTH
                 // are legal there) and NEVER read or set the business-version pin, so it may interleave on
                 // a connection pinned to any business version - symmetric to the Netty decoder. A
                 // bit-flipped version byte still fails the CRC (checked first) -> FRAME_CORRUPT.
@@ -973,9 +954,9 @@ public final class FanOutServer implements FanOutEndpoint {
         /**
          * Reads exactly {@code len} bytes into {@code dst[off..off+len)}, re-arming the socket read
          * timeout to the REMAINING first-frame budget before EVERY underlying read (see
-         * {@link #armReadBudget}). This makes the WH-11 deadline ABSOLUTE: a slow-loris that dribbles
+         * {@link #armReadBudget}). This makes the deadline ABSOLUTE: a slow-loris that dribbles
          * >=1 byte per window cannot reset it, because the budget shrinks monotonically and
-         * {@code armReadBudget} throws {@link SocketTimeoutException} once it is exhausted (C3).
+         * {@code armReadBudget} throws {@link SocketTimeoutException} once it is exhausted.
          *
          * @return {@code true} if all {@code len} bytes were read; {@code false} iff a clean EOF occurs
          *         BEFORE any byte is read (an idle peer that closed). A partial-then-EOF throws
@@ -1000,8 +981,8 @@ public final class FanOutServer implements FanOutEndpoint {
         }
 
         /**
-         * Shrinks the socket read timeout to the REMAINING first-frame budget so the WH-11 deadline is
-         * absolute (C3). A non-positive remaining budget throws {@link SocketTimeoutException}, reaping
+         * Shrinks the socket read timeout to the REMAINING first-frame budget so the deadline is
+         * absolute. A non-positive remaining budget throws {@link SocketTimeoutException}, reaping
          * the connection. The remaining budget is rounded UP to at least 1 ms so we never set
          * {@code soTimeout(0)} (= infinite) from a sub-millisecond remainder.
          */
@@ -1013,8 +994,6 @@ public final class FanOutServer implements FanOutEndpoint {
             long remainingMs = (remainingNanos + 999_999L) / 1_000_000L; // round up, never 0 = infinite
             socket.setSoTimeout((int) Math.min(remainingMs, Integer.MAX_VALUE));
         }
-
-        // ---- writer thread ----
 
         private void writerLoop() {
             try {
@@ -1039,8 +1018,7 @@ public final class FanOutServer implements FanOutEndpoint {
             }
         }
 
-        // ---- TransportSink (the only boundary; socket lives here, not in the session) ----
-
+        // TransportSink is the only boundary here: the socket lives in this class, not in the session.
         @Override
         public boolean offer(EdgeFrame frame) {
             if (!alive.get()) {
@@ -1064,8 +1042,6 @@ public final class FanOutServer implements FanOutEndpoint {
         public void close(ErrorCode code, String message) {
             teardown(code, message);
         }
-
-        // ---- teardown (idempotent) ----
 
         private void teardown(ErrorCode code, String message) {
             teardown(code, message, code.name());

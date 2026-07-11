@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  SpotBugs exclude filter for Configd (F-0020).
+  SpotBugs exclude filter for Configd.
 
   Suppresses known-noisy rules so first-pass output is actionable. Each
   suppression lists the reason; we can remove these one at a time as

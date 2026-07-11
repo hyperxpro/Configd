@@ -36,10 +36,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * RED-TEAM lane for the Gate-3b node-anchor (frozen-format v1 §2.5 / §A1.6, R-f closer). Every
- * guarantee here is exercised by PERFORMING the attack on ACTUAL on-disk bytes and asserting the
- * boot cross-check {@link NodeAnchorService#enforceNodeAnchor} DETECTS-and-REFUSES it - AND that a
- * legal crash does NOT false-refuse (a spurious REFUSE bricks a healthy node; equally serious).
+ * RED-TEAM lane for the node-anchor boot cross-check. Every guarantee here is exercised by
+ * PERFORMING the attack on ACTUAL on-disk bytes and asserting
+ * {@link NodeAnchorService#enforceNodeAnchor} DETECTS-and-REFUSES it - AND that a legal crash does
+ * NOT false-refuse (a spurious REFUSE bricks a healthy node; equally serious).
  *
  * <p>Unlike {@code NodeAnchorBootTest} (which hand-feeds {@code bootDurableIndex}/{@code freshShards}
  * maps at the service seam), the shard-wipe / forward-advance / no-false-refuse cases here drive REAL
@@ -49,15 +49,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * FRESH-vs-forward discriminator is proven end to end, not asserted.
  *
  * <p>Three buckets: (A) attacks that MUST REFUSE, (B) legal crashes that MUST PROCEED (no false
- * refuse), (C) the ratified R-a residuals (node-anchor rollback / deletion) demonstrated concretely
- * and CLASSIFIED - they PROCEED by design and are closable only by the Gate-3c AnchorWitness, not
- * Gate-3b holes.
+ * refuse), (C) residuals (node-anchor rollback / deletion) demonstrated concretely and classified -
+ * they PROCEED by design and are closable only by an external witness (see {@code AnchorWitness}),
+ * not by this boot cross-check.
  */
 class NodeAnchorRedteamTest {
 
     private static final long EPOCH = 9L;
-
-    // ---------------------------------------------------------------- fixtures / real-byte helpers
 
     private static IntegrityEnvelope keyed() {
         byte[] key = new byte[32];
@@ -102,7 +100,7 @@ class NodeAnchorRedteamTest {
         return d;
     }
 
-    /** A real per-shard shard: append entries 1..head over a real raft-anchor + WAL, then release. */
+    /** Builds a real per-shard log: appends entries 1..head over a real raft-anchor + WAL, then releases it. */
     private static void buildShard(Path shardDir, int gid, IntegrityEnvelope env, long head) {
         RaftLog log = new RaftLog(Storage.file(shardDir), env, gid);
         for (long i = 1; i <= head; i++) {
@@ -168,20 +166,20 @@ class NodeAnchorRedteamTest {
         }
     }
 
-    // ============================================================ (A) attacks that MUST REFUSE
+    // (A) attacks that MUST REFUSE
 
     @Test
     void mechanism_boundEpochMismatchRefuses_matchingEpochAccepts(@TempDir Path dir) throws Exception {
-        // MECHANISM of the topology cross-check (frozen now for a v2 dynamic reshard). The node-anchor binds
-        // a COPY of the descriptor's (epoch, N); boot compares them for EQUALITY. Here the on-disk
-        // node-anchor is swapped for a legitimately-MAC'd image binding epoch=7 while the descriptor value
-        // passed in is epoch=9 => mismatch => REFUSE.
+        // MECHANISM of the topology cross-check: the node-anchor binds a COPY of the descriptor's
+        // (epoch, N); boot compares them for EQUALITY. Here the on-disk node-anchor is swapped for a
+        // legitimately-MAC'd image binding epoch=7 while the descriptor value passed in is epoch=9 =>
+        // mismatch => REFUSE.
         //
-        // HONESTY (per the lead's v1 note): at v1 STATIC-N the epoch is invariant, so a KEYLESS attacker
-        // (the threat model) cannot produce a mismatching-but-valid node-anchor - there is no prior-epoch
-        // valid image to roll to, and forging one needs the key (R-b, out of scope). The swap is synthesized
-        // WITH the key purely to prove the comparison fires: it is the guard frozen now for v2, not a live
-        // v1 keyless attack. The v1-CORRECT dual (a same-(epoch,N) rollback is ACCEPTED) is asserted below.
+        // HONESTY: with a static shard count the epoch is invariant, so a keyless attacker cannot produce
+        // a mismatching-but-valid node-anchor - there is no prior-epoch valid image to roll to, and forging
+        // one needs the key. The swap here is synthesized WITH the key purely to prove the comparison
+        // fires, not to demonstrate a live keyless attack. The correct dual (a same-(epoch,N) rollback is
+        // ACCEPTED) is asserted below.
         IntegrityEnvelope env = keyed();
         Path dataDir = Files.createDirectories(dir.resolve("node"));
         Map<Integer, Long> boot = map(100, 200);
@@ -196,8 +194,8 @@ class NodeAnchorRedteamTest {
                 () -> NodeAnchorService.enforceNodeAnchor(dataDir, env, EPOCH, 2, boot, Set.of(), null));
         assertTrue(ex.getMessage().contains("topology"), ex.getMessage());
 
-        // v1-CORRECT no-false-refuse: booting against the MATCHING epoch (7) PROCEEDS - it is an equality
-        // cross-check, not a blanket refuse. A same-(epoch,N) descriptor rollback (all v1 can produce) passes.
+        // No-false-refuse: booting against the MATCHING epoch (7) PROCEEDS - it is an equality
+        // cross-check, not a blanket refuse. A same-(epoch,N) descriptor rollback passes.
         NodeAnchorFile ok = NodeAnchorService.enforceNodeAnchor(dataDir, env, EPOCH - 2, 2, boot, Set.of(), null);
         assertTrue(ok.hasValidRecord(), "matching (epoch,N) must proceed - no false refuse");
         ok.close();
@@ -205,11 +203,11 @@ class NodeAnchorRedteamTest {
 
     @Test
     void attack_boundEpochTamper_macCaught_refuses(@TempDir Path dir) throws Exception {
-        // ATTACK 1b: tamper the bound topologyEpoch bytes in place (no key). Slot0 envelope payload
-        // starts at file offset 8(container hdr)+4(recordLen)+8(env hdr)+4(scopeId)+4(keyTerm)=28; the
+        // Tamper the bound topologyEpoch bytes in place (no key). Slot0's envelope payload starts at
+        // file offset 8(container hdr)+4(recordLen)+8(env hdr)+4(scopeId)+4(keyTerm)=28; the
         // topologyEpoch field is payload bytes [8..16) => file offset 36. A flipped MAC-covered byte
         // fails the HMAC => slot0 invalid; a freshly-minted node-anchor has a zero slot1 => both invalid
-        // => REFUSE. Proves the epoch is AUTHENTICATED, not merely stored.
+        // => REFUSE. Proves the epoch is authenticated, not merely stored.
         IntegrityEnvelope env = keyed();
         Map<Integer, Long> boot = map(42);
         mint(dir, env, EPOCH, 1, boot, Set.of(), null);
@@ -225,10 +223,11 @@ class NodeAnchorRedteamTest {
 
     @Test
     void mechanism_boundShardCountMismatchRefuses(@TempDir Path dir) throws Exception {
-        // MECHANISM: the node-anchor binds a copy of N; a node-anchor binding N=3 booted against an N=2
-        // descriptor => topology cross-check REFUSE. Same v1 honesty caveat as the epoch case (frozen for
-        // a v2 reshard; the mismatch is synthesized with the key). Editing a plaintext shard-count file to
-        // bypass the reshard refusal is what the bound N frames; the descriptor itself is enveloped.
+        // The node-anchor binds a copy of N; a node-anchor binding N=3 booted against an N=2 descriptor
+        // triggers the topology cross-check REFUSE. Same honesty caveat as the epoch case: the mismatch
+        // is synthesized with the key, since a keyless attacker has no valid alternate-N image to swap
+        // in. The bound N exists precisely to stop editing a plaintext shard-count file to bypass a
+        // reshard refusal; the descriptor itself is enveloped.
         IntegrityEnvelope env = keyed();
         Path dataDir = Files.createDirectories(dir.resolve("node"));
         mint(dataDir, env, EPOCH, 2, map(100, 200), Set.of(), null);
@@ -244,8 +243,9 @@ class NodeAnchorRedteamTest {
 
     @Test
     void attack_bothSlotsForged_presentButInvalid_refuses(@TempDir Path dir) throws Exception {
-        // ATTACK 2: forge BOTH dual-slot envelopes (flip an authenticated byte in each). Neither slot
-        // MACs => present-but-invalid => REFUSE (distinct from a first boot with NO file, which mints).
+        // Forge BOTH dual-slot envelopes (flip an authenticated byte in each). Neither slot
+        // authenticates => present-but-invalid => REFUSE (distinct from a first boot with NO file,
+        // which mints).
         IntegrityEnvelope env = keyed();
         Map<Integer, Long> boot = map(7);
         // Give the file two live slots first (mint => slot0 seq1; a forward re-anchor => slot1 seq2).
@@ -264,8 +264,8 @@ class NodeAnchorRedteamTest {
 
     @Test
     void attack_containerHeaderTamper_refuses(@TempDir Path dir) throws Exception {
-        // ATTACK 2b: flip an MBZ container-header byte (flags). The unauthenticated header is validated
-        // fail-closed on open => IntegrityException REFUSE before any slot is trusted.
+        // Flip an MBZ container-header byte (flags). The unauthenticated header is validated fail-closed
+        // on open => IntegrityException REFUSE before any slot is trusted.
         IntegrityEnvelope env = keyed();
         mint(dir, env, EPOCH, 1, map(1), Set.of(), null);
 
@@ -279,8 +279,8 @@ class NodeAnchorRedteamTest {
 
     @Test
     void attack_truncatedBelowContainerHeader_refuses(@TempDir Path dir) throws Exception {
-        // ATTACK 2c: truncate the node-anchor below its 8-byte container header => refuse (torn/tamper),
-        // NOT mistaken for a first boot (a first boot has NO file at all).
+        // Truncate the node-anchor below its 8-byte container header => refuse (torn/tamper), NOT
+        // mistaken for a first boot (a first boot has NO file at all).
         IntegrityEnvelope env = keyed();
         mint(dir, env, EPOCH, 1, map(1), Set.of(), null);
         Files.write(naFile(dir), new byte[]{0x52, 0x4E}, StandardOpenOption.TRUNCATE_EXISTING);
@@ -291,17 +291,17 @@ class NodeAnchorRedteamTest {
 
     @Test
     void attack_singleShardWipeToFresh_endToEnd_refuses_Rf(@TempDir Path dir) throws Exception {
-        // ATTACK 4 (the R-f headline), END TO END on real bytes. Two real shards with real raft-anchors
-        // at heads (3, 4). Mint the node-anchor over the genuine recovered heads. Then FULLY wipe shard 1
-        // (delete its raft-anchor + WAL + snapshot) so it boots FRESH at index 0. Recompute freshShards
-        // from the REAL RaftLog recovery: shard 1's anchorExistedAtOpen() is now false => freshShards={1}.
-        // The digest differs AND a shard is FRESH => the R-f wipe signature => REFUSE.
+        // End to end on real bytes: two real shards with real raft-anchors at heads (3, 4). Mint the
+        // node-anchor over the genuine recovered heads. Then FULLY wipe shard 1 (delete its raft-anchor +
+        // WAL + snapshot) so it boots FRESH at index 0. Recompute freshShards from the REAL RaftLog
+        // recovery: shard 1's anchorExistedAtOpen() is now false => freshShards={1}. The digest differs
+        // AND a shard is FRESH => the wipe signature => REFUSE.
         //
-        // PRECONDITION (tick-equivalence): the anchored digest MUST be non-trivial (over the committed
-        // heads), not the all-zero first-boot mint - otherwise a wipe-to-0 could coincidentally match. Here
-        // that holds because the shards are built to (3,4) BEFORE the mint, so enforceNodeAnchor binds the
-        // digest over (3,4). A boot mint over non-zero heads writes the SAME NodeAnchorRecord a periodic
-        // refresher tick would (identical dual-slot write path); the explicit refresher tick is exercised in
+        // PRECONDITION: the anchored digest MUST be non-trivial (over the committed heads), not the
+        // all-zero first-boot mint - otherwise a wipe-to-0 could coincidentally match. Here that holds
+        // because the shards are built to (3,4) BEFORE the mint, so enforceNodeAnchor binds the digest
+        // over (3,4). A boot mint over non-zero heads writes the same record a periodic refresher tick
+        // would (identical dual-slot write path); the explicit refresher tick is exercised in
         // attack_wipeAfterPeriodicTick_endToEnd_refuses_Rf below.
         IntegrityEnvelope env = keyed();
         Path dataDir = Files.createDirectories(dir.resolve("node"));
@@ -318,7 +318,7 @@ class NodeAnchorRedteamTest {
                 "precondition: a NON-trivial digest over the committed heads is anchored (not the all-zero mint)");
         minted.close();
 
-        // --- the attack: physically wipe shard 1 ---
+        // the attack: physically wipe shard 1
         wipeShard(shardDir(dataDir, 1));
 
         Map<Integer, Long> boot2 = new HashMap<>();
@@ -334,14 +334,15 @@ class NodeAnchorRedteamTest {
 
     @Test
     void attack_wipeAfterPeriodicTick_endToEnd_refuses_Rf(@TempDir Path dir) throws Exception {
-        // ATTACK 4, FULL LIFECYCLE incl. the real PERIODIC TICK (lead's 5 steps). Proves the R-f closer end
-        // to end through the production refresher, not just the boot-mint path:
+        // Full lifecycle including the real periodic tick, proving the wipe-detection guarantee end to
+        // end through the production refresher, not just the boot-mint path:
         //   1. first boot: two EMPTY shards => node-anchor MINTS the all-zero digest (pre-tick);
         //   2. commit: shard heads advance to (5, 6) on real raft-anchors;
         //   3. TICK: the real NodeAnchorService.newRefresher re-anchors the non-zero digest over (5, 6);
         //   4. shutdown; 5. wipe shard 1 to FRESH; reboot => digest differs AND fresh => REFUSE.
-        // The CONTROL that this precondition matters is residual_Ra_fullWipe...: SKIP the tick + wipe ALL
-        // shards to 0 and the all-zero mint still matches => PROCEED (documented R-a freshness window).
+        // residual_Ra_fullWipe_plus_rollbackToFirstMint_isAccepted is the control showing why this
+        // precondition matters: skip the tick and wipe ALL shards to 0, and the all-zero mint still
+        // matches => PROCEED (a documented, bounded residual).
         IntegrityEnvelope env = keyed();
         Path dataDir = Files.createDirectories(dir.resolve("node"));
 
@@ -382,9 +383,9 @@ class NodeAnchorRedteamTest {
 
     @Test
     void attack_auditChainTruncatedBelowAnchoredHead_realFile_refuses(@TempDir Path dir) throws Exception {
-        // ATTACK 3: audit-tail truncation. A real file-backed keyed audit chain of 6 records. Mint anchors
-        // the head (record 6). Rewrite the persisted log to only the first 3 frames (drops the anchored
-        // head) => the head recordHash is no longer reachable => REFUSE.
+        // Audit-tail truncation. A real file-backed keyed audit chain of 6 records. Mint anchors the head
+        // (record 6). Rewrite the persisted log to only the first 3 frames (drops the anchored head) =>
+        // the head recordHash is no longer reachable => REFUSE.
         IntegrityEnvelope env = keyed();
         Path dataDir = Files.createDirectories(dir.resolve("node"));
         Path auditDir = Files.createDirectories(dir.resolve("audit"));
@@ -414,7 +415,7 @@ class NodeAnchorRedteamTest {
         assertTrue(ex.getMessage().contains("audit-head"), ex.getMessage());
     }
 
-    // ============================================================ (B) legal crashes that MUST PROCEED
+    // (B) legal crashes that MUST PROCEED (no false refuse)
 
     @Test
     void nofalse_n1CrashRestartAdvancedHead_realByte_acceptForward(@TempDir Path dir) throws Exception {
@@ -473,8 +474,8 @@ class NodeAnchorRedteamTest {
     @Test
     void nofalse_firstBootAllShardsFresh_mints_notWipe(@TempDir Path dir) throws Exception {
         // NO-FALSE-REFUSE, first boot. Two brand-new empty shards (both FRESH at 0) and NO node-anchor.
-        // The R-f wipe branch requires the node-anchor to EXIST; an absent node-anchor takes the mint
-        // path. A brand-new node must NEVER be mistaken for a wiped one.
+        // The wipe-detection branch requires the node-anchor to EXIST; an absent node-anchor takes the
+        // mint path. A brand-new node must NEVER be mistaken for a wiped one.
         IntegrityEnvelope env = keyed();
         Path dataDir = Files.createDirectories(dir.resolve("node"));
         // Empty shard dirs => RaftLog boots FRESH and lays down a bootstrap anchor.
@@ -496,9 +497,9 @@ class NodeAnchorRedteamTest {
 
     @Test
     void nofalse_auditTailAboveAnchoredHead_realFile_proceeds(@TempDir Path dir) throws Exception {
-        // NO-FALSE-REFUSE (R-e residual). Records land AFTER the anchor (the un-anchored tail); the
-        // anchored head is still present => PROCEED. Truncation confined to the tail is the documented,
-        // bounded residual, not a false-refuse.
+        // NO-FALSE-REFUSE. Records land AFTER the anchor (the un-anchored tail); the anchored head is
+        // still present => PROCEED. Truncation confined to the tail is a documented, bounded residual,
+        // not a false-refuse.
         IntegrityEnvelope env = keyed();
         Path dataDir = Files.createDirectories(dir.resolve("node"));
         Storage storage = Storage.file(Files.createDirectories(dir.resolve("audit")));
@@ -569,10 +570,10 @@ class NodeAnchorRedteamTest {
 
     @Test
     void hardening_authOffAcceptForward_preservesAnchoredAuditHead(@TempDir Path dir) throws Exception {
-        // REGRESSION for the red-team INFO fix (NodeAnchorService accept-forward, auth OFF). Pre-fix, an
-        // auth-off accept-forward wrote a genesis audit head, so a later auth-ON boot found genesis and
-        // SKIPPED the audit-truncation cross-check for a truncation that predated the auth-off boot. The
-        // fix PRESERVES the previously anchored (auditRecordCount, auditHeadHash) when auditLog == null.
+        // Regression test: pre-fix, an auth-off accept-forward wrote a genesis audit head, so a later
+        // auth-ON boot found genesis and SKIPPED the audit-truncation cross-check for a truncation that
+        // predated the auth-off boot. The fix PRESERVES the previously anchored (auditRecordCount,
+        // auditHeadHash) when auditLog == null.
         IntegrityEnvelope env = keyed();
         Path dataDir = Files.createDirectories(dir.resolve("node"));
         Storage storage = Storage.file(Files.createDirectories(dir.resolve("audit")));
@@ -612,14 +613,14 @@ class NodeAnchorRedteamTest {
         assertTrue(ex.getMessage().contains("audit-head"), ex.getMessage());
     }
 
-    // ============================================================ (C) ratified R-a residuals (PROCEED)
+    // (C) residuals that PROCEED by design
 
     @Test
     void bypass_partialWipe_anchorDeletedWalIntact_caughtByGate3a_beforeNodeAnchor(@TempDir Path dir) throws Exception {
-        // BYPASS HUNT: a PARTIAL wipe (delete raft-anchor, keep the WAL) must NOT launder into FRESH.
-        // Gate-3a's per-shard presence gate throws during RaftLog recovery ("anchor was deleted" over a
-        // non-empty shard) - the bring-up loop fails BEFORE enforceNodeAnchor ever runs. Confirmed here on
-        // real bytes: reopening the shard THROWS, so freshShards is never even computed.
+        // A PARTIAL wipe (delete raft-anchor, keep the WAL) must NOT launder into FRESH. RaftLog's
+        // per-shard presence gate throws during recovery ("anchor was deleted" over a non-empty shard) -
+        // the bring-up loop fails BEFORE enforceNodeAnchor ever runs. Confirmed here on real bytes:
+        // reopening the shard THROWS, so freshShards is never even computed.
         IntegrityEnvelope env = keyed();
         Path dataDir = Files.createDirectories(dir.resolve("node"));
         Path s1 = shardDir(dataDir, 1);
@@ -636,13 +637,14 @@ class NodeAnchorRedteamTest {
 
     @Test
     void residual_Ra_fullWipe_plus_rollbackToFirstMint_isAccepted(@TempDir Path dir) throws Exception {
-        // RATIFIED RESIDUAL R-a (NOT a Gate-3b hole). To HIDE a wipe the attacker must roll the node-anchor
+        // This is a documented residual, not a bug: to HIDE a wipe the attacker must roll the node-anchor
         // to a matching-digest version. The only digest that matches an all-zeros post-wipe state is the
         // FIRST-MINT image (all shards fresh at 0). So the attack degenerates to: capture the first-mint
         // node-anchor, wipe ALL shards to 0, roll the node-anchor back to first-mint => digest matches =>
-        // PROCEED (silent total loss). This is precisely "rollback the anchor itself to a prior valid
-        // state" = matrix-14 residual-(a), closable only by the Gate-3c AnchorWitness. A SINGLE-shard wipe
-        // canNOT reach a matching digest without a SHA-256 collision, so the R-f closer stands.
+        // PROCEED (silent total loss). Closing "rollback the anchor itself to a prior valid state" needs
+        // an external witness outside this node (see {@code AnchorWitness}); a SINGLE-shard wipe canNOT
+        // reach a matching digest without a SHA-256 collision, so the wipe-detection guarantee for that
+        // case stands.
         IntegrityEnvelope env = keyed();
         Path dataDir = Files.createDirectories(dir.resolve("node"));
         buildShard(shardDir(dataDir, 0), 0, env, 0); // both shards fresh at 0 on first boot
@@ -671,7 +673,7 @@ class NodeAnchorRedteamTest {
         assertEquals(Set.of(0, 1), fresh, "both shards are FRESH");
 
         // digestNow over (0,0) == the rolled-back first-mint digest over (0,0) => the digest-match branch
-        // short-circuits (freshShards is consulted only on a MISMATCH) => PROCEED. Documented R-a.
+        // short-circuits (freshShards is consulted only on a MISMATCH) => PROCEED.
         NodeAnchorFile na = NodeAnchorService.enforceNodeAnchor(dataDir, env, EPOCH, 2, wiped, fresh, null);
         assertTrue(na.hasValidRecord(),
                 "R-a residual: a node-anchor rollback to a prior valid state is accepted (needs AnchorWitness)");
@@ -680,10 +682,10 @@ class NodeAnchorRedteamTest {
 
     @Test
     void residual_Ra_nodeAnchorDeleted_plus_shardWipe_mints(@TempDir Path dir) throws Exception {
-        // RATIFIED RESIDUAL R-a (NOT a Gate-3b hole). Deleting the node-anchor entirely makes the node
-        // look like a first boot (existedAtOpen=false => mint, no cross-check). Combined with a shard wipe
-        // this hides the loss. Deleting the node-anchor IS an anchor rollback (to the never-existed state)
-        // = R-a; indistinguishable from a legitimate whole-datadir first boot without an external witness.
+        // Another documented residual: deleting the node-anchor entirely makes the node look like a
+        // first boot (no node-anchor => mint, no cross-check). Combined with a shard wipe this hides the
+        // loss. Deleting the node-anchor is itself a rollback (to the never-existed state),
+        // indistinguishable from a legitimate whole-datadir first boot without an external witness.
         IntegrityEnvelope env = keyed();
         Path dataDir = Files.createDirectories(dir.resolve("node"));
         buildShard(shardDir(dataDir, 0), 0, env, 3);

@@ -31,16 +31,17 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Runner II — CLIENT-CONFORMS, §07 edge streaming taxonomy. The reference client centralizes the normative
- * {@code (ErrorCode, carrier) → reaction} mapping in {@link ErrorClassifier} ("the single place the client
- * encodes the 'each type IS its reaction' rule"), so asserting the classifier directly IS asserting the
- * client's conformance to E3-2 (the catch-up ladder), E3-3 (scope = code + carrier — a pure code switch is
- * insufficient for codes 4, 6, 7, 9, 11, 12), and the edge column of E4-1 (the 401/403/session-expired split).
+ * The reference client centralizes the normative {@code (ErrorCode, carrier) -> reaction} mapping in
+ * {@link ErrorClassifier} (the single place the client encodes the "each type is its reaction" rule), so
+ * asserting the classifier directly is asserting the client's conformance to the edge error taxonomy: the
+ * catch-up ladder, the rule that reaction scope is code plus carrier (a pure code switch is insufficient
+ * for codes 4, 6, 7, 9, 11, and 12), and the edge column of the 401/403/session-expired split.
  *
  * <p>The classifier assertions are deterministic and exercise the exact production reaction logic the
- * connection state machine drives — no timing, no sockets. One end-to-end behavioral case additionally drives
- * the real {@link ConfigdEdgeClient} against a {@link MockEdgeServer} that emits a {@code WATCH_CANCELED} with a
- * specific {@code ErrorCode}, proving the per-watch reaction surfaces at the client boundary (§07 E4-1 / E3-3).
+ * connection state machine drives, with no timing and no sockets. One end-to-end behavioral case
+ * additionally drives the real {@link ConfigdEdgeClient} against a {@link MockEdgeServer} that emits a
+ * {@code WATCH_CANCELED} with a specific {@code ErrorCode}, proving the per-watch reaction surfaces at the
+ * client boundary.
  */
 @Timeout(30)
 class ClauseEdgeErrorTest {
@@ -48,49 +49,49 @@ class ClauseEdgeErrorTest {
     @Test
     @Tag("clause:E3-3")
     void reactionScopeIsCodePlusCarrierNotCodeAlone() {
-        // E3-3: the numeric code names the REASON; the carrier frame names the SCOPE. An ERROR_CLOSE is
+        // The numeric code names the reason; the carrier frame names the scope. An ERROR_CLOSE is
         // connection-fatal (except the non-fatal DEMOTED_TO_CATCHUP); a WATCH_CANCELED is per-watch (the
-        // connection and sibling watches survive). For the scope-overloaded codes a driver MUST key its
-        // reaction on BOTH — the same code yields a DIFFERENT reaction under a different carrier.
+        // connection and sibling watches survive). For the scope-overloaded codes a driver must key its
+        // reaction on both -- the same code yields a different reaction under a different carrier.
 
-        // code 6 GAP_UNRECOVERABLE — connection-fatal on ERROR_CLOSE (legacy plane) vs per-watch on
-        // WATCH_CANCELED (the 0x02 plane: siblings survive). Same exception type, different SCOPE.
+        // Code 6 GAP_UNRECOVERABLE: connection-fatal on ERROR_CLOSE (legacy plane) vs per-watch on
+        // WATCH_CANCELED (the 0x02 plane: siblings survive). Same exception type, different scope.
         assertFatal(classify(ErrorCode.GAP_UNRECOVERABLE, Carrier.ERROR_CLOSE), GapUnrecoverableException.class);
         assertPerWatch(classify(ErrorCode.GAP_UNRECOVERABLE, Carrier.WATCH_CANCELED), GapUnrecoverableException.class);
 
-        // code 11 NOT_AUTHORIZED — the 403-class per-watch reject on WATCH_CANCELED (siblings survive);
-        // connection-fatal if it ever rides an ERROR_CLOSE. Different SCOPE per carrier.
+        // Code 11 NOT_AUTHORIZED: the 403-class per-watch reject on WATCH_CANCELED (siblings survive);
+        // connection-fatal if it ever rides an ERROR_CLOSE. Different scope per carrier.
         assertPerWatch(classify(ErrorCode.NOT_AUTHORIZED, Carrier.WATCH_CANCELED), ForbiddenException.class);
         assertFatal(classify(ErrorCode.NOT_AUTHORIZED, Carrier.ERROR_CLOSE), ForbiddenException.class);
 
-        // code 12 STALE_TOPOLOGY — carrier-dependent scope (per-watch for a watch, connection-fatal for a
-        // legacy SUBSCRIBE). A v2-only code, but the reaction mapping is pinned now.
+        // Code 12 STALE_TOPOLOGY: carrier-dependent scope (per-watch for a watch, connection-fatal for a
+        // legacy SUBSCRIBE). Not used by the older wire version, but the reaction mapping is pinned here now.
         assertFatal(classify(ErrorCode.STALE_TOPOLOGY, Carrier.ERROR_CLOSE), StaleTopologyException.class);
         assertPerWatch(classify(ErrorCode.STALE_TOPOLOGY, Carrier.WATCH_CANCELED), StaleTopologyException.class);
 
-        // code 9 SERVER_SHUTDOWN — the SHARPEST carrier split: an ERROR_CLOSE is a genuine server-side close
-        // (reconnect), whereas a WATCH_CANCELED is the EXPECTED acknowledgement of the driver's own
-        // WATCH_CANCEL — do NOT reconnect. Same code, two entirely different reaction CLASSES.
+        // Code 9 SERVER_SHUTDOWN: the sharpest carrier split. An ERROR_CLOSE is a genuine server-side close
+        // (reconnect), whereas a WATCH_CANCELED is the expected acknowledgement of the driver's own
+        // WATCH_CANCEL -- do not reconnect. Same code, two entirely different reaction classes.
         assertFatal(classify(ErrorCode.SERVER_SHUTDOWN, Carrier.ERROR_CLOSE), UnavailableException.class);
         assertInstanceOf(Reaction.CancelAck.class, classify(ErrorCode.SERVER_SHUTDOWN, Carrier.WATCH_CANCELED),
                 "SERVER_SHUTDOWN on a WATCH_CANCELED is a cancel-ack, not a reconnect signal");
 
-        // code 7 DEMOTED_TO_CATCHUP — carrier-INDEPENDENT: the sole non-fatal code, a mode switch regardless of
-        // carrier (the exception proving the E3-3 rule, and the top of the catch-up ladder).
+        // Code 7 DEMOTED_TO_CATCHUP: carrier-independent. The sole non-fatal code, a mode switch regardless
+        // of carrier -- the exception that proves the rule above, and the top of the catch-up ladder.
         assertInstanceOf(Reaction.CatchUp.class, classify(ErrorCode.DEMOTED_TO_CATCHUP, Carrier.ERROR_CLOSE));
         assertInstanceOf(Reaction.CatchUp.class, classify(ErrorCode.DEMOTED_TO_CATCHUP, Carrier.WATCH_CANCELED));
 
-        // code 4 AUTH_FAIL — carrier-overloaded between a FRAMED ERROR_CLOSE(4) (token/basic edge) and an
-        // UNFRAMED mTLS handshake rejection (a TLS-layer failure that never reaches this classifier). The
-        // framed carrier is connection-fatal, "(re)authenticate".
+        // Code 4 AUTH_FAIL: carrier-overloaded between a framed ERROR_CLOSE (token/basic edge) and an
+        // unframed mTLS handshake rejection (a TLS-layer failure that never reaches this classifier). The
+        // framed carrier is connection-fatal: (re)authenticate.
         assertFatal(classify(ErrorCode.AUTH_FAIL, Carrier.ERROR_CLOSE), AuthFailedException.class);
     }
 
     @Test
     @Tag("clause:E3-2")
     void theCatchUpLadderDemotedIsNonFatalQuarantinedEndsTheSession() {
-        // E3-2: DEMOTED_TO_CATCHUP (7) rides an ERROR_CLOSE frame but does NOT close — it is a mode switch, so
-        // a conforming driver keeps the session open (ingest the snapshot, drain + CURSOR_ACK promptly) rather
+        // DEMOTED_TO_CATCHUP (7) rides an ERROR_CLOSE frame but does not close: it is a mode switch, so a
+        // conforming driver keeps the session open (ingest the snapshot, drain and CURSOR_ACK promptly) rather
         // than treating it as a fatal close.
         Reaction demoted = classify(ErrorCode.DEMOTED_TO_CATCHUP, Carrier.ERROR_CLOSE);
         assertInstanceOf(Reaction.CatchUp.class, demoted, "7 is non-fatal — keep streaming in catch-up mode");
@@ -107,15 +108,17 @@ class ClauseEdgeErrorTest {
     @Test
     @Tag("clause:E4-1")
     void the401Vs403SplitOnTheEdgeMirrorsTheHttpPlane() {
-        // E4-1 (edge column): the same authentication-vs-authorization split as HTTP 401/403, surfaced on the
-        // streaming plane and mapped to the same logical reactions.
-        // Authentication (no/invalid credential) ⇒ AUTH_FAIL (4) ≈ HTTP 401 ⇒ (re)authenticate.
+        // The same authentication-vs-authorization split as HTTP 401/403, surfaced on the streaming plane
+        // and mapped to the same logical reactions.
+        // Authentication (no/invalid credential): AUTH_FAIL (4), similar to HTTP 401, means (re)authenticate.
         assertFatal(classify(ErrorCode.AUTH_FAIL, Carrier.ERROR_CLOSE), AuthFailedException.class);
-        // Session expired (credential aged out) ⇒ CREDENTIAL_EXPIRED (13) ≈ HTTP 401 (re-present) ⇒ re-auth on a
-        // fresh connection. Distinct type from AUTH_FAIL so a driver tells "aged out" from "never valid".
+        // Session expired (credential aged out): CREDENTIAL_EXPIRED (13), similar to HTTP 401 (re-present),
+        // means re-auth on a fresh connection. Distinct type from AUTH_FAIL so a driver tells "aged out" from
+        // "never valid".
         assertFatal(classify(ErrorCode.CREDENTIAL_EXPIRED, Carrier.ERROR_CLOSE), CredentialExpiredException.class);
-        // Authorization (authenticated, not permitted) ⇒ NOT_AUTHORIZED (11) ≈ HTTP 403 ⇒ permanently forbidden
-        // for that target (a per-watch WATCH_CANCELED — the connection survives, narrow the target).
+        // Authorization (authenticated, not permitted): NOT_AUTHORIZED (11), similar to HTTP 403, means
+        // permanently forbidden for that target (a per-watch WATCH_CANCELED -- the connection survives,
+        // narrow the target).
         assertPerWatch(classify(ErrorCode.NOT_AUTHORIZED, Carrier.WATCH_CANCELED), ForbiddenException.class);
     }
 
@@ -123,10 +126,10 @@ class ClauseEdgeErrorTest {
     @Tag("clause:E4-1")
     @Tag("clause:E3-3")
     void aWatchCanceledNotAuthorizedSurfacesForbiddenPerWatchAgainstTheRealClient() throws Exception {
-        // End-to-end (client-conforms): the mock sends a WATCH_CANCELED carrying NOT_AUTHORIZED (11) — the
-        // 403-class per-watch reject. The real ConfigdEdgeClient MUST surface it as a ForbiddenException on the
-        // watch's terminal future (do not retry the same target) and, because the carrier is per-watch, MUST
-        // NOT reconnect — the connection is torn down once, not looped (E4-1 / E3-3 at the client boundary).
+        // End-to-end: the mock sends a WATCH_CANCELED carrying NOT_AUTHORIZED (11), the 403-class per-watch
+        // reject. The real ConfigdEdgeClient must surface it as a ForbiddenException on the watch's terminal
+        // future (do not retry the same target) and, because the carrier is per-watch, must not reconnect --
+        // the connection is torn down once, not looped.
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
             long wid = ((EdgeFrame.WatchCreate) conn.readFrame()).watchId();
             conn.send(new EdgeFrame.WatchCanceled(wid, ErrorCode.NOT_AUTHORIZED, null, "over-broad target"),

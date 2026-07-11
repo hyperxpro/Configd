@@ -69,7 +69,7 @@
     },
     {
       "id": 3,
-      "title": "Edge staleness (max, target < 500 ms / page > 2 s) — D-2: real served signal",
+      "title": "Edge staleness (max, target < 500 ms / page > 2 s)",
       "type": "timeseries",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},

@@ -41,45 +41,45 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Group B §4 live E2E — the production at-rest posture that no single suite exercised: a real,
+ * Live E2E for the production at-rest posture that no single suite exercised on its own: a real,
  * in-process, three-node {@link ConfigdServer} cluster running <b>encryption at rest ON with its
- * keyring-custody root sealed by a REAL external Vault Transit KMS</b> (a {@code hashicorp/vault}
- * container), booting, committing + replicating <b>encrypted</b> data, and surviving a node restart
+ * keyring-custody root sealed by a real external Vault Transit KMS</b> (a {@code hashicorp/vault}
+ * container), booting, committing and replicating <b>encrypted</b> data, and surviving a node restart
  * that <b>re-unseals through Vault</b> with the previously-committed data intact.
  *
  * <p>The two existing proofs each cover only half of this. {@code VaultTransitKmsIT} drives the
- * {@code vault-transit} provider against a real Vault but as a single-process unit — no cluster, no
+ * {@code vault-transit} provider against a real Vault but as a single-process unit, with no cluster and no
  * encrypted Raft log. {@code EncryptedMultiShardClusterCompositionTest} runs a real encrypted 3-node
- * cluster but seals with the DEFAULT {@code local} posture (custody derived from the signing key), so
+ * cluster but seals with the default {@code local} posture (custody derived from the signing key), so
  * the external KMS boot path never runs. This test is the join: the full cluster boot path
- * ({@code ConfigdServer.start} → {@code deriveRaftIntegrityEnvelope} → {@code unsealKeyringCustodySecret}
- * → {@code KmsProviderFactory} ServiceLoader → the real {@code VaultKmsProviderFactory}) selecting and
+ * ({@code ConfigdServer.start}, {@code deriveRaftIntegrityEnvelope}, {@code unsealKeyringCustodySecret},
+ * the {@code KmsProviderFactory} ServiceLoader, the real {@code VaultKmsProviderFactory}) selecting and
  * driving a real Vault, on every node, at boot and again on restart.
  *
  * <h2>What proves the Vault path actually ran (not a silent local fallback)</h2>
  * <ul>
  *   <li><b>Positive</b>: every node writes a {@code raft-kms-root} sealed-carrier file that the
- *       {@code local} posture NEVER writes, and its stored {@link WrappedKey} is a genuine Vault
- *       carrier — provider type {@code vault-transit} and a {@code vault:vN:} ciphertext that only a
+ *       {@code local} posture never writes, and its stored {@link WrappedKey} is a genuine Vault
+ *       carrier, with provider type {@code vault-transit} and a {@code vault:vN:} ciphertext that only a
  *       real Transit {@code encrypt} produces. A {@code local}-fallback boot would leave no such file.</li>
  *   <li><b>Negative</b> ({@link #bootFailsClosedWhenVaultUnreachable}): selecting {@code vault-transit}
- *       with an unreachable Vault FAILS the boot closed rather than silently downgrading to a local
- *       envelope — the property that makes the positive proof trustworthy.</li>
+ *       with an unreachable Vault fails the boot closed rather than silently downgrading to a local
+ *       envelope, which is the property that makes the positive proof trustworthy.</li>
  * </ul>
  *
- * <p>Flag-guarded on {@code -Dconfigd.it.containers=true} (needs a Docker daemon + pulls the Vault
+ * <p>Flag-guarded on {@code -Dconfigd.it.containers=true} (needs a Docker daemon and pulls the Vault
  * image), mirroring {@code VaultTransitKmsIT}; the {@code *IT} name keeps it out of the default reactor.
- * Single shard (the multi-shard dimension is orthogonal to KMS custody and already proven by the
- * composition test); three nodes so a 2-of-3 commit quorum survives while the restart target is down,
- * letting the restarted node re-unseal through Vault AND catch up a real gap. Deadlines are generous for
- * the throttled box and everything is deadline-polled — no sleep-as-synchronisation; the per-method
+ * Single shard, since the multi-shard dimension is orthogonal to KMS custody and already proven by the
+ * composition test; three nodes so a 2-of-3 commit quorum survives while the restart target is down,
+ * letting the restarted node re-unseal through Vault and catch up a real gap. Deadlines are generous for
+ * the throttled box and everything is deadline-polled, with no sleep-as-synchronisation; the per-method
  * {@link Timeout} is pure hang detection.
  */
 @EnabledIfSystemProperty(named = "configd.it.containers", matches = "true")
 @Timeout(600)
 final class EncryptedClusterVaultKmsIT {
 
-    // --- Vault (reused from VaultTransitKmsIT's provisioning) ---
+    // Vault, reused from VaultTransitKmsIT's provisioning.
     private static final String ROOT_TOKEN = "root-dev-token";
     private static final String MOUNT = "transit";
     private static final String KEY = "configd-root-kek";
@@ -89,7 +89,6 @@ final class EncryptedClusterVaultKmsIT {
     private static String roleId;
     private static String secretId;
 
-    // --- cluster ---
     private static final int NODES = 3;
     private static final int SHARDS = 1;
     private static final int PRIMARY = 0; // the single Raft group
@@ -168,7 +167,7 @@ final class EncryptedClusterVaultKmsIT {
         System.setProperty("configd.raft.shardCount", Integer.toString(SHARDS));
         System.setProperty("configd.raft.ownerPoolSize", Integer.toString(SHARDS));
         // Generous election budget (ratio ~15-20) so 2-vCPU jitter cannot trip a spurious election while
-        // three full servers AND a Vault container contend for two cores; matches the composition test.
+        // three full servers and a Vault container contend for two cores; matches the composition test.
         System.setProperty("configd.raft.electionTimeoutMinMs", "1500");
         System.setProperty("configd.raft.electionTimeoutMaxMs", "3000");
         System.setProperty("configd.raft.heartbeatIntervalMs", "100");
@@ -206,9 +205,10 @@ final class EncryptedClusterVaultKmsIT {
     @Test
     void encryptedClusterUnsealsViaVaultCommitsReplicatesAndReUnsealsOnRestart(@TempDir Path root)
             throws Exception {
-        // ONE shared cluster signing key OUTSIDE every node's data dir (D-1 co-location guard), pre-created
-        // so the three boots never race to mint it. The signing key still exists under the Vault posture -
-        // it is the auth/keyring-integrity IKM; what Vault custodies is the SEPARATE keyring-custody secret.
+        // One shared cluster signing key kept outside every node's data dir (avoiding key/data co-location),
+        // pre-created so the three boots never race to mint it. The signing key still exists under the
+        // Vault posture: it is the auth and keyring-integrity IKM; what Vault custodies is the separate
+        // keyring-custody secret.
         Path signingKey = root.resolve("secrets").resolve("signing-key.bin");
         Files.createDirectories(signingKey.getParent());
         SigningKeyStore.loadOrCreate(signingKey);
@@ -226,8 +226,8 @@ final class EncryptedClusterVaultKmsIT {
             running.add(servers[i]);
         }
 
-        // PROOF the Vault path ran (not a local fallback): every node persisted a raft-kms-root carrier -
-        // the file the 'local' posture NEVER writes - and it is a genuine Vault Transit carrier.
+        // Proof the Vault path ran (not a local fallback): every node persisted a raft-kms-root carrier -
+        // the file the 'local' posture never writes - and it is a genuine Vault Transit carrier.
         byte[][] carriersBefore = new byte[NODES][];
         for (int i = 0; i < NODES; i++) {
             Path data = root.resolve("node-" + i);
@@ -241,24 +241,24 @@ final class EncryptedClusterVaultKmsIT {
                     "node " + i + " carrier must be a real Vault Transit vault:vN: ciphertext, not a local seal");
             carriersBefore[i] = Files.readAllBytes(sealed);
 
-            // Encryption is genuinely ON: every node minted the frozen dual-slot keyring at the encrypted size.
+            // Encryption is genuinely on: every node minted the frozen dual-slot keyring at the encrypted size.
             assertEquals(131080L, Files.size(data.resolve("raft-keyring")),
                     "node " + i + " must mint the frozen preallocated keyring under encryption");
         }
 
-        // --- a stable leader forms (the armed strict-boot witness gate clears at quorum) ---
+        // A stable leader forms (the armed strict-boot witness gate clears at quorum).
         int leader = awaitStableLeader(servers, PRIMARY, STABILIZE_MS);
         assertTrue(leader >= 0, "the single shard must elect one stable leader within " + STABILIZE_MS
                 + "ms: " + leadershipSnapshot(servers, PRIMARY));
 
-        // --- a write commits on the leader and REPLICATES + applies on all three Vault-sealed nodes ---
-        // The value carries a distinctive canary; encryption at rest must keep it OFF the disk in plaintext.
+        // A write commits on the leader and replicates plus applies on all three Vault-sealed nodes. The
+        // value carries a distinctive canary; encryption at rest must keep it off the disk in plaintext.
         String canary = "PLAINTEXT-CANARY-" + UUID.randomUUID();
         byte[] canaryBytes = canary.getBytes(StandardCharsets.UTF_8);
         long committed = commitAndAwaitReplication(servers, PRIMARY, "cfg/secret", canary);
         assertTrue(committed > 0, "the write must reach a committed index replicated to all three nodes");
 
-        // Sanity that the search bytes are the ones that WOULD be on disk unencrypted: the raw command the
+        // Sanity that the search bytes are the ones that would be on disk unencrypted: the raw command the
         // Raft log would append plainly does contain the canary. It must nonetheless be absent from disk.
         byte[] plainCommand = CommandCodec.encodePut("cfg/secret", canaryBytes);
         assertTrue(indexOf(plainCommand, canaryBytes) >= 0, "the canary is present in the plaintext command");
@@ -266,10 +266,10 @@ final class EncryptedClusterVaultKmsIT {
             assertMarkerAbsentOnDisk(root.resolve("node-" + i), canaryBytes);
         }
 
-        // --- restart a follower: it must RE-UNSEAL through Vault (read the SAME carrier, unwrap live) and
-        //     recover its encrypted data, catching up a gap opened while it was down ---
+        // Restart a follower: it must re-unseal through Vault (read the same carrier, unwrap live) and
+        // recover its encrypted data, catching up a gap opened while it was down.
         // Re-confirm the leader right before choosing (leadership may have moved since the first election),
-        // so the restart target is a genuine FOLLOWER and dropping it forces no re-election.
+        // so the restart target is a genuine follower and dropping it forces no re-election.
         int curLeader = awaitStableLeader(servers, PRIMARY, STABILIZE_MS);
         assertTrue(curLeader >= 0, "leadership must be stable before the restart: "
                 + leadershipSnapshot(servers, PRIMARY));
@@ -288,7 +288,7 @@ final class EncryptedClusterVaultKmsIT {
         running.add(restarted);
 
         // A successful restart is itself a re-unseal proof (an unreachable Vault would fail it closed - see
-        // the negative test), and the carrier was UNWRAPPED, not re-provisioned: the file is byte-unchanged.
+        // the negative test), and the carrier was unwrapped, not re-provisioned: the file is byte-unchanged.
         assertArrayEquals(carriersBefore[restartTarget],
                 Files.readAllBytes(root.resolve("node-" + restartTarget).resolve(KmsSealedRootStore.FILE_NAME)),
                 "restart must re-unseal the EXISTING Vault carrier, never re-seal a new secret");
@@ -297,7 +297,7 @@ final class EncryptedClusterVaultKmsIT {
         assertTrue(caughtUp, "restarted node must re-unseal via Vault and catch shard up to " + postDown
                 + " (got " + appliedIndex(restarted, PRIMARY) + ") — decrypting its recovered log");
 
-        // The previously-committed canary is still served post-restart and STILL encrypted on disk.
+        // The previously-committed canary is still served post-restart and still encrypted on disk.
         assertMarkerAbsentOnDisk(root.resolve("node-" + restartTarget), canaryBytes);
 
         // A fresh write after recovery commits + replicates to all three (the cluster is whole again).
@@ -307,7 +307,7 @@ final class EncryptedClusterVaultKmsIT {
 
     /**
      * The trust anchor for the positive proof: selecting {@code vault-transit} while Vault is unreachable
-     * FAILS the boot closed — it does NOT silently fall back to a local envelope (which would return
+     * fails the boot closed - it does not silently fall back to a local envelope (which would return
      * normally and leave a node claiming "encrypted at rest" whose custody chain never touched Vault).
      */
     @Test
@@ -325,9 +325,7 @@ final class EncryptedClusterVaultKmsIT {
                 "must fail closed on an unreachable Vault, never a silent local fallback: " + msg);
     }
 
-    // =======================================================================
-    // cluster helpers (deadline-polled; no sleep-as-sync) — mirror the composition test's idiom
-    // =======================================================================
+    // cluster helpers (deadline-polled; no sleep-as-sync) - mirror the composition test's idiom
 
     private ServerConfig nodeConfig(int nodeId, int[] bindPorts, Path dataDir, Path signingKey) {
         StringBuilder peers = new StringBuilder();
@@ -366,7 +364,7 @@ final class EncryptedClusterVaultKmsIT {
             RaftNode node = servers[i].driver().getGroup(gid);
             if (node != null && node.monitorView().role() == RaftRole.LEADER) {
                 if (leader >= 0) {
-                    return -1; // two leaders observed (transient) — not stable
+                    return -1; // two leaders observed (transient) - not stable
                 }
                 leader = i;
             }
@@ -488,7 +486,7 @@ final class EncryptedClusterVaultKmsIT {
         }
     }
 
-    /** First index of {@code needle} in {@code haystack}, or -1. Small inputs — a naive scan is fine. */
+    /** First index of {@code needle} in {@code haystack}, or -1. Small inputs - a naive scan is fine. */
     private static int indexOf(byte[] haystack, byte[] needle) {
         if (needle.length == 0 || haystack.length < needle.length) {
             return -1;

@@ -8,58 +8,43 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Per-key-prefix ACL enforcement.
  * Controls which principals may {@code READ}, {@code LIST}, {@code WRITE}, {@code WATCH}, or
- * {@code ADMIN}ister config under specific key prefixes (the v1 capability set - see {@link Permission}).
+ * {@code ADMIN}ister config under specific key prefixes (see {@link Permission}).
  * <p>
- * <b>Evaluation model (namespace-model {@code access-control.md} section 4).</b>
- * Authorization is the <b>union of all matching ancestor grants</b> with <b>absolute deny-precedence</b>
- * and <b>default-deny</b> - the Vault model:
+ * <b>Evaluation model.</b> Authorization is the union of all matching ancestor grants, with
+ * absolute deny-precedence and default-deny - the Vault model:
  * <pre>
  *   allow = union { rule.caps : rule matches key, rule.effect = ALLOW }
  *   deny  = union { rule.caps : rule matches key, rule.effect = DENY  }
  *   authorized(C)  iff  C in allow  AND  C not in deny
  * </pre>
- * A rule "matches" a key when its prefix is an ancestor of (or equals) the key
- * ({@code key.startsWith(prefix)}). <b>Every</b> matching ancestor contributes - not just the
- * longest. So a {@code READ} grant on {@code "a."} and a {@code WRITE} grant on {@code "a.b."}
- * give a principal {@code READ+WRITE} on {@code "a.b.x"} (the natural hierarchical composition).
- * A {@code DENY} for a capability at <b>any</b> matching ancestor removes that capability regardless
- * of any {@code ALLOW}, including more-specific paths and including {@code ADMIN} - deny is absolute.
- * No matching {@code ALLOW} -> denied.
+ * A rule matches a key when its prefix is an ancestor of (or equals) the key
+ * ({@code key.startsWith(prefix)}). Every matching ancestor contributes, not just the longest:
+ * a {@code READ} grant on {@code "a."} and a {@code WRITE} grant on {@code "a.b."} give a
+ * principal {@code READ+WRITE} on {@code "a.b.x"}. A {@code DENY} for a capability at any
+ * matching ancestor removes that capability regardless of any {@code ALLOW}, including
+ * more-specific paths and including {@code ADMIN} - deny is absolute. No matching {@code ALLOW}
+ * means denied.
  * <p>
- * <b>One capability-relationship refinement ({@code access-control.md} section 2.1).</b> Writing
- * the effective set {@code eff = allow - deny}, {@link #isAllowed} decides {@code C in eff} for every
- * capability {@code C} <b>except</b> {@code WATCH}, for which it returns the floored decision
- * {@code WATCH in eff AND READ in eff} - a watch is a streaming read and <b>MUST never expose what a
- * read could not</b> (INV-WATCH-READ). {@code LIST} is independent of {@code READ}, and {@code ADMIN}
- * is <b>not</b> a super-capability; both fall out of plain per-capability membership with no extra logic.
+ * One refinement: writing the effective set {@code eff = allow - deny}, {@link #isAllowed}
+ * decides {@code C in eff} for every capability {@code C} except {@code WATCH}, for which it
+ * returns the floored decision {@code WATCH in eff AND READ in eff} - a watch is a streaming
+ * read and must never expose what a read could not. {@code LIST} is independent of {@code READ},
+ * and {@code ADMIN} is not a super-capability; both fall out of plain per-capability membership
+ * with no extra logic.
  * <p>
- * This <b>supersedes</b> the historical longest-match-only evaluation (which consulted only the single
- * longest matching prefix - across <i>all</i> principals - and silently dropped ancestor grants, a
- * hierarchy footgun). The two evaluations are <b>byte-identical precisely when the set of stored
- * prefixes forms an antichain</b> (no stored prefix is an ancestor of another): then at most one prefix
- * matches any key, so the union has a single term and equals longest-match. The deployed
- * single-root-grant production config ({@code ""} only) is a trivial antichain, so production decisions
- * are byte-identical. They differ only when ancestor-related prefixes both match a key - which only the
- * tests construct. (Note the precondition is the global prefix set, not "one rule per principal": a
- * longer prefix granted to a <i>different</i> principal could shadow this principal's shorter grant
- * under the old longest-match, but not under the union.)
- * <p>
- * <b>Role layer (additive, dormant in production).</b> Beyond a principal's own per-prefix grants,
- * authorization also unions the grants of the principal's <b>roles</b>. A {@link Role} bundles
- * {@link Policy policies}, each a set of {@link PolicyRule}s ({@code prefix -> allow/deny}); roles are
- * defined via {@link #defineRole}. A principal's effective roles are the union of two additive,
- * empty-by-default sources: the <b>authn-asserted</b> roles passed to
- * {@link #isAllowed(String, Set, String, Permission)} and the <b>ACL-static</b> bindings added via
- * {@link #assignRole}. Each resolved role's matching {@link PolicyRule}s contribute into the
- * <b>same</b> {@code (allow, deny)} accumulators as the own grants, so the identical
- * union / absolute-deny-precedence / default-deny / effective-{@code WATCH} = {@code WATCH} AND
- * {@code READ} rules apply across own and role grants alike - in particular a {@code DENY} from a
- * role (or own grant) is subtracted with absolute precedence over an {@code ALLOW} from a role (or own
- * grant). Both role maps are <b>empty by default</b>; when empty the role layer contributes nothing and
- * {@link #isAllowed} reduces <b>exactly</b> to the historical own-grants-only evaluation (the deployed
- * config defines no roles, so production decisions are byte-identical). The legacy 3-arg
- * {@link #isAllowed(String, String, Permission)} delegates to the 4-arg form with no authn-asserted
- * roles.
+ * <b>Role layer.</b> Beyond a principal's own per-prefix grants, authorization also unions the
+ * grants of the principal's roles. A {@link Role} bundles {@link Policy policies}, each a set of
+ * {@link PolicyRule}s ({@code prefix -> allow/deny}); roles are defined via {@link #defineRole}.
+ * A principal's effective roles are the union of two additive, empty-by-default sources: the
+ * authn-asserted roles passed to {@link #isAllowed(String, Set, String, Permission)} and the
+ * ACL-static bindings added via {@link #assignRole}. Each resolved role's matching
+ * {@link PolicyRule}s contribute into the same {@code (allow, deny)} accumulators as the own
+ * grants, so the same union / absolute-deny-precedence / default-deny / effective-{@code WATCH}
+ * rules apply across own and role grants alike - a {@code DENY} from a role is subtracted with
+ * the same absolute precedence as a {@code DENY} from an own grant. Both role maps are empty by
+ * default; when empty the role layer contributes nothing and {@link #isAllowed} reduces exactly
+ * to own-grants-only evaluation. The legacy 3-arg {@link #isAllowed(String, String, Permission)}
+ * delegates to the 4-arg form with no authn-asserted roles.
  * <p>
  * Thread safety: a {@link ConcurrentSkipListMap} holds the prefix -> (principal -> {@link GrantEntry})
  * map; each {@link GrantEntry} is immutable and is swapped wholesale on {@link #grant}/{@link #deny},
@@ -69,21 +54,20 @@ import java.util.concurrent.atomic.AtomicReference;
  * role-name sets, each swapped wholesale on {@link #defineRole}/{@link #assignRole}; {@link #isAllowed}
  * reads them lock-free. Both maps are typically populated once at boot.
  * <p>
- * <b>Config-policy layer (additive, empty in production).</b> Beyond the imperative role layer,
- * authorization also unions a <b>config-sourced</b> {@link ConfigPolicy} - role definitions and
- * principal-to-role bindings loaded by the server from the reserved {@code _acl/} key subtree. It is
- * held behind a <b>single volatile reference</b> ({@link #publishConfigPolicy}); {@link #isAllowed}
- * reads it <b>exactly once</b>, so a concurrent reload (a whole-snapshot swap, never an in-place mutation)
- * is observed entirely-old or entirely-new - never torn. The config layer folds its matching rules into the
- * <b>same</b> {@code (allow, deny)} accumulators (same union / absolute-deny-precedence / default-deny /
- * effective-{@code WATCH} = {@code WATCH} AND {@code READ} rules), so a config {@code DENY} composes with
- * absolute precedence across all layers. It is {@link ConfigPolicy#EMPTY} by default; the deployed config
- * defines no {@code _acl/} keys, so the config layer contributes nothing and decisions are byte-identical.
+ * <b>Config-policy layer.</b> Beyond the imperative role layer, authorization also unions a
+ * config-sourced {@link ConfigPolicy} - role definitions and principal-to-role bindings loaded
+ * by the server from the reserved {@code _acl/} key subtree. It is held behind a single volatile
+ * reference ({@link #publishConfigPolicy}); {@link #isAllowed} reads it exactly once, so a
+ * concurrent reload (a whole-snapshot swap, never an in-place mutation) is observed
+ * entirely-old or entirely-new - never torn. The config layer folds its matching rules into the
+ * same {@code (allow, deny)} accumulators, so a config {@code DENY} composes with absolute
+ * precedence across all layers. It is {@link ConfigPolicy#EMPTY} by default, so an unconfigured
+ * deployment sees no contribution from this layer.
  */
 public final class AclService {
 
     /**
-     * Config-operation capabilities - the v1 capability set ({@code access-control.md} section 2):
+     * Config-operation capabilities:
      * <ul>
      *   <li>{@code READ}  - read the value at a concrete path ({@code get}).</li>
      *   <li>{@code LIST}  - enumerate the children/descendants of a path ({@code list}); a distinct
@@ -97,19 +81,19 @@ public final class AclService {
      * {@code DENY} is <b>not</b> a permission - it is an effect on a rule, expressed via {@link #deny}
      * and subtracted with absolute precedence (see the class doc).
      * <p>
-     * <b>Capability relationships ({@code access-control.md} section 2.1).</b>
+     * <b>Capability relationships.</b>
      * <ul>
      *   <li><b>{@code LIST} is independent of {@code READ}</b>: neither implies the other.
      *       Holding {@code READ} never confers {@code LIST}, nor vice-versa. This falls out of evaluating
      *       each capability by exact membership in the effective set - <b>no special code</b>.</li>
-     *   <li><b>{@code WATCH} requires {@code READ}</b> (INV-WATCH-READ): a watch is a streaming read,
-     *       so it must <b>never expose what a read could not</b>. {@code WATCH} is its own grantable
+     *   <li><b>{@code WATCH} requires {@code READ}</b>: a watch is a streaming read, so it must
+     *       <b>never expose what a read could not</b>. {@code WATCH} is its own grantable
      *       capability but is <b>ineffective without {@code READ}</b> over the same target -
      *       {@link #isAllowed} enforces <b>effective-{@code WATCH} = {@code WATCH} AND {@code READ}</b>
      *       for a <b>single key</b>. Because {@link #isAllowed} unions only a key's <i>ancestor</i>
-     *       grants it cannot observe a {@code READ} deny on a <i>descendant</i>; a future watch endpoint
-     *       must apply this floor over the <b>whole target</b> - per delivered key, or via a whole-target
-     *       cover-check (cf. {@code WatchAuthz.authorizeWatch}) - <b>not</b> with a single
+     *       grants it cannot observe a {@code READ} deny on a <i>descendant</i>; a subtree/full watch
+     *       endpoint must apply this floor over the <b>whole target</b> - per delivered key, or via a
+     *       whole-target cover-check ({@link #coversTarget}) - <b>not</b> with a single
      *       {@code isAllowed(p, subtreeRoot, WATCH)} call, which would over-expose a denied
      *       descendant.</li>
      * </ul>
@@ -142,24 +126,22 @@ public final class AclService {
     private final ConcurrentSkipListMap<String, ConcurrentHashMap<String, GrantEntry>> acls =
             new ConcurrentSkipListMap<>();
 
-    // roleName -> Role definition. EMPTY by default; typically populated at boot (see defineRole).
-    // When empty the role layer contributes nothing and isAllowed is byte-identical to own-grants-only.
+    // roleName -> Role definition. Empty by default; typically populated at boot (see defineRole).
+    // When empty the role layer contributes nothing to isAllowed.
     private final ConcurrentHashMap<String, Role> roleDefinitions = new ConcurrentHashMap<>();
 
     // principal -> ACL-static role names, additive to the authn-asserted roles passed to isAllowed.
-    // EMPTY by default; each value is an immutable snapshot swapped wholesale on assignRole.
+    // Empty by default; each value is an immutable snapshot swapped wholesale on assignRole.
     private final ConcurrentHashMap<String, Set<String>> principalRoles = new ConcurrentHashMap<>();
 
     // The config-sourced policy (roles + principal-to-role bindings loaded from the reserved `_acl/`
-    // subtree) plus the store version it was derived from, in ONE immutable holder published via a
-    // SINGLE AtomicReference swap - the atomic-swap point that fixes the torn-read window (a get() is a
-    // volatile-acquire read; isAllowed reads it EXACTLY ONCE so a concurrent reload is never observed
-    // half-applied). This is a SEPARATE, additive layer; the static imperative layer above (acls /
-    // roleDefinitions / principalRoles) is untouched. EMPTY by default -> the config layer contributes
-    // nothing -> byte-identical. The version makes the versioned publish MONOTONIC: an out-of-order rebuild
-    // (e.g. a slow boot seed vs a concurrent apply-thread rebuild) carrying an OLDER store version is
-    // ignored, so it can never clobber a newer policy with stale state (the swap fixes torn READS; the
-    // version fixes out-of-order WRITES).
+    // subtree) plus the store version it was derived from, in one immutable holder published via a
+    // single AtomicReference swap: a get() is a volatile-acquire read, and isAllowed reads it exactly
+    // once, so a concurrent reload is never observed half-applied. This is a separate, additive layer;
+    // the static imperative layer above (acls / roleDefinitions / principalRoles) is untouched. The
+    // version makes the publish monotonic: an out-of-order rebuild (e.g. a slow boot seed racing a
+    // concurrent apply-thread rebuild) carrying an older store version is ignored, so it can never
+    // clobber a newer policy with stale state.
     private record VersionedConfigPolicy(long version, ConfigPolicy policy) {
         static final VersionedConfigPolicy EMPTY = new VersionedConfigPolicy(Long.MIN_VALUE, ConfigPolicy.EMPTY);
     }
@@ -242,9 +224,7 @@ public final class AclService {
     /**
      * Defines (or replaces) a {@link Role}'s grants. Roles are an <b>additive</b> layer over per-prefix
      * grants: {@link #isAllowed(String, Set, String, Permission)} unions a resolved role's matching
-     * {@link PolicyRule}s into the same allow/deny accumulators as the principal's own grants. No role
-     * is defined in the deployed production config (the role maps are empty, so the role layer is
-     * byte-identical), making this dormant there.
+     * {@link PolicyRule}s into the same allow/deny accumulators as the principal's own grants.
      *
      * @param role the role to define, keyed by {@link Role#name()} (non-null)
      */
@@ -279,10 +259,9 @@ public final class AclService {
      * atomic-swap point for config-sourced policy. A concurrent {@link #isAllowed} reads the reference
      * <b>exactly once</b> and therefore observes either the entire old or the entire new policy, never a
      * torn (half-applied) mix. The snapshot is deeply immutable. This overload carries no store version
-     * (each call simply supersedes the prior); production reload goes through the
+     * (each call simply supersedes the prior); a reloader that tracks store versions should use the
      * <b>version-ordered</b> {@link #publishConfigPolicy(long, ConfigPolicy)} instead, so a stale rebuild
-     * cannot clobber a newer policy. Passing {@link ConfigPolicy#EMPTY} clears the config layer (the
-     * production default, byte-identical).
+     * cannot clobber a newer policy. Passing {@link ConfigPolicy#EMPTY} clears the config layer.
      *
      * @param snapshot the new config-policy snapshot (non-null)
      */
@@ -335,26 +314,21 @@ public final class AclService {
     /**
      * The current config-policy version - the monotonic store version the live {@link ConfigPolicy}
      * snapshot was derived from (the {@code _acl/} reload version). It is {@link Long#MIN_VALUE} until
-     * the first policy is published (the production default, since no {@code _acl/} keys are deployed),
-     * and advances on <b>every</b> {@code _acl/} reload (each {@link #publishConfigPolicy} bumps it;
-     * the versioned overload installs the store version monotonically). Because the imperative grant
-     * layer is boot-static, this version captures all <b>runtime</b> authorization changes.
+     * the first policy is published, and advances on <b>every</b> {@code _acl/} reload (each
+     * {@link #publishConfigPolicy} bumps it; the versioned overload installs the store version
+     * monotonically). This version is the trigger for <b>bounded watch revocation</b>: the watch veneer
+     * caches the version a live watch was last authorized at and re-authorizes when it advances,
+     * force-closing any watch whose principal no longer holds {@code READ} AND {@code WATCH} over its
+     * target. When no {@code _acl/} key is touched the version never changes, so re-authorization costs
+     * nothing (a single comparison per tick). A single volatile-acquire read; never torn.
      * <p>
-     * <b>INVARIANT (trigger completeness).</b> This version advances <b>only</b> on a {@code _acl/}
-     * config-policy reload, <b>not</b> on the imperative mutators ({@link #grant} / {@link #deny} /
-     * {@link #revoke} / {@link #defineRole} / {@link #assignRole}). That is correct <b>only because
-     * those mutators are boot-static</b> (in the deployed wiring the sole runtime call is the boot root
-     * grant; every runtime ACL change flows through the versioned {@code _acl/} loader). If a future
-     * change ever wires a <b>runtime</b> imperative-ACL mutation path (e.g. an admin endpoint calling
-     * {@link #deny}/{@link #revoke}), it <b>MUST</b> also advance a version the watch re-authorization
-     * observes - extend this version, or have those mutators bump a parallel counter folded into it -
-     * otherwise a revocation through that path would be silently missed by bounded watch revocation.
-     * <p>
-     * It is the trigger for <b>bounded watch revocation</b>: the watch veneer caches the version a live
-     * watch was last authorized at and re-authorizes when it advances, force-closing any watch whose
-     * principal no longer holds {@code READ} AND {@code WATCH} over its target. When no {@code _acl/}
-     * key is touched the version never changes, so re-authorization costs nothing (a single comparison
-     * per tick). A single volatile-acquire read; never torn.
+     * <b>Caveat.</b> This version advances only on a {@code _acl/} config-policy reload, not on the
+     * imperative mutators ({@link #grant} / {@link #deny} / {@link #revoke} / {@link #defineRole} /
+     * {@link #assignRole}). That is correct only as long as those mutators are called at boot, before
+     * any watch is authorized against them - if a caller ever wires a <b>runtime</b> imperative-ACL
+     * mutation path (e.g. an admin endpoint calling {@link #deny}/{@link #revoke}), it must also advance
+     * a version the watch re-authorization observes, or a revocation through that path would be silently
+     * missed by bounded watch revocation.
      *
      * @return the current config-policy version ({@link Long#MIN_VALUE} if none published)
      */
@@ -365,9 +339,8 @@ public final class AclService {
     /**
      * Checks if a principal has the given permission for a key, with <b>no authn-asserted roles</b> - a
      * thin overload of {@link #isAllowed(String, Set, String, Permission)} that supplies
-     * {@code Set.of()} for the roles. Existing callers (and the historical evaluation) reach the
-     * role-aware path with an empty role set, so with no roles defined/assigned the decision is
-     * byte-identical to the own-grants-only evaluation. See the 4-arg overload for the full contract.
+     * {@code Set.of()} for the roles. With no roles defined or assigned for the principal, the decision
+     * is exactly the own-grants-only evaluation. See the 4-arg overload for the full contract.
      *
      * @param principal  the principal name (non-null)
      * @param key        the config key (non-null)
@@ -397,11 +370,10 @@ public final class AclService {
      * Deny is then subtracted <b>once</b> over the combined set ({@code eff = allow - deny}), so absolute
      * deny-precedence holds <b>through roles</b> as well as own grants. Returns {@code permission in eff}
      * for every capability <b>except</b> {@code WATCH}, for which it returns the floored decision
-     * {@code WATCH in eff AND READ in eff} (INV-WATCH-READ - see below). With empty role maps and an
-     * empty {@code roles} argument this reduces exactly to the historical own-grants-only evaluation.
-     * The walk length is bounded by the number of stored prefixes <= the key plus the principal's role
-     * rules; for a control-plane policy set (a small number of grants; exactly one and no roles in the
-     * deployed config) this is negligible.
+     * {@code WATCH in eff AND READ in eff} (see below). With empty role maps and an empty {@code roles}
+     * argument this reduces exactly to the own-grants-only evaluation. The walk length is bounded by the
+     * number of stored prefixes <= the key plus the principal's role rules; for a control-plane policy
+     * set this is negligible.
      *
      * @param principal  the principal name (non-null)
      * @param roles      the authn-asserted role names for this request (non-null; may be empty; must
@@ -420,15 +392,14 @@ public final class AclService {
         EnumSet<Permission> allow = EnumSet.noneOf(Permission.class);
         EnumSet<Permission> deny = EnumSet.noneOf(Permission.class);
 
-        // (1) The principal's OWN per-prefix grants - the historical union-of-ancestors walk, unchanged.
+        // (1) The principal's OWN per-prefix grants - the union-of-ancestors walk.
         accumulateOwnGrants(principal, key, allow, deny);
 
         // (2) Role grants. Effective roles = authn-asserted (the `roles` argument) union ACL-static
         // bindings (assignRole / principalRoles); both empty by default. Each resolved, DEFINED role's
         // flattened PolicyRules whose literal prefix matches the key fold ALLOW/DENY into the SAME
         // accumulators, so a role ALLOW composes with own ALLOWs and a role DENY is subtracted with the
-        // same absolute precedence below. When both sources are empty (the deployed config) this adds
-        // nothing.
+        // same absolute precedence below.
         Set<String> staticRoles = principalRoles.getOrDefault(principal, Set.of());
         if (!roles.isEmpty() || !staticRoles.isEmpty()) {
             Set<String> effectiveRoles;
@@ -458,9 +429,8 @@ public final class AclService {
         // reload is observed all-old or all-new, never torn. Effective config roles = authn-asserted
         // (`roles`) union this principal's CONFIG bindings; each DEFINED config role's matching PolicyRules
         // fold ALLOW/DENY into the SAME accumulators (config ALLOW composes; config DENY keeps the absolute
-        // precedence applied below). The outer guard short-circuits on the EMPTY snapshot (production
-        // defines no _acl/ keys) -> this block contributes nothing -> byte-identical to the pre-policy-layer
-        // own+static-role evaluation. (The config role layer and the imperative role layer (2) are
+        // precedence applied below). The outer guard short-circuits on an EMPTY snapshot, so an unconfigured
+        // policy contributes nothing here. (The config role layer and the imperative role layer (2) are
         // independent additive sub-layers - a name is resolved against the source it was bound through,
         // while an authn-asserted name is resolved against both - see ConfigPolicy.)
         ConfigPolicy cp = this.configPolicyRef.get().policy();   // single acquire read - never torn
@@ -494,16 +464,16 @@ public final class AclService {
         // falls out of the empty initial allow set. `allow` is now the effective set eff = allow − deny.
         allow.removeAll(deny);
 
-        // INV-WATCH-READ enforcement point. A watch is a streaming read, so effective WATCH is floored
-        // by READ: WATCH is authorized only when BOTH WATCH and READ survive in eff. Consequences - a
-        // WATCH-without-READ grant yields no watch authz; a deny of READ (or of WATCH) at any matching
+        // WATCH-requires-READ enforcement point. A watch is a streaming read, so effective WATCH is
+        // floored by READ: WATCH is authorized only when BOTH WATCH and READ survive in eff. Consequences -
+        // a WATCH-without-READ grant yields no watch authz; a deny of READ (or of WATCH) at any matching
         // ancestor (own OR role) also removes effective WATCH. NOTE this floors a SINGLE KEY: the
         // accumulation above unions only `key`'s ANCESTOR grants, so it cannot see a READ/WATCH deny on
         // a DESCENDANT of `key`. A subtree/FULL watch is therefore NOT authorized by one
         // isAllowed(p, subtreeRoot, WATCH) call - the watch-subscribe path must apply this floor over
-        // the WHOLE target (per delivered key, or a whole-target cover-check via
-        // WatchAuthz.authorizeWatch), else it would over-expose a denied descendant. Every other
-        // capability (READ/LIST/WRITE/ADMIN) is decided by exact membership.
+        // the WHOLE target (per delivered key, or a whole-target cover-check via coversTarget), else it
+        // would over-expose a denied descendant. Every other capability (READ/LIST/WRITE/ADMIN) is
+        // decided by exact membership.
         if (permission == Permission.WATCH) {
             return allow.contains(Permission.WATCH) && allow.contains(Permission.READ);
         }
@@ -512,7 +482,7 @@ public final class AclService {
 
     /**
      * Assembles the principal's <b>complete effective {@link PolicyRule} set</b> - the union of its own
-     * per-prefix grants, its role grants, and its config-sourced grants - the rule collection the dormant
+     * per-prefix grants, its role grants, and its config-sourced grants - the rule collection the
      * whole-target predicates {@link #coversTarget} / {@link #authorizesWatch} consume. This is the
      * gate's rule-assembly step: a PREFIX/FULL watch (or {@code list}) authorization needs the
      * <b>whole-subtree</b> cover-check, which {@link #isAllowed} cannot provide because it unions only a
@@ -526,9 +496,7 @@ public final class AclService {
      *       {@link GrantEntry} becomes one {@link PolicyRule}{@code (prefix, allow, deny)}. The
      *       <b>complete</b> set is returned (not just ancestors of some target): {@link #coversTarget}
      *       itself filters by the ancestor-or-equal / interior prefix relationship, so the complete set
-     *       is both correct and the source of the interior-{@code DENY} term. (Production holds one
-     *       prefix {@code ""}; the walk is over a small control-plane policy set - watch creation is
-     *       infrequent, never per-event.)</li>
+     *       is both correct and the source of the interior-{@code DENY} term.</li>
      *   <li><b>Imperative role grants</b> - effective roles = the authn-asserted {@code roles} union the
      *       {@link #assignRole ACL-static} bindings, resolved against the {@link #defineRole defined}
      *       roles; each resolved role contributes <b>all</b> its {@link Role#rules() rules}.</li>
@@ -539,9 +507,8 @@ public final class AclService {
      * </ol>
      * Each role contributes <b>all</b> its rules (not only those matching some key) because, again,
      * {@link #coversTarget} does the prefix filtering. With empty role maps and an empty {@code roles}
-     * argument the result is exactly the principal's own grants (the deployed config), so a watch over
-     * the root {@code ""} is authorized iff that principal holds the root {@code READ} AND {@code WATCH}
-     * grant.
+     * argument the result is exactly the principal's own grants, so a watch over the root {@code ""} is
+     * authorized iff that principal holds the root {@code READ} AND {@code WATCH} grant.
      *
      * @param principal the principal whose effective rules to assemble (non-null)
      * @param roles     the authn-asserted role names for this request (non-null; may be empty)
@@ -567,7 +534,7 @@ public final class AclService {
         }
 
         // (2) Imperative role grants - effective roles = asserted union ACL-static bindings, resolved against
-        // the defined roles (the SAME resolution isAllowed performs; both empty by default -> no contribution).
+        // the defined roles (the SAME resolution isAllowed performs).
         Set<String> staticRoles = principalRoles.getOrDefault(principal, Set.of());
         if (!roles.isEmpty() || !staticRoles.isEmpty()) {
             for (String roleName : unionRoleNames(roles, staticRoles)) {
@@ -580,7 +547,7 @@ public final class AclService {
 
         // (3) Config-sourced role grants - read the snapshot EXACTLY ONCE (never torn). Effective config
         // roles = asserted union config bindings, resolved against the config roles (the SAME resolution
-        // isAllowed performs; EMPTY snapshot in production -> no contribution -> own-grants only).
+        // isAllowed performs).
         ConfigPolicy cp = this.configPolicyRef.get().policy();
         if (!cp.roles().isEmpty() || !cp.bindings().isEmpty()) {
             Set<String> cfgBindings = cp.bindings().getOrDefault(principal, Set.of());
@@ -619,7 +586,7 @@ public final class AclService {
      * (or {@code list}) authorization needs, and the one a single-key
      * {@link #isAllowed(String, Set, String, Permission)} structurally <b>cannot</b> provide. It is
      * deliberately {@code static}: it reads <b>no</b> instance ACL state, so it can decide only from the
-     * rules handed in - the strongest possible proof it changes no existing behavior.
+     * rules handed in.
      * <p>
      * Over the literal-prefix model ({@link PolicyRule#matches} is {@code key.startsWith(prefix)}), in
      * <b>one</b> O(#rules) pass:
@@ -651,10 +618,8 @@ public final class AclService {
      * clarity over micro-optimization for a security-crux predicate. Deny-precedence is absolute: (ii) can
      * reject regardless of (i).
      * <p>
-     * <b>This method has no call sites yet.</b> The runtime is byte-identical. The whole-target
-     * authorization gate that assembles the principal's unioned rule set and calls this is the
-     * watch-subscribe path; see the docs-only {@code WatchAuthz#authorizeWatch} for the shape it realizes
-     * in the literal-prefix model.
+     * The whole-target authorization gate that assembles the principal's unioned rule set and calls this
+     * is the watch-subscribe path (see {@code AclServiceWatchAuthorizer} in the server module).
      * <p>
      * <b>The {@code rules} collection is the principal's unioned rule set</b> - own union role union config,
      * the same sources {@link #isAllowed} accumulates - assembled by that gate (each own
@@ -665,19 +630,17 @@ public final class AclService {
      * <b>Literal, not segment-aware.</b> Matching is the same raw {@code startsWith} {@link #isAllowed} and
      * {@link PolicyRule#matches} use, so {@code coversTarget} is <b>exactly faithful to the literal model
      * {@code isAllowed} enforces</b> - it never reports a subtree covered when {@code isAllowed} would deny
-     * some key in it, i.e. no exposure beyond {@code isAllowed}. Segment-aware matching is deferred,
-     * accepted for V1 and pinned by a test; measured against segment-aware intent the deferral cuts both
-     * ways - an ALLOW on {@code "team"} over-grants coverage of {@code "teamX"} while a DENY on
-     * {@code "team"} over-denies it - so a segment-confusable carve-out stays fail-closed while a
-     * segment-confusable grant over-covers, exactly as the deployed flat-key {@code isAllowed} already does.
+     * some key in it, i.e. no exposure beyond {@code isAllowed}. Segment-aware matching is a known,
+     * accepted limitation, pinned by a test; the deferral cuts both ways - an ALLOW on {@code "team"}
+     * over-grants coverage of {@code "teamX"} while a DENY on {@code "team"} over-denies it - so a
+     * segment-confusable carve-out stays fail-closed while a segment-confusable grant over-covers,
+     * exactly as the flat-key {@code isAllowed} already does.
      * <p>
      * <b>FULL ({@code target == ""}).</b> {@code "".startsWith(A.prefix)} holds <b>only</b> when
      * {@code A.prefix == ""}, so FULL coverage requires a <b>root-prefix ALLOW</b> carrying {@code cap};
      * and at {@code target == ""} the interior disjunct {@code D.prefix.startsWith("")} is true for
      * <b>every</b> deny, so <b>any</b> {@code cap}-DENY anywhere blocks FULL - exactly
-     * "root grant AND no {@code cap}-DENY anywhere." In the deployed config only
-     * {@code grant("", "root", allOf)} holds the root grant, so full-scope watch authorization falls
-     * straight out of the predicate.
+     * "root grant AND no {@code cap}-DENY anywhere."
      * <p>
      * <b>Cost.</b> O(#rules), one pass, with <b>no</b> store scan and <b>no</b> key enumeration: the
      * subtree is authorized once, not per delivered key.
@@ -712,7 +675,7 @@ public final class AclService {
     }
 
     /**
-     * The INV-WATCH-READ floor of {@link #isAllowed} (effective {@code WATCH} = {@code WATCH} AND
+     * The WATCH-requires-READ floor of {@link #isAllowed} (effective {@code WATCH} = {@code WATCH} AND
      * {@code READ}) <b>lifted to the whole {@code target} subtree</b>: a watch over a subtree/FULL target
      * is authorized only when the rule set {@linkplain #coversTarget covers} the entire subtree with
      * <b>both</b> {@code READ} <b>and</b> {@code WATCH}. A watch is a streaming read, so it MUST NEVER
@@ -721,8 +684,8 @@ public final class AclService {
      * {@code isAllowed(p, subtreeRoot, WATCH)} cannot. Pure and {@code static}, like
      * {@link #coversTarget} (null-arg validation is delegated to it).
      * <p>
-     * <b>This method has no call sites yet.</b> The whole-target watch gate that assembles the rule set
-     * and calls this is the watch-subscribe path; cf. the docs-only {@code WatchAuthz#authorizeWatch}.
+     * The whole-target watch gate that assembles the rule set and calls this is the watch-subscribe
+     * path (see {@code AclServiceWatchAuthorizer} in the server module).
      *
      * @param rules  the principal's effective (unioned own union role union config) rule set (non-null)
      * @param target the subtree root to authorize a watch over; {@code ""} is FULL/root (non-null)
@@ -737,9 +700,8 @@ public final class AclService {
 
     /**
      * Accumulates the principal's OWN per-prefix grants for {@code key} into {@code allow}/{@code deny}:
-     * the union of <b>every</b> matching ancestor prefix (not longest-match-only). This is the historical
-     * {@link #isAllowed} walk, extracted verbatim so the own-grants contribution is unchanged; the role
-     * layer folds into the same two accumulators afterward.
+     * the union of <b>every</b> matching ancestor prefix (not longest-match-only). Extracted from
+     * {@link #isAllowed} so the role layer can fold into the same two accumulators afterward.
      */
     private void accumulateOwnGrants(String principal, String key,
                                      EnumSet<Permission> allow, EnumSet<Permission> deny) {
@@ -763,7 +725,7 @@ public final class AclService {
     }
 
     /**
-     * Defensive, immutable copy of a permission set, via {@link EnumSet#copyOf} as the prior contract did.
+     * Defensive, immutable copy of a permission set via {@link EnumSet#copyOf}.
      * Note {@code EnumSet.copyOf} throws on an empty <i>non-</i>{@code EnumSet} collection but accepts an
      * empty {@code EnumSet} (stored as a no-op empty set - harmless: an empty allow grants nothing, an
      * empty deny denies nothing); so the {@code non-empty} javadoc on {@link #grant}/{@link #deny} is a

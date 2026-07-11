@@ -29,7 +29,7 @@ import java.util.stream.Collectors;
  * @param strongReadPrefixes key prefixes whose GETs MUST be served fail-closed
  *                        linearizable; defaults to
  *                        {@code secure/}. Empty disables strong-read enforcement.
- * @param edgePort        the C1 fan-out endpoint port (ADR-0037), or {@code null} to
+ * @param edgePort        the fan-out endpoint port, or {@code null} to
  *                        disable the edge data-plane endpoint (the default - current
  *                        behavior is unchanged when {@code --edge-port} is absent). When
  *                        present, the endpoint reuses the same {@link io.configd.transport.TlsManager}
@@ -70,7 +70,7 @@ public record ServerConfig(
      *   --auth-token      bearer token for API auth (optional)
      *   --strong-read-prefixes comma-separated key prefixes served fail-closed
      *                     linearizable; default "secure/"
-     *   --edge-port       C1 fan-out edge endpoint port (ADR-0037); absent = endpoint
+     *   --edge-port       fan-out edge endpoint port; absent = endpoint
      *                     disabled (default). Reuses the Raft TlsManager (mTLS) when configured.
      *   --config          path to an optional YAML config file (loaded into the ConfigSource by
      *                     {@code ConfigdServer.loadBootConfig}, not stored on this record)
@@ -203,7 +203,7 @@ public record ServerConfig(
         );
     }
 
-    /** True if the C1 fan-out edge endpoint is configured ({@code --edge-port} present). */
+    /** True if the fan-out edge endpoint is configured ({@code --edge-port} present). */
     public boolean edgeEnabled() {
         return edgePort != null;
     }

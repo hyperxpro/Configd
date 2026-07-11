@@ -23,12 +23,12 @@ import java.util.zip.CRC32C;
 
 /**
  * Single-pass encode baseline - the <b>production</b> single-pass {@link EdgeFrameCodec#encodeInto} against the
- * original multi-pass baseline, on the batch-64 signed NOTIFY (the head-to-head Surface-3 shape).
+ * original multi-pass baseline, on the batch-64 signed NOTIFY (the head-to-head surface-3 shape).
  * Run with {@code -prof gc} (B/op, CPU-count-independent on the 2-vCPU box).
  *
  * <p>This differs from {@code FanOutWireH2HBenchmark} (which raced two <em>testkit</em> encoders,
- * {@code H2HCodecs} / {@code NettyWireEncoders}, pre-migration) by measuring the encoder that
- * actually shipped:
+ * {@code H2HCodecs} / {@code NettyWireEncoders}, before the production codec itself was rewritten
+ * to single-pass) by measuring the encoder that actually shipped:
  * <ul>
  *   <li>{@code legacyMultiPassEncode} - a verbatim copy of the {@code EdgeFrameCodec.encode}
  *       (intermediate {@code List<byte[]>}, per-notification + payload + out arrays). The 69,492
@@ -43,7 +43,7 @@ import java.util.zip.CRC32C;
  *       clones) that NEITHER backend removes.</li>
  * </ul>
  * If the two {@code encodeInto} legs ~ {@code messageBuildingFloor} << {@code legacyMultiPassEncode},
- * the single-pass rewrite shipped the win and Netty does not regress the floor (charter section 2.3).
+ * the single-pass rewrite shipped the win and Netty does not regress the floor.
  */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
@@ -132,11 +132,9 @@ public class FanOutEncodeIntoBenchmark {
         }
     }
 
-    // ---------------------------------------------------------------------
-    // A bench-local Netty ByteBuf FrameSink - shape-identical to the production
+    // A bench-local Netty ByteBuf FrameSink, shape-identical to the production
     // io.configd.server.fanout.ByteBufFrameSink (which configd-testkit does not depend on). The
-    // contract proves the production sink byte-identical; this proves the floor on a pooled ByteBuf.
-    // ---------------------------------------------------------------------
+    // production sink is proven byte-identical elsewhere; this proves the floor on a pooled ByteBuf.
     static final class ByteBufFrameSink implements FrameSink {
         private final ByteBuf buf;
 
@@ -155,9 +153,7 @@ public class FanOutEncodeIntoBenchmark {
         }
     }
 
-    // ---------------------------------------------------------------------
-    // Verbatim copy of the original multi-pass EdgeFrameCodec.encode (NOTIFY path) - the baseline.
-    // ---------------------------------------------------------------------
+    // Verbatim copy of the original multi-pass EdgeFrameCodec.encode (NOTIFY path); the baseline.
     private static byte[] legacyEncode(EdgeFrame.Notify frame) {
         byte[] payload = legacyEncodeNotify(frame);
         int totalLen = EdgeFrameCodec.HEADER_SIZE + payload.length + EdgeFrameCodec.TRAILER_SIZE;

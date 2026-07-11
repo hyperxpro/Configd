@@ -65,7 +65,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * microseconds, so the whole class is well under a second of CPU. Each {@code @Property} pins a
  * fixed {@code seed} so a failing input is reproducible and lands in the committed corpus, matching
  * the golden-fixture discipline. The hardcoded {@code @Property(tries = 1)} cases at the bottom are
- * the permanent crash/regression corpus seeded from the Gate-1 attack matrix.
+ * the permanent crash/regression corpus of hand-picked hostile byte shapes.
  */
 class RaftMessageCodecFuzzTest {
 
@@ -90,10 +90,6 @@ class RaftMessageCodecFuzzTest {
             MessageType.RAFT_WITNESS,
             MessageType.RAFT_WITNESS_REPLY,
     };
-
-    // -----------------------------------------------------------------------
-    // 1. Arbitrary payload bytes against EVERY raft decode surface.
-    // -----------------------------------------------------------------------
 
     /**
      * The core oracle: an arbitrary raft type stamped on a wholly arbitrary, adversarially-sized
@@ -123,10 +119,6 @@ class RaftMessageCodecFuzzTest {
         assertOracleHolds(type, groupId, term, payload);
     }
 
-    // -----------------------------------------------------------------------
-    // 2. Structured mutation of a VALID frame's payload.
-    // -----------------------------------------------------------------------
-
     /**
      * Encode a valid message of every type, then overwrite a random 4-byte window of its payload with
      * a hostile int (negative, huge count, Integer.MAX/MIN). A mutated frame must decode to SOME valid
@@ -148,9 +140,9 @@ class RaftMessageCodecFuzzTest {
     }
 
     /**
-     * Append trailing garbage to a valid frame's payload. WH-06 makes the fixed-shape request
-     * decoders strict-end, so this is either accepted (types that legitimately tolerate a trailing
-     * optional field) or rejected as {@link IllegalArgumentException} - never a forbidden throwable.
+     * Append trailing garbage to a valid frame's payload. The fixed-shape request decoders are
+     * strict-end, so this is either accepted (types that legitimately tolerate a trailing optional
+     * field) or rejected as {@link IllegalArgumentException} - never a forbidden throwable.
      */
     @Property(tries = 500, seed = "1002")
     void trailingGarbageOnValidFrameNeverViolatesTheOracle(
@@ -176,10 +168,8 @@ class RaftMessageCodecFuzzTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // 3. Bounded allocation: a tiny frame declaring a huge count is rejected
-    //    BEFORE the list/map allocation (no multi-GB heap from 32 attacker bytes).
-    // -----------------------------------------------------------------------
+    // Bounded allocation: a tiny frame declaring a huge count is rejected BEFORE the list/map
+    // allocation (no multi-GB heap from 32 attacker bytes).
 
     /**
      * A minimal AppendEntries header that lies about {@code numEntries} = a near-2^31 value must be
@@ -241,13 +231,11 @@ class RaftMessageCodecFuzzTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // 4. Permanent regression corpus - Gate-1 attack-matrix hostile shapes.
-    //    Each is a hardcoded byte[] case; if any codec change reintroduces a
-    //    forbidden throwable here, CI fails loud on the exact byte pattern.
-    // -----------------------------------------------------------------------
+    // Permanent regression corpus of hand-picked hostile byte shapes. Each is a hardcoded byte[]
+    // case; if any codec change reintroduces a forbidden throwable here, CI fails loud on the exact
+    // byte pattern.
 
-    /** WH-05: a negative InstallSnapshot chunk offset is a clean IllegalArgumentException. */
+    /** A negative InstallSnapshot chunk offset is a clean IllegalArgumentException. */
     @Property(tries = 1, seed = "2001")
     void corpusNegativeInstallSnapshotOffset() {
         ByteBuffer p = ByteBuffer.allocate(29);
@@ -261,7 +249,7 @@ class RaftMessageCodecFuzzTest {
         assertThrows(IllegalArgumentException.class, () -> RaftMessageCodec.decode(frame));
     }
 
-    /** WH-06: trailing bytes past a fully-parsed AppendEntries heartbeat are rejected strict-end. */
+    /** Trailing bytes past a fully-parsed AppendEntries heartbeat are rejected strict-end. */
     @Property(tries = 1, seed = "2002")
     void corpusAppendEntriesTrailingBytes() {
         ByteBuffer p = ByteBuffer.allocate(33);
@@ -311,10 +299,6 @@ class RaftMessageCodecFuzzTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Oracle + dispatch helpers.
-    // -----------------------------------------------------------------------
-
     /**
      * Routes a frame to the correct decode entry point for its type and asserts the resource oracle:
      * a valid message/map OR an {@link IllegalArgumentException}, within the time budget, never a
@@ -356,10 +340,6 @@ class RaftMessageCodecFuzzTest {
         String hex = HexFormat.of().formatHex(data, 0, Math.min(data.length, 48));
         return "len=" + data.length + " hex=" + hex + (data.length > 48 ? "..." : "");
     }
-
-    // -----------------------------------------------------------------------
-    // Arbitraries.
-    // -----------------------------------------------------------------------
 
     @Provide
     Arbitrary<MessageType> raftType() {

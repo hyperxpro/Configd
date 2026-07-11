@@ -162,8 +162,6 @@ class RealHashCompletenessTest {
         }
     }
 
-    // ---- helpers ------------------------------------------------------------
-
     /** A key that {@link StaticShardMap#shardFor} routes to shard {@code g} (GLOBAL scope). */
     private String keyHashingTo(int g) {
         for (int i = 0; i < 100_000; i++) {

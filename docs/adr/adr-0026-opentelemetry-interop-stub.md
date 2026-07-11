@@ -1,4 +1,4 @@
-# ADR-0026: OpenTelemetry Interop Is a Stub for v0.1
+# ADR-0026: OpenTelemetry Interop Is a Documented Bridge, Not a Native Integration
 
 ## Status
 
@@ -6,11 +6,10 @@ Accepted (2026-04-17).
 
 ## Context
 
-The production audit (PA-5012, gap O8) flagged that Configd emits its
-own metrics format via `MetricsRegistry` + `PrometheusExporter` but does
-not speak OpenTelemetry. Most operators expect to receive both metrics
-and traces over OTLP into their existing collector (Tempo / Jaeger /
-Grafana Cloud / Datadog).
+Configd emits its own metrics format via `MetricsRegistry` +
+`PrometheusExporter` but does not speak OpenTelemetry natively. Most
+operators expect to receive both metrics and traces over OTLP into
+their existing collector (Tempo / Jaeger / Grafana Cloud / Datadog).
 
 A full OTel integration involves:
 
@@ -24,21 +23,24 @@ A full OTel integration involves:
    prefers underscores) and whether to bridge the existing
    `MetricsRegistry` or replace it.
 
-This is a multi-week effort. v0.1 ships without it.
+That is a multi-week effort in its own right, and Configd does not take
+it on.
 
 ## Decision
 
-For v0.1 GA we ship:
+Configd ships:
 
-- **Native Prometheus exposition** via `PrometheusExporter` (the
-  histogram-type fix in O6 makes this aggregatable across instances).
+- **Native Prometheus exposition** via `PrometheusExporter`, with
+  histograms emitted as a proper `histogram` type so they aggregate
+  correctly across instances.
 - **A documented bridge contract** (this ADR) describing exactly how an
   operator who needs OTel can wire it up themselves: scrape the
   `/metrics` endpoint with the Prometheus receiver in their OTel
   collector, then forward via OTLP to their backend.
 
-For traces, v0.1 ships **no traces**. Operators wanting distributed
-traces must wait for v0.2.
+Configd emits **no traces**. There are currently zero spans in the
+codebase; operators who need distributed tracing need a separate tool
+for that today.
 
 ## Bridge contract for operators wanting OTel
 
@@ -64,26 +66,25 @@ service:
       exporters: [otlp]
 ```
 
-This is a one-config-file integration. The histograms emit as proper
-`histogram` type per O6 so they remain aggregatable through the OTel
-pipeline.
+This is a one-config-file integration. The histograms emit as a proper
+`histogram` type so they remain aggregatable through the OTel pipeline.
 
 ## Consequences
 
-- v0.1 GA can ship without taking on a 20-dep OTel hard dependency.
+- Configd ships without taking on a ~20-dependency OTel SDK hard
+  dependency.
 - Operators who only need metrics get a clean, low-friction integration.
-- Operators wanting distributed traces are blocked until v0.2 - this is
-  documented as a v0.2 residual.
-- We retain the option to add a native OTel SDK in v0.2 without breaking
-  the Prometheus path (both can coexist).
+- Operators wanting distributed traces need a separate tool for that;
+  Configd does not emit spans.
+- Adding a native OTel SDK later would not need to break the Prometheus
+  path - both could coexist.
 
 ## Related
 
-- O6 / PA-5008/15 - histogram type fix in `PrometheusExporter`
 - ADR-0025 - on-call procurement separation (operator-side observability)
 
 ## Verification
 
-- **Testable via:** the Prometheus exposition path is exercised by `configd-observability/src/test/java/io/configd/observability/PrometheusExporterTest.java`; histogram type emission is asserted there (the O6 fix). The "no OTel SDK on classpath" structural assertion is verifiable by `mvn dependency:tree` returning no `io.opentelemetry:*` artifacts.
+- **Testable via:** the Prometheus exposition path is exercised by `configd-observability/src/test/java/io/configd/observability/PrometheusExporterTest.java`; histogram type emission is asserted there. The "no OTel SDK on classpath" structural assertion is verifiable by `mvn dependency:tree` returning no `io.opentelemetry:*` artifacts.
 - **Invalidated by:** introduction of `io.opentelemetry:opentelemetry-sdk` (or any OTLP exporter) into a production POM - that would silently change the operator integration model.
-- **Operator check:** `curl -sf http://configd-server:9090/metrics | head` returns Prometheus-format histograms (`# TYPE ... histogram`); operator OTel collector scrapes that endpoint per the config snippet above. Distributed-trace spans are NOT YET WIRED in v0.1 (operator must wait for v0.2).
+- **Operator check:** `curl -sf http://configd-server:9090/metrics | head` returns Prometheus-format histograms (`# TYPE ... histogram`); operator OTel collector scrapes that endpoint per the config snippet above. Configd does not emit distributed-trace spans - there is nothing to wire.

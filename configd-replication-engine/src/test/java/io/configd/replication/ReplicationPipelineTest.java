@@ -25,10 +25,6 @@ class ReplicationPipelineTest {
         pipeline = new ReplicationPipeline(MAX_BATCH_SIZE, MAX_BATCH_BYTES, MAX_BATCH_DELAY_NANOS);
     }
 
-    // ========================================================================
-    // Constructor validation
-    // ========================================================================
-
     @Nested
     class ConstructorValidation {
 
@@ -63,10 +59,6 @@ class ReplicationPipelineTest {
         }
     }
 
-    // ========================================================================
-    // Empty pipeline
-    // ========================================================================
-
     @Nested
     class EmptyPipeline {
 
@@ -91,10 +83,6 @@ class ReplicationPipelineTest {
             assertTrue(batch.isEmpty());
         }
     }
-
-    // ========================================================================
-    // Offer and pending tracking
-    // ========================================================================
 
     @Nested
     class OfferAndPending {
@@ -131,10 +119,6 @@ class ReplicationPipelineTest {
         }
     }
 
-    // ========================================================================
-    // Flush by count
-    // ========================================================================
-
     @Nested
     class FlushByCount {
 
@@ -151,7 +135,6 @@ class ReplicationPipelineTest {
             for (int i = 0; i < MAX_BATCH_SIZE - 1; i++) {
                 pipeline.offer(new byte[]{(byte) i});
             }
-            // Time hasn't elapsed either
             assertFalse(pipeline.shouldFlush(0L));
         }
 
@@ -166,16 +149,11 @@ class ReplicationPipelineTest {
             assertArrayEquals(new byte[]{0}, batch.get(0));
             assertArrayEquals(new byte[]{3}, batch.get(3));
 
-            // Pipeline should be empty after flush
             assertEquals(0, pipeline.pendingCount());
             assertEquals(0L, pipeline.pendingBytes());
             assertFalse(pipeline.shouldFlush(Long.MAX_VALUE));
         }
     }
-
-    // ========================================================================
-    // Flush by bytes
-    // ========================================================================
 
     @Nested
     class FlushByBytes {
@@ -200,19 +178,14 @@ class ReplicationPipelineTest {
         }
     }
 
-    // ========================================================================
-    // Flush by time
-    // ========================================================================
-
     @Nested
     class FlushByTime {
 
         @Test
         void shouldFlushWhenTimeExceeded() {
             pipeline.offer(new byte[]{1});
-            // First call initializes the timer
+            // The batching timer starts on this first shouldFlush check, not on offer().
             assertFalse(pipeline.shouldFlush(0L));
-            // Second call checks against the timer
             assertTrue(pipeline.shouldFlush(MAX_BATCH_DELAY_NANOS));
         }
 
@@ -226,22 +199,16 @@ class ReplicationPipelineTest {
         @Test
         void timerResetsAfterFlush() {
             pipeline.offer(new byte[]{1});
-            pipeline.shouldFlush(0L); // initialize timer
+            pipeline.shouldFlush(0L); // starts the timer (return value unused here)
 
             pipeline.flush();
 
-            // Add new entry - timer should restart
             pipeline.offer(new byte[]{2});
             assertFalse(pipeline.shouldFlush(MAX_BATCH_DELAY_NANOS - 1));
-            // Initialize new timer
-            pipeline.shouldFlush(1_000_000L);
+            pipeline.shouldFlush(1_000_000L); // starts the new batch's timer
             assertTrue(pipeline.shouldFlush(1_000_000L + MAX_BATCH_DELAY_NANOS));
         }
     }
-
-    // ========================================================================
-    // Reset
-    // ========================================================================
 
     @Nested
     class Reset {
@@ -250,7 +217,7 @@ class ReplicationPipelineTest {
         void resetClearsAllState() {
             pipeline.offer(new byte[]{1, 2, 3});
             pipeline.offer(new byte[]{4, 5});
-            pipeline.shouldFlush(0L); // initialize timer
+            pipeline.shouldFlush(0L); // starts the timer (return value unused here)
 
             pipeline.reset();
 
@@ -260,10 +227,6 @@ class ReplicationPipelineTest {
             assertTrue(pipeline.flush().isEmpty());
         }
     }
-
-    // ========================================================================
-    // Flush returns unmodifiable list
-    // ========================================================================
 
     @Nested
     class FlushUnmodifiable {
@@ -276,10 +239,6 @@ class ReplicationPipelineTest {
                     () -> batch.add(new byte[]{99}));
         }
     }
-
-    // ========================================================================
-    // Multiple batches
-    // ========================================================================
 
     @Nested
     class MultipleBatches {
@@ -296,7 +255,6 @@ class ReplicationPipelineTest {
             assertEquals(1, batch2.size());
             assertArrayEquals(new byte[]{3}, batch2.get(0));
 
-            // batch1 should not be affected
             assertEquals(2, batch1.size());
         }
     }

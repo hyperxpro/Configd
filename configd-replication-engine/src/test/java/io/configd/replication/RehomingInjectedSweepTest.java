@@ -113,8 +113,8 @@ class RehomingInjectedSweepTest {
     @Timeout(600) // pure DEADLOCK ceiling (a correct run is ~seconds); see class doc - NOT a throughput budget
     void rehomingUnderConcurrentMultiOwnerWorkload_holdsInvariants_keepsCommitting_zeroFires() throws Exception {
         // Seed-sweep: each seed drives a different rehome SEQUENCE; real-executor scheduling adds
-        // interleaving diversity on top. CI runs 1 sweep (fast smoke); the S3 verification runs many
-        // (-Dconfigd.sweep.count=N). -Dconfigd.sweep.iters scales each sweep's per-producer workload.
+        // interleaving diversity on top. CI runs 1 sweep (fast smoke); a fuller verification pass runs
+        // many (-Dconfigd.sweep.count=N). -Dconfigd.sweep.iters scales each sweep's per-producer workload.
         int sweeps = Integer.getInteger("configd.sweep.count", 1);
         long baseSeed = Long.getLong("configd.sweep.seed", 20260622L);
         for (int s = 0; s < sweeps; s++) {

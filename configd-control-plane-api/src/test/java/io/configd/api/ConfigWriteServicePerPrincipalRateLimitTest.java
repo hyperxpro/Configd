@@ -53,8 +53,8 @@ class ConfigWriteServicePerPrincipalRateLimitTest {
         byte[] v = "v".getBytes();
         assertInstanceOf(ConfigWriteService.WriteResult.Committed.class,
                 svc.put("k1", v, ConfigScope.GLOBAL, "A"));
-        // Same global bucket: A's second AND B's first are both shed - the old, NON-isolated behavior
-        // this fix replaces (kept as a guard that the legacy path is unchanged).
+        // Same global bucket: A's second AND B's first are both shed - the shared-bucket behavior
+        // the per-principal path avoids (kept as a guard that the legacy path is unchanged).
         assertInstanceOf(ConfigWriteService.WriteResult.Overloaded.class,
                 svc.put("k2", v, ConfigScope.GLOBAL, "A"));
         assertInstanceOf(ConfigWriteService.WriteResult.Overloaded.class,

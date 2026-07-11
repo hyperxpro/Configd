@@ -80,7 +80,7 @@ class EdgeFrameCodecV4GoldenFixtureTest {
         assertEquals(true, all.stream().anyMatch(f -> f.type() == FrameType.REFRESH_AUTH), "REFRESH_AUTH covered");
     }
 
-    // ---- the type<->version legality matrix -----------------------------------------------------
+    // the type<->version legality matrix
 
     @Test
     void authFrameCannotBeEncodedUnderABusinessVersion() {
@@ -120,7 +120,7 @@ class EdgeFrameCodecV4GoldenFixtureTest {
                 () -> EdgeFrameCodec.decode(frame)).code());
     }
 
-    // ---- frame model guards + redaction ---------------------------------------------------------
+    // frame model guards + redaction
 
     @Test
     void aClientCertificateCannotRideAnAuthFrame() {

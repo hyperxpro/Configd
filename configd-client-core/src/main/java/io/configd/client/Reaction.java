@@ -2,17 +2,16 @@ package io.configd.client;
 
 /**
  * The classified reaction to a terminal edge frame — the output of {@link ErrorClassifier}. Encodes the
- * §07 {@code (code, carrier)} scope so the connection state machine knows whether to tear the connection
+ * {@code (code, carrier)} scope so the connection state machine knows whether to tear the connection
  * down, end one watch, or keep streaming.
  *
  * <ul>
  *   <li>{@link Fatal} — the connection is dead; raise the carried exception.</li>
- *   <li>{@link PerWatch} — one watch ended; the connection and sibling watches survive (Gate 3 delivers the
- *       carried exception to that watch handle).</li>
+ *   <li>{@link PerWatch} — one watch ended; the connection and sibling watches survive.</li>
  *   <li>{@link CatchUp} — {@code DEMOTED_TO_CATCHUP} (7): non-fatal — the session stays open and switches to
- *       catch-up (snapshot) mode; drain and ack promptly (Gate 2/3).</li>
+ *       catch-up (snapshot) mode; drain and ack promptly.</li>
  *   <li>{@link CancelAck} — {@code SERVER_SHUTDOWN} (9) on a {@code WATCH_CANCELED}: the expected
- *       acknowledgement of the driver's own {@code WATCH_CANCEL}; not an error, do not reconnect (Gate 3).</li>
+ *       acknowledgement of the driver's own {@code WATCH_CANCEL}; not an error, do not reconnect.</li>
  * </ul>
  */
 public sealed interface Reaction

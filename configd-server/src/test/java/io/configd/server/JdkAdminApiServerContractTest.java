@@ -2,10 +2,10 @@ package io.configd.server;
 
 /**
  * The full admin / control-plane contract on the JDK {@link HttpApiServer} transport - the
- * incumbent transport, re-proven through the shared {@link AbstractAdminApiServerContract} after the
- * decision logic was extracted into {@link AdminApiHandler}. This is the baseline the
- * two Netty subclasses must match byte-for-byte; together the three classes are the
- * equivalence-by-construction proof for the transport swap.
+ * incumbent transport, re-proven through the shared {@link AbstractAdminApiServerContract}, whose
+ * decision logic lives in {@link AdminApiHandler}. This is the baseline the two Netty subclasses
+ * must match byte-for-byte; together the three classes are the equivalence-by-construction proof
+ * for the transport swap.
  */
 class JdkAdminApiServerContractTest extends AbstractAdminApiServerContract {
 

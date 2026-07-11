@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * The Gate-3 shared-connection multiplex (§06 W6-4 / W8-6a): two from-now watches ride ONE connection, each
+ * The shared-connection multiplex: two from-now watches ride ONE connection, each
  * demultiplexed by {@code watch_id}; a per-watch terminal ends only that watch while its sibling keeps
  * streaming (the surviving-siblings guarantee a dedicated-per-watch client can never exercise); and a cursored
  * share is refused loudly.
@@ -140,7 +140,7 @@ class EdgeWatchMultiplexTest {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(trustedConfig(server.port()))) {
                 Watch host = client.watch(WatchTarget.key("/a"), WatchOptions.defaults());
                 host.awaitCreated(Duration.ofSeconds(10));
-                // A cursored (independently-resumed) watch cannot ride a shared drain (W8-6a / F10-1b).
+                // A cursored (independently-resumed) watch cannot ride a shared drain.
                 IllegalStateException ex = assertThrows(IllegalStateException.class, () ->
                         client.watch(WatchTarget.key("/b"),
                                 WatchOptions.defaults().resume(WatchCursor.of(0, 5)).shareConnectionOf(host)));
@@ -148,8 +148,6 @@ class EdgeWatchMultiplexTest {
             }
         }
     }
-
-    // -----------------------------------------------------------------------
 
     private static long readCreate(MockEdgeServer.Conn conn) throws IOException {
         return ((EdgeFrame.WatchCreate) conn.readFrame()).watchId();

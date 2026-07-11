@@ -3,19 +3,18 @@
 ## Status
 Superseded - partially. The GC choice (ZGC on JDK 25) stands; library-level claims do not.
 
-> **Note (2026-04-16, Verification Phase V8 re-audit):** Sections of this
-> ADR assert Netty, gRPC-java, and Spring Boot as the implementation
-> stack; none of those libraries are present in the actual codebase (see
-> ADR-0010 Superseded note, ADR-0016 Not Implemented note, and finding
-> F-0072). The "Why not GraalVM" and "Influenced by" sections describe
-> a deployment model that was not carried forward. The ZGC / generational
-> ZGC / heap sizing / allocation-rate guidance in this ADR remains
-> authoritative. F-0041 and F-0042 (2026-04-16) document residual
-> allocations above the HAMT leaf that this ADR's "zero-allocation read
-> path" section did not account for; those are tracked separately.
+> **Note (2026-04-16):** Sections of this ADR assert Netty, gRPC-java, and
+> Spring Boot as the implementation stack; none of those libraries are
+> present in the actual codebase (see the ADR-0010 Superseded note and the
+> ADR-0016 Not Implemented note). The "Why not GraalVM" and "Influenced by"
+> sections describe a deployment model that was not carried forward. The
+> ZGC / generational ZGC / heap sizing / allocation-rate guidance in this
+> ADR remains authoritative. A later re-audit found residual allocations
+> above the HAMT leaf that this ADR's "zero-allocation read path" section
+> did not account for; those are tracked separately.
 
 ## Context
-The system requires < 1ms p99 edge reads and < 5ms p999. JVM garbage collection pauses are a known threat to coordination services: ZooKeeper's 500ms GC pauses trigger cascading session expirations across all connected clients (the gap analysis). The ZK troubleshooting guide warns "things may start going wrong" when pauses exceed session timeout. The heap sizing dilemma (< 2 GB = frequent pauses, > 8 GB = longer full GC when they occur) limits ZooKeeper's effective in-memory data capacity to 4-8 GB. The system must handle datasets up to 10 GB per shard (10^9 keys / 100 shards x 1 KB) without GC-induced latency violations.
+The system requires < 1ms p99 edge reads and < 5ms p999. JVM garbage collection pauses are a known threat to coordination services: ZooKeeper's 500ms GC pauses trigger cascading session expirations across all connected clients. The ZK troubleshooting guide warns "things may start going wrong" when pauses exceed session timeout. The heap sizing dilemma (< 2 GB = frequent pauses, > 8 GB = longer full GC when they occur) limits ZooKeeper's effective in-memory data capacity to 4-8 GB. The system must handle datasets up to 10 GB per shard (10^9 keys / 100 shards x 1 KB) without GC-induced latency violations.
 
 ## Decision
 We adopt a multi-layered GC mitigation strategy:

@@ -57,7 +57,7 @@ class AclServiceByteIdentityDifferentialTest {
              "db.conn.pool", "miss"};
 
     /**
-     * The independent pre-O6 reference oracle. Mirrors {@link AclService#grant}/{@link AclService#deny}/
+     * The independent reference oracle. Mirrors {@link AclService#grant}/{@link AclService#deny}/
      * {@link AclService#revoke} overwrite semantics (grant replaces a principal's ALLOW at the exact
      * prefix, deny replaces its DENY, revoke removes the whole entry) and evaluates a decision by a
      * brute-force scan over <b>all</b> stored prefixes - intentionally a different traversal than
@@ -125,13 +125,11 @@ class AclServiceByteIdentityDifferentialTest {
         return caps;
     }
 
-    // -----------------------------------------------------------------------
-    // (a) + (b): fuzz AclService against the independent oracle through four lenses, empty role maps.
-    // -----------------------------------------------------------------------
+    // Fuzz AclService against the independent oracle through four lenses, empty role maps.
 
     /**
-     * Over many random configurations (built only from grant/deny/revoke - the pre-O6 API surface, so the
-     * role maps stay empty as in production), every (principal, key, permission) decision must equal the
+     * Over many random configurations (built only from grant/deny/revoke, so the role maps stay empty as
+     * in production), every (principal, key, permission) decision must equal the
      * independent oracle through all four lenses:
      * <ul>
      *   <li>L1 - 3-arg {@code isAllowed(p, key, perm)};</li>
@@ -198,9 +196,7 @@ class AclServiceByteIdentityDifferentialTest {
         assertTrue(assertions >= 5000, "expected a large differential space; ran " + assertions);
     }
 
-    // -----------------------------------------------------------------------
-    // (c): the deployed grant("","root",allOf), evaluated through the production {"admin"} 4-arg path.
-    // -----------------------------------------------------------------------
+    // The deployed grant("","root",allOf), evaluated through the production {"admin"} 4-arg path.
 
     /**
      * Replicates the deployed config verbatim - the sole {@code grant("", "root", allOf)} - and drives it
@@ -238,10 +234,8 @@ class AclServiceByteIdentityDifferentialTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Hardening: even an ACL-static binding to an UNDEFINED role (which flips the empty-roles guard's
     // branch and runs the role block) must not perturb a single decision while no role is defined.
-    // -----------------------------------------------------------------------
 
     /**
      * Strictly beyond the production shape (server code never calls {@code assignRole}), this proves the
@@ -303,14 +297,13 @@ class AclServiceByteIdentityDifferentialTest {
         assertTrue(assertions >= 1000, "expected a substantial guard-flip space; ran " + assertions);
     }
 
-    // -----------------------------------------------------------------------
-    // (d) An EMPTY config-policy is the PRODUCTION state (no _acl/ keys) - it must not perturb
+    // An EMPTY config-policy is the PRODUCTION state (no _acl/ keys) - it must not perturb
     // a single decision. Nor must a config-policy whose roles cannot be resolved for the query: a binding to
     // an UNDEFINED config role (flips the config-block guard, resolution finds nothing), or a DEFINED-but-
     // UNBOUND, un-asserted config role with broad rules (no principal holds it). The oracle has no config
     // concept, so each must leave every decision equal to the own-grants oracle - byte-identical, exactly
-    // as in production. This is the 2a analog of {@link #undefinedStaticBindingFlipsGuardYetStaysByteIdentical}.
-    // -----------------------------------------------------------------------
+    // as in production. This is the config-layer analog of
+    // {@link #undefinedStaticBindingFlipsGuardYetStaysByteIdentical}.
     @Test
     void configPolicyEmptyOrNonContributingStaysByteIdentical() {
         Random r = new Random(0xC0FD_2A0FFL);

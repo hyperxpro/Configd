@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-# =============================================================================
-# smoke-multinode.sh — Configd CONTROL-PLANE-ONLY multi-node smoke gate
-# -----------------------------------------------------------------------------
-# Authored by the sre-auditor (audit-session-1) as harness-enablement.
+# smoke-multinode.sh — CONTROL-PLANE-ONLY multi-node smoke gate
 #
 # SCOPE: control-plane only (steps 2,3,4,6 of the smoke deliverable).
 #   The EDGE propagation step (step 5) is DELIBERATELY OMITTED because it is
@@ -10,13 +7,13 @@
 #   (only /health/*, /metrics, /v1/config/{key}), the FanOutBuffer is
 #   appended-to but never drained (ConfigdServer.java:360 is its only ref),
 #   and EdgeConfigClient has no network transport (applyDelta takes an
-#   in-process object). See docs/audit-session-1/smoke-test.md step 5.
+#   in-process object).
 #
 # WHAT IT PROVES (exits non-zero on ANY failure):
 #   - 3-node localhost cluster comes up, all /health/ready == 200
 #   - a leader is elected (one node commit-confirms a PUT with 200)
-#   - PUT a config -> 200 (RR-004/ADR-0033: 200 == "Committed: seq=S", returned
-#     ONLY after quorum commit + apply; the write now BLOCKS until commit or the
+#   - PUT a config -> 200 (ADR-0033: 200 == "Committed: seq=S", returned
+#     ONLY after quorum commit + apply; the write blocks until commit or the
 #     5s write deadline, so probe/write curls allow for commit-wait latency)
 #   - read it back from ALL 3 nodes (default GET) and linearizably from leader
 #   - kill -9 the leader, a NEW leader is elected within budget
@@ -24,7 +21,6 @@
 #
 # Budget ~60s. No sudo. Idempotent (cleans up its own ports/dirs on entry+exit).
 # Requires: a built shaded jar at the path below (mvn -pl configd-server package).
-# =============================================================================
 set -u
 
 # Default to THIS repo's freshly-built shaded jar, not a stale external clone.
@@ -60,13 +56,13 @@ rm -rf "$BASE"; mkdir -p "$BASE"
 
 api() { echo "127.0.0.1:$((API_BASE + $1))"; }
 
-# ---- step 2: launch 3 nodes ------------------------------------------------
+# step 2: launch 3 nodes
 echo "[step 2] launching 3-node cluster under $BASE"
 for k in 1 2 3; do
   peers=$(echo "1 2 3" | tr ' ' '\n' | grep -v "^$k$" | paste -sd,)
   dd="$BASE/n$k"; mkdir -p "$dd"
   # Dev smoke drill: the key is co-located in the data dir (single-host test). Opt out of the
-  # D-1 fail-closed guard (prod mounts the key separately — see deploy/compose + ADR-0043).
+  # fail-closed guard (prod mounts the key separately — see deploy/compose + ADR-0043).
   CONFIGD_ALLOW_COLOCATED_SIGNING_KEY=true \
   java -Xmx256m --enable-preview -jar "$JAR" \
     --node-id "$k" --data-dir "$dd" --peers "$peers" \
@@ -91,8 +87,8 @@ done
 pass "all 3 nodes /health/ready == 200 (leader elected)"
 
 # identify leader: the node that COMMIT-CONFIRMS a probe PUT with 200.
-# RR-004/ADR-0033: 200 now means the probe entry actually quorum-committed (a real
-# side-effecting __leader_probe__ write), and the PUT BLOCKS until commit or the 5s
+# ADR-0033: 200 means the probe entry actually quorum-committed (a real
+# side-effecting __leader_probe__ write), and the PUT blocks until commit or the 5s
 # write deadline. --max-time must exceed that deadline so a probe to the leader is
 # not cut off mid-commit and misread as "not leader". A follower returns 503
 # (NotLeader) promptly, so the loop still moves on quickly.
@@ -106,7 +102,7 @@ find_leader() {
   return 1
 }
 # Resolve the initial leader with patience: on a CPU-credit-throttled box the
-# RR-006 real-millisecond election timeout (150-300ms) can let leadership churn
+# real-millisecond election timeout (150-300ms) can let leadership churn
 # faster than a single probe scan, so a node that is leader at probe time may
 # step down before the probe write commits. Retry the whole scan over a generous
 # window (additive patience only — a single 200 still means a real committed
@@ -119,8 +115,8 @@ done
 [ -n "$LEADER" ] || fail "no node accepted a write (no leader) after ~20s of retries"
 pass "leader elected: node $LEADER (api $(api "$LEADER"))"
 
-# ---- step 3: write a config (RR-004/ADR-0033: 200 == COMMITTED) -------------
-# Retry across leader churn: under RR-006's real 150-300ms election timeout a
+# step 3: write a config (ADR-0033: 200 == COMMITTED)
+# Retry across leader churn: under the real 150-300ms election timeout a
 # CPU-starved box (e.g. a credit-exhausted CI runner) can churn leadership
 # faster than one write commits, so a single PUT may see 503 (NotLeader/Lost)
 # even though the cluster is healthy. Re-resolve the leader and retry on any
@@ -139,7 +135,7 @@ done
 echo "  PUT response body: $(echo "$body" | head -1)  (RR-004: 200 == quorum-committed; body 'Committed: seq=S')"
 pass "write committed (200)"
 
-# ---- step 4: read back from all 3 + linearizable from leader ---------------
+# step 4: read back from all 3 + linearizable from leader
 # Followers serve their LOCAL applied state, which lags the leader's commit by
 # a replication round-trip; poll each node up to ~4s rather than a fixed sleep.
 echo "[step 4] read back smoke/k1"
@@ -166,7 +162,7 @@ done
 [ "$lin" = "smoke-value-1" ] || fail "linearizable GET on leader returned '$lin' after retries"
 pass "linearizable GET on leader == smoke-value-1"
 
-# ---- step 6: kill leader, observe re-election, write again -----------------
+# step 6: kill leader, observe re-election, write again
 echo "[step 6] kill -9 leader (node $LEADER) and re-elect"
 kill -9 "${PIDS[$((LEADER - 1))]}" 2>/dev/null
 DEAD="$LEADER"
@@ -179,7 +175,7 @@ done
 pass "new leader elected: node $NEWLEADER"
 
 echo "[step 6] write smoke/k2 to new leader, read back"
-# RR-004/ADR-0033: the PUT blocks until quorum commit or the 5s deadline, so allow
+# ADR-0033: the PUT blocks until quorum commit or the 5s deadline, so allow
 # for commit-wait latency (--max-time 8) — a 200 here is a real committed write.
 # Retry across leader churn (same rationale as step 3): the post-kill cluster may
 # re-elect more than once on a CPU-starved box before a write commits.

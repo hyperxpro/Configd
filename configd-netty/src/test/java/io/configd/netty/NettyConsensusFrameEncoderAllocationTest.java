@@ -95,7 +95,7 @@ class NettyConsensusFrameEncoderAllocationTest {
             assertTrue(eventLoop.submit(() -> Thread.currentThread() instanceof FastThreadLocalThread).get(),
                     "event-loop thread must be a FastThreadLocalThread (the production condition)");
 
-            // ---- the headline contrast, across representative payload sizes ----
+            // The headline contrast, across representative payload sizes.
             System.out.println();
             System.out.println("=== NettyConsensusFrameEncoder per-op heap allocation (getThreadAllocatedBytes) ===");
             System.out.printf("%-10s %24s %24s%n", "payload", "idiomatic(event-loop)", "naive-trap(plain-thread)");
@@ -124,7 +124,7 @@ class NettyConsensusFrameEncoderAllocationTest {
                 }
             }
 
-            // ---- mechanism: the cliff is the FastThreadLocalThread, not pipeline-vs-manual ----
+            // Mechanism: the cliff is the FastThreadLocalThread, not pipeline-vs-manual.
             FrameCodec.Frame f256 = frame(256);
             long naiveEl = measureNaive(eventLoop, f256, 256);       // manual loop, but ON the event loop  -> ~0
             long idiomaticPlain = measureIdiomatic(plain, f256);     // production encoder, but OFF the loop -> ~160

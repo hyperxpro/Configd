@@ -14,7 +14,7 @@ class SlowConsumerPolicyConfigTest {
     @Test
     void defaultsMatchTheDesignTable() {
         SlowConsumerPolicyConfig c = SlowConsumerPolicyConfig.defaults();
-        assertEquals(10_000L, c.queueWarnWindowMs());   // 0 credits for > 10 s analogue
+        assertEquals(10_000L, c.queueWarnWindowMs());   // 0 credits for a window greater than 10 s
         assertEquals(3, c.demoteLimit());
         assertEquals(10, c.gapDemoteLimit());           // gap demotions count more
         assertEquals(60_000L, c.demoteWindowMs());

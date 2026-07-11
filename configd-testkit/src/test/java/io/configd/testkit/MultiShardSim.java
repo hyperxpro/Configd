@@ -18,17 +18,17 @@ import java.util.random.RandomGenerator;
 import java.util.random.RandomGeneratorFactory;
 
 /**
- * The deterministic MULTI-SHARD simulator (charter section 2, "verification machinery
- * FIRST"). Composes {@code S} independent single-group clusters - each a proven
- * {@link ConsistencyPropertyTests.ClusterHarness} of {@code R} nodes - under a {@link ShardMap} that
- * routes a deterministic client workload to the shard that owns each key. Every tick it checks the new
- * cross-shard invariants AND each shard's existing S2 - S4 safety surface ({@link SimInvariants}).
+ * The deterministic multi-shard simulator. Composes {@code S} independent single-group clusters -
+ * each a proven {@link ConsistencyPropertyTests.ClusterHarness} of {@code R} nodes - under a
+ * {@link ShardMap} that routes a deterministic client workload to the shard that owns each key. Every
+ * tick it checks the cross-shard invariants AND each shard's existing safety surface
+ * ({@link SimInvariants}).
  *
  * <p>The whole run is a pure function of the master {@code seed} (each shard is seeded from
  * {@code mix(seed, shardId)}, the workload from {@code mix(seed, WORKLOAD_TAG)}), so a failing seed is
- * replayable - the FoundationDB determinism discipline, lifted to the multi-shard surface.
+ * replayable.
  *
- * <h2>The six multi-shard invariants (charter section 2.2), and how each is checked here</h2>
+ * <h2>The six multi-shard invariants, and how each is checked here</h2>
  * <ol>
  *   <li><b>Routing correctness</b> - every write for key K is proposed ONLY to {@code shardFor(scope,K)};
  *       {@link #routedShardOf} records the (key->shard) decision and {@link #checkRoutingStability} fails
@@ -38,11 +38,11 @@ import java.util.random.RandomGeneratorFactory;
  *       no key is owned by two shards, and the owning shard equals {@code shardFor(key)}.</li>
  *   <li><b>Per-shard linearizability</b> - each shard runs its own {@link SimInvariants#checkAll()} every
  *       tick (version monotonicity, log matching, state-machine safety, single-leader-per-term) plus the
- *       throwing in-node checker (9 in-node invariants). The S2 - S4 surface, instantiated per shard.</li>
+ *       throwing in-node checker.</li>
  *   <li><b>Cross-shard isolation</b> - {@link #faultShardLeader} isolates one shard's leader; the other
- *       shards must keep their safety invariants green AND keep committing ({@link #commitsOn}). Because
- *       shards are independent harnesses, a fault cannot leak - the check proves the machinery did not
- *       wrongly couple them (e.g. via a routing leak, which {@link #checkDisjointOwnership} catches).</li>
+ *       shards must keep their safety invariants green AND keep committing ({@link #commitsAdvancedOn}).
+ *       Because shards are independent harnesses, a fault cannot leak - the check proves the machinery did
+ *       not wrongly couple them (e.g. via a routing leak, which {@link #checkDisjointOwnership} catches).</li>
  *   <li><b>Stale-map redirect correctness</b> - the client caches a leader per shard; when it goes stale
  *       (failover), {@link #write} redirects to the shard's current leader (intra-shard, never crossing
  *       shards) and retries. {@link #checkNoWritesLost} proves every committed-intent write landed (no
@@ -53,7 +53,7 @@ import java.util.random.RandomGeneratorFactory;
  *       bare control harness on the same per-shard seed + op stream.</li>
  * </ol>
  *
- * <p><b>Non-vacuity.</b> The machinery is proven to CATCH the bugs multi-shard routing could introduce: the
+ * <p><b>Non-vacuity.</b> The machinery is proven to catch the bugs multi-shard routing could introduce: the
  * {@code injectBug(...)} flags (and the deliberately-broken routers in {@link ShardRouters}) drive a
  * deliberate mis-route / cross-shard-redirect / dropped-redirect / N=1-divergence, and
  * {@link MultiShardSimTest} asserts the corresponding check goes RED. A correct router stays green.
@@ -63,8 +63,8 @@ import java.util.random.RandomGeneratorFactory;
 final class MultiShardSim {
 
     /** Seed-derivation tags so per-shard streams and the workload never share entropy. */
-    private static final long WORKLOAD_TAG = 0x77F1_5EEDL; // distinct constant for the workload stream
-    static final ConfigScope SCOPE = ConfigScope.GLOBAL; // the only scope wired on the write path today
+    private static final long WORKLOAD_TAG = 0x77F1_5EEDL;
+    static final ConfigScope SCOPE = ConfigScope.GLOBAL; // the only scope wired on the write path
 
     /** A fixed, small keyspace so hash collisions onto shards are genuinely exercised (immutable). */
     private static final String[] KEYSPACE = buildKeyspace();
@@ -106,10 +106,10 @@ final class MultiShardSim {
     private final Map<String, String> intendedWrites = new HashMap<>();
 
     /**
-     * Per-shard commit-progress witness - the MAX applied store version across the shard's replicas
-     * (genuine new-commit signal). NOT the sum: a sum rises when a lagging replica merely catches up to an
-     * existing committed version, so it would falsely report "progress" during a total stall (red-team find,
-     * invariant 4). The max only rises when a NEW entry commits and applies on the most-advanced replica.
+     * Per-shard commit-progress witness: the max applied store version across the shard's replicas (a
+     * genuine new-commit signal). Not the sum -- a sum rises when a lagging replica merely catches up to an
+     * existing committed version, so it would falsely report progress during a total stall. The max only
+     * rises when a new entry commits and applies on the most-advanced replica.
      */
     private final long[] lastSeenMaxVersion;
 
@@ -148,10 +148,6 @@ final class MultiShardSim {
         }
         this.workloadRng = RandomGeneratorFactory.of("L64X128MixRandom").create(mix(seed, WORKLOAD_TAG));
     }
-
-    // ---------------------------------------------------------------------------------------------
-    // Driving
-    // ---------------------------------------------------------------------------------------------
 
     /** Bring every shard to a stable leader and seed the client's leader cache. */
     void electAllLeaders(int maxTicks) {
@@ -303,10 +299,6 @@ final class MultiShardSim {
         return view;
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // Fault injection (cross-shard isolation)
-    // ---------------------------------------------------------------------------------------------
-
     /** Isolate shard {@code s}'s current leader (force a failover ON THAT SHARD ONLY). */
     int faultShardLeader(int s) {
         int leader = shards.get(s).findLeader();
@@ -334,10 +326,6 @@ final class MultiShardSim {
     void healShard(int s) {
         shards.get(s).sim().healAllPartitions();
     }
-
-    // ---------------------------------------------------------------------------------------------
-    // Invariant checks
-    // ---------------------------------------------------------------------------------------------
 
     /** Routing correctness: a key must always resolve to the SAME shard (the map is a function). */
     private void checkRoutingStability(String key, int s) {
@@ -394,7 +382,7 @@ final class MultiShardSim {
      */
     void checkNoWritesLost() {
         // Iterate in sorted key order so the FIRST reported violation is stable across runs (replay
-        // determinism); pass/fail is order-independent regardless (red-team minor nit).
+        // determinism); pass/fail is order-independent regardless.
         for (Map.Entry<String, String> e : new java.util.TreeMap<>(intendedWrites).entrySet()) {
             String key = e.getKey();
             String token = e.getValue();
@@ -416,11 +404,11 @@ final class MultiShardSim {
     }
 
     /**
-     * Cross-shard isolation liveness witness: shard {@code s} made GENUINE new-commit progress since the
-     * last call. Uses the strictly-increasing MAX applied version across replicas - a new entry committed
+     * Cross-shard isolation liveness witness: shard {@code s} made genuine new-commit progress since the
+     * last call. Uses the strictly-increasing max applied version across replicas - a new entry committed
      * and applied on the most-advanced replica. A dead shard (lost quorum) cannot raise its max even as
-     * lagging replicas catch up, so this correctly reports {@code false} for a stalled shard (red-team
-     * find: the prior sum-of-versions witness rose on catch-up and falsely reported progress).
+     * lagging replicas catch up, so this correctly reports {@code false} for a stalled shard (a prior
+     * sum-of-versions witness rose on catch-up and falsely reported progress).
      */
     boolean commitsAdvancedOn(int s) {
         long max = 0;
@@ -432,10 +420,6 @@ final class MultiShardSim {
         lastSeenMaxVersion[s] = max;
         return advanced;
     }
-
-    // ---------------------------------------------------------------------------------------------
-    // Accessors + helpers
-    // ---------------------------------------------------------------------------------------------
 
     int shardCount() { return shardCount; }
     ConsistencyPropertyTests.ClusterHarness shard(int s) { return shards.get(s); }

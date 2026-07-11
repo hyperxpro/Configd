@@ -10,7 +10,7 @@
   "templating": {"list": [{"name": "cluster", "type": "query", "label": "Cluster", "query": "label_values(jvm_heap_used_bytes, cluster)", "datasource": {"type": "prometheus", "uid": "prometheus"}}]},
   "panels": [
     {
-      "id": 1, "title": "Heap used vs max (S5 soak flat ~220–290 MB)", "type": "timeseries",
+      "id": 1, "title": "Heap used vs max (soak baseline ~220-290 MB)", "type": "timeseries",
       "datasource": {"type": "prometheus", "uid": "prometheus"}, "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
       "targets": [
         {"expr": "jvm_heap_used_bytes{cluster=\"$cluster\"}", "legendFormat": "used {{instance}}", "refId": "A"},
@@ -24,13 +24,13 @@
       "targets": [{"expr": "rate(jvm_gc_collection_millis{cluster=\"$cluster\"}[5m]) / 1000", "legendFormat": "GC s/s {{instance}}", "refId": "A"}]
     },
     {
-      "id": 3, "title": "Threads (S5 soak flat ~93)", "type": "timeseries",
+      "id": 3, "title": "Threads (soak baseline ~93)", "type": "timeseries",
       "datasource": {"type": "prometheus", "uid": "prometheus"}, "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
       "targets": [{"expr": "jvm_threads_current{cluster=\"$cluster\"}", "legendFormat": "{{instance}}", "refId": "A"}],
       "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 400}]}}}
     },
     {
-      "id": 4, "title": "Open file descriptors (S5 soak flat ~69)", "type": "timeseries",
+      "id": 4, "title": "Open file descriptors (soak baseline ~69)", "type": "timeseries",
       "datasource": {"type": "prometheus", "uid": "prometheus"}, "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
       "targets": [{"expr": "process_open_fds{cluster=\"$cluster\"}", "legendFormat": "{{instance}}", "refId": "A"}],
       "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 500}]}}}

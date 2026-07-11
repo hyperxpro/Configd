@@ -20,10 +20,8 @@ import static org.junit.jupiter.api.Assertions.fail;
  * format because an upgrading node must replay segments written by the
  * previous release before producing its first new entry.
  *
- * <p>This test is intentionally a stub. There is no v0 WAL fixture yet
- * (the project has not cut a v0.1.0 release at the time of writing), so
- * we cannot honestly assert backwards-compat. When the first version
- * bump lands, the maintainer must:
+ * <p>This test is intentionally a stub. There is no v0 WAL fixture yet, so it cannot honestly
+ * assert backwards-compat. When the first version bump lands, the maintainer must:
  *
  * <ol>
  *   <li>Generate a WAL segment under the previous release and check it

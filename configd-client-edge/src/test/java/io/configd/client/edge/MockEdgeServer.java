@@ -26,7 +26,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * both directions, not a mock codec.
  *
  * <p>Plaintext by default (fast; the auth/framing logic is transport-agnostic); a {@link #startTls} variant
- * drives the §06 F9 TLS cases. Every {@link Handler} runs on its own thread; the server records every frame it
+ * drives the TLS cases. Every {@link Handler} runs on its own thread; the server records every frame it
  * decoded from the client so a test can assert "exactly one {@code AUTH}", "the refreshed token", etc.
  */
 final class MockEdgeServer implements AutoCloseable {

@@ -3,7 +3,7 @@ package io.configd.client;
 /**
  * Persistence for the monotonic replay-protection high-water mark — the highest signing {@code epoch} the
  * client has accepted in a verified delta. Any later delta with {@code 0 < epoch <= highestSeen} is a replay
- * and is rejected (§04 / the reference {@code DeltaApplier}). Persisting it durably is what stops a captured
+ * and is rejected (see the reference {@code DeltaApplier}). Persisting it durably is what stops a captured
  * older leader-signed delta from being replayed <b>across a process restart</b>: without it, a restarted client
  * starts at {@code 0} and would re-accept an already-superseded epoch.
  *

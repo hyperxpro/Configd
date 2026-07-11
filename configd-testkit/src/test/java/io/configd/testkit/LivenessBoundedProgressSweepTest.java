@@ -23,8 +23,7 @@ import java.util.random.RandomGeneratorFactory;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * First-class bounded-progress LIVENESS verdict for the consensus plane. Closes the asymmetry the prior stall work exposed: safety had
- * 10k-seed sweep coverage, liveness had only anecdotes.
+ * Bounded-progress LIVENESS verdict for the consensus plane.
  * <p>
  * Safety sweeps ask "is anything incorrect ever observed". This sweep asks the dual
  * liveness question with a DEADLINE, which is the only honest way to tell a benign
@@ -211,10 +210,10 @@ class LivenessBoundedProgressSweepTest {
                             + " new leader within " + RECOVER_BOUND + " ticks of losing the old one");
             worstReElect = Math.max(worstReElect, reElectTicks);
             // Soak the partition: the majority leader keeps committing writes the minority
-            // can't see AND keeps heartbeating the two dropped minority peers for >10
-            // heartbeat intervals - so its per-peer inflight window toward each pins at the
-            // cap. This precondition caps the partition
-            // is too short to pin the window and the leak never triggers.
+            // can't see, and keeps heartbeating the two dropped minority peers for more than
+            // 10 heartbeat intervals, so its per-peer inflight window toward each pins at the
+            // cap. The partition must be held at least this long, or the window never pins
+            // and the underlying leak never triggers.
             for (int t = 0; t < 700; t++) {
                 c.step();
                 int ldr = c.findLeader();
@@ -227,8 +226,8 @@ class LivenessBoundedProgressSweepTest {
 
             // (3) Heal -> the minority rejoins and the WHOLE cluster must return to full
             //     service (a write committed on ALL N nodes) within a bound. This is the
-            //     propagation-after-reconnect liveness check - and exactly the path
-            //     broke (the new leader's inflight window toward the rejoining minority).
+            //     propagation-after-reconnect liveness check - exactly the path that broke
+            //     (the new leader's inflight window toward the rejoining minority).
             c.net.healAll();
             c.net.setDropRate(0.0);
             int convergeTicks = -1;

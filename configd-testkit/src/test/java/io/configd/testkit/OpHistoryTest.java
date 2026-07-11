@@ -8,12 +8,11 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * section 4.4 / design section 6: the adversarial sim emits a checker-neutral invoke/ok/fail/info
- * op-history in the exact format the configd-linz Porcupine checker already
- * consumes from the real-binary harness, so the B5 linz round can check sim
- * histories without re-instrumenting. This test runs one sim with a
- * {@link HistoryRecorder}, validates the format, and writes a sample
- * {@code history-<seed>.jsonl} for B5 to consume.
+ * The adversarial sim emits a checker-neutral invoke/ok/fail/info op-history in the exact
+ * format the configd-linz Porcupine checker already consumes from the real-binary harness, so
+ * the linearizability check can run against sim histories without re-instrumenting. This test
+ * runs one sim with a {@link HistoryRecorder}, validates the format, and writes a sample
+ * {@code history-<seed>.jsonl} for the checker to consume.
  */
 class OpHistoryTest {
 
@@ -63,8 +62,8 @@ class OpHistoryTest {
                     "line carries the required fields");
         }
 
-        // Write a sample for B5 (linz) to consume. Target a stable repo path under
-        // the module's target dir; also drop a copy into the session captures.
+        // Write a sample for the linearizability checker to consume. Target a stable repo path
+        // under the module's target dir; also drop a copy into the session captures.
         Path out = Path.of("target", "sim-histories");
         Files.createDirectories(out);
         Files.writeString(out.resolve("history-" + seed + ".jsonl"), jsonl);

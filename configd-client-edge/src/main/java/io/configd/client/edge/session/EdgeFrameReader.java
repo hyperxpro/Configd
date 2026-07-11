@@ -15,7 +15,7 @@ import java.io.IOException;
  * proven to only ever return a frame, signal a clean end, or throw a mapped
  * {@link EdgeFrameCodec.CodecException} — never hang, OOM, or throw anything else.
  *
- * <p>Order (§06 F3): read the 4-byte length prefix → {@link EdgeFrameCodec#peekLength} bounds it to
+ * <p>Order: read the 4-byte length prefix → {@link EdgeFrameCodec#peekLength} bounds it to
  * {@code [10, MAX_EDGE_FRAME_SIZE]} <b>and</b> the client's (possibly tighter) {@code maxFrameBytes}
  * <b>before</b> allocating → read exactly {@code length} bytes → {@link EdgeFrameCodec#decode} (CRC before
  * version/type, strict-end). A lying length prefix cannot induce a giant allocation; a truncated frame is
@@ -31,7 +31,7 @@ public final class EdgeFrameReader {
      *
      * @param in            the stream (SO_TIMEOUT governs how long a partial read blocks)
      * @param pinnedVersion the connection's pinned business version, or {@code null} to accept any business
-     *                      version (the pre-pin phase — Gate 1 never pins, so it passes {@code null})
+     *                      version (the pre-pin phase never pins, so it passes {@code null})
      * @param maxFrameBytes the client's frame ceiling (≤ the codec's 2 MiB cap)
      * @return the decoded frame, or {@code null} on a clean end-of-stream at a frame boundary
      * @throws EdgeFrameCodec.CodecException on any malformed / oversize / truncated / bad-CRC frame

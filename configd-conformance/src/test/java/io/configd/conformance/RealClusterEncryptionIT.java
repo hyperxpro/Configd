@@ -43,31 +43,33 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The §4 encryption-compose proof: the Group-C <b>reference driver client</b> round-trips transparently against
- * a REAL {@link ConfigdServer} booted with <b>node-local encryption at rest ENABLED</b> — proving that
- * encryption is an at-rest-only property invisible to the client (the wire and the client API are byte-identical
- * to the plaintext deployment; the client carries no encryption knob).
+ * The encryption-compose proof: the reference driver client round-trips transparently against a REAL
+ * {@link ConfigdServer} booted with <b>node-local encryption at rest ENABLED</b>, proving that encryption
+ * is an at-rest-only property invisible to the client (the wire and the client API are byte-identical to
+ * the plaintext deployment; the client carries no encryption knob).
  *
  * <h2>The two halves (a genuine at-rest differential)</h2>
  * <ul>
  *   <li><b>Encryption ON</b> ({@link #encryptedNodeRoundTripsTheClientAndKeepsValuesOffDiskInCleartext}): a
  *       single encrypted node ({@code -Dconfigd.raft.encryption.enabled=true}, the default HKDF-from-signing-key
- *       KMS — no external KMS). The reference {@link ConfigdHttpClient} does put→get and the reference
- *       {@link ConfigdEdgeClient} hydrates + tails a from-now change — all round-trip correctly. Then a walk of
- *       the node's data dir proves a distinctive canary value the client just committed does NOT appear on disk
- *       in cleartext: it is committed + readable through the client, yet AES-GCM-scrambled at rest.</li>
+ *       KMS, no external KMS). The reference {@link ConfigdHttpClient} does put-then-get and the reference
+ *       {@link ConfigdEdgeClient} hydrates and tails a from-now change, all round-tripping correctly. Then a
+ *       walk of the node's data dir proves a distinctive canary value the client just committed does NOT
+ *       appear on disk in cleartext: it is committed and readable through the client, yet AES-GCM-scrambled
+ *       at rest.</li>
  *   <li><b>Plaintext control</b> ({@link #plaintextControlLeavesTheCanaryOnDiskProvingTheWalkIsSensitive}): the
- *       SAME node with encryption OFF commits the SAME canary, and the SAME walk FINDS it on disk. This control
- *       proves the ON-absence above is caused by encryption — not by a blind spot in the walk or a value that
- *       never reached durable storage.</li>
+ *       SAME node with encryption OFF commits the SAME canary, and the SAME walk FINDS it on disk. This
+ *       control proves the ON-absence above is caused by encryption, not by a blind spot in the walk or a
+ *       value that never reached durable storage.</li>
  * </ul>
  *
- * <p>Single-node ({@code --peers ""} ⇒ majority 1 ⇒ self-elects; no peer addresses ⇒ no Raft transport, so the
- * armed peer-quorum witness gate never engages) keeps this a light compose check next to the heavier 3-node
- * failover E2E. Group commit is synchronous ({@code -Dconfigd.groupCommit.enabled=false}) so a committed write
- * is durably on disk the instant the client sees its {@code seq}, making the on-disk canary walk meaningful.
- * Everything is deadline-polled; the per-method {@link Timeout} is hang detection only. Authentication is OFF,
- * so the edge round-trip uses the full-store {@code SUBSCRIBE} feed (the surface an auth-OFF cluster serves).
+ * <p>Single-node ({@code --peers ""}, so majority 1, so it self-elects; no peer addresses, so no Raft
+ * transport, and the armed peer-quorum witness gate never engages) keeps this a light compose check next to
+ * the heavier 3-node failover E2E. Group commit is synchronous ({@code -Dconfigd.groupCommit.enabled=false})
+ * so a committed write is durably on disk the instant the client sees its {@code seq}, making the on-disk
+ * canary walk meaningful. Everything is deadline-polled; the per-method {@link Timeout} is hang detection
+ * only. Authentication is OFF, so the edge round-trip uses the full-store {@code SUBSCRIBE} feed (the
+ * surface an auth-OFF cluster serves).
  */
 @Timeout(120)
 class RealClusterEncryptionIT {
@@ -129,7 +131,7 @@ class RealClusterEncryptionIT {
         ConfigdServer server = bootSingleNode(root, dataDir);
 
         try (ConfigdHttpClient http = httpClient(server)) {
-            // put → get: the reference client round-trips the canary against the encrypted node.
+            // put then get: the reference client round-trips the canary against the encrypted node.
             WriteOutcome put = http.blocking().put(CANARY_KEY, CANARY_VALUE.getBytes(UTF_8), WriteOptions.defaults());
             assertTrue(put.seq() > 0, "the encrypted node must commit the write (seq=" + put.seq() + ")");
             GetResult read = http.blocking().get(CANARY_KEY, GetOptions.defaults());
@@ -138,7 +140,7 @@ class RealClusterEncryptionIT {
                     "the client must read back the exact value — encryption is transparent on the wire/API");
 
             // The edge plane also round-trips under encryption: hydrate carries the canary, and a fresh commit
-            // is tailed as a from-now change — the fan-out feed is plaintext on the wire (at-rest only).
+            // is tailed as a from-now change -- the fan-out feed is plaintext on the wire (at-rest only).
             try (ConfigdEdgeClient edge = ConfigdEdgeClient.open(edgeConfig(server.fanOutServer().localPort()))) {
                 Subscription sub = edge.subscribeFullStore(SubscribeOptions.defaults());
                 List<ConfigChange> changes = new CopyOnWriteArrayList<>();
@@ -160,8 +162,8 @@ class RealClusterEncryptionIT {
         }
 
         // AT-REST PROOF: the committed canary must NOT appear anywhere under the data dir in cleartext.
-        // (It IS committed + readable via the client above, so this is a true differential: readable through the
-        //  API yet absent as plaintext on disk ⇒ encrypted at rest, not merely unflushed.)
+        // (It IS committed and readable via the client above, so this is a true differential: readable
+        //  through the API yet absent as plaintext on disk, so encrypted at rest, not merely unflushed.)
         String hit = firstFileContaining(dataDir, CANARY_VALUE.getBytes(UTF_8));
         assertTrue(hit == null,
                 "encryption at rest is ON: the committed value must not appear in cleartext on disk, but found it in "
@@ -200,8 +202,8 @@ class RealClusterEncryptionIT {
     // =======================================================================
 
     private ConfigdServer bootSingleNode(Path root, Path dataDir) throws Exception {
-        // Signing key OUTSIDE the data dir (the D-1 co-location guard REFUSES a key co-located with the
-        // encrypted artifacts it protects), pre-created so the boot never mints it.
+        // Signing key kept outside the data dir: the boot guard refuses a key co-located with the encrypted
+        // artifacts it protects. Pre-created so the boot never mints it.
         Path signingKey = root.resolve("secrets").resolve("signing-key.bin");
         Files.createDirectories(signingKey.getParent());
         SigningKeyStore.loadOrCreate(signingKey);
@@ -209,7 +211,7 @@ class RealClusterEncryptionIT {
         ServerConfig config = ServerConfig.parse(new String[]{
                 "--node-id", "0",
                 "--data-dir", dataDir.toString(),
-                "--peers", "",       // empty ⇒ single-node self-elects (majority 1); no Raft transport
+                "--peers", "",       // empty, so single-node self-elects (majority 1); no Raft transport
                 "--api-port", "0",   // ephemeral HTTP control plane
                 "--edge-port", "0",  // ephemeral edge fan-out plane
                 "--signing-key-file", signingKey.toString(),

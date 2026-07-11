@@ -13,20 +13,19 @@ import static org.junit.jupiter.api.Assertions.*;
  * Uses {@link com.sun.management.ThreadMXBean#getThreadAllocatedBytes(long)}
  * to measure thread-local allocation delta across a batch of clock operations.
  * <p>
- * The original implementation allocated a fresh {@code HybridTimestamp} per call
- * (24 bytes on a 64-bit JVM with compressed oops), so 10,000 calls allocated
- * ~240 KB. Packing HLC state into a primitive {@code long} reduces steady-state
- * allocation to zero.
+ * A naive implementation would allocate a fresh {@code HybridTimestamp} per call
+ * (24 bytes on a 64-bit JVM with compressed oops), so 10,000 calls would allocate
+ * ~240 KB. Packing HLC state into a primitive {@code long} keeps steady-state
+ * allocation at zero.
  */
 class HybridClockAllocationTest {
 
     private static final int ITERATIONS = 10_000;
     /**
-     * Budget: 8 KB. The pre-fix baseline was ~240 KB (24 B/op x 10K), so any
-     * value well under that proves packing eliminated the hot-path allocation.
-     * After packing HLC state into a primitive long with a VarHandle, steady
-     * state should be 0 bytes; we allow 8 KB headroom for background noise
-     * (class unloading, JIT profiling side-effects, safepoint bookkeeping).
+     * Budget: 8 KB. An unoptimized per-call-allocation baseline would be ~240 KB (24 B/op x 10K),
+     * so a value well under that shows the packed representation eliminates hot-path allocation.
+     * Steady state should be 0 bytes; the 8 KB headroom absorbs background noise (class
+     * unloading, JIT profiling side effects, safepoint bookkeeping).
      */
     private static final long MAX_BYTES = 8_192L;
 

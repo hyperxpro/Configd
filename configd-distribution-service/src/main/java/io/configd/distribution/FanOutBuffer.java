@@ -25,11 +25,10 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  * readers call {@link #readSince} / the legacy read methods concurrently. All
  * reads are lock-free.
  *
- * <p>The original hazard was that {@link #deltasSince} read {@code tail}
- * then {@code head} non-atomically, so a concurrent appender could lap the reader
- * mid-scan and yield duplicated/wrong deltas. It was harmless while no drain
- * existed; this interface is the drain. The cursor-based {@link #readSince}
- * closes it with two mechanisms:
+ * <p>{@link #deltasSince} reads {@code tail} then {@code head} non-atomically, so
+ * a concurrent appender can lap the reader mid-scan and yield duplicated or wrong
+ * deltas; that is tolerable for a best-effort read but not for an exactly-once
+ * drain. The cursor-based {@link #readSince} closes the gap with two mechanisms:
  * <ol>
  *   <li><b>Gap detection by evicted-seq watermark.</b> The appender publishes the
  *       sequence of the most-recently evicted notification into {@code lastEvictedSeq}
@@ -50,10 +49,9 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  *       {@code ring.set(slot)} -> {@code head++}: the tail advance precedes the
  *       in-place overwrite in the volatile total order, so a reader that observed
  *       an overwritten (lapped) slot value necessarily observes {@code t2 > t1}
- *       and reports GAP. (The original order - overwrite before tail advance -
- *       let a reader copy a lapped slot and still pass the {@code t2 == t1} check,
- *       yielding a duplicate/non-ascending run; caught by
- *       {@code FanOutBufferRaceTest} on a 4-vCPU CI runner.)</li>
+ *       and reports GAP. (Reversing the order - overwrite before tail advance -
+ *       would let a reader copy a lapped slot and still pass the {@code t2 == t1}
+ *       check, yielding a duplicate/non-ascending run.)</li>
  * </ol>
  * The append path remains allocation-free (it wraps the incoming
  * {@link CommitNotification} reference into the ring; no per-append allocation).
@@ -95,10 +93,6 @@ public final class FanOutBuffer implements CommitNotificationSource {
         this.tail = 0;
     }
 
-    // -----------------------------------------------------------------------
-    // Append (single-writer, apply thread)
-    // -----------------------------------------------------------------------
-
     /**
      * Publishes a commit notification to the ring buffer. Allocation-free: the
      * notification reference is stored directly. On overflow the oldest entry is
@@ -114,16 +108,15 @@ public final class FanOutBuffer implements CommitNotificationSource {
     public void publish(CommitNotification notification) {
         Objects.requireNonNull(notification, "notification must not be null");
         int slot = (int) (head % capacity);
-        // On eviction the tail MUST advance BEFORE the in-place overwrite.
-        // The original order (ring.set -> head++ -> tail=) had a hole: a reader
-        // mid-copy could read the just-overwritten slot (a lapped, newer
-        // notification at an old position) and then read tail BEFORE the writer's
-        // tail-advance store executed - its t2==t1 verify passed and the non-GAP
-        // run contained a duplicate/non-ascending seq (observed on a 4-vCPU CI
-        // runner). With tail advanced first, any reader that observes the overwritten
-        // slot value is - by the volatile total order (W_tail precedes W_ring, so
-        // R_slot seeing W_ring implies R_tail sees W_tail) - guaranteed to observe
-        // t2 > t1 and return GAP.
+        // On eviction, tail must advance before the slot is overwritten in place.
+        // If the overwrite happened first, a reader mid-copy could read the
+        // just-overwritten (lapped) slot and then read tail before the writer's
+        // tail-advance store executed, so its t2==t1 verify would pass and the
+        // non-GAP run would contain a duplicate/non-ascending seq. With tail
+        // advanced first, any reader that observes the overwritten slot value is -
+        // by the volatile total order (the tail write precedes the ring write, so
+        // observing the ring write implies observing the tail write) - guaranteed
+        // to observe t2 > t1 and return GAP.
         //
         // Order within an evicting publish:
         //   1. capture evicted seq from the slot (before it is clobbered)
@@ -157,10 +150,6 @@ public final class FanOutBuffer implements CommitNotificationSource {
         Objects.requireNonNull(delta, "delta must not be null");
         publish(new CommitNotification(delta.toVersion(), 0L, delta));
     }
-
-    // -----------------------------------------------------------------------
-    // CommitNotificationSource (cursor-based, GAP-signalling)
-    // -----------------------------------------------------------------------
 
     @Override
     public Result readSince(long cursor) {
@@ -242,10 +231,6 @@ public final class FanOutBuffer implements CommitNotificationSource {
     public long droppedTotal() {
         return droppedTotal.get();
     }
-
-    // -----------------------------------------------------------------------
-    // Legacy delta-based read API (retained for existing fan-out wiring/tests)
-    // -----------------------------------------------------------------------
 
     public List<ConfigDelta> deltasSince(long fromVersion) {
         long currentTail = tail;   // volatile read

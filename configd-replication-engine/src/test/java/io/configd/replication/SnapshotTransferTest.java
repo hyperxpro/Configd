@@ -27,10 +27,6 @@ class SnapshotTransferTest {
         transfer = new SnapshotTransfer();
     }
 
-    // ========================================================================
-    // Sender tests
-    // ========================================================================
-
     @Nested
     class SenderTests {
 
@@ -47,7 +43,6 @@ class SnapshotTransferTest {
             assertEquals(10, chunk.lastIncludedIndex());
             assertEquals(2, chunk.lastIncludedTerm());
 
-            // No more chunks
             assertNull(transfer.nextChunk(state));
             assertTrue(state.isComplete());
         }
@@ -67,25 +62,21 @@ class SnapshotTransferTest {
             // 3 full chunks + 1 partial = 4 chunks
             assertEquals(4, chunks.size());
 
-            // Verify offsets
             assertEquals(0, chunks.get(0).offset());
             assertEquals(SnapshotTransfer.CHUNK_SIZE, chunks.get(1).offset());
             assertEquals(SnapshotTransfer.CHUNK_SIZE * 2, chunks.get(2).offset());
             assertEquals(SnapshotTransfer.CHUNK_SIZE * 3, chunks.get(3).offset());
 
-            // Verify sizes
             assertEquals(SnapshotTransfer.CHUNK_SIZE, chunks.get(0).data().length);
             assertEquals(SnapshotTransfer.CHUNK_SIZE, chunks.get(1).data().length);
             assertEquals(SnapshotTransfer.CHUNK_SIZE, chunks.get(2).data().length);
             assertEquals(100, chunks.get(3).data().length);
 
-            // Only last chunk is marked done
             assertFalse(chunks.get(0).done());
             assertFalse(chunks.get(1).done());
             assertFalse(chunks.get(2).done());
             assertTrue(chunks.get(3).done());
 
-            // All chunks have correct metadata
             for (SnapshotChunk c : chunks) {
                 assertEquals(50, c.lastIncludedIndex());
                 assertEquals(5, c.lastIncludedTerm());
@@ -149,10 +140,6 @@ class SnapshotTransferTest {
         }
     }
 
-    // ========================================================================
-    // Receiver tests
-    // ========================================================================
-
     @Nested
     class ReceiverTests {
 
@@ -195,7 +182,6 @@ class SnapshotTransferTest {
             SnapshotReceiveState state = transfer.startReceive(1, 1);
 
             assertTrue(transfer.acceptChunk(state, 0, new byte[]{1, 2}, false));
-            // Skip expected offset 2, try offset 5
             assertFalse(transfer.acceptChunk(state, 5, new byte[]{3}, true));
             assertFalse(transfer.isComplete(state));
         }
@@ -206,7 +192,6 @@ class SnapshotTransferTest {
             assertTrue(transfer.acceptChunk(state, 0, new byte[]{1}, true));
             assertTrue(transfer.isComplete(state));
 
-            // Should reject further chunks
             assertFalse(transfer.acceptChunk(state, 1, new byte[]{2}, true));
         }
 
@@ -246,10 +231,6 @@ class SnapshotTransferTest {
         }
     }
 
-    // ========================================================================
-    // Full roundtrip tests
-    // ========================================================================
-
     @Nested
     class Roundtrip {
 
@@ -261,7 +242,6 @@ class SnapshotTransferTest {
 
         @Test
         void fullRoundtripLargeSnapshot() {
-            // Generate a large snapshot spanning multiple chunks
             byte[] original = new byte[SnapshotTransfer.CHUNK_SIZE * 5 + 1234];
             new Random(42).nextBytes(original);
             verifyRoundtrip(original, 500, 12);
@@ -275,13 +255,9 @@ class SnapshotTransferTest {
         }
 
         private void verifyRoundtrip(byte[] original, long lastIndex, long lastTerm) {
-            // Sender side
             SnapshotSendState sendState = transfer.startSend(original, lastIndex, lastTerm);
-
-            // Receiver side
             SnapshotReceiveState receiveState = transfer.startReceive(lastIndex, lastTerm);
 
-            // Transfer chunks
             SnapshotChunk chunk;
             while ((chunk = transfer.nextChunk(sendState)) != null) {
                 boolean accepted = transfer.acceptChunk(
@@ -294,10 +270,6 @@ class SnapshotTransferTest {
             assertArrayEquals(original, assembled);
         }
     }
-
-    // ========================================================================
-    // Determinism tests
-    // ========================================================================
 
     @Nested
     class Determinism {

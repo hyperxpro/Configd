@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * per-batch CURSOR_ACK, SNAPSHOT_* reassembly + cutover, backward-snapshot refusal,
  * HEARTBEAT covered-frontier including {@code latestSeq > cursor} never advancing it,
  * ERROR_CLOSE handling), the tick CURSOR_ACK + heartbeat-silence reconnect directive,
- * and the INV-M1 monotonic-read seam routing.
+ * and the monotonic-read seam routing.
  */
 class EdgeClientCoreTest {
 
@@ -75,7 +75,7 @@ class EdgeClientCoreTest {
         clock = new TestClock(1_000_000L);
         sink = new RecordingSink();
         metrics = new MetricsRegistry();
-        // testMode=true -> an INV-M1 monotonic_read violation throws (fails the test).
+        // testMode=true -> a monotonic_read violation throws (fails the test).
         monitor = new InvariantMonitor(metrics, true);
         core = new EdgeClientCore(clock, monitor,
                 metrics.counter(StalenessTracker.IMPLAUSIBLE_METRIC),
@@ -113,10 +113,6 @@ class EdgeClientCoreTest {
         return frames;
     }
 
-    // -----------------------------------------------------------------------
-    // SUBSCRIBE_OK
-    // -----------------------------------------------------------------------
-
     @Nested
     class SubscribeOkHandling {
 
@@ -133,10 +129,6 @@ class EdgeClientCoreTest {
             assertEquals(EdgeFrame.Mode.TAIL, core.mode());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // NOTIFY: verify->filter->apply + per-batch CURSOR_ACK
-    // -----------------------------------------------------------------------
 
     @Nested
     class NotifyHandling {
@@ -192,10 +184,6 @@ class EdgeClientCoreTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Subscription storage filter through the core
-    // -----------------------------------------------------------------------
-
     @Nested
     class StorageFilterThroughCore {
 
@@ -230,10 +218,6 @@ class EdgeClientCoreTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // SNAPSHOT flow: reassembly + cutover, backward refusal
-    // -----------------------------------------------------------------------
-
     @Nested
     class SnapshotHandling {
 
@@ -261,7 +245,7 @@ class EdgeClientCoreTest {
             assertEquals(8, core.cursor());
             int acksBefore = sink.acks().size();
 
-            // A backward snapshot at seq 4 (< cursor 8) must be REFUSED (C1(a) monotonicity).
+            // A backward snapshot at seq 4 (< cursor 8) must be REFUSED (monotonicity).
             for (EdgeFrame f : snapshotFrames(snapshot(4, "x", "1"), 4)) {
                 core.onFrame(f);
             }
@@ -297,10 +281,6 @@ class EdgeClientCoreTest {
                     () -> core.onFrame(new EdgeFrame.SnapshotChunk(0, new byte[]{1, 2, 3})));
         }
     }
-
-    // -----------------------------------------------------------------------
-    // HEARTBEAT: covered-frontier staleness
-    // -----------------------------------------------------------------------
 
     @Nested
     class HeartbeatFrontier {
@@ -345,10 +325,6 @@ class EdgeClientCoreTest {
             assertEquals(2, core.heartbeatsObserved());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // tick: CURSOR_ACK on advance + heartbeat-silence reconnect
-    // -----------------------------------------------------------------------
 
     @Nested
     class TickBehavior {
@@ -408,10 +384,6 @@ class EdgeClientCoreTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Gap -> resubscribe-with-cursor
-    // -----------------------------------------------------------------------
-
     @Nested
     class GapResubscribeDirective {
 
@@ -438,7 +410,7 @@ class EdgeClientCoreTest {
         @Test
         void gapIsSuppressedWhileAServerSnapshotIsAlreadyHealingUs() {
             core.onFrame(new EdgeFrame.Notify(List.of(notif(1, 0, 1, clock.timeMs, "a", "1"))));
-            // The server demoted us: a snapshot flow is owed - the in-session C1 heal is
+            // The server demoted us: a snapshot flow is owed - the in-session heal is
             // already in progress, so a racing gap must NOT bounce the connection.
             core.onFrame(new EdgeFrame.ErrorClose(ErrorCode.DEMOTED_TO_CATCHUP, "ack-lag"));
             core.onFrame(new EdgeFrame.Notify(List.of(notif(5, 4, 5, clock.timeMs, "a", "5"))));
@@ -464,10 +436,6 @@ class EdgeClientCoreTest {
                     "SNAPSHOT_FIRST handshake promises a snapshot — no resubscribe churn");
         }
     }
-
-    // -----------------------------------------------------------------------
-    // DISCONNECTED entry -> re-bootstrap resubscribe at the current cursor
-    // -----------------------------------------------------------------------
 
     @Nested
     class DisconnectedRebootstrapDirective {
@@ -506,7 +474,7 @@ class EdgeClientCoreTest {
 
         @Test
         void bootStateNeverFiresTheRebootstrap() {
-            // The boot state IS DISCONNECTED (no frontier yet): process start is C5's
+            // The boot state IS DISCONNECTED (no frontier yet): process start is the initial
             // bootstrap, not a re-bootstrap - ticking an idle fresh core fires nothing.
             assertEquals(StalenessTracker.State.DISCONNECTED, core.stalenessState());
             for (int i = 0; i < 5; i++) {
@@ -537,10 +505,6 @@ class EdgeClientCoreTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // ERROR_CLOSE
-    // -----------------------------------------------------------------------
-
     @Nested
     class ErrorCloseHandling {
 
@@ -560,10 +524,6 @@ class EdgeClientCoreTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Reads route through the INV-M1 monitor seam (hot path)
-    // -----------------------------------------------------------------------
-
     @Nested
     class MonotonicReadSeam {
 
@@ -576,7 +536,7 @@ class EdgeClientCoreTest {
         @Test
         void cursorAheadOfStoreReturnsNotFoundAndFiresMonitor() {
             core.onFrame(new EdgeFrame.Notify(List.of(notif(1, 0, 1, clock.timeMs, "a", "1"))));
-            // testMode=true -> a cursor ahead of the store throws via the INV-M1 seam.
+            // testMode=true -> a cursor ahead of the store throws via the monotonic-read seam.
             assertThrows(AssertionError.class,
                     () -> core.get("a", new VersionCursor(5, 0)));
             assertEquals(1L,
@@ -584,10 +544,6 @@ class EdgeClientCoreTest {
                     "the read store routes through the real monotonic_read seam");
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Inbound rejection of edge->server frames (mis-wired shell guard)
-    // -----------------------------------------------------------------------
 
     @Test
     void inboundSubscribeIsRejected() {
@@ -600,10 +556,6 @@ class EdgeClientCoreTest {
         assertThrows(IllegalArgumentException.class,
                 () -> core.onFrame(new EdgeFrame.CursorAck(3)));
     }
-
-    // -----------------------------------------------------------------------
-    // Constructor validation
-    // -----------------------------------------------------------------------
 
     @Nested
     class ConstructorValidation {
@@ -632,10 +584,6 @@ class EdgeClientCoreTest {
                     clock, monitor, null, null, sink, 250, 8));
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Silence-window boundary (exact threshold: silenceFactor x heartbeatMs)
-    // -----------------------------------------------------------------------
 
     @Nested
     class SilenceWindowBoundary {
@@ -668,10 +616,6 @@ class EdgeClientCoreTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Signed-chain verification seam
-    // -----------------------------------------------------------------------
-
     @Nested
     class VerificationSeam {
 
@@ -693,7 +637,7 @@ class EdgeClientCoreTest {
         @Test
         void verifierConstructorAcceptsAndAppliesUnsignedlessFlowViaEpochDir(
                 @org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) throws Exception {
-            // The full constructor wires a real verifier + the SEC-017 epoch.lock dir.
+            // The full constructor wires a real verifier + the epoch.lock dir.
             java.security.KeyPair kp =
                     java.security.KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
             io.configd.store.ConfigSigner leaderSigner = new io.configd.store.ConfigSigner(kp);
@@ -724,16 +668,11 @@ class EdgeClientCoreTest {
             assertEquals(1, verified.verifyRejections());
             assertEquals(1, verified.cursor(), "tampered delta never advances the cursor");
 
-            // SEC-017: the epoch sidecar landed in the data dir (metadata only, no values).
+            // The epoch sidecar landed in the data dir (metadata only, no values).
             assertTrue(java.nio.file.Files.exists(tmp.resolve("epoch.lock")),
                     "epoch.lock persisted under the supplied dir");
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Snapshot-cutover signal integrity: must NOT trip the implausibility counter
-    // (snapshot bodies carry no commit timestamp)
-    // -----------------------------------------------------------------------
 
     @Nested
     class SnapshotFrontierIntegrity {

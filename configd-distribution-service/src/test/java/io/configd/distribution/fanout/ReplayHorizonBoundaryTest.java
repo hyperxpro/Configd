@@ -42,8 +42,6 @@ class ReplayHorizonBoundaryTest {
     private final FakeClock clock = new FakeClock(1_000L);
     private final RecordingTransportSink sink = new RecordingTransportSink();
 
-    // --- authoritative writer model (the "concurrent writes" source) -------------------
-
     private HamtMap<String, VersionedValue> auth = HamtMap.empty();
     private long version;
 
@@ -63,8 +61,6 @@ class ReplayHorizonBoundaryTest {
     private static byte[] bytes(String s) {
         return s.getBytes(StandardCharsets.UTF_8);
     }
-
-    // --- minimal edge model (applies what the session emits; chain-checked) ------------
 
     private static final class EdgeModel {
         final Map<String, byte[]> state = new HashMap<>();
@@ -137,10 +133,6 @@ class ReplayHorizonBoundaryTest {
         return buffer;
     }
 
-    // -----------------------------------------------------------------------
-    // The static ±1 matrix (under writes continuing after the decision)
-    // -----------------------------------------------------------------------
-
     @Test
     void cursorOneBelowHorizonIsBeyondReplayAndGetsSnapshotFirst() {
         FanOutBuffer buffer = bufferLappedTo20();
@@ -204,10 +196,6 @@ class ReplayHorizonBoundaryTest {
         assertConverged(edge);
     }
 
-    // -----------------------------------------------------------------------
-    // The C3-1 condition: lapped AFTER the TAIL decision, BEFORE the first drain
-    // -----------------------------------------------------------------------
-
     @Test
     void lappedAfterTailDecisionSelfHealsViaGapDemoteSnapshotResume() {
         FanOutBuffer buffer = bufferLappedTo20();
@@ -226,7 +214,7 @@ class ReplayHorizonBoundaryTest {
         assertTrue(buffer.oldestSeq() > 13, "fixture: the ring genuinely lapped the cursor");
 
         // Step 3: the first drain hits the GAP and demotes - the deterministic forcing of
-        // exactly the race the screen names.
+        // exactly this race.
         sink.clear();
         s.tick(clock.now());
         assertEquals(FanOutSessionCore.SessionState.CATCHUP, s.state(),
@@ -245,10 +233,6 @@ class ReplayHorizonBoundaryTest {
         assertTrue(edge.snapshotsApplied >= 1, "the self-heal path is snapshot re-bootstrap");
         assertConverged(edge);
     }
-
-    // -----------------------------------------------------------------------
-    // helpers
-    // -----------------------------------------------------------------------
 
     /** Seeds the edge model as if it had applied the authoritative prefix at or before seq. */
     private void seedEdgeAt(EdgeModel edge, long seq) {
@@ -307,10 +291,6 @@ class ReplayHorizonBoundaryTest {
             return new FanOutConfig(64, 80, 64, 262_144, 2L, 250L, 5L, 1_048_576);
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Decision metric: exact mode + horizon distance
-    // -----------------------------------------------------------------------
 
     /** Captures the subscribe-time decision the session reports. */
     private static final class ModeCapture implements FanOutSessionMetrics {

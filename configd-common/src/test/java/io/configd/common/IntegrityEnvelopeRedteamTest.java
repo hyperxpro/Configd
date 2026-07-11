@@ -15,20 +15,20 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Independent red-team pass over {@link IntegrityEnvelope}'s frozen fail-closed contract.
+ * Independent red-team pass over {@link IntegrityEnvelope}'s frozen, fail-closed contract.
  *
- * <p>Each test PERFORMS a byte-level attack on a real envelope and asserts the reader REFUSES
- * (throws {@link IntegrityException}) rather than best-effort-parsing. These go beyond the
- * builder's tests: they cover version 0 and the {@code 0xFFFF} reserved escape (the builder only
- * rolled the version DOWN), unknown/dispatch-confused {@code algId}s, the reserved-byte MBZ
- * check under the ENCRYPTING posture (the builder covered keyless + keyed only), and — the sharpest
- * one — cross-artifact confusion under AES-256-GCM, where a repaired outer CRC is not enough because
- * the per-artifact magic is bound into the GCM AAD.
+ * <p>Each test performs a byte-level attack on a real envelope and asserts that the reader refuses
+ * (throws {@link IntegrityException}) rather than best-effort-parsing. These go beyond the builder's
+ * tests: they cover version 0 and the {@code 0xFFFF} reserved escape (the builder only rolled the
+ * version down), unknown or dispatch-confused {@code algId}s, the reserved-byte MBZ check under the
+ * encrypting posture (the builder covered keyless and keyed only), and the sharpest case, cross-artifact
+ * confusion under AES-256-GCM, where a repaired outer CRC is not enough because the per-artifact magic
+ * is bound into the GCM AAD.
  *
  * <p>All crafted attacks repair the version-independent CRC32C so the reader is forced past the
- * corruption check and onto the version/algId/reserved/MAC control we are actually testing — a stale
- * CRC would mask the real behavior behind a "corruption" error. The header offsets attacked here
- * (version/algId/reserved) sit inside the 8-byte header and are unaffected by the v3 scopeId, which
+ * corruption check and onto the version, algId, reserved, or MAC control actually under test - a stale
+ * CRC would mask the real behavior behind a corruption error. The header offsets attacked here
+ * (version, algId, reserved) sit inside the 8-byte header and are unaffected by the v3 scopeId, which
  * begins at offset 8.
  */
 class IntegrityEnvelopeRedteamTest {
@@ -61,16 +61,14 @@ class IntegrityEnvelopeRedteamTest {
         return "frozen-redteam-payload".getBytes();
     }
 
-    /** Repairs the CRC32C trailer over [0, len-4) so a crafted header change is judged on its merits. */
+    /** Repairs the CRC32C trailer (all bytes but the last 4) so a crafted header change is judged on its own merits. */
     private static void repairCrc(byte[] b) {
         CRC32C crc = new CRC32C();
         crc.update(b, 0, b.length - IntegrityEnvelope.CRC_SIZE);
         ByteBuffer.wrap(b).putInt(b.length - IntegrityEnvelope.CRC_SIZE, (int) crc.getValue());
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // (b)/(c) version 0 and the u16 reserved escape 0xFFFF must both fail closed.
-    // ---------------------------------------------------------------------------------------------
+    // Version 0 and the u16 reserved escape 0xFFFF must both fail closed.
 
     @Test
     void versionZeroRejected_keyed() {
@@ -98,8 +96,9 @@ class IntegrityEnvelopeRedteamTest {
 
     @Test
     void higherVersionRejected_keyed() {
-        // Attack: present a NEWER format (version 4, one past the frozen v3) with a valid CRC. An old
-        // grammar must never parse a newer format. The builder only rolled DOWN; this covers rolling UP.
+        // Attack: present a newer format (version 4, one past the frozen v3) with a valid CRC. An old
+        // grammar must never parse a newer format; the builder only rolled the version down, so this
+        // covers rolling it up.
         IntegrityEnvelope env = new IntegrityEnvelope(hmacKey());
         byte[] w = env.wrap(SNAP_MAGIC, SCOPE, payload());
         w[OFF_VERSION] = 0;
@@ -122,14 +121,12 @@ class IntegrityEnvelopeRedteamTest {
                 "the 0xFFFF reserved-escape version must fail closed");
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // (h) unknown algId, and algId-dispatch posture confusion.
-    // ---------------------------------------------------------------------------------------------
+    // Unknown algId, and algId-dispatch posture confusion.
 
     @Test
     void unknownAlgIdRejected_keyless() {
-        // Attack: set algId to an unallocated code (3). Neither NONE/HMAC/GCM — must throw, never
-        // fall through to a best-effort parse.
+        // Attack: set algId to an unallocated code (3), neither NONE, HMAC, nor GCM - it must
+        // throw, never fall through to a best-effort parse.
         IntegrityEnvelope env = IntegrityEnvelope.keyless();
         byte[] w = env.wrap(SNAP_MAGIC, SCOPE, payload());
         w[OFF_ALGID] = 3;
@@ -165,23 +162,23 @@ class IntegrityEnvelopeRedteamTest {
 
     @Test
     void algNoneUnderEncryptingReaderRejected_downgrade() {
-        // Attack: strip authentication (algId=NONE) and present the plaintext to an ENCRYPTING
-        // reader. Posture — not just bytes — must defeat the strip-to-plaintext downgrade.
+        // Attack: strip authentication (algId=NONE) and present the plaintext to an encrypting
+        // reader. Posture, not just bytes, must defeat the strip-to-plaintext downgrade.
         byte[] plain = IntegrityEnvelope.keyless().wrap(SNAP_MAGIC, SCOPE, payload()); // algId=NONE
         IntegrityException ex = assertThrows(IntegrityException.class,
                 () -> encryptingEnvelope().unwrap(SNAP_MAGIC, SCOPE, plain));
         assertTrue(ex.getMessage().contains("downgrade"), ex.getMessage());
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // (d) reserved != 0 under the ENCRYPTING posture (the builder covered keyless + keyed only).
-    // ---------------------------------------------------------------------------------------------
+    // Reserved byte not equal to zero under the encrypting posture (the builder covered keyless
+    // and keyed only).
 
     @Test
     void reservedNonZeroRejected_encrypting() {
         // Attack: on a real AES-256-GCM envelope, set the MBZ reserved byte non-zero and repair the
-        // CRC. The explicit reserved==0 check must fire BEFORE the GCM body is even reached — the
-        // reserved slot stays a genuine forward-compat door under encryption, not GCM-AAD-only cover.
+        // CRC. The explicit check that reserved is zero must fire before the GCM body is even
+        // reached - the reserved slot stays a genuine forward-compatibility door under encryption,
+        // not something only covered by the GCM AAD.
         IntegrityEnvelope env = encryptingEnvelope();
         byte[] w = env.wrap(WALE_MAGIC, SCOPE, payload());
         w[OFF_RESERVED] = 1;
@@ -191,9 +188,7 @@ class IntegrityEnvelopeRedteamTest {
                 "a non-zero reserved byte on an encrypted record must fail closed, got: " + ex.getMessage());
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // (f) cross-artifact magic confusion. Wrap under one artifact's magic, read as another's.
-    // ---------------------------------------------------------------------------------------------
+    // Cross-artifact magic confusion: wrap under one artifact's magic, read as another's.
 
     @Test
     void crossArtifactConfusionRejected_keyed() {
@@ -208,12 +203,12 @@ class IntegrityEnvelopeRedteamTest {
 
     @Test
     void crossArtifactConfusionRejected_gcmAadBinding() {
-        // Attack (the strong one): a valid ENCRYPTED WAL record. Overwrite its leading magic to the
-        // snapshot magic and REPAIR the outer CRC, then read it as a snapshot. The magic bytes now
-        // match what the reader asked for and the CRC is clean — so nothing structural catches it.
-        // The only thing standing between this and a cross-artifact confusion is that the ORIGINAL
-        // magic is bound into the GCM AAD: the tag was computed over WALE, the decrypt AAD now says
-        // SNAP, so authentication fails. Prove the binding actually holds.
+        // Attack (the strongest one): a valid encrypted WAL record. Overwrite its leading magic to
+        // the snapshot magic and repair the outer CRC, then read it as a snapshot. The magic bytes
+        // now match what the reader asked for and the CRC is clean, so nothing structural catches
+        // it. The only thing standing between this and a cross-artifact confusion is that the
+        // original magic is bound into the GCM AAD: the tag was computed over WALE, the decrypt AAD
+        // now says SNAP, so authentication fails. This proves the binding actually holds.
         IntegrityEnvelope env = encryptingEnvelope();
         byte[] walRecord = env.wrap(WALE_MAGIC, SCOPE, payload());
 
@@ -227,10 +222,8 @@ class IntegrityEnvelopeRedteamTest {
                 "the magic-AAD binding must surface as an auth failure, got: " + ex.getMessage());
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // Non-vacuity: the encrypting round-trip still works (so the attacks above prove refusal, not
-    // a broken codec).
-    // ---------------------------------------------------------------------------------------------
+    // Non-vacuity: the encrypting round-trip still works, so the attacks above prove refusal, not
+    // a broken codec.
 
     @Test
     void encryptingRoundTripStillWorks() {

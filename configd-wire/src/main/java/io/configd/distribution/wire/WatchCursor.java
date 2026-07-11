@@ -5,17 +5,17 @@ import java.util.Objects;
 
 /**
  * The watch resume position: a {@code topologyEpoch} bound to a <b>per-shard cursor vector</b>
- * (W3-1 / W3-5, A4). The vector is an ordered list of {@code (gid, S)} components, where {@code gid}
+ * (W3-1 / W3-5). The vector is an ordered list of {@code (gid, S)} components, where {@code gid}
  * is a shard group id (a {@code uint32} compared and ordered <b>UNSIGNED</b>) and {@code S} is the
  * applied-mutation sequence of that shard the client has already processed.
  *
- * <p><b>Topology-epoch binding (A4).</b> Every resume token carries the {@code topologyEpoch} of the
+ * <p><b>Topology-epoch binding.</b> Every resume token carries the {@code topologyEpoch} of the
  * topology generation that minted it (the server's {@code ShardMap.epoch()}, sourced from the
- * authenticated {@code topology-descriptor.dat}; v1 = {@link #INITIAL_TOPOLOGY_EPOCH}). The server
- * refuses a cursor whose epoch does not match its current epoch with
+ * authenticated {@code topology-descriptor.dat}; currently always {@link #INITIAL_TOPOLOGY_EPOCH}).
+ * The server refuses a cursor whose epoch does not match its current epoch with
  * {@link ErrorCode#STALE_TOPOLOGY} - the whole cursor generation is invalid and the client must drop
  * it and fully re-hydrate (the etcd {@code ErrCompacted} model). Epoch {@code 0}
- * ({@link #EPOCH_UNSET}) is reserved-illegal and decodes as {@link ErrorCode#FRAME_CORRUPT}. At v1
+ * ({@link #EPOCH_UNSET}) is reserved-illegal and decodes as {@link ErrorCode#FRAME_CORRUPT}. At
  * static-N (one deploy-time epoch) the epoch is always {@link #INITIAL_TOPOLOGY_EPOCH}, so the check
  * never fires - behavior is byte-identical.
  *
@@ -41,11 +41,12 @@ import java.util.Objects;
 public record WatchCursor(long topologyEpoch, List<Component> components) {
 
     /**
-     * The v1 static-N topology epoch. The authoritative source is the server's
+     * The static-N topology epoch. The authoritative source is the server's
      * {@code ShardMap.epoch()} (the {@code topology-descriptor.dat} value); this is the wire-layer
      * mirror of {@code TopologyDescriptor.INITIAL_EPOCH} (distribution-service does not depend on
      * consensus-core). The convenience factories that omit an epoch stamp this value - correct for a
-     * v1 static-N deployment; a v2 multi-epoch caller MUST use the epoch-taking overloads.
+     * static-N deployment; a caller tracking multiple topology epochs MUST use the epoch-taking
+     * overloads.
      */
     public static final long INITIAL_TOPOLOGY_EPOCH = 1L;
 
@@ -53,9 +54,10 @@ public record WatchCursor(long topologyEpoch, List<Component> components) {
     public static final long EPOCH_UNSET = 0L;
 
     /**
-     * A cursor over {@code components} at the v1 static topology epoch
+     * A cursor over {@code components} at the static topology epoch
      * ({@link #INITIAL_TOPOLOGY_EPOCH}). Convenience for the common single-epoch case (tests /
-     * static-N tooling); a v2 multi-epoch caller MUST use the canonical constructor with the live epoch.
+     * static-N tooling); a caller tracking multiple topology epochs MUST use the canonical
+     * constructor with the live epoch.
      */
     public WatchCursor(List<Component> components) {
         this(INITIAL_TOPOLOGY_EPOCH, components);
@@ -81,7 +83,7 @@ public record WatchCursor(long topologyEpoch, List<Component> components) {
     }
 
     /**
-     * The "from now per shard" cursor at the v1 static topology epoch - an empty vector
+     * The "from now per shard" cursor at the static topology epoch - an empty vector
      * ({@code count == 0}; W3-4). See {@link #INITIAL_TOPOLOGY_EPOCH} on the epoch default.
      */
     public static WatchCursor fromNow() {
@@ -94,7 +96,7 @@ public record WatchCursor(long topologyEpoch, List<Component> components) {
     }
 
     /**
-     * A single-component cursor at the v1 static topology epoch - the {@code N = 1} form is
+     * A single-component cursor at the static topology epoch - the {@code N = 1} form is
      * {@code of(0, S)} (W3-5). See {@link #INITIAL_TOPOLOGY_EPOCH} on the epoch default.
      */
     public static WatchCursor of(int gid, long s) {

@@ -56,15 +56,13 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Real-server coverage of the four auth modes — the Gate-1 de-risk the lead prioritized: connect + present the
- * credential against the actual {@code EdgeAuthGateHandler}, then subscribe + hydrate. Bearer and Basic ride
- * the {@code AUTH} frame (pipelined behind which the {@code SUBSCRIBE} is buffered by the real server, §06
- * F6A-6); mTLS authenticates at the handshake with no frame. (No-auth is proven by
- * {@link RealServerSubscribeHydrateTest}.) Deltas are unsigned here in {@code trustUnverified} mode to isolate
- * the auth path; the signed-chain verify is proven separately.
+ * Real-server coverage of the four auth modes: connect and present the credential against the actual
+ * {@code EdgeAuthGateHandler}, then subscribe and hydrate. Bearer and Basic ride the {@code AUTH} frame
+ * (pipelined behind which the {@code SUBSCRIBE} is buffered by the real server, §06 F6A-6); mTLS authenticates
+ * at the handshake with no frame. (No-auth is proven by {@link RealServerSubscribeHydrateTest}.) Deltas are
+ * unsigned here in {@code trustUnverified} mode to isolate the auth path; the signed-chain verify is proven
+ * separately.
  */
-// Server-obeys + client-conforms: the real client authenticates against the live EdgeAuthGateHandler in each
-// of the three framed/edge auth postures (mTLS handshake, bearer AUTH frame, basic AUTH frame).
 @Timeout(120)
 @Tag("clause:AU2-1")
 @Tag("clause:AU2-3")
@@ -150,8 +148,6 @@ class RealServerAuthModesTest {
         assertHydrates(config, "app/mtls", "ok");
     }
 
-    // -----------------------------------------------------------------------
-
     private void assertHydrates(ConfigdClientConfig config, String key, String value) throws Exception {
         try (ConfigdEdgeClient client = ConfigdEdgeClient.open(config)) {
             Subscription sub = client.subscribeFullStore(SubscribeOptions.defaults());
@@ -202,8 +198,6 @@ class RealServerAuthModesTest {
         buffer.publish(new CommitNotification(to, T0, delta));
     }
 
-    // ---- auth chains ----
-
     private static AuthenticatorChain bearerChain() {
         return AuthenticatorChain.build(List.of("bearer"), mapConfig(Map.of(
                 "configd.auth.bearer.token", TOKEN,
@@ -233,8 +227,6 @@ class RealServerAuthModesTest {
             }
         };
     }
-
-    // ---- helpers ----
 
     private static RetryPolicy fastRetry() {
         return new RetryPolicy(Duration.ofMillis(10), Duration.ofMillis(100), 5);

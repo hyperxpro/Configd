@@ -6,8 +6,8 @@ This is an operational runbook, not an alert response — it is invoked
 on a planned schedule (or to publish a hot-fix). The "trigger" is one
 of:
 
-- All Phase-11 GA gates in `docs/ga-review.md` are GREEN and the
-  release manager intends to publish a tagged version.
+- The operator's release-readiness checklist (see `docs/readiness/`) is
+  green and the release manager intends to publish a tagged version.
 - A previously-published release exhibits a regression (consumers
   observe a bug); the rollback section below is the response.
 
@@ -38,11 +38,11 @@ Per ADR-0025 the release operator must, before this runbook applies:
 
 ### Pre-flight (any release)
 
-1. **All gates green on `main`.** Phase 11 GA review records this in
-   `docs/ga-review.md`. If any gate is yellow or red, do not cut.
+1. **All readiness gates green on `main`.** See `docs/readiness/` for the
+   current state. If any gate is yellow or red, do not cut.
 2. **POM version matches intended tag.** The release workflow re-checks
    this; failing here aborts the release before image push.
-3. **CHANGELOG / release notes drafted** from `RELEASE_NOTES_TEMPLATE.md`.
+3. **Draft the changelog / release notes** from `RELEASE_NOTES_TEMPLATE.md`.
 
 ### When something goes wrong post-release
 
@@ -84,13 +84,13 @@ The push of `v0.1.0` triggers `.github/workflows/release.yml`. That
 workflow:
 
 1. Re-runs the full reactor `mvn verify`.
-2. Generates a CycloneDX SBOM (B5).
-3. Builds the runtime image from `docker/Dockerfile.runtime` (B8 —
-   pinned base image digest).
+2. Generates a CycloneDX SBOM.
+3. Builds the runtime image from `docker/Dockerfile.runtime` (pinned base
+   image digest).
 4. Pushes to GHCR with tags `:0.1.0` and `:sha-<full-commit>`.
-5. **Cosign-signs** the image keylessly with GitHub OIDC (B6 / PA-6011).
-6. Attaches a **SLSA build provenance attestation** (PA-6012) to the
-   image manifest in the registry.
+5. **Cosign-signs** the image keylessly with GitHub OIDC.
+6. Attaches a **SLSA build provenance attestation** to the image manifest
+   in the registry.
 7. Publishes a GitHub release with the SBOM attached and verification
    instructions in the body.
 
@@ -139,8 +139,8 @@ runtime pin in ADR-0022.
 engineering ADR yet; the original reference was to ADR-0026 which is
 the OpenTelemetry stub (wrong topic). The closest extant decisions are
 ADR-0021 (build) and ADR-0022 (runtime pin). A dedicated
-`adr-XXXX-release-engineering.md` should be authored when the release
-pipeline is exercised end-to-end (Phase 9 demotion in iter-1). -->
+`adr-XXXX-release-engineering.md` should be authored once the release
+pipeline has been exercised end-to-end against a real release. -->
 
 ## Resolution
 
@@ -150,7 +150,8 @@ A release is **resolved** when:
 - `cosign verify` succeeds against the published digest.
 - `gh attestation verify` succeeds against the same digest.
 - The next-snapshot bump commit is on `main`.
-- The release notes link from CHANGELOG.md is filed.
+- The release notes for this version are drafted and published with the
+  release.
 
 A rollback is **resolved** when the criteria in the **Rollback —
 declare rollback successful** section are met.
@@ -273,7 +274,7 @@ least 10 consecutive minutes:
   a probe-key GET is identical (no follower more than one heartbeat
   behind). The header is set by `HttpApiServer.handleGet` from
   `ReadResult.version()` — see `configd-server/.../HttpApiServer.java`.
-  <!-- TODO PA-7002: admin endpoint missing — `/admin/raft/status` is
+  <!-- TODO: admin endpoint missing — `/admin/raft/status` is
   not exposed on HttpApiServer; once it ships, swap the probe-key
   approach for a direct `commit_index` read. -->
   ```sh
@@ -289,7 +290,7 @@ least 10 consecutive minutes:
   `rate(configd_snapshot_install_failed_total[5m])` are both zero, and
   no SLO burn-rate alerts are currently firing:
   `count(ALERTS{alertname=~"ConfigdWriteCommitFastBurn|ConfigdControlPlaneAvailability",alertstate="firing"}) == 0`.
-  <!-- TODO PA-XXXX: a derived `configd_slo_burn_rate_1h` series is not
+  <!-- TODO: a derived `configd_slo_burn_rate_1h` series is not
   emitted; the canonical signal is the burn-rate alert state from
   `ops/alerts/configd-slo-alerts.yaml`. -->
   The metric `configd_write_failure_total` does NOT exist; the actual
@@ -330,13 +331,12 @@ Then re-deploy via the standard forward path.
 
 - `.github/workflows/release.yml` — pipeline source
 - `RELEASE_NOTES_TEMPLATE.md` — release notes scaffold
-- `CHANGELOG.md` — Keep-a-Changelog log per release
-- `docs/decisions/adr-0021-maven-build-system.md` — build system /
+- `docs/adr/adr-0021-maven-build-system.md` — build system /
   reproducibility contract that the release workflow re-runs as
   `mvn verify`.
-- `docs/decisions/adr-0022-java-25-runtime.md` — JDK pin that the
-  Cosign signature attests to (any change requires a CHANGELOG entry).
-- `docs/decisions/adr-0025-on-call-rotation-required.md` — operator-side
+- `docs/adr/adr-0022-java-25-runtime.md` — JDK pin that the
+  Cosign signature attests to (call out any change in the release notes).
+- `docs/adr/adr-0025-on-call-rotation-required.md` — operator-side
   paging hand-off.
 
 ## Do not

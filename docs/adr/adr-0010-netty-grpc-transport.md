@@ -1,17 +1,19 @@
 # ADR-0010: Netty for Data Plane, gRPC for Control Plane Transport
 
 ## Status
-Superseded
+Superseded by ADR-0043
 
-> **Note (2026-04-14, Verification Phase V8):** The actual implementation uses
-> plain Java TCP sockets with virtual threads (`TcpRaftTransport.java`) and
-> TLS 1.3 (`TlsManager.java`), not Netty or gRPC. The custom framed wire
-> format described below is implemented in `FrameCodec.java` with the same
-> message types, but over `java.net.Socket`/`SSLSocket` rather than Netty
-> channels. The control plane API uses `com.sun.net.httpserver.HttpServer`
-> (REST/JSON), not gRPC. This ADR documents the original design intent; the
-> implementation chose a simpler transport layer that meets the same
-> performance targets without the Netty/gRPC dependency.
+> **Note (2026-04-14):** At the time this note was first written, the actual implementation used
+> plain Java TCP sockets with virtual threads (`TcpRaftTransport.java`) and TLS 1.3
+> (`TlsManager.java`) for the data plane, and `com.sun.net.httpserver.HttpServer` (REST/JSON) for
+> the control plane API - not Netty, not gRPC. [ADR-0043](adr-0043-netty-transport-platform.md)
+> subsequently migrated all four transport surfaces (edge-read HTTP, admin API, fan-out streaming,
+> and the inter-node consensus wire) onto Netty, so the data plane and control plane both run on
+> Netty in production today (`NettyRaftTransport`, `NettyHttpApiServer`, `NettyFanOutServer`); the
+> JDK socket implementations are kept only as a documented fast-revert. The custom framed wire
+> format described below (`FrameCodec` and the edge frame codec) is unchanged by that migration -
+> Netty replaced the socket layer, not the wire format. gRPC and Spring Boot were never adopted:
+> the control plane API is still plain REST/JSON, not gRPC.
 
 ## Context
 The system has two distinct transport needs: (1) high-throughput, low-latency data plane for Raft replication and edge fan-out, and (2) request-response control plane API for admin operations, writes, and reads.

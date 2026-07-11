@@ -118,7 +118,7 @@ abstract class AbstractRaftTransportContract {
     private static Path clientKeyStore;    // legit, trusted (the downgrade attack's credential)
     private static Path expiredKeyStore;   // CA-signed end-entity, validity window already past
 
-    // NEW: a client signed by a DIFFERENT CA that is NOT in the server trust store.
+    // A client signed by a DIFFERENT CA that is NOT in the server trust store.
     private static Path untrustedClientKeyStore;
 
     @BeforeAll
@@ -255,11 +255,10 @@ abstract class AbstractRaftTransportContract {
         CountDownLatch receivedLatch = new CountDownLatch(1);
         var receivedMessages = new CopyOnWriteArrayList<InboundMessage>();
 
-        // Create transport B first so we know its port
         RaftTransportEndpoint transportB = createTransport(
                 nodeB,
                 new InetSocketAddress("127.0.0.1", 0),
-                Map.of(), // no peers initially -- will be set after both ports are known
+                Map.of(),
                 msg -> {
                     receivedMessages.add(msg);
                     receivedLatch.countDown();
@@ -268,7 +267,6 @@ abstract class AbstractRaftTransportContract {
         transportB.start();
         int portB = transportB.localPort();
 
-        // Create transport A that knows about B
         RaftTransportEndpoint transportA = createTransport(
                 nodeA,
                 new InetSocketAddress("127.0.0.1", 0),
@@ -277,7 +275,6 @@ abstract class AbstractRaftTransportContract {
         );
         transportA.start();
 
-        // Send a message from A to B
         FrameCodec.Frame frame = new FrameCodec.Frame(
                 MessageType.HEARTBEAT, 1, 5L, "hello".getBytes());
         transportA.send(nodeB, frame);
@@ -303,12 +300,10 @@ abstract class AbstractRaftTransportContract {
         var receivedByA = new CopyOnWriteArrayList<InboundMessage>();
         var receivedByB = new CopyOnWriteArrayList<InboundMessage>();
 
-        // Bind both to ephemeral ports; we need to create them in stages
-        // Step 1: Create B with no peers, start it to get its port
         RaftTransportEndpoint transportB = createTransport(
                 nodeB,
                 new InetSocketAddress("127.0.0.1", 0),
-                Map.of(), // peers added via separate transport instance
+                Map.of(),
                 msg -> {
                     receivedByB.add(msg);
                     latchB.countDown();
@@ -317,7 +312,6 @@ abstract class AbstractRaftTransportContract {
         transportB.start();
         int portB = transportB.localPort();
 
-        // Step 2: Create A knowing B's port, start it
         RaftTransportEndpoint transportA = createTransport(
                 nodeA,
                 new InetSocketAddress("127.0.0.1", 0),
@@ -330,7 +324,6 @@ abstract class AbstractRaftTransportContract {
         transportA.start();
         int portA = transportA.localPort();
 
-        // A sends to B
         FrameCodec.Frame frameAtoB = new FrameCodec.Frame(
                 MessageType.APPEND_ENTRIES, 1, 10L, "from-a".getBytes());
         transportA.send(nodeB, frameAtoB);
@@ -349,7 +342,6 @@ abstract class AbstractRaftTransportContract {
         CountDownLatch secondReceived = new CountDownLatch(2);
         var receivedMessages = new CopyOnWriteArrayList<InboundMessage>();
 
-        // Create B
         RaftTransportEndpoint transportB = createTransport(
                 nodeB,
                 new InetSocketAddress("127.0.0.1", 0),
@@ -363,7 +355,6 @@ abstract class AbstractRaftTransportContract {
         transportB.start();
         int portB = transportB.localPort();
 
-        // Create A
         RaftTransportEndpoint transportA = createTransport(
                 nodeA,
                 new InetSocketAddress("127.0.0.1", 0),
@@ -372,20 +363,17 @@ abstract class AbstractRaftTransportContract {
         );
         transportA.start();
 
-        // Send first message
         FrameCodec.Frame frame1 = new FrameCodec.Frame(
                 MessageType.HEARTBEAT, 1, 1L, "first".getBytes());
         transportA.send(nodeB, frame1);
         assertTrue(firstReceived.await(5, TimeUnit.SECONDS), "First message should arrive");
 
-        // Close B and restart to simulate connection drop
         transportB.close();
         transports.remove(transportB);
 
-        // Small delay to let the close propagate
+        // Small delay to let the close propagate.
         Thread.sleep(200);
 
-        // Start a new B on the same port
         RaftTransportEndpoint transportB2 = createTransport(
                 nodeB,
                 new InetSocketAddress("127.0.0.1", portB),
@@ -397,7 +385,6 @@ abstract class AbstractRaftTransportContract {
         );
         transportB2.start();
 
-        // Send second message; should reconnect automatically
         FrameCodec.Frame frame2 = new FrameCodec.Frame(
                 MessageType.HEARTBEAT, 1, 2L, "second".getBytes());
 
@@ -447,7 +434,6 @@ abstract class AbstractRaftTransportContract {
         );
         transportA.start();
 
-        // Launch concurrent senders
         CountDownLatch startGun = new CountDownLatch(1);
         Thread[] senders = new Thread[messageCount];
         for (int i = 0; i < messageCount; i++) {
@@ -465,10 +451,8 @@ abstract class AbstractRaftTransportContract {
             });
         }
 
-        // Fire!
         startGun.countDown();
 
-        // Wait for all sender threads
         for (Thread t : senders) {
             t.join(5000);
         }
@@ -492,14 +476,12 @@ abstract class AbstractRaftTransportContract {
         int port = transportA.localPort();
         assertTrue(port > 0, "Should be bound to a real port");
 
-        // Close and verify no exceptions
         transportA.close();
         transports.remove(transportA);
 
-        // Sending after close should not throw (just silently drop)
         FrameCodec.Frame frame = new FrameCodec.Frame(
                 MessageType.HEARTBEAT, 0, 0L, new byte[0]);
-        // send should return without throwing since running is false
+        // send() must return without throwing since running is now false.
         assertDoesNotThrow(() -> transportA.send(NodeId.of(99), frame));
     }
 
@@ -628,8 +610,7 @@ abstract class AbstractRaftTransportContract {
         transportB.start();
         int portB = transportB.localPort();
 
-        // Client targets 127.0.0.2 - the hostname must not be covered by
-        // the SAN, so the handshake must fail.
+        // Client targets 127.0.0.2, which the SAN does not cover, so the handshake must fail.
         RaftTransportEndpoint transportA = createEndpoint(
                 nodeA,
                 new InetSocketAddress("127.0.0.1", 0),
@@ -641,9 +622,8 @@ abstract class AbstractRaftTransportContract {
         FrameCodec.Frame frame = new FrameCodec.Frame(
                 MessageType.HEARTBEAT, 0, 0L, new byte[0]);
 
-        // Without the fix: the handshake passes because endpoint identification is disabled,
-        // SAN mismatch is ignored, and `received` latches to zero.
-        // With the fix: the handshake fails (SSLHandshakeException); no frame arrives at B.
+        // Endpoint identification must reject the SAN mismatch (SSLHandshakeException), so no
+        // frame ever arrives at B and `received` stays at zero.
         for (int i = 0; i < 5; i++) {
             try { transportA.send(nodeB, frame); } catch (Exception ignored) {}
             Thread.sleep(100);
@@ -883,7 +863,7 @@ abstract class AbstractRaftTransportContract {
         if (!released) {
             // Bounded observation: confirm the worker is parked, snapshot its
             // stack as evidence, then fail WITHOUT waiting out the ~127 s SYN
-            // timeout. (Post-fix this branch is never taken.)
+            // timeout. A correct implementation never takes this branch.
             String stack = stackSnippet(worker);
             // Give it the rest of the observation window only to enrich the
             // diagnostic - the assertion has already conceptually failed.

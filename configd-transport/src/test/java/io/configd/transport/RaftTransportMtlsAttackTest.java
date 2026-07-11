@@ -172,9 +172,7 @@ class RaftTransportMtlsAttackTest {
                 "a plaintext frame must never be decoded as a peer message by the TLS-only Raft server");
     }
 
-    // -----------------------------------------------------------------------
     // Expired client certificate rejected.
-    // -----------------------------------------------------------------------
 
     @Test
     @Timeout(120)

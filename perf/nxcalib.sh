@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# =============================================================================
-# nxcalib.sh — Multi-Raft N×knee via CLOSED-LOOP calibration (the honest ceiling).
-# -----------------------------------------------------------------------------
+# nxcalib.sh — multi-Raft N x knee via closed-loop calibration (the honest ceiling).
+#
 # The open-loop nxknee.sh ladder is contaminated by driver backpressure when the
 # offered rate exceeds what a single open-loop driver can submit (the worker pool
-# saturates and the run measures the DRIVER, not the cluster — observed: servers
-# + NVMe idle, yet throughput capped). This harness instead drives CLOSED-LOOP
+# saturates and the run measures the driver, not the cluster — observed: servers
+# and NVMe idle, yet throughput capped). This harness instead drives closed-loop
 # (calibrate-sharded: C workers each send-as-fast-as-possible, routed per shard),
 # so the measured sustained 200/s is the cluster's true throughput ceiling at
 # that concurrency. It sweeps concurrency to find the plateau, and captures
-# iostat/mpstat/pidstat (INCLUDING the driver PID) so the bottleneck (NVMe fsync
+# iostat/mpstat/pidstat (including the driver PID) so the bottleneck (NVMe fsync
 # vs CPU vs driver) is visible at the knee.
 #
 #   Usage:  perf/nxcalib.sh <N> [outdir]
@@ -18,7 +17,6 @@
 #           NXC_GC (default ZGC)  NXC_TRANSPORT (default epoll)
 #           NXC_BASE (default /mnt/nvme/run/nxc-N<N>-<pid>)  NXC_DRYRUN (default 0)
 #           NXC_JVM_EXTRA (per-node extra flags)  CONFIGD_JAR / CONFIGD_BENCH / NXC_SIGNKEY
-# =============================================================================
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JAR="${CONFIGD_JAR:-$(ls "$ROOT"/configd-server/target/configd-server-*.jar 2>/dev/null | grep -v original- | head -1)}"

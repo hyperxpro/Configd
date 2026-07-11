@@ -42,10 +42,6 @@ public final class MetricsRegistry {
     private final ConcurrentHashMap<String, GaugeRegistration> gauges = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, DefaultHistogram> histograms = new ConcurrentHashMap<>();
 
-    // -----------------------------------------------------------------------
-    // Counter
-    // -----------------------------------------------------------------------
-
     /**
      * A monotonically increasing counter.
      */
@@ -76,10 +72,6 @@ public final class MetricsRegistry {
         return counters.computeIfAbsent(name, k -> new DefaultCounter());
     }
 
-    // -----------------------------------------------------------------------
-    // Gauge
-    // -----------------------------------------------------------------------
-
     /**
      * Registers a gauge with the given name and value supplier.
      * <p>
@@ -98,10 +90,6 @@ public final class MetricsRegistry {
         Objects.requireNonNull(supplier, "supplier must not be null");
         gauges.put(name, new GaugeRegistration(supplier));
     }
-
-    // -----------------------------------------------------------------------
-    // Histogram
-    // -----------------------------------------------------------------------
 
     /**
      * A distribution of {@code long} values with percentile support.
@@ -168,10 +156,6 @@ public final class MetricsRegistry {
         return histograms.computeIfAbsent(name, k -> new DefaultHistogram(DEFAULT_HISTOGRAM_CAPACITY));
     }
 
-    // -----------------------------------------------------------------------
-    // Snapshot
-    // -----------------------------------------------------------------------
-
     /**
      * A point-in-time snapshot of a single metric's value.
      *
@@ -217,10 +201,6 @@ public final class MetricsRegistry {
 
         return new MetricsSnapshot(result);
     }
-
-    // -----------------------------------------------------------------------
-    // Internal implementations
-    // -----------------------------------------------------------------------
 
     /**
      * Lock-free counter backed by {@link LongAdder} for high-throughput
@@ -373,16 +353,13 @@ public final class MetricsRegistry {
                 return 0;
             }
 
-            // Snapshot the ring buffer
             int n = (int) Math.min(c, capacity);
             long[] snapshot = new long[n];
             long cursorVal = cursor.get();
 
             if (c <= capacity) {
-                // Buffer is not yet full - copy from start
                 System.arraycopy(buffer, 0, snapshot, 0, n);
             } else {
-                // Buffer has wrapped - copy from current write position
                 int start = (int) (cursorVal % capacity);
                 int tailLen = capacity - start;
                 System.arraycopy(buffer, start, snapshot, 0, tailLen);
@@ -391,7 +368,6 @@ public final class MetricsRegistry {
 
             Arrays.sort(snapshot);
 
-            // Nearest-rank method
             int rank = (int) Math.ceil(p * n) - 1;
             if (rank < 0) rank = 0;
             if (rank >= n) rank = n - 1;

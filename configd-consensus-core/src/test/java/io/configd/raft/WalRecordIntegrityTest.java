@@ -22,8 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Verifies at-rest integrity of the WAL records, and the
- * critical TORN-vs-TAMPER disambiguation (D-1 condition 3).
+ * Verifies at-rest integrity of the WAL records, and the critical torn-vs-tamper disambiguation.
  * <ul>
  *   <li><b>Tamper:</b> a COMPLETE, FileStorage-CRC32C-valid WAL frame whose inner
  *       integrity envelope HMAC fails - replay REFUSES (throws). A write-access

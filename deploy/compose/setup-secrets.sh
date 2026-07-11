@@ -1,30 +1,28 @@
 #!/usr/bin/env bash
-# =============================================================================
-# setup-secrets.sh — generates the mTLS + signing key material for the C6
+# setup-secrets.sh generates the mTLS and signing key material for the
 # Docker-Compose E2E topology into deploy/compose/secrets/.
 #
 # Pattern: the FanOutServerMtlsTest / EdgeNodeIntegrationTest keytool fixture
 # (EC secp256r1 self-signed certs, cross-imported trust), adapted for the
-# production CLI TLS path: TlsConfig.mtls hard-codes an EMPTY store password
+# production CLI TLS path: TlsConfig.mtls hard-codes an empty store password
 # and keytool refuses passwords < 6 chars, so every keytool-built store is
-# REPACKED to an empty-password PKCS12 via SecretsTool.java (which also
+# repacked to an empty-password PKCS12 via SecretsTool.java (which also
 # verifies each artifact loads exactly the way TlsManager will load it).
 #
-# Identity model (C1 decision): the mTLS client-cert Subject DN is the
-# AUTHORITATIVE edge identity — each edge gets CN=edge-N and passes the same
-# string as --edge-id. The single server cert carries SANs for cp1/cp2/cp3
-# (the edge client enforces HTTPS endpoint identification, F-0051) and is
-# ALSO trusted by the server trust store (CP nodes present it as the client
-# cert in Raft peer mTLS).
+# Identity model: the mTLS client-cert Subject DN is the authoritative edge
+# identity -- each edge gets CN=edge-N and passes the same string as
+# --edge-id. The single server cert carries SANs for cp1/cp2/cp3 (the edge
+# client enforces HTTPS endpoint identification) and is also trusted by the
+# server trust store (CP nodes present it as the client cert in Raft peer
+# mTLS).
 #
-# The Ed25519 signing key is minted ONCE and mounted into all three CP nodes
+# The Ed25519 signing key is minted once and mounted into all three CP nodes
 # (--signing-key-file): each node signs its own fan-out stream at apply time,
 # so a per-node key would break edge verification at the first failover.
 #
 # Idempotent: a complete secrets/ dir is left alone; FORCE=1 regenerates.
 # Requires: keytool + java (JDK 25) on PATH, and the configd-server shaded jar
 # (pass via SERVER_JAR or build with: ./mvnw -pl configd-server -am clean package).
-# =============================================================================
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -86,7 +84,7 @@ echo "[secrets] shared Ed25519 signing key + exported verify key (production cla
 java -cp "$SERVER_JAR" "$HERE/SecretsTool.java" signing-key \
     "$SECRETS/signing-key.bin" "$SECRETS/verify-key.der"
 
-# Containers run as root in this TEST topology; keep host-side perms tight anyway.
+# Containers run as root in this test topology; keep host-side perms tight anyway.
 chmod 600 "$SECRETS"/*.p12 "$SECRETS/signing-key.bin"
 chmod 644 "$SECRETS"/*.pem "$SECRETS/verify-key.der"
 touch "$SECRETS/.complete"

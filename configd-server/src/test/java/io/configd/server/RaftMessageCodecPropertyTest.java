@@ -298,8 +298,6 @@ class RaftMessageCodecPropertyTest {
                 () -> RaftMessageCodec.decode(corrupted));
     }
 
-    // ---- Arbitraries ----
-
     @Provide
     Arbitrary<List<LogEntry>> entryLists() {
         Arbitrary<LogEntry> entry = Combinators.combine(

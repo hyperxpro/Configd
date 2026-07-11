@@ -10,8 +10,8 @@ import java.util.function.Predicate;
 
 /**
  * A {@link ReplaySource} decorator that filters the catch-up <b>snapshot</b> to a key predicate
- * before it is streamed - either a single watch's target (W5-10 / W7-4) as {@code
- * WATCH_SNAPSHOT_*}, or a filtered legacy SUBSCRIBE session's prefix set (ADR-0045) as
+ * before it is streamed - either a single watch's target as {@code
+ * WATCH_SNAPSHOT_*}, or a filtered legacy SUBSCRIBE session's prefix set as
  * {@code SNAPSHOT_*}, so the catch-up snapshot is narrowed the same way the live tail is.
  *
  * <p><b>Why this exists (the read-authz hole it closes).</b> The watch veneer drives the shared
@@ -19,17 +19,18 @@ import java.util.function.Predicate;
  * ({@code SNAPSHOT_FIRST}) is the <b>whole store</b>. The per-{@code NOTIFY} filter narrows the
  * live tail to each watch's target, but the snapshot is a <b>separate</b> server-to-client path:
  * left unfiltered, a watch authorized for one key receives <b>every</b> key on its first snapshot -
- * a read-authorization bypass around the subscription gate (INV-WATCH-READ, W7-4). This decorator
+ * a read-authorization bypass around the subscription gate (INV-WATCH-READ: a watch must never
+ * expose a key a plain read would deny). This decorator
  * filters the snapshot to the drain-owning watch's target so the snapshot exposes only what the
  * live path would, with the <b>same literal match</b> ({@link WatchTarget#matches}).
  *
  * <p><b>Match-all means no filter.</b> A FULL or {@code full_chain_verify} target was gated by a
- * root-scope grant (W7-3), so it is authorized for the whole store; filtering is skipped (the
+ * root-scope grant, so it is authorized for the whole store; filtering is skipped (the
  * snapshot passes through whole, and the rebuild is avoided). A {@code null} target - a legacy
  * (non-watch) connection, or a watch connection before the drain-owner is known - also passes
  * through, preserving the legacy fan-out's byte-identical whole-store snapshot.
  *
- * <p><b>v1 boundary.</b> The connection has ONE shared drain (W8-6), so the filter is the
+ * <p><b>Shared-drain boundary.</b> The connection has ONE shared drain, so the filter is the
  * <b>drain-owning (first) watch's</b> target. A connection-level re-snapshot (demotion) is
  * therefore filtered to the drain-owner - a sibling watch with a different target does not receive
  * a tailored re-snapshot (it must reconnect). This is a correctness boundary, not a leak: the
@@ -61,7 +62,7 @@ final class FilteringReplaySource implements ReplaySource {
 
     /**
      * Sets the filter to an arbitrary key predicate - the filtered legacy SUBSCRIBE session's
-     * prefix-plus-strong-read matcher (ADR-0045). A {@code null} predicate leaves the snapshot
+     * prefix-plus-strong-read matcher. A {@code null} predicate leaves the snapshot
      * whole (passthrough).
      */
     void setPredicate(Predicate<String> predicate) {

@@ -10,9 +10,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Verifies {@link RegistryFanOutSessionMetrics} registers the design section 4 series eagerly (a
- * metric the exporter can find from the first scrape, not one that blinks in on first event)
- * and that they render with the exact {@code edge_fanout_*} Prometheus names.
+ * Verifies {@link RegistryFanOutSessionMetrics} registers its metrics series eagerly (a metric the
+ * exporter can find from the first scrape, not one that blinks in on first event) and that they render
+ * with the exact {@code edge_fanout_*} Prometheus names.
  */
 class RegistryFanOutSessionMetricsTest {
 
@@ -23,7 +23,7 @@ class RegistryFanOutSessionMetricsTest {
 
         String out = new PrometheusExporter(registry).export();
 
-        // Counters -> *_total; gauges bare. (Present at value 0 before any event.)
+        // Counters get a *_total suffix; gauges stay bare. (Present at value 0 before any event.)
         assertTrue(out.contains("edge_fanout_heartbeats_total"), out);
         assertTrue(out.contains("edge_fanout_slow_consumer_warnings_total"), out);
         assertTrue(out.contains("edge_fanout_notify_batches_total"), out);
@@ -38,10 +38,10 @@ class RegistryFanOutSessionMetricsTest {
         assertTrue(out.contains("edge_fanout_demotions_" + DemotionEvent.REASON_TRANSPORT_BLOCK + "_total"), out);
         // Per-reason session-closed counters.
         assertTrue(out.contains("edge_fanout_sessions_closed_server_shutdown_total"), out);
-        assertTrue(out.contains("edge_fanout_sessions_closed_quarantined_total"), out); // C4
+        assertTrue(out.contains("edge_fanout_sessions_closed_quarantined_total"), out);
         // The legacy-SUBSCRIBE refusal at N>1 gets its own series (not folded into other).
         assertTrue(out.contains("edge_fanout_sessions_closed_bad_subscribe_total"), out);
-        // C4 slow-consumer policy series (design section 2 names, verbatim).
+        // Slow-consumer policy series.
         assertTrue(out.contains("edge_fanout_slow_transitions_total"), out);
         assertTrue(out.contains("edge_fanout_quarantines_total"), out);
         assertTrue(out.contains("edge_fanout_unhealthy_total"), out);

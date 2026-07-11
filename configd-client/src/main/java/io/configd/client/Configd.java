@@ -173,7 +173,7 @@ public final class Configd implements AutoCloseable {
             return this;
         }
 
-        /** Enable the optional replay guard on the HTTP plane's mutations (§04 D11-3). */
+        /** Enable the optional replay guard on the HTTP plane's mutations. */
         public Builder replayGuard(boolean enabled) {
             this.replayGuard = enabled;
             return this;

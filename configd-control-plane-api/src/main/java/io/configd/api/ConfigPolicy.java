@@ -17,9 +17,8 @@ import java.util.Set;
  * observes a half-applied (torn) reload. The snapshot is deeply immutable, so holding a reference to it is
  * always safe.
  * <p>
- * <b>Empty by default ({@link #EMPTY}).</b> Production deploys define no {@code _acl/} keys, so the
- * config-policy snapshot is empty and contributes nothing to any authorization decision - every decision is
- * byte-identical to the pre-policy-layer own-grants(+static-roles) evaluation.
+ * <b>Empty by default ({@link #EMPTY}).</b> An unconfigured deployment defines no {@code _acl/} keys, so
+ * the config-policy snapshot is empty and contributes nothing to any authorization decision.
  * <p>
  * <b>Roles + bindings only (Vault-shaped).</b> Config authority flows through {@link Role}s (which bundle
  * {@link Policy policies} of literal-prefix {@link PolicyRule}s) and per-principal role bindings; the
@@ -32,7 +31,7 @@ import java.util.Set;
  */
 public record ConfigPolicy(Map<String, Role> roles, Map<String, Set<String>> bindings) {
 
-    /** The empty config-policy: no roles, no bindings - the production default; contributes nothing. */
+    /** The empty config-policy: no roles, no bindings; contributes nothing to authorization. */
     public static final ConfigPolicy EMPTY = new ConfigPolicy(Map.of(), Map.of());
 
     public ConfigPolicy {

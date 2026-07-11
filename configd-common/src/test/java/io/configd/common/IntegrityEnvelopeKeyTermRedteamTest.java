@@ -17,19 +17,19 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Red-team pass over the Gate-4 {@code keyTerm}-versioned at-rest integrity (frozen-format
- * Option B). Every attack REWRITES the {@code keyTerm} field of a real on-disk envelope and
- * asserts verification REFUSES - and, decisively, RECOMPUTES the CRC32C after the edit so the
- * refusal is proven to come from the AUTHENTICATION (HMAC / GCM tag), not the CRC. A stale CRC
- * would mask the real behavior behind a "corruption" error and prove nothing about the keyTerm
- * binding.
+ * Red-team pass over the keyTerm-versioned at-rest integrity format. Every attack rewrites the
+ * {@code keyTerm} field of a real on-disk envelope and asserts that verification refuses - and,
+ * decisively, recomputes the CRC32C after the edit so the refusal is proven to come from the
+ * authentication (HMAC or GCM tag), not the CRC. A stale CRC would mask the real behavior behind
+ * a "corruption" error and prove nothing about the keyTerm binding.
  *
- * <p>Both keyed postures are attacked: algId=1 HMAC (the MAC input binds keyTerm AND selects
- * K_integrity[keyTerm]) and algId=2 GCM (the AAD binds keyTerm AND selects DEK[keyTerm,segmentId]).
- * The forge targets both a VALID-but-wrong retained term (key selection succeeds, so only the
- * MAC/tag can catch it) and an ABSENT term (fail-closed key selection). The {@code keyTerm=0}
- * signing-key domain crossing is attacked too. Finally the operator's hard sub-rule is asserted:
- * a keyless (algId=0) record is byte-identical to the pre-Gate-4 layout - NO keyTerm inserted.
+ * <p>Both keyed postures are attacked: algId=1 HMAC (the MAC input binds keyTerm and selects the
+ * per-term integrity key) and algId=2 GCM (the AAD binds keyTerm and selects the per-term,
+ * per-segment encryption key). The forge targets both a valid-but-wrong retained term (key
+ * selection succeeds, so only the MAC/tag can catch it) and an absent term (fail-closed key
+ * selection). The {@code keyTerm=0} signing-key domain crossing is attacked too. Finally, a
+ * keyless (algId=0) record must stay byte-identical to the layout before keyTerm was introduced -
+ * no keyTerm is inserted.
  *
  * <p>{@code keyTerm} sits at offset {@code HEADER(8)+scopeId(4)=12} in every keyed posture.
  */
@@ -67,7 +67,7 @@ class IntegrityEnvelopeKeyTermRedteamTest {
         ByteBuffer.wrap(enveloped).putInt(KEY_TERM_OFFSET, keyTerm);
     }
 
-    /** Repairs the CRC32C trailer over [0, len-4) so the forge is judged on the MAC/tag, not the CRC. */
+    /** Repairs the CRC32C trailer (all bytes but the last 4) so the forge is judged on the MAC or tag, not the CRC. */
     private static void repairCrc(byte[] b) {
         CRC32C crc = new CRC32C();
         crc.update(b, 0, b.length - IntegrityEnvelope.CRC_SIZE);
@@ -78,10 +78,8 @@ class IntegrityEnvelopeKeyTermRedteamTest {
         return ByteBuffer.wrap(enveloped).getInt(KEY_TERM_OFFSET);
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // ATTACK 1 (HMAC): forge keyTerm to a VALID-but-wrong retained term. Key selection SUCCEEDS
-    // (root[1] is retained), so the ONLY thing that can catch this is the MAC binding keyTerm.
-    // ---------------------------------------------------------------------------------------------
+    // Attack 1 (HMAC): forge keyTerm to a valid-but-wrong retained term. Key selection succeeds
+    // (root 1 is retained), so the only thing that can catch this is the MAC binding keyTerm.
 
     @Test
     void hmacKeyTermForged_toValidOtherTerm_failsMac_notCrc() {
@@ -89,8 +87,8 @@ class IntegrityEnvelopeKeyTermRedteamTest {
         byte[] rec = env.wrap(WALE_MAGIC, SCOPE, payload());
         assertEquals(2, keyTermOf(rec), "the active term is stamped");
 
-        setKeyTerm(rec, 1);   // roll keyTerm 2 -> 1 (term 1's K_integrity IS retained)
-        repairCrc(rec);       // CRITICAL: make the CRC pass so the MAC (not the CRC) must catch it
+        setKeyTerm(rec, 1);   // roll keyTerm from 2 to 1 (term 1's integrity key is retained)
+        repairCrc(rec);       // make the CRC pass so the MAC, not the CRC, must catch it
 
         IntegrityException ex = assertThrows(IntegrityException.class,
                 () -> env.unwrap(WALE_MAGIC, SCOPE, rec),
@@ -111,10 +109,8 @@ class IntegrityEnvelopeKeyTermRedteamTest {
                 "an absent keyTerm must fail closed at key selection, got: " + ex.getMessage());
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // ATTACK 1 (GCM): forge keyTerm to a VALID-but-wrong retained term. DEK selection succeeds, so
-    // only the GCM AAD (which binds keyTerm) can catch it.
-    // ---------------------------------------------------------------------------------------------
+    // Attack 1 (GCM): forge keyTerm to a valid-but-wrong retained term. DEK selection succeeds,
+    // so only the GCM AAD, which binds keyTerm, can catch it.
 
     @Test
     void gcmKeyTermForged_toValidOtherTerm_failsTag_notCrc() {
@@ -123,7 +119,7 @@ class IntegrityEnvelopeKeyTermRedteamTest {
         assertEquals(2, keyTermOf(rec), "the active term is stamped");
         assertEquals(IntegrityEnvelope.ALG_AES256_GCM, rec[6]);
 
-        setKeyTerm(rec, 1);   // roll keyTerm 2 -> 1 (root[1] retained -> DEK[1,seg] derivable)
+        setKeyTerm(rec, 1);   // roll keyTerm from 2 to 1 (root 1 is retained, so the term-1 segment key derives)
         repairCrc(rec);
 
         IntegrityException ex = assertThrows(IntegrityException.class,
@@ -145,9 +141,7 @@ class IntegrityEnvelopeKeyTermRedteamTest {
                 "an absent keyTerm must fail closed at DEK selection, got: " + ex.getMessage());
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // ATTACK: cross into the keyTerm=0 signing-key domain on a NON-keyring artifact (illegal, §2.2).
-    // ---------------------------------------------------------------------------------------------
+    // Attack: cross into the keyTerm=0 signing-key domain on a non-keyring artifact, which is illegal.
 
     @Test
     void hmacKeyTermForged_toZero_reservedDomain_failsClosed() {
@@ -173,12 +167,10 @@ class IntegrityEnvelopeKeyTermRedteamTest {
                 "a GCM record with keyTerm 0 must fail closed, got: " + ex.getMessage());
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // ISOLATION: prove the MAC BINDS keyTerm independent of key selection. A single-key HMAC
-    // envelope verifies under ONE key for every keyTerm >= 1, so key selection cannot differ - the
-    // ONLY defense against a rolled keyTerm is the MAC covering it. (This is the guard the
-    // mutation-proof defeats to show the assertion flips.)
-    // ---------------------------------------------------------------------------------------------
+    // Isolation: prove the MAC binds keyTerm independent of key selection. A single-key HMAC
+    // envelope verifies under one key for every keyTerm >= 1, so key selection cannot differ - the
+    // only defense against a rolled keyTerm is the MAC covering it. This is the guard that a
+    // mutation test would need to defeat to flip the assertion.
 
     @Test
     void singleKeyHmac_keyTermForge_caughtByMacInputBinding() {
@@ -196,43 +188,41 @@ class IntegrityEnvelopeKeyTermRedteamTest {
                         + ex.getMessage());
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // OPERATOR HARD-RULE: keyless (algId=0) stays byte-identical to pre-Gate-4 - NO keyTerm. The
-    // keyTerm was added ONLY to the keyed postures; if one leaked into the keyless body it is a
-    // FINDING.
-    // ---------------------------------------------------------------------------------------------
+    // Keyless (algId=0) records stay byte-identical to the layout before keyTerm was introduced -
+    // no keyTerm. keyTerm was added only to the keyed postures; if one leaked into the keyless
+    // body, that would be a real defect.
 
     @Test
     void keylessRecord_carriesNoKeyTerm_byteIdenticalLayout() {
         byte[] p = payload();
         byte[] keyless = IntegrityEnvelope.keyless().wrap(WALE_MAGIC, SCOPE, p);
 
-        // Layout must be exactly [header:8][scopeId:4][payload][CRC:4] - no 4-byte keyTerm.
+        // Layout must be exactly header (8 bytes), scopeId (4 bytes), payload, then CRC (4 bytes) -
+        // no 4-byte keyTerm.
         int expectedLen = IntegrityEnvelope.HEADER_SIZE + IntegrityEnvelope.SCOPE_ID_SIZE
                 + p.length + IntegrityEnvelope.CRC_SIZE;
         assertEquals(expectedLen, keyless.length,
                 "a keyless record must not carry a keyTerm (any +4 length is a leak)");
         assertEquals(IntegrityEnvelope.ALG_NONE, keyless[6], "keyless posture is algId=0");
-        // The payload begins immediately after the scopeId (offset 12), NOT after a keyTerm.
+        // The payload begins immediately after the scopeId (offset 12), not after a keyTerm.
         assertArrayEquals(p, Arrays.copyOfRange(keyless, KEY_TERM_OFFSET, KEY_TERM_OFFSET + p.length),
                 "the payload must sit at offset 12 - proving no keyTerm was inserted");
 
-        // Contrast: the keyed HMAC record of the SAME payload IS exactly 4 (keyTerm) + 32 (MAC)
-        // longer, with a keyTerm (=1) at offset 12 - so the keyTerm exists ONLY in the keyed posture.
+        // Contrast: the keyed HMAC record of the same payload is exactly 4 (keyTerm) plus 32 (MAC)
+        // bytes longer, with a keyTerm of 1 at offset 12 - the keyTerm exists only in the keyed posture.
         byte[] keyed = new IntegrityEnvelope(singleHmacKey()).wrap(WALE_MAGIC, SCOPE, p);
         assertEquals(keyless.length + IntegrityEnvelope.KEY_TERM_SIZE + IntegrityEnvelope.MAC_SIZE,
                 keyed.length, "the keyed layout differs from keyless by keyTerm + MAC");
         assertEquals(1, keyTermOf(keyed), "the keyed posture carries a keyTerm at offset 12");
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // NON-VACUITY: the two-term round trip verifies both terms (so the forges above prove REFUSAL,
-    // not a broken codec). An old-term record still verifies after the active term moved on.
-    // ---------------------------------------------------------------------------------------------
+    // Non-vacuity: the two-term round trip verifies both terms, so the forges above prove
+    // refusal, not a broken codec. An old-term record still verifies after the active term moves on.
 
     @Test
     void twoTermRoundTrip_bothPostures_verifyBothTerms() {
-        // HMAC: write at active term 2, and a hand-forced term-1 record verifies under retained root[1].
+        // HMAC: write at active term 2; a hand-forced term-1 record still verifies under the
+        // retained root for term 1.
         SegmentKeyManager keys = twoTermKeys();
         IntegrityEnvelope hmac = IntegrityEnvelope.hmac(keys);
         byte[] recTerm2 = hmac.wrap(WALE_MAGIC, SCOPE, payload());

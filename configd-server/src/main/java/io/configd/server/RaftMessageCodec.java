@@ -113,8 +113,8 @@ public final class RaftMessageCodec {
      * {@link #decodeWitness}).
      *
      * <p>That prefix is <em>cryptographically bound</em> to the peer's TLS certificate identity
-     * <b>only when a peer-identity allow-list is configured</b> (WH-08/09,
-     * {@code PeerIdentityPolicy}): the transport verifies the accepted peer's cert and drops any frame
+     * <b>only when a peer-identity allow-list is configured</b> ({@code PeerIdentityPolicy}): the
+     * transport verifies the accepted peer's cert and drops any frame
      * whose {@code senderId} differs from the connection's authorized {@code NodeId}. When no allow-list
      * is configured (default) the prefix is CA-chain-validated but self-declared, so a cert-valid peer
      * could forge it - the transport logs a one-time warning in that posture. Shared by
@@ -152,7 +152,7 @@ public final class RaftMessageCodec {
     }
 
     /**
-     * WH-06 strict-end: a fixed-shape decoder consumes exactly its declared payload, so any bytes
+     * Strict-end: a fixed-shape decoder consumes exactly its declared payload, so any bytes
      * left in the buffer are padding a hostile peer appended - reject them (bounded by frame length,
      * but a real grammar violation). Uniform with the strict-end already enforced by
      * {@link #decodeAppendEntries}, {@link #decodeInstallSnapshot} and
@@ -256,8 +256,6 @@ public final class RaftMessageCodec {
                     "Not a Raft message type: " + frame.messageType());
         };
     }
-
-    // ---- CoalescedHeartbeat ----
 
     /**
      * Encodes a coalesced heartbeat - the per-group empty {@link AppendEntriesRequest}s one node
@@ -367,8 +365,6 @@ public final class RaftMessageCodec {
         return out;
     }
 
-    // ---- AppendEntries ----
-
     private static FrameCodec.Frame encodeAppendEntries(AppendEntriesRequest req, int groupId) {
         if (req.entries().size() > MAX_ENTRIES_PER_APPEND) {
             throw new IllegalArgumentException(
@@ -441,7 +437,7 @@ public final class RaftMessageCodec {
             entries.add(new LogEntry(index, term, cmd));
         }
         if (buf.hasRemaining()) {
-            // WH-06 strict-end: a well-formed AppendEntries is exactly the fixed header plus its
+            // Strict-end: a well-formed AppendEntries is exactly the fixed header plus its
             // declared entries, with no padding. Reject trailing bytes (uniform with the coalesced
             // heartbeat and the edge plane) so a hostile peer cannot smuggle bytes past the grammar.
             throw new IllegalArgumentException(
@@ -449,8 +445,6 @@ public final class RaftMessageCodec {
         }
         return new AppendEntriesRequest(frame.term(), leaderId, prevLogIndex, prevLogTerm, entries, leaderCommit);
     }
-
-    // ---- AppendEntriesResponse ----
 
     private static FrameCodec.Frame encodeAppendEntriesResponse(AppendEntriesResponse resp, int groupId) {
         ByteBuffer buf = ByteBuffer.allocate(1 + 8 + 4);
@@ -469,8 +463,6 @@ public final class RaftMessageCodec {
         rejectTrailingBytes(buf, "AppendEntriesResponse");
         return new AppendEntriesResponse(frame.term(), success, matchIndex, from);
     }
-
-    // ---- RequestVote ----
 
     private static FrameCodec.Frame encodeRequestVote(RequestVoteRequest req, int groupId) {
         ByteBuffer buf = ByteBuffer.allocate(4 + 8 + 8);
@@ -491,8 +483,6 @@ public final class RaftMessageCodec {
         return new RequestVoteRequest(frame.term(), candidateId, lastLogIndex, lastLogTerm, preVote);
     }
 
-    // ---- RequestVoteResponse ----
-
     private static FrameCodec.Frame encodeRequestVoteResponse(RequestVoteResponse resp, int groupId) {
         ByteBuffer buf = ByteBuffer.allocate(1 + 4);
         buf.put((byte) (resp.voteGranted() ? 1 : 0));
@@ -509,8 +499,6 @@ public final class RaftMessageCodec {
         rejectTrailingBytes(buf, "RequestVoteResponse");
         return new RequestVoteResponse(frame.term(), voteGranted, from, preVote);
     }
-
-    // ---- InstallSnapshot ----
 
     private static FrameCodec.Frame encodeInstallSnapshot(InstallSnapshotRequest req, int groupId) {
         byte[] configData = req.clusterConfigData() != null ? req.clusterConfigData() : new byte[0];
@@ -539,9 +527,9 @@ public final class RaftMessageCodec {
         long lastIncludedTerm = buf.getLong();
         int offset = buf.getInt();
         if (offset < 0) {
-            // WH-05: reject a negative chunk offset at decode, closing the asymmetry with the
-            // response's nextExpectedOffset check below (:576). Downstream reassembly is a guarded
-            // contiguous-prefix, but the wire violation is rejected here where it enters.
+            // Reject a negative chunk offset at decode, matching the check on the response's
+            // nextExpectedOffset below. Downstream reassembly is a guarded contiguous-prefix, but
+            // the wire violation is rejected here where it enters.
             throw new IllegalArgumentException(
                     "Negative InstallSnapshot offset: " + offset);
         }
@@ -568,7 +556,7 @@ public final class RaftMessageCodec {
             }
         }
         if (buf.hasRemaining()) {
-            // WH-06 strict-end: the request is a fixed-shape header + data blob + optional configData
+            // Strict-end: the request is a fixed-shape header + data blob + optional configData
             // blob, nothing more. A frame with configData absent decodes with nothing remaining; a
             // frame that carried configData consumes it exactly. Any bytes past that are padding a
             // hostile peer appended - reject them (uniform with decodeAppendEntries / coalesced HB).
@@ -578,8 +566,6 @@ public final class RaftMessageCodec {
         return new InstallSnapshotRequest(frame.term(), leaderId, lastIncludedIndex, lastIncludedTerm,
                 offset, data, done, configData);
     }
-
-    // ---- InstallSnapshotResponse ----
 
     private static FrameCodec.Frame encodeInstallSnapshotResponse(InstallSnapshotResponse resp, int groupId) {
         // [1B success][4B from][8B lastIncludedIndex][4B nextExpectedOffset]
@@ -607,8 +593,8 @@ public final class RaftMessageCodec {
                             + lastIncludedIndex);
         }
         // nextExpectedOffset (chunked-transfer position) is an optional trailing field: decode it
-        // when present, default 0 otherwise. The chunk-transfer field was added after the base
-        // response; a frame without it decodes to offset 0, which the sender safely re-syncs from.
+        // when present, default 0 otherwise, so a peer speaking an older wire version that omits it
+        // still decodes cleanly - the sender safely re-syncs from offset 0.
         int nextExpectedOffset = 0;
         if (buf.hasRemaining()) {
             checkRemaining(buf, 4, "InstallSnapshotResponse nextExpectedOffset");
@@ -620,12 +606,11 @@ public final class RaftMessageCodec {
         }
         // Strict-end AFTER the optional nextExpectedOffset: the absence of the optional field is
         // legitimate (checked by the hasRemaining() gate above), but bytes past a present-or-absent
-        // field are padding a hostile peer appended - reject them (WH-06 uniformity).
+        // field are padding a hostile peer appended - reject them (matching the strict-end enforced
+        // elsewhere in this codec).
         rejectTrailingBytes(buf, "InstallSnapshotResponse");
         return new InstallSnapshotResponse(frame.term(), success, from, lastIncludedIndex, nextExpectedOffset);
     }
-
-    // ---- TimeoutNow ----
 
     private static FrameCodec.Frame encodeTimeoutNow(TimeoutNowRequest req, int groupId) {
         ByteBuffer buf = ByteBuffer.allocate(4);
@@ -640,8 +625,6 @@ public final class RaftMessageCodec {
         rejectTrailingBytes(buf, "TimeoutNow");
         return new TimeoutNowRequest(frame.term(), leaderId);
     }
-
-    // ---- Witness (Gate 3c) ----
 
     private static FrameCodec.Frame encodeWitness(WitnessMessage m, int groupId) {
         return witnessFrame(MessageType.RAFT_WITNESS, groupId,
@@ -662,9 +645,9 @@ public final class RaftMessageCodec {
         buf.putInt(selfVotedFor);
         buf.putLong(seenOfYouSeq);
         buf.put((byte) (query ? WITNESS_FLAG_QUERY : 0));
-        // The frame-header term mirrors the sender's currentTerm, as every other raft frame does; the
-        // body ALSO carries selfTerm (the authoritative field the decoder reads) per the frozen 29-byte
-        // body. The sender id is NOT written - the transport prefix carries it.
+        // The frame-header term mirrors the sender's currentTerm, as every other Raft frame does; the
+        // body also carries selfTerm (the authoritative field the decoder reads) as part of the fixed
+        // 29-byte body. The sender id is not written - the transport prefix carries it.
         return new FrameCodec.Frame(type, groupId, selfTerm, buf.array());
     }
 
@@ -694,9 +677,8 @@ public final class RaftMessageCodec {
         long seenOfYouSeq = buf.getLong();
         int flags = buf.get() & 0xFF;
         boolean query = (flags & WITNESS_FLAG_QUERY) != 0;
-        // Strict-end (WH-06): the witness body is exactly WITNESS_BODY_LEN; reject any surplus,
-        // matching every other fixed-shape Raft decoder (the Gate-7 round-2 review caught this as the
-        // one fixed-shape decoder the round-1 WH-06 completeness fix missed).
+        // Strict-end: the witness body is exactly WITNESS_BODY_LEN; reject any surplus, matching
+        // every other fixed-shape Raft decoder in this codec.
         rejectTrailingBytes(buf, "Witness");
         if (type == MessageType.RAFT_WITNESS) {
             return new WitnessMessage(from, selfAnchorSeq, selfTerm, selfVotedFor, seenOfYouSeq, query);

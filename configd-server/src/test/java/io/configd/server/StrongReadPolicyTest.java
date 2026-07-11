@@ -12,8 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Pure unit checks for {@link StrongReadPolicy} - the key-class assignment
  * that decides which keys MUST be served via the fail-closed linearizable path. These need no server
  * and so run once (the server-driven strong-read behaviour is re-proven on every transport in
- * {@link AbstractAdminApiServerContract}). Transcribed verbatim from the former
- * {@code StrongReadFailClosedTest} policy-unit section.
+ * {@link AbstractAdminApiServerContract}).
  */
 class StrongReadPolicyTest {
 

@@ -44,29 +44,21 @@ class EndToEndTest {
         return new String(b, StandardCharsets.UTF_8);
     }
 
-    // -----------------------------------------------------------------------
-    // Full pipeline: write -> snapshot -> edge load -> delta -> edge apply
-    // -----------------------------------------------------------------------
-
     @Nested
     class FullPipeline {
 
         @Test
         void writeToControlPlaneThenSyncToEdge() {
-            // 1. Write several config entries to control plane
             controlPlane.put("db.host", bytes("prod-db.internal"), 1);
             controlPlane.put("db.port", bytes("5432"), 2);
             controlPlane.put("cache.ttl", bytes("300"), 3);
 
-            // 2. Take a snapshot
             ConfigSnapshot snap = controlPlane.snapshot();
             assertEquals(3, snap.version());
             assertEquals(3, snap.size());
 
-            // 3. Load snapshot into edge store
             edge.loadSnapshot(snap);
 
-            // 4. Verify reads from edge return correct values
             ReadResult dbHost = edge.get("db.host");
             assertTrue(dbHost.found());
             assertArrayEquals(bytes("prod-db.internal"), dbHost.value());
@@ -84,37 +76,28 @@ class EndToEndTest {
 
         @Test
         void computeAndApplyDeltaToEdge() {
-            // Set up initial state on both sides
             controlPlane.put("a", bytes("1"), 1);
             controlPlane.put("b", bytes("2"), 2);
             ConfigSnapshot snap1 = controlPlane.snapshot();
             edge.loadSnapshot(snap1);
 
-            // Make changes on control plane
             controlPlane.put("b", bytes("updated"), 3);
             controlPlane.put("c", bytes("3"), 4);
             controlPlane.delete("a", 5);
             ConfigSnapshot snap2 = controlPlane.snapshot();
 
-            // Compute delta
             ConfigDelta delta = DeltaComputer.compute(snap1, snap2);
             assertEquals(2, delta.fromVersion());
             assertEquals(5, delta.toVersion());
 
-            // Apply delta to edge
             edge.applyDelta(delta);
 
-            // Verify edge reflects the changes
             assertFalse(edge.get("a").found(), "key 'a' should be deleted");
             assertArrayEquals(bytes("updated"), edge.get("b").value());
             assertArrayEquals(bytes("3"), edge.get("c").value());
             assertEquals(5, edge.currentVersion());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Version cursor enforcement
-    // -----------------------------------------------------------------------
 
     @Nested
     class VersionCursorEnforcement {
@@ -160,21 +143,15 @@ class EndToEndTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Multiple sequential deltas
-    // -----------------------------------------------------------------------
-
     @Nested
     class SequentialDeltas {
 
         @Test
         void multipleSequentialDeltasAppliedCorrectly() {
-            // Initial load
             controlPlane.put("a", bytes("1"), 1);
             ConfigSnapshot snap0 = controlPlane.snapshot();
             edge.loadSnapshot(snap0);
 
-            // Delta 1: add "b"
             controlPlane.put("b", bytes("2"), 2);
             ConfigSnapshot snap1 = controlPlane.snapshot();
             ConfigDelta delta1 = DeltaComputer.compute(snap0, snap1);
@@ -184,7 +161,6 @@ class EndToEndTest {
             assertArrayEquals(bytes("1"), edge.get("a").value());
             assertArrayEquals(bytes("2"), edge.get("b").value());
 
-            // Delta 2: update "a", add "c"
             controlPlane.put("a", bytes("updated"), 3);
             controlPlane.put("c", bytes("3"), 4);
             ConfigSnapshot snap2 = controlPlane.snapshot();
@@ -196,7 +172,6 @@ class EndToEndTest {
             assertArrayEquals(bytes("2"), edge.get("b").value());
             assertArrayEquals(bytes("3"), edge.get("c").value());
 
-            // Delta 3: delete "b"
             controlPlane.delete("b", 5);
             ConfigSnapshot snap3 = controlPlane.snapshot();
             ConfigDelta delta3 = DeltaComputer.compute(snap2, snap3);
@@ -209,10 +184,6 @@ class EndToEndTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Delete propagation through delta
-    // -----------------------------------------------------------------------
-
     @Nested
     class DeletePropagation {
 
@@ -224,7 +195,6 @@ class EndToEndTest {
             ConfigSnapshot snap1 = controlPlane.snapshot();
             edge.loadSnapshot(snap1);
 
-            // Delete all keys
             controlPlane.delete("x", 4);
             controlPlane.delete("y", 5);
             controlPlane.delete("z", 6);
@@ -244,10 +214,6 @@ class EndToEndTest {
             assertEquals(6, edge.currentVersion());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Version monotonicity
-    // -----------------------------------------------------------------------
 
     @Nested
     class VersionMonotonicity {
@@ -276,16 +242,11 @@ class EndToEndTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Snapshot load replaces entire state
-    // -----------------------------------------------------------------------
-
     @Nested
     class SnapshotLoadReplacesState {
 
         @Test
         void loadSnapshotReplacesEntireEdgeState() {
-            // Load initial state with keys a, b, c
             controlPlane.put("a", bytes("1"), 1);
             controlPlane.put("b", bytes("2"), 2);
             controlPlane.put("c", bytes("3"), 3);
@@ -295,25 +256,18 @@ class EndToEndTest {
             assertTrue(edge.get("b").found());
             assertTrue(edge.get("c").found());
 
-            // Create a completely different snapshot with only key "x"
             VersionedConfigStore otherStore = new VersionedConfigStore();
             otherStore.put("x", bytes("new-world"), 1);
             edge.loadSnapshot(otherStore.snapshot());
 
-            // Old keys should be gone
             assertFalse(edge.get("a").found());
             assertFalse(edge.get("b").found());
             assertFalse(edge.get("c").found());
 
-            // New key should be present
             assertTrue(edge.get("x").found());
             assertArrayEquals(bytes("new-world"), edge.get("x").value());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Staleness tracker with controlled clock
-    // -----------------------------------------------------------------------
 
     @Nested
     class StalenessWithSimulatedClock {
@@ -323,39 +277,31 @@ class EndToEndTest {
             SimulatedClock clock = new SimulatedClock(10_000);
             StalenessTracker tracker = new StalenessTracker(clock);
 
-            // Initially DISCONNECTED
             assertEquals(StalenessTracker.State.DISCONNECTED, tracker.currentState());
 
-            // Record update -> CURRENT
             tracker.recordUpdate(1, 10_000);
             assertEquals(StalenessTracker.State.CURRENT, tracker.currentState());
 
-            // Advance 400ms -> still CURRENT
             clock.advanceMs(400);
             assertEquals(StalenessTracker.State.CURRENT, tracker.currentState());
 
-            // Advance to 501ms total -> STALE
+            // cumulative 501ms since the update
             clock.advanceMs(101);
             assertEquals(StalenessTracker.State.STALE, tracker.currentState());
 
-            // Advance to 5001ms total -> DEGRADED
+            // cumulative 5001ms since the update
             clock.advanceMs(4500);
             assertEquals(StalenessTracker.State.DEGRADED, tracker.currentState());
 
-            // Advance to 30001ms total -> DISCONNECTED
+            // cumulative 30001ms since the update
             clock.advanceMs(25000);
             assertEquals(StalenessTracker.State.DISCONNECTED, tracker.currentState());
 
-            // Record update -> back to CURRENT
             tracker.recordUpdate(2, 40_001);
             assertEquals(StalenessTracker.State.CURRENT, tracker.currentState());
             assertEquals(2, tracker.lastVersion());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Delta version mismatch detection
-    // -----------------------------------------------------------------------
 
     @Nested
     class DeltaVersionMismatch {
@@ -365,7 +311,7 @@ class EndToEndTest {
             controlPlane.put("a", bytes("1"), 1);
             edge.loadSnapshot(controlPlane.snapshot());
 
-            // Create a delta that claims to be from version 5, but edge is at version 1
+            // the delta claims fromVersion 5, but the edge is at version 1
             ConfigDelta badDelta = new ConfigDelta(5, 6, List.of(
                     new ConfigMutation.Put("b", bytes("2"))
             ));
@@ -373,10 +319,6 @@ class EndToEndTest {
             assertThrows(IllegalArgumentException.class, () -> edge.applyDelta(badDelta));
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Empty delta (no-op)
-    // -----------------------------------------------------------------------
 
     @Nested
     class EmptyDelta {
@@ -387,14 +329,12 @@ class EndToEndTest {
             ConfigSnapshot snap = controlPlane.snapshot();
             edge.loadSnapshot(snap);
 
-            // Compute delta between identical snapshots
             ConfigDelta delta = DeltaComputer.compute(snap, snap);
             assertTrue(delta.isEmpty());
 
-            // Apply the empty delta -- fromVersion must match
+            // an empty delta still requires fromVersion to match the edge's current version
             edge.applyDelta(delta);
 
-            // State unchanged
             assertEquals(1, edge.currentVersion());
             assertArrayEquals(bytes("1"), edge.get("a").value());
         }

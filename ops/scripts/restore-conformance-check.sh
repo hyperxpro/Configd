@@ -35,7 +35,7 @@
 #   0  PASS
 #   1  FAIL
 #
-# Endpoint gaps tracked at the bottom of this file under "TODO PA-XXXX".
+# Endpoint gaps are tracked inline below as TODO comments.
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
@@ -188,7 +188,7 @@ APPLIED_INDEX="$(printf '%s\n' "$METRICS_TEXT" \
   | awk '/^configd_raft_last_applied_index([{ ]|$)/ {print $2; exit}')"
 
 if [ -z "$APPLIED_INDEX" ]; then
-  # TODO PA-XXXX: ConfigdServer / MetricsRegistry does not currently emit
+  # TODO: ConfigdServer / MetricsRegistry does not currently emit
   # configd_raft_last_applied_index. Until that gauge ships, the conformance
   # check cannot verify the post-restore commit index. Document the gap
   # rather than inventing an endpoint.
@@ -219,7 +219,7 @@ LIVE_HASH="$(printf '%s\n' "$METRICS_TEXT" \
   | awk -F'"' '/^configd_state_machine_hash\{/ {print $2; exit}')"
 
 if [ -z "$LIVE_HASH" ]; then
-  # TODO PA-XXXX: state-machine hash is not exposed by HttpApiServer or by
+  # TODO: state-machine hash is not exposed by HttpApiServer or by
   # MetricsRegistry. Until it is, the conformance check cannot byte-compare
   # the live state against the snapshot.
   emit_fail "metric configd_state_machine_hash not exposed — TODO PA-XXXX: state-hash surface missing"

@@ -13,20 +13,20 @@ import java.util.Map;
 import java.util.zip.CRC32C;
 
 /**
- * Runner I (WIRE-format conformance) — the case corpus. Two directions, per the protobuf-conformance model:
+ * Runner I (wire-format conformance) -- the case corpus. Two directions, per the protobuf-conformance model:
  *
  * <ul>
- *   <li><b>ACCEPT</b> — the pinned golden vectors ({@link EdgeFrameGoldenBytes}, the single source of truth,
- *       reused via the wire module's test-jar): each must {@code decode → re-encode} <b>byte-for-byte</b>
- *       identically (the cross-language wire oracle, §00 OV5-5).
- *   <li><b>REJECT</b> — a poison-frame corpus enumerating the codec's reject paths (§06/§07 + the decode
- *       taxonomy): each corrupt frame must be rejected with a SPECIFIC {@link io.configd.distribution.wire.ErrorCode}.
+ *   <li><b>ACCEPT</b> -- the pinned golden vectors ({@link EdgeFrameGoldenBytes}, the single source of truth,
+ *       reused via the wire module's test-jar): each must decode then re-encode byte-for-byte identically
+ *       (the cross-language wire oracle, §00 OV5-5).
+ *   <li><b>REJECT</b> -- a poison-frame corpus enumerating the codec's reject paths (§06/§07 and the decode
+ *       taxonomy): each corrupt frame must be rejected with a specific {@link io.configd.distribution.wire.ErrorCode}.
  * </ul>
  *
  * Each case yields an {@link #outcome} string (ACCEPT / REJECT:&lt;code&gt; / MISMATCH / REJECT:OTHER); the
  * expected outcome per case lives in the checked-in manifest ({@code wire-manifest.txt}), and
- * {@link WireConformanceRatchetTest} asserts the actual set EQUALS the declared set (an unexpected pass OR an
- * unexpected fail both break CI — the {@code --failure_list} bidirectional ratchet).
+ * {@link WireConformanceRatchetTest} asserts the actual set equals the declared set (an unexpected pass or an
+ * unexpected fail both break CI -- the {@code --failure_list} bidirectional ratchet).
  */
 final class WireCases {
 
@@ -52,7 +52,7 @@ final class WireCases {
         return cases;
     }
 
-    // -------- ACCEPT direction: golden round-trips --------
+    // ACCEPT direction: golden round-trips.
 
     private static List<Case> goldenRoundTrips() {
         List<Case> cases = new ArrayList<>();
@@ -67,7 +67,7 @@ final class WireCases {
         return cases;
     }
 
-    /** decode(golden) → re-encode at {@code version} → byte-identical ⇒ ACCEPT, else MISMATCH / REJECT. */
+    /** Decodes {@code golden}, re-encodes at {@code version}: byte-identical is ACCEPT, otherwise MISMATCH or REJECT. */
     private static String roundTrip(byte[] golden, byte version) {
         EdgeFrame frame;
         try {
@@ -79,7 +79,7 @@ final class WireCases {
         return java.util.Arrays.equals(golden, reencoded) ? "ACCEPT" : "MISMATCH";
     }
 
-    // -------- REJECT direction: the poison corpus --------
+    // REJECT direction: the poison corpus.
 
     private static List<Case> poison() {
         Map<String, byte[]> v1 = EdgeFrameGoldenBytes.forVersion(1);
@@ -101,20 +101,20 @@ final class WireCases {
         // Declared length disagrees with the actual byte count (not over cap, not under min).
         cases.add(decodeCase("poison.length-mismatch", withLengthField(anyV1, anyV1.length + 16)));
 
-        // A flipped payload byte with the ORIGINAL (now-wrong) CRC ⇒ CRC mismatch.
+        // A flipped payload byte with the original (now-stale) CRC: CRC mismatch.
         cases.add(decodeCase("poison.crc-mismatch", flipPayloadByte(anyV1)));
 
         // An unsupported version byte, CRC recomputed so the reject is the version (not the CRC).
         cases.add(decodeCase("poison.bad-version", reversionRecrc(anyV1, (byte) 0x05)));
 
-        // A structurally-valid 0x02 watch frame fed to a 0x01-pinned decode ⇒ version-pin reject.
+        // A structurally valid 0x02 watch frame fed to a 0x01-pinned decode: version-pin reject.
         cases.add(new Case("poison.version-pin-mismatch",
                 () -> decodeOutcome(() -> EdgeFrameCodec.decode(watch, EdgeFrameCodec.EDGE_WIRE_VERSION))));
 
         // An unknown type byte, CRC recomputed.
         cases.add(decodeCase("poison.unknown-type", retypeRecrc(anyV1, (byte) 0x7F)));
 
-        // A 0x02 watch frame re-stamped 0x01 (type↔version illegal), CRC recomputed.
+        // A 0x02 watch frame re-stamped 0x01 (type/version combination illegal), CRC recomputed.
         cases.add(decodeCase("poison.watch-type-on-v1", reversionRecrc(watch, EdgeFrameCodec.EDGE_WIRE_VERSION)));
 
         // A 0x04 auth frame re-stamped 0x01 (auth type illegal off 0x04), CRC recomputed.
@@ -123,16 +123,16 @@ final class WireCases {
         // A trailing byte inside the declared length that the payload parser does not consume.
         cases.add(decodeCase("poison.trailing-bytes", appendPayloadByte(anyV1)));
 
-        // ---- INNER-PAYLOAD bounds rejects: the reject-before-allocate hardening (§06 F3-2, the
-        // amplification/underflow defense). Each mutates ONE inner field of a valid golden to an out-of-bounds
-        // value (recomputing the CRC so the outer frame is intact), proving a conforming codec bounds EVERY
-        // inner length/count BEFORE allocating — not just the outer frame. ----
+        // Inner-payload bounds rejects: the reject-before-allocate hardening (§06 F3-2, the amplification and
+        // underflow defense). Each mutates one inner field of a valid golden to an out-of-bounds value
+        // (recomputing the CRC so the outer frame is intact), proving a conforming codec bounds every inner
+        // length/count before allocating -- not just the outer frame.
         byte[] authBearer = pick(v4, "auth_bearer", auth);
         byte[] subFull = pick(v1, "subscribe_full_store", anyV1);
         byte[] subOk = pick(v1, "subscribe_ok_tail", anyV1);
         byte[] notifyOne = pick(v1, "notify_single_unsigned", pick(v1, "notify_batch", anyV1));
 
-        // AUTH scheme byte ∉ {BEARER=1, BASIC=2} (payload offset 0).
+        // AUTH scheme byte not in {BEARER=1, BASIC=2} (payload offset 0).
         cases.add(decodeCase("poison.inner.auth-unknown-scheme", subU8(authBearer, 0, (byte) 0x09)));
         // NOTIFY count > MAX_NOTIFY_BATCH (payload offset 0, the count u32).
         cases.add(decodeCase("poison.inner.notify-count-over-cap", subU32(notifyOne, 0, 100)));
@@ -148,14 +148,12 @@ final class WireCases {
         return cases;
     }
 
-    // -------- Clause-directed additions: F5 numeric-range + F6-9 error-message handling --------
-
     /**
      * The §06 F5 (u64 field ranges) and F6-9 (ERROR_CLOSE message) reject/passthrough paths, on top of the
-     * base poison corpus. Each field-range case mutates ONE inner u64 of a valid golden to a high-bit / zero
-     * value (recomputing the outer CRC) and asserts the SPECIFIC reject the record constructor / cursor codec
+     * base poison corpus. Each field-range case mutates one inner u64 of a valid golden to a high-bit or zero
+     * value (recomputing the outer CRC) and asserts the specific reject the record constructor / cursor codec
      * yields; the ERROR_CLOSE passthrough case proves the codec preserves an untrusted control-byte message
-     * byte-for-byte (sanitization is the driver's job, not the codec's — F6-9).
+     * byte-for-byte (sanitization is the driver's job, not the codec's -- F6-9).
      */
     private static List<Case> boundsAndSanitizeCases() {
         Map<String, byte[]> v1 = EdgeFrameGoldenBytes.forVersion(1);
@@ -168,8 +166,8 @@ final class WireCases {
         List<Case> cases = new ArrayList<>();
 
         // F6-9 (passthrough): the codec preserves an ERROR_CLOSE message carrying control bytes (newline, ANSI
-        // ESC, NUL) byte-for-byte through decode→re-encode — it does NOT sanitize or reject it. A round-trip of
-        // a control-byte message is the wire-observable fact that makes sanitize-before-display the DRIVER's job.
+        // ESC, NUL) byte-for-byte through a decode/re-encode round trip -- it does not sanitize or reject it.
+        // That round trip is the wire-observable fact that makes sanitize-before-display the driver's job.
         String controlBytes = "boom\n" + (char) 0x1B + "[31mY" + (char) 0x00 + "Z"; // newline + ANSI ESC + NUL
         byte[] hostileMsg = EdgeFrameCodec.encode(
                 new EdgeFrame.ErrorClose(ErrorCode.PROTOCOL_VIOLATION, controlBytes));
@@ -179,7 +177,7 @@ final class WireCases {
         // (ErrorCode.fromCode rejects it; the code is payload offset 0).
         cases.add(decodeCase("poison.inner.error-close-unknown-code", subU8(errClose, 0, (byte) 0xFF)));
 
-        // F5-1 (client-emitted seq): a CURSOR_ACK.seq with the high bit set (≥ 2^63) decodes as FRAME_CORRUPT
+        // F5-1 (client-emitted seq): a CURSOR_ACK.seq with the high bit set (>= 2^63) decodes as FRAME_CORRUPT
         // (the CursorAck ctor validates non-negative; seq is payload offset 0).
         cases.add(decodeCase("poison.inner.cursor-ack-seq-high-bit", subU8(cursorAck, 0, (byte) 0x80)));
 
@@ -188,13 +186,13 @@ final class WireCases {
         cases.add(decodeCase("poison.inner.subscribe-resume-cursor-high-bit", subU8(subFull, 13, (byte) 0x80)));
 
         // F5-2 (failover sentinel): SUBSCRIBE.failoverResumeCursor's ONLY legal high-bit value is
-        // 0xFFFF…FF ("none"); any other high-bit pattern decodes as FRAME_CORRUPT. Overwrite the golden's
-        // sentinel with 0x8000…0 (payload offset 21 = after resumeCursor u64).
+        // 0xFFFF...FF ("none"); any other high-bit pattern decodes as FRAME_CORRUPT. Overwrite the golden's
+        // sentinel with 0x8000...0 (payload offset 21 = after resumeCursor u64).
         cases.add(decodeCase("poison.inner.subscribe-failover-cursor-nonsentinel",
                 subU64(subFull, 21, 0x8000000000000000L)));
 
-        // F5-3 / F8-2 / W3-5 (cursor epoch): the cursor vector's topologyEpoch 0 is reserved-illegal ⇒
-        // FRAME_CORRUPT via decodeCursor — a DISTINCT code path from the SUBSCRIBE-inline epoch check.
+        // F5-3 / F8-2 / W3-5 (cursor epoch): the cursor vector's topologyEpoch 0 is reserved-illegal, decoding
+        // as FRAME_CORRUPT via decodeCursor -- a distinct code path from the SUBSCRIBE-inline epoch check.
         // Zero the WATCH_CREATE cursor epoch (payload offset 21 = watchId u64 + scope u8 + targetKind u8 +
         // path[len u32 = 7 + 7 bytes]).
         cases.add(decodeCase("poison.inner.watch-cursor-topology-epoch-zero", subU64Zero(watchCreate, 21)));
@@ -251,7 +249,7 @@ final class WireCases {
     private static String decodeOutcome(java.util.function.Supplier<EdgeFrame> decode) {
         try {
             decode.get();
-            return "ACCEPT"; // decoded without complaint — for a poison case this is a REGRESSION
+            return "ACCEPT"; // decoded without complaint -- for a poison case this is a REGRESSION
         } catch (CodecException ce) {
             return "REJECT:" + ce.code();
         } catch (RuntimeException re) {
@@ -259,7 +257,7 @@ final class WireCases {
         }
     }
 
-    // -------- byte manipulation helpers (all recompute the CRC unless testing the CRC itself) --------
+    // Byte manipulation helpers (all recompute the CRC unless testing the CRC itself).
 
     private static byte[] intBE(int value, int totalLen) {
         byte[] b = new byte[totalLen];
@@ -270,7 +268,7 @@ final class WireCases {
         return b;
     }
 
-    /** A copy with the 4-byte BE length field overwritten (CRC untouched — for the length-mismatch case). */
+    /** A copy with the 4-byte BE length field overwritten (CRC untouched -- for the length-mismatch case). */
     private static byte[] withLengthField(byte[] frame, int lengthField) {
         byte[] c = frame.clone();
         c[0] = (byte) (lengthField >>> 24);
@@ -280,7 +278,7 @@ final class WireCases {
         return c;
     }
 
-    /** Flip one payload byte, leaving the original CRC ⇒ CRC mismatch. */
+    /** Flip one payload byte, leaving the original CRC: CRC mismatch. */
     private static byte[] flipPayloadByte(byte[] frame) {
         byte[] c = frame.clone();
         int i = EdgeFrameCodec.HEADER_SIZE; // first payload byte
@@ -304,7 +302,7 @@ final class WireCases {
         return c;
     }
 
-    /** Insert one extra byte into the payload (bump length, recompute CRC) ⇒ unconsumed trailing byte. */
+    /** Insert one extra byte into the payload (bump length, recompute CRC): an unconsumed trailing byte. */
     private static byte[] appendPayloadByte(byte[] frame) {
         byte[] c = new byte[frame.length + 1];
         int crcOffset = frame.length - EdgeFrameCodec.TRAILER_SIZE;
@@ -345,7 +343,7 @@ final class WireCases {
         return fallback;
     }
 
-    /** All fixture names present per version — for the coverage/breakdown listing. */
+    /** All fixture names present per version -- for the coverage/breakdown listing. */
     static Map<Integer, List<String>> goldenFixtureNames() {
         Map<Integer, List<String>> names = new LinkedHashMap<>();
         for (int v = 1; v <= 4; v++) {

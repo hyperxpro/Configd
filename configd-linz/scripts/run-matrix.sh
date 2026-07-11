@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# =============================================================================
-# run-matrix.sh — the E1 faulted-linearizability MATRIX driver.
-# -----------------------------------------------------------------------------
+# run-matrix.sh -- the faulted-linearizability matrix driver.
+#
 # Drives the unmodified shaded configd-server jar through a matrix of seeded
 # fault+workload schedules and checks every recorded history with the trusted
 # Porcupine checker. Unlike the 15-second single-fault smoke (run-gate.sh), this
@@ -10,7 +9,7 @@
 # clock skew when libfaketime is present.
 #
 # A cell = (mode, N, posture, seed). Every cell must be LINEARIZABLE. A single
-# NON_LINEARIZABLE fails the whole matrix (exit 1) — that is a real correctness
+# NON_LINEARIZABLE fails the whole matrix (exit 1) -- that is a real correctness
 # bug, never a documented-and-shipped result. An INDETERMINATE (no leader, or a
 # checker timeout) is retried once, then flagged (exit 2) so it is never a silent
 # pass.
@@ -25,10 +24,9 @@
 #   --seq-seeds N               legacy sequential seeds per N (continuity)
 #   --adv-dur MS                adversarial run duration
 #   --keys K                    keyspace (more keys => smaller per-key histories => tractable)
-#   --shard i/n                 run only cell index ≡ i (mod n): parallel sharding on distinct ports
+#   --shard i/n                 run only cell index i (mod n): parallel sharding on distinct ports
 #   --faketime-lib PATH         libfaketime.so.1 (enables the skew posture)
 #   --jar PATH                  server jar (default: configd-server/target/...)
-# =============================================================================
 set -u
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 2
 ROOT="$(pwd)"
@@ -161,7 +159,7 @@ for n in $NODES; do
       s=$((s+1))
     done
   done
-  # SEQUENTIAL continuity cells (base posture only) — same schedule the CI gate uses, at depth
+  # SEQUENTIAL continuity cells (base posture only) -- same schedule the CI gate uses, at depth
   s=0
   while [ "$s" -lt "$SEQ_SEEDS" ]; do
     run_cell sequential "$n" base $((30000 + s)) 20000 72

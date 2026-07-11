@@ -14,10 +14,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
- * A live watch handle (§02). Consume it reactively — {@code watch.subscribe(Flow.Subscriber<WatchEvent>)} with
+ * A live watch handle. Consume it reactively — {@code watch.subscribe(Flow.Subscriber<WatchEvent>)} with
  * {@code request(n)} backpressure — or with the blocking facade ({@link #awaitCreated} + {@link #poll}) for the
- * reference / conformance driver. Each watch runs on its <b>own</b> dedicated connection (§06 F10-1b: one
- * connection per independently-resumed watch), so a per-watch terminal (e.g. a {@code NOT_AUTHORIZED}
+ * reference / conformance driver. Each watch runs on its <b>own</b> dedicated connection, one connection per
+ * independently-resumed watch, so a per-watch terminal (e.g. a {@code NOT_AUTHORIZED}
  * {@code WATCH_CANCELED}) tears down this watch without affecting any other.
  *
  * <p>The emitted {@link WatchEvent}s are <b>per-key/per-shard-ordered only</b> — never a cross-shard order
@@ -28,7 +28,7 @@ public final class Watch implements Flow.Publisher<WatchEvent>, AutoCloseable {
     private final WatchSession session;
     private final EdgeSession edgeSession;
     private final boolean fromNow;
-    /** Non-null once this watch's connection is shared by a multiplex (§06 W6-4); null while dedicated. */
+    /** Non-null once this watch's connection is shared by a multiplex; null while dedicated. */
     private volatile WatchMultiplexHandler multiplex;
 
     Watch(WatchSession session, EdgeSession edgeSession, WatchMultiplexHandler multiplex, boolean fromNow) {
@@ -86,7 +86,7 @@ public final class Watch implements Flow.Publisher<WatchEvent>, AutoCloseable {
         return session.cursorVector();
     }
 
-    /** The current wire {@code watch_id} (a fresh one is minted per (re)create; W2-8 / F10-1a). */
+    /** The current wire {@code watch_id} (a fresh one is minted per (re)create). */
     public long watchId() {
         return session.watchId();
     }
@@ -94,7 +94,7 @@ public final class Watch implements Flow.Publisher<WatchEvent>, AutoCloseable {
     /**
      * Completes exceptionally when THIS watch permanently ends — a non-retryable per-watch terminal (e.g. a
      * {@code NOT_AUTHORIZED} reject) or, for a dedicated watch, its connection giving up — and normally on
-     * {@link #close()}. On a shared connection this fires for this watch alone; the siblings keep streaming (W6-4).
+     * {@link #close()}. On a shared connection this fires for this watch alone; the siblings keep streaming.
      */
     public CompletableFuture<Void> terminalFuture() {
         return session.watchTerminal();

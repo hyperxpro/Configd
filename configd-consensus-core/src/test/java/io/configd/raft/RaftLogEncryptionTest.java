@@ -31,11 +31,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Exercises AES-256-GCM encryption at rest through the REAL RaftLog seam (WAL records +
- * snapshot blob on {@link Storage#file}). Proves the two properties the security lead + redteam
- * will check: (1) persisted bytes carry NO plaintext config value; (2) a tampered on-disk byte
- * fails closed on recovery. Plus the restart round-trip: encrypt -> persist -> reopen (re-derive
- * the same root) -> recover -> state identical.
+ * Exercises AES-256-GCM encryption at rest through the real RaftLog seam (WAL records +
+ * snapshot blob on {@link Storage#file}). Proves two properties: (1) persisted bytes carry no
+ * plaintext config value; (2) a tampered on-disk byte fails closed on recovery. Plus the restart
+ * round-trip: encrypt -> persist -> reopen (re-derive the same root) -> recover -> state identical.
  */
 class RaftLogEncryptionTest {
 

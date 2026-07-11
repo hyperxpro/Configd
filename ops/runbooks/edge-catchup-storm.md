@@ -5,11 +5,11 @@
 partition heals, slow-consumer quarantine, forced re-bootstrap.
 **Severity:** warn
 
-> Reconciled for S6 from `docs/runbooks/edge-catchup-storm.md` (S3 doc pass,
-> RR-050 runbook-fiction closure). Everything below names only machinery that
-> exists at runtime and series proven emitted by `EdgeMetricsContractTest`.
-> The deleted `CatchUpService` / `SlowConsumerPolicy` / `/admin/catchup-*`
-> endpoints from older drafts are gone.
+> Everything below names only machinery that exists at runtime, and every
+> series named is proven emitted by `EdgeMetricsContractTest`. Earlier drafts
+> of this runbook referenced a `CatchUpService`, a `SlowConsumerPolicy`, and
+> `/admin/catchup-*` endpoints; none of those exist, and none of the steps
+> below depend on them.
 
 ## Symptom
 
@@ -59,8 +59,8 @@ Open the `Configd Data Plane` dashboard (`ops/dashboards/configd-data-plane.json
 ## Resolution steps
 
 There is deliberately **no kill-switch rate limiter** — the bounded
-per-session queues + paced transfers (RR-102) + the `SlowConsumerGovernor`
-ladder ARE the rate limit. Operator levers:
+per-session queues, paced transfers, and the `SlowConsumerGovernor`
+ladder are the rate limit. Operator levers:
 
 1. **Clock skew:** fix time sync. Restart `chronyd`/`ntpd` on the offending
    host; once skew is back inside the 500 ms fence,
@@ -95,19 +95,18 @@ ladder ARE the rate limit. Operator levers:
 ## Escalation
 
 - Page the next tier if a wedged CP follower is starving the edges
-  subscribed to it (RR-103 family): the edges' staleness ladder +
-  multi-endpoint failover is the containment, but a persistently wedged
-  follower is a control-plane issue → [raft-saturation.md](raft-saturation.md).
-- A long-PAUSED transfer (wedged-but-open transport) has no dedicated
-  stalled-transfer signal yet — queue-depth shows pressure only
-  (S6 residual). If queue depth stays elevated with no convergence,
-  recycle the stuck edge pod.
+  subscribed to it (a known wedged-leader failure mode): the edges'
+  staleness ladder + multi-endpoint failover is the containment, but a
+  persistently wedged follower is a control-plane issue →
+  [raft-saturation.md](raft-saturation.md).
+- A long-paused transfer (wedged-but-open transport) has no dedicated
+  stalled-transfer signal yet — queue-depth shows pressure only. If queue
+  depth stays elevated with no convergence, recycle the stuck edge pod.
 
 ## Validation (fault injection)
 
 `gates/e2e-compose-scenario.sh` phase 3 is the executable miniature
-(partition → demotion ladder → re-bootstrap → convergence), captured green
-in `docs/session-3/captures/e2e-compose-scenario-run.txt`. The governor's
+(partition → demotion ladder → re-bootstrap → convergence). The governor's
 state-machine walk is `SlowConsumerStateMachineWalkTest` (sim) +
 `FanOutServerQuarantineTest` (wire). Reconnect-storm recovery is asserted by
 `OverloadChaosTest` (post-partition reconnect storm,
@@ -120,7 +119,5 @@ to `edge_staleness_state = CURRENT` and `edge_cursor_lag = 0`.
 
 ## Related
 
-- `docs/runbooks/edge-catchup-storm.md` — the longer S3 narrative this is
-  reconciled from.
-- ADR-0040 poison-pill ladder; RR-100 `decideMode`; RR-102 transfer pacing.
+- ADR-0040 — poison-pill ladder and `decideMode` transfer pacing.
 - [overload-shedding.md](overload-shedding.md) — when the storm drives CP 429s.

@@ -22,8 +22,8 @@ import static org.junit.jupiter.api.Assertions.*;
  * with no duplicate and no skip, and that a reader which advances its cursor and
  * replays on GAP eventually observes every committed seq exactly once, in order.
  *
- * <p>Also listed for B6's jcstress (FanOutBuffer is on that list); this JUnit
- * stress test is the deterministic-bounded-latch complement (no sleeps-as-sync).
+ * <p>This complements a jcstress-based test of the same buffer, using
+ * deterministic bounded latches instead of sleeps to synchronize threads.
  */
 class FanOutBufferRaceTest {
 
@@ -82,14 +82,12 @@ class FanOutBufferRaceTest {
                         boolean done = writeDone.await(0, TimeUnit.MILLISECONDS);
                         CommitNotificationSource.Result res = buf.readSince(cursor);
                         if (res.isGap()) {
-                            // Replay: adopt the floor as the new cursor. The replay
-                            // source would deliver state up to (oldestRetained - 1);
-                            // here we just resume tailing from the floor predecessor.
+                            // Replay would deliver state up to (oldestRetained - 1); since
+                            // everything below the floor is covered by replay, just resume
+                            // tailing from the floor predecessor so the next readSince
+                            // returns the retained run contiguously.
                             long floor = ((CommitNotificationSource.Result.Gap) res)
                                     .oldestRetainedSeq();
-                            // floor is the oldest retained seq; everything < floor is
-                            // covered by replay. Resume so the next readSince returns
-                            // the retained run contiguously.
                             cursor = Math.max(cursor, floor - 1);
                             lastSeen = Math.max(lastSeen, cursor);
                             continue;
@@ -141,7 +139,6 @@ class FanOutBufferRaceTest {
         assertFalse(writerFailed.get(), "writer thread failed: " + errors);
         assertTrue(errors.isEmpty(), "concurrent correctness violations: " + errors);
 
-        // Final invariants on the buffer itself.
         assertEquals(capacity, buf.size());
         assertEquals(totalWrites, buf.latestSeq());
         assertEquals(totalWrites - capacity + 1, buf.oldestSeq());
@@ -163,13 +160,13 @@ class FanOutBufferRaceTest {
      * succeeds contiguously - no skip, no duplicate, no permanent loss.
      *
      * <p>Pacing is a bounded handoff (a volatile high-water cursor the reader publishes
-     * and the writer spins on) - not a sleep - per the no-sleeps-as-sync rule.
+     * and the writer spins on), not a sleep, so the test stays deterministic.
      */
     @Test
     void readerPacedSeesContiguousStreamExactlyOnce() throws InterruptedException {
         int capacity = 4096;
         long totalWrites = 50_000;
-        long lead = capacity / 2; // writer stays within half a ring of the reader
+        long lead = capacity / 2;
         FanOutBuffer buf = new FanOutBuffer(capacity);
 
         CountDownLatch start = new CountDownLatch(1);
@@ -206,10 +203,8 @@ class FanOutBufferRaceTest {
                     boolean done = writeDone.await(0, TimeUnit.MILLISECONDS);
                     CommitNotificationSource.Result res = buf.readSince(cursor);
                     if (res.isGap()) {
-                        // Transient eviction window - paced, so our cursor is still
-                        // retained. Retry; the next read is contiguous. A GAP here
-                        // must NEVER cause us to skip or duplicate (verified by the
-                        // strict expected-seq check below across retries).
+                        // Transient eviction window; since we're paced, our cursor's
+                        // data is still retained, so retry and the next read is contiguous.
                         Thread.onSpinWait();
                         continue;
                     }

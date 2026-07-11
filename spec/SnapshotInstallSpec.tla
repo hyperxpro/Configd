@@ -1,8 +1,6 @@
 ------------------------ MODULE SnapshotInstallSpec ------------------------
 \* TLA+ specification of Raft's InstallSnapshot RPC for follower bootstrap.
 \*
-\* Closes SPEC-GAP-6 / PA-5027.
-\*
 \* The InstallSnapshot protocol (Ongaro 2014, Section 7) lets a leader
 \* replicate state to a follower whose log is too far behind to catch up
 \* via AppendEntries. The protocol:
@@ -17,7 +15,7 @@
 \* This spec deliberately abstracts log replication and election safety
 \* (already proven by ConsensusSpec.tla). Instead we model:
 \*
-\*   - A global authoritative "committed log" — the cluster has agreed,
+\*   - A global authoritative "committed log" -- the cluster has agreed,
 \*     via some Raft execution, on a sequence of log entries up to
 \*     commitedTip. This stands in for the consistent committed prefix.
 \*   - snapshot[n] = the highest index node n has installed (either via
@@ -26,13 +24,13 @@
 \*     in the global log.
 \*
 \* Safety properties verified:
-\*   (a) SnapshotBoundedByCommitted — no node has a snapshot ahead of
+\*   (a) SnapshotBoundedByCommitted -- no node has a snapshot ahead of
 \*       the global committed log.
-\*   (b) SnapshotMatching — two snapshots at the same index agree on
+\*   (b) SnapshotMatching -- two snapshots at the same index agree on
 \*       term (snapshot equivalent of LogMatching).
-\*   (c) NoCommitRevert — InstallSnapshot never decreases a follower's
+\*   (c) NoCommitRevert -- InstallSnapshot never decreases a follower's
 \*       installed snapshot index.
-\*   (d) InflightTermMonotonic — every in-flight InstallSnapshot was
+\*   (d) InflightTermMonotonic -- every in-flight InstallSnapshot was
 \*       sent for an index that exists in the global committed log.
 
 EXTENDS Integers, FiniteSets, Sequences, TLC
@@ -42,7 +40,7 @@ CONSTANTS
     MaxTerm,      \* Term bound
     MaxIndex,     \* Maximum committed index in the global log
     PERSIST_BEFORE_TRUNCATE
-                  \* RR-003 defect switch (BOOLEAN): TRUE = the fixed model
+                  \* Defect-reproduction switch (BOOLEAN): TRUE = the fixed model
                   \* (snapshot bytes persisted durably BEFORE the WAL prefix is
                   \* truncated); FALSE = reproduce the silent-data-loss counterexample
                   \* (truncate the WAL prefix while the snapshot lives only in RAM, so a
@@ -55,7 +53,7 @@ VARIABLES
     committedLog,
     \* Per-node installed snapshot (the in-RAM / live view).
     snapshot,     \* snapshot[n] = [index |-> i, term |-> t]; index = 0 = none
-    \* RR-003 durability model — per node:
+    \* Durability model -- per node:
     \*   durIndex[n]  = index of the snapshot whose BYTES are durably persisted
     \*                  (0 = none). This is what survives a crash. The in-RAM
     \*                  snapshot[n].index can be >= durIndex[n] (RAM ahead of disk).
@@ -118,10 +116,10 @@ ClusterCommit(t) ==
     /\ committedLog' = Append(committedLog, [term |-> t])
     /\ UNCHANGED <<snapshot, durIndex, walBase, walTip, inflight>>
 
-\* RR-003 WAL model: a node durably appends the next committed entry to its WAL.
-\* The WAL holds the contiguous suffix [walBase[n] .. walTip[n]]; it can grow up to
-\* the global committed tip. This is the durable WAL suffix that, together with the
-\* durable snapshot, must reconstruct the full committed prefix.
+\* A node durably appends the next committed entry to its WAL. The WAL holds the
+\* contiguous suffix [walBase[n] .. walTip[n]]; it can grow up to the global committed
+\* tip. This is the durable WAL suffix that, together with the durable snapshot, must
+\* reconstruct the full committed prefix.
 ReplicateToWal(n) ==
     /\ walTip[n] < Len(committedLog)
     /\ walTip[n] + 1 >= walBase[n]   \* keep the WAL suffix contiguous
@@ -129,10 +127,10 @@ ReplicateToWal(n) ==
     /\ UNCHANGED <<committedLog, snapshot, durIndex, walBase, inflight>>
 
 \* A node locally advances its IN-RAM snapshot to follow the global committed log.
-\* RR-003: this is the RAM-only step (the pre-fix bug took a snapshot ONLY in RAM).
-\* It does NOT persist bytes (see PersistSnapshot) and does NOT truncate the WAL
-\* (see TruncateWal). The snapshot point must be covered by durable state (snapshot
-\* bytes or WAL) so it is a real recoverable index: bounded by the WAL tip.
+\* This is the RAM-only step (the pre-fix bug took a snapshot ONLY in RAM). It does
+\* NOT persist bytes (see PersistSnapshot) and does NOT truncate the WAL (see
+\* TruncateWal). The snapshot point must be covered by durable state (snapshot bytes
+\* or WAL) so it is a real recoverable index: bounded by the WAL tip.
 LocalSnapshot(n) ==
     /\ snapshot[n].index < Len(committedLog)
     /\ \E i \in (snapshot[n].index + 1)..Len(committedLog):
@@ -143,19 +141,19 @@ LocalSnapshot(n) ==
                             [index |-> i, term |-> LogTermAt(i)]]
     /\ UNCHANGED <<committedLog, durIndex, walBase, walTip, inflight>>
 
-\* RR-003 FIX STEP: persist the in-RAM snapshot BYTES durably. Advances durIndex[n]
-\* to the in-RAM snapshot index. This is the step the pre-fix code never performed
-\* (the snapshot lived only in the RAM field `latestSnapshot`).
+\* Persists the in-RAM snapshot BYTES durably. Advances durIndex[n] to the in-RAM
+\* snapshot index. This is the step the pre-fix code never performed (the snapshot
+\* lived only in the RAM field `latestSnapshot`).
 PersistSnapshot(n) ==
     /\ durIndex[n] < snapshot[n].index
     /\ durIndex' = [durIndex EXCEPT ![n] = snapshot[n].index]
     /\ UNCHANGED <<committedLog, snapshot, walBase, walTip, inflight>>
 
-\* RR-003 ORDERING: truncate the WAL prefix [walBase .. S] after a snapshot at S.
-\* In the FIXED model (PERSIST_BEFORE_TRUNCATE = TRUE) truncation is GATED on the
-\* snapshot bytes being durable (durIndex[n] >= S): you never delete the WAL prefix
-\* until a complete snapshot covers it. In the DEFECT model (FALSE) truncation may
-\* run while the snapshot is RAM-only (durIndex[n] < S), opening the loss window.
+\* Truncates the WAL prefix [walBase .. S] after a snapshot at S. In the FIXED model
+\* (PERSIST_BEFORE_TRUNCATE = TRUE) truncation is GATED on the snapshot bytes being
+\* durable (durIndex[n] >= S): you never delete the WAL prefix until a complete
+\* snapshot covers it. In the DEFECT model (FALSE) truncation may run while the
+\* snapshot is RAM-only (durIndex[n] < S), opening the loss window.
 TruncateWal(n) ==
     /\ snapshot[n].index >= walBase[n]
     /\ snapshot[n].index <= walTip[n]
@@ -163,15 +161,15 @@ TruncateWal(n) ==
     /\ walBase' = [walBase EXCEPT ![n] = snapshot[n].index + 1]
     /\ UNCHANGED <<committedLog, snapshot, durIndex, walTip, inflight>>
 
-\* RR-003 CRASH/RESTART: the node crashes and recovers. All in-RAM state is lost;
-\* recovery rebuilds from DURABLE state only — the persisted snapshot at durIndex[n]
-\* plus the durable WAL suffix [walBase[n] .. walTip[n]]. The recovered in-RAM
-\* snapshot is the durable snapshot (the WAL suffix is replayed on top, but for the
-\* snapshot-position invariant we model the recovered snapshot index as durIndex).
-\* This is where the silent-loss defect manifests: if the WAL prefix was truncated
-\* (walBase advanced past durIndex+1) while the snapshot bytes were NOT persisted
-\* (durIndex < that point), the recovered state has a GAP — committed entries that
-\* are in neither the durable snapshot nor the durable WAL.
+\* The node crashes and recovers. All in-RAM state is lost; recovery rebuilds from
+\* DURABLE state only -- the persisted snapshot at durIndex[n] plus the durable WAL
+\* suffix [walBase[n] .. walTip[n]]. The recovered in-RAM snapshot is the durable
+\* snapshot (the WAL suffix is replayed on top, but for the snapshot-position
+\* invariant we model the recovered snapshot index as durIndex). This is where the
+\* silent-loss defect manifests: if the WAL prefix was truncated (walBase advanced
+\* past durIndex+1) while the snapshot bytes were NOT persisted (durIndex < that
+\* point), the recovered state has a GAP -- committed entries that are in neither
+\* the durable snapshot nor the durable WAL.
 CrashRestart(n) ==
     /\ snapshot' = [snapshot EXCEPT ![n] =
                         [index |-> durIndex[n], term |-> LogTermAt(durIndex[n])]]
@@ -200,11 +198,11 @@ SendInstallSnapshot(leader, follower) ==
 \*       log (we verify this as an invariant).
 ReceiveInstallSnapshot(msg) ==
     /\ msg \in inflight
-    /\ \/ \* Snapshot is older — discard the message.
+    /\ \/ \* Snapshot is older -- discard the message.
           /\ msg.lastIncludedIndex <= snapshot[msg.to].index
           /\ inflight' = inflight \ {msg}
           /\ UNCHANGED <<committedLog, snapshot, durIndex, walBase, walTip>>
-       \/ \* Snapshot is newer — install. RR-003: the follower persists the received
+       \/ \* Snapshot is newer -- install. The follower persists the received
           \* snapshot bytes DURABLY (durIndex advances) BEFORE compaction, then the WAL
           \* prefix up to the snapshot point is dropped (walBase advances past it). This
           \* mirrors handleInstallSnapshot's persist-then-compact ordering, so a follower
@@ -242,12 +240,12 @@ Spec == Init /\ [][Next]_vars
 \* INV-SI-1: Snapshot is bounded by the global committed log.
 \* No node has installed a snapshot whose index exceeds the global committed
 \* tip. (LocalSnapshot enforces this; InstallSnapshot only carries snapshots
-\* sourced from another node, so transitively bounded — verified here.)
+\* sourced from another node, so transitively bounded -- verified here.)
 SnapshotBoundedByCommitted ==
     \A n \in Nodes:
         snapshot[n].index <= Len(committedLog)
 
-\* INV-SI-2: Snapshot Matching — two snapshots at the same index agree on
+\* INV-SI-2: Snapshot Matching -- two snapshots at the same index agree on
 \* term, AND that term matches the global committed log.
 \* This is the snapshot equivalent of LogMatching from ConsensusSpec.
 SnapshotMatching ==
@@ -258,20 +256,20 @@ SnapshotMatching ==
         snapshot[n].index > 0 =>
             snapshot[n].term = LogTermAt(snapshot[n].index)
 
-\* INV-SI-3: NoCommitRevert (de-vacuumed, R-05c) — installing a newer-index
-\* snapshot must never revert the term. For any in-flight InstallSnapshot that
-\* WOULD install (lastIncludedIndex > the receiver's current snapshot index),
-\* its term must be >= the receiver's current snapshot term. Snapshots are
-\* sourced from the committed log, whose terms are monotonic in index
-\* (ClusterCommit), so a higher index always carries a >= term; a regression
-\* that ships/installs a higher-index but lower-term snapshot (a commit revert)
-\* is caught here. (Non-vacuous: the previous form was `P \/ ~P`, a tautology.)
+\* INV-SI-3: NoCommitRevert -- installing a newer-index snapshot must never revert
+\* the term. For any in-flight InstallSnapshot that WOULD install (lastIncludedIndex
+\* > the receiver's current snapshot index), its term must be >= the receiver's
+\* current snapshot term. Snapshots are sourced from the committed log, whose terms
+\* are monotonic in index (ClusterCommit), so a higher index always carries a >=
+\* term; a regression that ships/installs a higher-index but lower-term snapshot (a
+\* commit revert) is caught here. (Non-vacuous: a form that reduces to `P \/ ~P` is a
+\* tautology and could never fail -- this one actually constrains the state.)
 NoCommitRevert ==
     \A msg \in inflight:
         msg.lastIncludedIndex > snapshot[msg.to].index =>
             msg.lastIncludedTerm >= snapshot[msg.to].term
 
-\* INV-SI-4: InflightTermMonotonic — every in-flight InstallSnapshot
+\* INV-SI-4: InflightTermMonotonic -- every in-flight InstallSnapshot
 \* references an index that exists in the global committed log with the
 \* matching term. This rejects "leader sends a snapshot it doesn't have"
 \* scenarios.
@@ -280,26 +278,27 @@ InflightTermMonotonic ==
         msg.lastIncludedIndex <= Len(committedLog)
         /\ msg.lastIncludedTerm = LogTermAt(msg.lastIncludedIndex)
 
-\* INV-SI-5: DurablePrefix (RR-003) — at every instant, the DURABLE state of every
-\* node reconstructs a complete contiguous prefix of the committed log: the persisted
+\* INV-SI-5: DurablePrefix -- at every instant, the DURABLE state of every node
+\* reconstructs a complete contiguous prefix of the committed log: the persisted
 \* snapshot at durIndex[n] PLUS the durable WAL suffix [walBase[n] .. walTip[n]] cover
 \* [1 .. coveredTip] with NO gap. Concretely, there must be no committed index that is
 \* below the WAL base (so not in the WAL) AND above the durable snapshot index (so not
-\* in the snapshot) — such an index is on durable storage NOWHERE and is silently lost
+\* in the snapshot) -- such an index is on durable storage NOWHERE and is silently lost
 \* on a crash/restart. The WAL suffix must also be contiguous with the snapshot:
 \* walBase[n] <= durIndex[n] + 1 (no hole between the snapshot top and the WAL start).
 \*
-\* This is the runtime invariant the RR-003 fix establishes ("persisted snapshot at S +
-\* contiguous WAL suffix [S+1..last] reconstructs all committed"). With the fixed model
-\* (PERSIST_BEFORE_TRUNCATE = TRUE) the truncation gate keeps walBase <= durIndex+1, so
-\* the prefix is always whole. With the defect (FALSE) TruncateWal can advance walBase
-\* past durIndex+1 while durIndex still trails, opening a hole at the indices in
-\* (durIndex .. walBase-1] — the silent-data-loss window. TLC reports the counterexample.
+\* This is the runtime invariant the fix establishes: persisted snapshot at S plus
+\* contiguous WAL suffix [S+1..last] reconstructs all committed state. With the fixed
+\* model (PERSIST_BEFORE_TRUNCATE = TRUE) the truncation gate keeps walBase <=
+\* durIndex+1, so the prefix is always whole. With the defect (FALSE) TruncateWal can
+\* advance walBase past durIndex+1 while durIndex still trails, opening a hole at the
+\* indices in (durIndex .. walBase-1] -- the silent-data-loss window. TLC reports the
+\* counterexample.
 DurablePrefix ==
     \A n \in Nodes:
         walBase[n] <= durIndex[n] + 1
 
-\* INV-SI-6: RecoveredCoversCommitted (RR-003) — after a crash/restart, the recovered
+\* INV-SI-6: RecoveredCoversCommitted -- after a crash/restart, the recovered
 \* in-RAM snapshot index never silently advances past a hole: the recovered snapshot
 \* (= durIndex on restart) plus the durable WAL must still cover the committed prefix
 \* the node had acknowledged. We express the durable-coverage consequence: no node's

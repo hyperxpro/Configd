@@ -9,7 +9,7 @@ import java.util.function.Supplier;
 
 /**
  * Supplies the credential the edge {@link io.configd.distribution.wire.EdgeFrame.Auth} frame presents, and
- * mints a <b>fresh</b> one for a proactive {@code REFRESH_AUTH} (§03 AU5-6). It is a supplier, not a value, so
+ * mints a <b>fresh</b> one for a proactive {@code REFRESH_AUTH}. It is a supplier, not a value, so
  * a short-lived OIDC/JWT token can be re-minted before it expires rather than pinned for the client's life.
  *
  * <p>Each {@link #provide()} returns the current credential plus an <b>optional</b> expiry instant. When the
@@ -18,9 +18,9 @@ import java.util.function.Supplier;
  * credential and relies on the server's {@code CREDENTIAL_EXPIRED} close to trigger a reconnect (a static
  * token with an unknown server-side TTL).
  *
- * <p>A driver <b>MUST</b> treat a bearer token as opaque (§03 AU2-2): this type never parses it. A client
+ * <p>A driver <b>MUST</b> treat a bearer token as opaque: this type never parses it. A client
  * certificate is <b>not</b> a {@code CredentialSource} — it authenticates at the TLS handshake and is never
- * framed (§06 F6A-1); use {@link #none()} on an mTLS edge.
+ * framed; use {@link #none()} on an mTLS edge.
  */
 public interface CredentialSource {
 
@@ -57,7 +57,7 @@ public interface CredentialSource {
 
     /**
      * A static bearer token with a known expiry {@code instant} — the client schedules a proactive
-     * {@code REFRESH_AUTH} before it. Re-minting the same token before expiry extends the session (§03 AU4-6).
+     * {@code REFRESH_AUTH} before it. Re-minting the same token before expiry extends the session.
      */
     static CredentialSource staticBearer(String token, Instant expiresAt) {
         Objects.requireNonNull(token, "token");

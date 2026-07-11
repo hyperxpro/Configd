@@ -20,21 +20,21 @@ import java.util.Set;
  * while certificate clients still authenticate at the handshake. When it is {@code null} the edge is
  * byte-identical to the mTLS-only / plaintext posture that predates the token frame.
  *
- * <p>The {@link AuthenticatorChain} here is the SAME chain the HTTP admin plane resolves (one chain,
+ * <p>The {@link AuthenticatorChain} here is the same chain the HTTP admin plane resolves (one chain,
  * both planes); it verifies the bearer/basic credential presented in an {@code AUTH}/{@code REFRESH_AUTH}
  * frame. A verified client certificate is authenticated separately at the TLS handshake via an
  * identity-only {@link MtlsAuthenticator} - the edge has always turned a verified peer cert into an
  * identity-only principal (roles resolved downstream by the {@code AclService} from the Subject DN),
  * so the token frame is purely additive and mTLS clients stay byte-identical.
  *
- * <h2>Token expiry (Gate 5)</h2>
- * A static bearer/basic token carries no authority-issued {@code exp} today, so its expiry is a
+ * <h2>Token expiry</h2>
+ * A static bearer/basic token carries no authority-issued {@code exp}, so its expiry is a
  * server-computed session-lifetime cap: the connection closes at {@code now + defaultTokenTtlMs},
  * measured on this server's own clock (no clock-skew leeway - the leeway is for a credential whose
- * absolute expiry was issued by an external authority). This is byte-identical to the pre-Gate-5 fixed
- * TTL. When Gate 6 feeds an OIDC {@code exp} the token path will instead close at {@code exp + leeway}.
- * A {@code REFRESH_AUTH} re-arms the cap. Certificate expiry ({@code notAfter}) and online revocation are
- * a separate, token-independent concern owned by {@link EdgeCertGate}.
+ * absolute expiry was issued by an external authority). When the authenticator instead surfaces an
+ * OIDC/JWT {@code exp}, the token path closes at {@code exp + leeway} instead. A {@code REFRESH_AUTH}
+ * re-arms the cap. Certificate expiry ({@code notAfter}) and online revocation are a separate,
+ * token-independent concern owned by {@link EdgeCertGate}.
  *
  * @param chain                the shared authenticator chain (bearer/basic) for {@code AUTH} frames
  * @param preAuthMaxFrameBytes the declared-length ceiling enforced by the frame decoder while a token
@@ -45,19 +45,18 @@ import java.util.Set;
  * @param defaultTokenTtlMs    the session lifetime armed on a static token auth (a bearer/basic credential
  *                             with no authority-issued expiry); {@code now + defaultTokenTtlMs} is the close
  *                             deadline, on the server clock, no skew leeway
- * @param expiryPolicy         the Gate-5 window/leeway model; used only to turn an authority-issued token
+ * @param expiryPolicy         the window/leeway model used to turn an authority-issued token
  *                             expiry (an OIDC/JWT {@code exp}, surfaced on {@link AuthResult.Authenticated})
  *                             into a close deadline of {@code exp + leeway}. Ignored for a static token,
- *                             which has no authority expiry - so the four-argument constructor (which
- *                             defaults it) is byte-identical to the pre-Gate-6 behaviour.
+ *                             which has no authority expiry, so the four-argument constructor (which
+ *                             defaults it) covers the static-token-only case.
  */
 public record EdgeAuthConfig(AuthenticatorChain chain, int preAuthMaxFrameBytes,
                              int maxAuthTokenBytes, long defaultTokenTtlMs, CredentialExpiryPolicy expiryPolicy) {
 
     /**
-     * Backward-compatible constructor for the static-token posture (no authority expiry): the expiry policy
-     * defaults to {@link CredentialExpiryPolicy#DEFAULTS} and is never consulted, so this is byte-identical
-     * to the pre-Gate-6 edge auth config.
+     * Constructor for the static-token posture (no authority expiry): the expiry policy defaults to
+     * {@link CredentialExpiryPolicy#DEFAULTS} and is never consulted.
      */
     public EdgeAuthConfig(AuthenticatorChain chain, int preAuthMaxFrameBytes, int maxAuthTokenBytes,
                           long defaultTokenTtlMs) {
@@ -98,7 +97,7 @@ public record EdgeAuthConfig(AuthenticatorChain chain, int preAuthMaxFrameBytes,
 
     /**
      * Whether mTLS is a configured edge authenticator (the shared chain lists an {@code mtls} provider).
-     * A token-only edge (chain without {@code mtls}) must NOT turn a presented trust-store cert into an
+     * A token-only edge (chain without {@code mtls}) must not turn a presented trust-store cert into an
      * authenticated identity - the callers gate the handshake cert path on this so a certificate client
      * on such an edge falls through to token auth, symmetric with the HTTP plane (where a cert
      * authenticates only if the chain lists {@code mtls}).
@@ -111,7 +110,7 @@ public record EdgeAuthConfig(AuthenticatorChain chain, int preAuthMaxFrameBytes,
     AuthResult authenticateClientCertificate(List<X509Certificate> verifiedChain) {
         if (!mtlsConfigured()) {
             // Defense in depth: a presented cert must not auto-authenticate on a token-only edge (that
-            // would admit ANY trust-store cert). Callers already gate on mtlsConfigured(); this fails
+            // would admit any trust-store cert). Callers already gate on mtlsConfigured(); this fails
             // closed if a future caller forgets.
             return new AuthResult.Denied(io.configd.common.auth.DenyReason.NOT_THIS_AUTHENTICATOR,
                     "mTLS is not a configured edge authenticator");
@@ -121,9 +120,8 @@ public record EdgeAuthConfig(AuthenticatorChain chain, int preAuthMaxFrameBytes,
 
     /**
      * The wall-clock time at which a static token connection is closed for credential expiry:
-     * {@code nowMillis + defaultTokenTtlMs}. Measured on the server clock (no skew leeway), so it is
-     * byte-identical to the pre-Gate-5 fixed TTL. A {@code REFRESH_AUTH} re-computes it from the new
-     * {@code now}.
+     * {@code nowMillis + defaultTokenTtlMs}, measured on the server clock with no skew leeway. A
+     * {@code REFRESH_AUTH} re-computes it from the new {@code now}.
      */
     long staticTokenCloseDeadlineMillis(long nowMillis) {
         return nowMillis + defaultTokenTtlMs;
@@ -132,11 +130,10 @@ public record EdgeAuthConfig(AuthenticatorChain chain, int preAuthMaxFrameBytes,
     /**
      * The close deadline for a token connection given the authenticated result. When the authenticator
      * surfaced an authority-issued credential expiry (an OIDC/JWT {@code exp}), the connection closes at
-     * {@code exp + leeway} per the Gate-5 model (the leeway accommodates cross-clock skew against the
-     * issuing authority). When it did not ({@link AuthResult#NO_EXPIRY} - a static bearer/basic token), this
-     * falls back to the server-computed {@code now + defaultTokenTtlMs} with no leeway, byte-identical to the
-     * pre-Gate-6 static-token path. This is the seam that lets a token connection close exactly when the
-     * presented token expires rather than only at a fixed session cap.
+     * {@code exp + leeway} (the leeway accommodates clock skew against the issuing authority). When it
+     * did not ({@link AuthResult#NO_EXPIRY} - a static bearer/basic token), this falls back to the
+     * server-computed {@code now + defaultTokenTtlMs} with no leeway. This lets a token connection close
+     * exactly when the presented token expires rather than only at a fixed session cap.
      */
     long tokenCloseDeadlineMillis(AuthResult.Authenticated authenticated, long nowMillis) {
         long credentialExpiresAtMillis = authenticated.credentialExpiresAtMillis();
@@ -147,7 +144,7 @@ public record EdgeAuthConfig(AuthenticatorChain chain, int preAuthMaxFrameBytes,
     }
 
     /**
-     * Whether a frame credential is within the receive-side size policy, checked BEFORE the credential
+     * Whether a frame credential is within the receive-side size policy, checked before the credential
      * is verified so a hostile peer cannot drive an unbounded verification cost (PBKDF2 / token parse)
      * with an oversized secret that still fits the pre-auth frame ceiling. A client certificate is
      * never frame-borne, so it is rejected here (defensive; the codec already refuses to decode one).

@@ -72,8 +72,7 @@ driver **MUST NOT** assume forward-compatible behavior changes within `/v1/`.
 **D2-1 (base path).** A configuration entry is addressed at **`/v1/config/{key}`**, where `{key}` is the
 **entire** remainder of the request path after the literal prefix `/v1/config/` (`config`, :182–194). `{key}`
 is the **percent-decoded** path (`URI.getPath()`, :131) and **is** the storage key — it is **not** normalized,
-**not** re-encoded, and **not** lower-cased (the class-level C6/RR-020 note; this is load-bearing for
-strong-read classification, D3-5).
+**not** re-encoded, and **not** lower-cased — this is load-bearing for strong-read classification, D3-5.
 
 **D2-2 (routing).** Routing is **exact-match** for the three fixed endpoints (`/health/live`,
 `/health/ready`, `/metrics`), **prefix-match** for `/v1/config/`, and — **when the leadership-admin seam is
@@ -296,7 +295,7 @@ key/value-limit `400`.
 | overloaded | `429` | `Overloaded` + `Retry-After: 1` | back off `Retry-After`, retry |
 
 **D4-7 (`200` means committed-and-applied).** A `200` is returned **only** after the entry is
-**quorum-committed AND applied** (RR-004 / ADR-0033; `Committed` is the only path to `200`, :384–385). It is
+**quorum-committed AND applied** (ADR-0033; `Committed` is the only path to `200`, :384–385). It is
 **not** an "accepted/enqueued" ack. A driver may treat `200` as durable.
 
 **D4-8 (the `504` Indeterminate contract — a write that MAY commit later).** A `504` is the

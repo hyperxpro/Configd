@@ -60,7 +60,6 @@ class AssertionTwinFiringTest {
         ConfigStateMachine sm = new ConfigStateMachine(
                 new VersionedConfigStore(), Clock.system(), checker, null);
 
-        // Establish key "k" at version 1.
         sm.apply(1L, 1L, CommandCodec.encodePut("k", new byte[]{1}));
 
         // Rewind the sequence counter so the next PUT computes a version <= existing.

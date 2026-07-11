@@ -17,8 +17,8 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Binds a peer's authenticated TLS certificate identity to its consensus {@link NodeId}
- * (WH-08/WH-09). The 4-byte {@code senderId} prefix and the in-body {@code leaderId}/{@code candidateId}
+ * Binds a peer's authenticated TLS certificate identity to its consensus {@link NodeId}.
+ * The 4-byte {@code senderId} prefix and the in-body {@code leaderId}/{@code candidateId}
  * are attacker-influenceable wire bytes; without this policy a cert-valid-but-Byzantine cluster member
  * can impersonate another member's id. Grounded in etcd ({@code --peer-cert-allowed-cn}),
  * CockroachDB ({@code CN=node}), and ZooKeeper quorum-cert verification, which all cross-check the
@@ -42,7 +42,7 @@ import java.util.Objects;
  * that peer-identity verification is unconfigured. This builds the capability now without changing the
  * bytes of, or breaking, an existing single-shared-cert deployment.
  *
- * <h2>Fail-closed under authentication (Group B)</h2>
+ * <h2>Fail-closed under authentication</h2>
  * The unenforced/warn posture is safe only for an explicitly auth-disabled deployment. When
  * authentication is enabled and the Raft interior uses TLS, an empty allow-list is a boot error
  * ({@link #requireEnforcedUnderAuth(boolean, boolean)}): a CA-valid client certificate could otherwise
@@ -82,7 +82,7 @@ public final class PeerIdentityPolicy {
      * PKCS12 trust store for the Raft interior (etcd {@code --peer-trusted-ca-file} / ZooKeeper
      * {@code ssl.quorum.trustStore}). When set, a client certificate that does not chain to this peer CA
      * cannot complete the peer handshake - structurally stronger than a marker match on a shared CA. When
-     * unset the shared client/edge trust store is used (byte-identical to the pre-Group-B posture).
+     * unset the shared client/edge trust store is used.
      */
     public static final String TRUST_STORE_PROP = "configd.raft.peerIdentity.trustStore";
 
@@ -223,7 +223,7 @@ public final class PeerIdentityPolicy {
     }
 
     /**
-     * Group B fail-closed default: an authenticated cluster with TLS on the Raft interior MUST enumerate
+     * Fail-closed default: an authenticated cluster with TLS on the Raft interior MUST enumerate
      * its peers. When {@code authEnabled} and {@code tlsEnabled} but this policy is not {@link #enforced()},
      * refuse to boot - a CA-valid client certificate could otherwise forge a peer's {@code senderId} and
      * join consensus (the exact residual the unenforced warning names). An auth-disabled or plaintext-interior

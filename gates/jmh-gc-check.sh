@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
-# =============================================================================
 # jmh-gc-check.sh — CT-34 mechanical hot-path allocation check (gate-3 step)
-# -----------------------------------------------------------------------------
-# INVOKED BY: gate-3 (assembled at Session-3 close; until then runnable
-# standalone). Authored at C2 sign-off per the C2 contract-qa audit's REQUIRED
-# follow-up: the CT-34 GATE row cannot pass on Javadoc-recorded numbers — it
-# needs a mechanical `-prof gc` run with a saved artifact.
 #
-# WHAT A GREEN RUN PROVES (CT-34 / charter §6 rule 3 — the inherited hot-path
-# law on the edge read path):
+# The CT-34 gate row cannot pass on Javadoc-recorded numbers — it needs a
+# mechanical `-prof gc` run with a saved artifact.
+#
+# WHAT A GREEN RUN PROVES (CT-34 — the inherited hot-path law on the edge
+# read path):
 #   ZERO steady-state allocation on the in-process edge read path
 #   (LocalConfigStore), measured by JMH's GC profiler on:
 #     - getMiss     the miss path (pre-allocated ReadResult.NOT_FOUND singleton)
@@ -20,20 +17,20 @@
 #   see ReadResult's javadoc and the benchmark's) and are captured in the
 #   artifact for trend visibility but NOT gated.
 #
-# SCOPE (the signed law boundary — c2-signoff-review Finding 4): the law binds
-# the IN-PROCESS read path only. The HTTP serving shell above it
-# (EdgeHttpServer) allocates per request and is out of scope by design; do NOT
-# point this gate at the HTTP surface.
+# SCOPE (the signed law boundary): the law binds the IN-PROCESS read path
+# only. The HTTP serving shell above it (EdgeHttpServer) allocates per
+# request and is out of scope by design; do NOT point this gate at the HTTP
+# surface.
 #
 # ARTIFACT: the full raw JMH output is saved to
 #   docs/session-3/captures/ct34-jmh-gc-check.txt   (stable path; overwritten
 # per run, header carries the timestamp + git SHA so the contract map row can
 # cite a concrete, reproducible run).
 #
-# NON-VACUITY (RR-012 lesson — a gate that can pass while checking nothing is
-# worse than no gate): the script FAILS if either gated leg's summary line is
-# absent from the JMH output (a renamed benchmark or a bad regex must go RED,
-# not silently green).
+# NON-VACUITY (a gate that can pass while checking nothing is worse than no
+# gate): the script FAILS if either gated leg's summary line is absent from
+# the JMH output (a renamed benchmark or a bad regex must go RED, not
+# silently green).
 #
 # Environment knobs:
 #   JMHGC_SKIP_BUILD=1   reuse an existing benchmarks.jar (local convenience;
@@ -42,7 +39,6 @@
 # Runtime: ~2-3 minutes on the 2-vCPU gate box (1 fork, 3+3 x 1s iterations
 # per leg; deliberately short — this is a zero-vs-nonzero gate, not a
 # latency measurement).
-# =============================================================================
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -55,13 +51,13 @@ GATED_LEGS=(getMiss getIntoHit)
 # Captured-not-gated legs (the documented single-ReadResult allocation).
 ALL_LEGS_REGEX='LocalConfigStoreReadBenchmark\.(getMiss|getIntoHit|getHit|getHitWithCursor)$'
 
-# --- 2-vCPU box discipline: never overlap another Maven/JMH workload ---------
+# 2-vCPU box discipline: never overlap another Maven/JMH workload.
 if pgrep -f "org.apache.maven" >/dev/null 2>&1; then
   echo "JMH-GC-CHECK: another Maven workload is running — refusing to start" >&2
   exit 1
 fi
 
-# --- build the benchmarks uber-jar (unless explicitly reusing) ---------------
+# build the benchmarks uber-jar (unless explicitly reusing)
 if [ "${JMHGC_SKIP_BUILD:-0}" = "1" ] && [ -f "$JAR" ]; then
   echo "JMH-GC-CHECK: JMHGC_SKIP_BUILD=1 — REUSING existing $JAR (CI must not do this)"
 else
@@ -73,14 +69,14 @@ else
 fi
 [ -f "$JAR" ] || { echo "JMH-GC-CHECK: $JAR missing after build" >&2; exit 1; }
 
-# --- run the benchmark with the GC profiler ----------------------------------
+# run the benchmark with the GC profiler
 RAW="$(mktemp /tmp/ct34-jmh-XXXXXX.txt)"
 echo "JMH-GC-CHECK: running LocalConfigStoreReadBenchmark (-prof gc, size=$SIZE)"
 java --enable-preview -jar "$JAR" "$ALL_LEGS_REGEX" \
     -p "size=$SIZE" -prof gc -f 1 -wi 3 -i 3 -w 1 -r 1 \
     >"$RAW" 2>&1 || { echo "JMH-GC-CHECK: JMH run FAILED"; tail -20 "$RAW"; exit 1; }
 
-# --- persist the artifact (stable path, provenance header) -------------------
+# persist the artifact (stable path, provenance header)
 mkdir -p "$(dirname "$CAPTURE")"
 {
   echo "# CT-34 mechanical gc-profile run (gates/jmh-gc-check.sh)"
@@ -91,7 +87,7 @@ mkdir -p "$(dirname "$CAPTURE")"
 } >"$CAPTURE"
 rm -f "$RAW"
 
-# --- mechanical assertion: gc.alloc.rate.norm < 1 B/op on the gated legs -----
+# mechanical assertion: gc.alloc.rate.norm < 1 B/op on the gated legs
 # JMH summary lines look like either of:
 #   LocalConfigStoreReadBenchmark.getMiss:gc.alloc.rate.norm  10000  avgt  3  ≈ 10⁻⁴  B/op
 #   LocalConfigStoreReadBenchmark.getMiss:gc.alloc.rate.norm  10000  avgt  3  0.001   B/op

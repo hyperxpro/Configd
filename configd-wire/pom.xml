@@ -19,7 +19,7 @@
       CommitNotification the NOTIFY frame carries, and the JDK-only config value types the codec
       serializes (CommandCodec/ConfigDelta/ConfigMutation/ConfigSnapshot/VersionedValue). Depends only
       on configd-common; config-store and distribution-service depend back on it. The golden fixtures
-      live here and re-prove byte-identity after the relocation.
+      live here as the single proof of the wire format's byte-identity.
     -->
     <dependencies>
         <dependency>

@@ -28,14 +28,14 @@ import io.configd.common.config.ConfigSource;
  * <p>The leeway applies ONLY to a credential with an authority-issued absolute expiry (skew is between
  * two clocks). A server-computed session-lifetime cap (a static bearer token's default TTL, measured on
  * this server's own clock as {@code now + ttl}) has no cross-clock skew and does not use this model - it
- * closes at exactly {@code now + ttl}, byte-identical to the pre-Gate-5 edge.
+ * closes at exactly {@code now + ttl}.
  */
 public record CredentialExpiryPolicy(double tokenWindowFraction, long tokenWindowFloorMs,
                                      long tokenWindowCeilMs, double certWindowFraction,
                                      long certWindowFloorMs, long certWindowCeilMs,
                                      long clockSkewLeewayMs) {
 
-    /** The finding's recommended defaults: token {@code (0.20, 30s, 5m)}, cert {@code (0.10, 5m, 1h)}, leeway 60s. */
+    /** Default windows: token {@code (0.20, 30s, 5m)}, cert {@code (0.10, 5m, 1h)}, leeway 60s. */
     public static final CredentialExpiryPolicy DEFAULTS = new CredentialExpiryPolicy(
             0.20, 30_000L, 300_000L, 0.10, 300_000L, 3_600_000L, 60_000L);
 
@@ -51,8 +51,8 @@ public record CredentialExpiryPolicy(double tokenWindowFraction, long tokenWindo
 
     /**
      * Builds the policy from {@link ConfigSource}, fail-closed (a present-but-unparseable knob fails the
-     * boot). Absent keys fall back to {@link #DEFAULTS}, so an unconfigured deployment reproduces the
-     * finding's recommended windows.
+     * boot). Absent keys fall back to {@link #DEFAULTS}, so an unconfigured deployment uses the
+     * recommended windows above.
      */
     public static CredentialExpiryPolicy fromConfig(ConfigSource cfg) {
         return new CredentialExpiryPolicy(

@@ -24,18 +24,17 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The Gate-7 DATA-INTEGRITY proof for routing the encryption boot path through the KMS SPI: the {@code local}
- * posture MUST stay byte-identical, so an existing encrypted deployment's on-disk keyring + records still
- * decrypt after the change.
+ * Proves that routing the encryption boot path through the KMS SPI keeps the {@code local} posture
+ * byte-identical, so an existing encrypted deployment's on-disk keyring and records still decrypt.
  *
- * <p>Fully self-contained - NO committed key material (the repo convention is to generate all key material at
- * runtime). A test signing key is generated in {@code @BeforeAll}, then a {@code raft-keyring} + an encrypted
- * record are minted using the FROZEN keyring-key derivation hard-coded IN THIS TEST - HKDF over the signing-key
- * IKM with salt = the 16-byte keyId and the two info strings {@code configd/keyring-mac/v1} and
- * {@code configd/keyring-wrap/v1}. That hard-coded frozen formula IS the pre-change ("old code") baseline: it
- * is computed here independently of {@link ConfigdServer}, so if the boot's {@code local} KEK derivation ever
- * drifted by a single bit it would fail to unseal this keyring and the test would fail. The post-change
- * {@code local} boot must decrypt the record byte-for-byte.
+ * <p>Fully self-contained - no committed key material (the repo convention is to generate all key
+ * material at runtime). A test signing key is generated in {@code @BeforeAll}, then a {@code
+ * raft-keyring} and an encrypted record are minted using the frozen keyring-key derivation hard-coded in
+ * this test - HKDF over the signing-key IKM with salt = the 16-byte keyId and the two info strings
+ * {@code configd/keyring-mac/v1} and {@code configd/keyring-wrap/v1}. That hard-coded formula is
+ * computed independently of {@link ConfigdServer}, so if the boot's {@code local} KEK derivation ever
+ * drifted by a single bit it would fail to unseal this keyring and the test would fail. The {@code local}
+ * boot must decrypt the record byte-for-byte.
  *
  * <p>The encryption-OFF byte-identity and the encrypting-envelope round-trip are separately locked by
  * {@link EncryptionAtRestWiringTest}.
@@ -48,8 +47,8 @@ class KmsBootByteIdentityTest {
     private static final byte[] PLAINTEXT =
             "gate7-byte-identity-record-✓".getBytes(StandardCharsets.UTF_8);
 
-    // The FROZEN keyring-key derivation info strings - hard-coded here as the pre-change baseline; they MUST
-    // mirror ConfigdServer.KEYRING_MAC_INFO / KEYRING_WRAP_INFO.
+    // The frozen keyring-key derivation info strings, hard-coded here independently; they must mirror
+    // ConfigdServer.KEYRING_MAC_INFO / KEYRING_WRAP_INFO.
     private static final byte[] MAC_INFO = "configd/keyring-mac/v1".getBytes(StandardCharsets.UTF_8);
     private static final byte[] WRAP_INFO = "configd/keyring-wrap/v1".getBytes(StandardCharsets.UTF_8);
 
@@ -62,7 +61,7 @@ class KmsBootByteIdentityTest {
 
     @BeforeAll
     static void mintFrozenFormulaKeyringAndRecord() throws Exception {
-        keyFile = shared.resolve("secrets").resolve("signing-key.bin"); // OUTSIDE dataDir (D-1)
+        keyFile = shared.resolve("secrets").resolve("signing-key.bin"); // deliberately outside dataDir
         dataDir = shared.resolve("data");
         SigningKeyStore ks = SigningKeyStore.loadOrCreate(keyFile); // generates a fresh Ed25519 key (SecureRandom)
         frozenRecord = mintFrozenKeyringAndEncrypt(ks, dataDir, PLAINTEXT);
@@ -86,7 +85,7 @@ class KmsBootByteIdentityTest {
     @Test
     void differentialFreshMintAlsoDecryptsUnderLocalBoot(@TempDir Path root) throws Exception {
         // An independent instance: fresh signing key + fresh frozen-formula keyring in its own dir, decrypted
-        // by the post-change local boot - proves the match is not an artefact of the @BeforeAll fixture.
+        // by the local boot - proves the match is not an artefact of the @BeforeAll fixture.
         Path kf = root.resolve("secrets").resolve("signing-key.bin");
         Path dd = root.resolve("data");
         SigningKeyStore ks = SigningKeyStore.loadOrCreate(kf);
@@ -103,8 +102,7 @@ class KmsBootByteIdentityTest {
         }
     }
 
-    // -- frozen-formula minting (mirrors the shipped boot's local keyring construction, sans ConfigdServer) --
-
+    // Mirrors the shipped boot's local keyring construction, independently of ConfigdServer.
     private static byte[] mintFrozenKeyringAndEncrypt(SigningKeyStore ks, Path dataDir, byte[] plaintext)
             throws Exception {
         Files.createDirectories(dataDir);

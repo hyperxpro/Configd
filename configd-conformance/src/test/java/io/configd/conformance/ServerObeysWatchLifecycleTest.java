@@ -64,12 +64,12 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * SERVER-OBEYS, the watch-authorization contract (§02 W7): drives the reference {@link Watch} against a live
- * {@link FanOutServer} whose {@link WatchAuthorizer} SPI is scripted, and asserts the veneer obeys the gate —
+ * {@link FanOutServer} whose {@link WatchAuthorizer} SPI is scripted, and asserts the veneer obeys the gate --
  * authorize-at-subscription BEFORE any data frame (W5-4 / W7-1), reject an over-broad target rather than
  * silently narrowing it (W7-2), a {@code full_chain_verify} target without root scope is rejected with ZERO
  * {@code NOTIFY} leaked (W7-3, the mandatory negative test), the {@code NOT_AUTHORIZED} 403-class per-watch
- * terminal (W7-5/W7-5a), and bounded revocation on an ACL policy-version advance (W7-7). The authn→authz→stream
- * order (W8-2) is exercised by the authenticated positive path.
+ * terminal (W7-5/W7-5a), and bounded revocation on an ACL policy-version advance (W7-7). The
+ * authn-then-authz-then-stream order (W8-2) is exercised by the authenticated positive path.
  */
 @Timeout(60)
 class ServerObeysWatchLifecycleTest {
@@ -94,13 +94,13 @@ class ServerObeysWatchLifecycleTest {
     @Tag("clause:W7-1..W7-4")
     @Tag("clause:W8-2")
     void authorizedNarrowWatchIsAdmittedThenStreams() throws Exception {
-        // The gate authorizes a KEY /allowed watch (READ ∧ WATCH over the whole, narrow target).
+        // The gate authorizes a KEY /allowed watch (READ and WATCH over the whole, narrow target).
         int port = startServer(new ScriptedAuthorizer(t -> "/allowed".equals(t.path())));
         try (ConfigdEdgeClient client = ConfigdEdgeClient.open(bearerConfig(port))) {
             Watch watch = client.watch(WatchTarget.key("/allowed"), WatchOptions.defaults());
             List<WatchEvent> events = subscribe(watch);
-            // authn (mTLS/bearer handshake) → authz (subscription) → stream: WATCH_CREATED arrives only after
-            // the gate authorized the subscription (W8-2 / W5-4).
+            // authn (mTLS/bearer handshake), then authz (subscription), then stream: WATCH_CREATED arrives only
+            // after the gate authorized the subscription (W8-2 / W5-4).
             watch.awaitCreated(Duration.ofSeconds(20));
             publish(1, "/allowed", "v");
             await("the authorized watch tailed its key from the real server", () -> countChanges(events) >= 1);
@@ -118,7 +118,7 @@ class ServerObeysWatchLifecycleTest {
         try (ConfigdEdgeClient client = ConfigdEdgeClient.open(bearerConfig(port))) {
             Watch watch = client.watch(WatchTarget.full(), WatchOptions.defaults());
             List<WatchEvent> events = subscribe(watch);
-            // No WATCH_CREATED / data frame precedes the reject — awaitCreated throws the 403-class terminal
+            // No WATCH_CREATED / data frame precedes the reject -- awaitCreated throws the 403-class terminal
             // (W7-1: authorize before any payload-bearing frame; NOT_AUTHORIZED (11) is the 403-class code).
             assertThrows(ForbiddenException.class, () -> watch.awaitCreated(Duration.ofSeconds(20)));
             // A key the principal COULD read (/data/pub) is published; a server that SILENTLY NARROWED the FULL
@@ -140,7 +140,7 @@ class ServerObeysWatchLifecycleTest {
             List<WatchEvent> events = subscribe(watch);
             assertThrows(ForbiddenException.class, () -> watch.awaitCreated(Duration.ofSeconds(20)));
             // Publish under the requested target; the fcv carrier is the connection-level NOTIFY firehose. Because
-            // the reject precedes any data frame, ZERO events are delivered ⇒ ZERO NOTIFY leaked to a non-root
+            // the reject precedes any data frame, ZERO events are delivered, so ZERO NOTIFY leaks to a non-root
             // principal (W7-3 + the W7-5 mandatory "assert zero NOTIFY" negative case).
             publish(1, "/k", "v");
             assertNoEvents(events, "the verbatim signed chain MUST NOT stream to a principal lacking root scope");
@@ -160,7 +160,7 @@ class ServerObeysWatchLifecycleTest {
             publish(1, "/allowed", "v");
             await("the watch is live before revocation", () -> countChanges(events) >= 1);
 
-            // Revoke the grant and advance the policy version — the veneer polls the version each session tick.
+            // Revoke the grant and advance the policy version -- the veneer polls the version each session tick.
             authorizer.allow = t -> false;
             authorizer.version.incrementAndGet();
             publish(2, "/allowed", "v2"); // drive a session-loop iteration so the reauthorization tick runs
@@ -173,8 +173,6 @@ class ServerObeysWatchLifecycleTest {
                     "a revoked live watch is force-closed with the 403-class NOT_AUTHORIZED");
         }
     }
-
-    // -----------------------------------------------------------------------
 
     /** A {@link WatchAuthorizer} whose per-target verdict and monotonic policy version are scripted per test. */
     private static final class ScriptedAuthorizer implements WatchAuthorizer {

@@ -12,14 +12,13 @@ import io.configd.edge.StalenessTracker;
  * Frontier staleness at SIM level, driven by the real
  * {@link C1StreamDriver} heartbeats + deltas through the production {@link io.configd.edge.EdgeClientCore}).
  *
- * <p>Two scenarios, both judged against the edges' staleness STATE (the contract section 2 state
- * machine, staleness-measure-spec-measured):
+ * <p>Two scenarios, both judged against the edges' staleness state machine:
  * <ul>
  *   <li><b>idle-but-connected</b> - after the workload quiesces, a connected edge keeps
  *       receiving HEARTBEAT frames carrying {@code latestSeq == cursor}, so its frontier
  *       advances and it stays {@link StalenessTracker.State#CURRENT} across >=35s of idle sim
- *       time. The prior idle-time proxy would have walked it to DISCONNECTED at 30s -
- *       this test is the executable proof of the fix at sim level;</li>
+ *       time: staleness is driven by the heartbeat-carried frontier, not by elapsed idle
+ *       time, so an idle-but-connected edge never walks toward DISCONNECTED;</li>
  *   <li><b>partitioned</b> - an edge cut off from its stream (no deltas, no heartbeats) walks
  *       CURRENT -> STALE -> DEGRADED -> DISCONNECTED as sim time elapses past the thresholds.</li>
  * </ul>
@@ -32,7 +31,7 @@ class EdgeStalenessFrontierSimTest {
     /**
      * Idle-but-connected: a connected edge stays CURRENT indefinitely on heartbeats alone.
      * Runs a short workload to catch the edges up, then ticks IDLE (no new ops - the workload
-     * schedule is exhausted) for &gt;35s of sim time. The C1 driver emits HEARTBEAT frames
+     * schedule is exhausted) for &gt;35s of sim time. The C1StreamDriver emits HEARTBEAT frames
      * every {@code heartbeatMs} (250ms); each carries {@code latestSeq == cursor}, advancing
      * the frontier, so the edge never leaves CURRENT.
      */
@@ -69,7 +68,8 @@ class EdgeStalenessFrontierSimTest {
                                 + " must stay CURRENT (ADR-0039) at sim time " + sim.currentTime());
             }
         }
-        // Sanity: >35s elapsed - the prior idle proxy would have hit DISCONNECTED (30s).
+        // Sanity: >35s elapsed, past the 30s threshold that would apply if staleness were
+        // driven by idle time rather than by heartbeats.
         assertTrue(sim.currentTime() - start >= 35_000);
     }
 

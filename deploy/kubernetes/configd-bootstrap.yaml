@@ -1,7 +1,6 @@
-# =============================================================================
-# Configd Bootstrap Job — ONE-SHOT.
+# Configd Bootstrap Job -- one-shot.
 #
-# DO NOT RE-RUN THIS JOB AGAINST AN EXISTING CLUSTER. The Job emits the
+# Do not re-run this job against an existing cluster. The Job emits the
 # initial peer-set ConfigMap that the StatefulSet (configd-statefulset.yaml)
 # consumes on first startup. Re-running it after the cluster is bootstrapped
 # would overwrite the peer-set the cluster has already committed via Raft
@@ -11,9 +10,9 @@
 # Operational contract:
 #   * Apply once, immediately before the first apply of
 #     deploy/kubernetes/configd-statefulset.yaml.
-#   * `backoffLimit: 0` — a failure here means the cluster is *not*
+#   * `backoffLimit: 0` -- a failure here means the cluster is not
 #     bootstrapped; do not paper over it with retries.
-#   * `ttlSecondsAfterFinished: 600` — pod is GC'd 10 minutes after the
+#   * `ttlSecondsAfterFinished: 600` -- pod is GC'd 10 minutes after the
 #     Job completes so the cluster's resource state stays minimal.
 #   * Mounts no PVCs. The Job emits exactly one ConfigMap (configd-peers)
 #     and exits. It must not write to any persistent volume.
@@ -22,15 +21,13 @@
 # recovery.md. The runbook deletes PVCs and the existing ConfigMap before
 # re-applying this manifest.
 #
-# B9 / B10 alignment: this manifest mirrors the PodSecurity restricted
-# profile applied at namespace level by configd-statefulset.yaml — the
-# Job pod runs as non-root, with a read-only root filesystem and ALL
-# capabilities dropped.
-# =============================================================================
+# This manifest mirrors the PodSecurity restricted profile applied at
+# namespace level by configd-statefulset.yaml -- the Job pod runs as
+# non-root, with a read-only root filesystem and all capabilities dropped.
 ---
 # RBAC for the bootstrap Job. Scoped to a single ConfigMap name so that
 # even with full RBAC compromise the blast radius is "could overwrite the
-# peers ConfigMap" — which is exactly what this Job is supposed to do.
+# peers ConfigMap" -- which is exactly what this Job is supposed to do.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -80,9 +77,8 @@ metadata:
     app: configd
     component: bootstrap
 spec:
-  # An explicit zero — never retry. A failed bootstrap is an incident.
+  # An explicit zero -- never retry. A failed bootstrap is an incident.
   backoffLimit: 0
-  # GC the completed pod automatically.
   ttlSecondsAfterFinished: 600
   template:
     metadata:
@@ -105,7 +101,7 @@ spec:
       containers:
         - name: bootstrap
           # IMPORTANT: replace at deploy time with a digest reference
-          # (configd@sha256:...) — see ops/runbooks/release.md. Must match
+          # (configd@sha256:...) -- see ops/runbooks/release.md. Must match
           # the StatefulSet image so the bootstrap reuses the same
           # configd-server.jar that will run the cluster.
           image: configd:GIT_SHA
@@ -125,9 +121,8 @@ spec:
             - "-eu"
             - "-c"
             - |
-              # Generate the peer list expected by configd-server's
-              # --peers flag. This is the StatefulSet's ordinal scheme:
-              # configd-0, configd-1, ..., configd-(N-1).
+              # Generate the --peers value expected by configd-server, matching
+              # the StatefulSet's ordinal scheme: configd-0, configd-1, ..., configd-(N-1).
               REPLICAS="${CONFIGD_REPLICAS:-3}"
               PEERS=""
               i=0
@@ -140,7 +135,7 @@ spec:
                 i=$((i+1))
               done
               echo "Generated peer list: ${PEERS}"
-              # Emit the ConfigMap via the Kubernetes API. We use kubectl
+              # Emit the ConfigMap via the Kubernetes API using kubectl
               # baked into the image (Dockerfile.runtime ships busybox +
               # jdk; if kubectl is not present the operator wires their
               # own emitter here).
@@ -160,7 +155,7 @@ spec:
               EOF
               # `apply` is idempotent for the data fields, but the Role
               # above only allows create/update on the single name
-              # configd-peers — no escalation possible.
+              # configd-peers -- no escalation possible.
               kubectl apply -f /tmp/peers.yaml
           env:
             - name: CONFIGD_REPLICAS

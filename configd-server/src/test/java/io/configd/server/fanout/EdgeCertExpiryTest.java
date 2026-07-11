@@ -52,12 +52,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Gate 5 mid-connection certificate {@code notAfter} enforcement on the pure-mTLS edge, proven on both
+ * Mid-connection certificate {@code notAfter} enforcement on the pure-mTLS edge, proven on both
  * transports. A SHORT-lived client certificate connects; with {@code enforceCertNotAfter} ON the
  * {@link EdgeCertGate} arms a close at {@code notAfter + leeway} and the connection is torn down
  * {@code CREDENTIAL_EXPIRED} (a reconnect signal - a cert cannot refresh in-band). With enforcement OFF
- * (the default) the connection survives past {@code notAfter} - byte-identical to Gate 3, where the
- * handshake validated {@code notAfter} once, at connect, and never re-checked it.
+ * (the default) the connection survives past {@code notAfter} - byte-identical to the prior behavior,
+ * where the handshake validated {@code notAfter} once, at connect, and never re-checked it.
  *
  * <p>The client leaf is imported into the server truststore as its own trust anchor, so the handshake is
  * not gated on the leaf's own validity window (RFC 5280 does not check an anchor's validity) - this
@@ -130,7 +130,7 @@ class EdgeCertExpiryTest {
         }
     }
 
-    // ---- enforcement ON: the connection is closed CREDENTIAL_EXPIRED at notAfter + leeway ----
+    // Enforcement ON: the connection is closed CREDENTIAL_EXPIRED at notAfter + leeway.
 
     private void enforcedCertNotAfterClosesCredentialExpired(boolean netty) throws Exception {
         // enforceCertNotAfter ON, leeway 0 so the close fires at notAfter (a few seconds out, or already
@@ -158,7 +158,7 @@ class EdgeCertExpiryTest {
         enforcedCertNotAfterClosesCredentialExpired(true);
     }
 
-    // ---- enforcement OFF (default): the connection survives past notAfter (byte-identical to Gate 3) ----
+    // Enforcement OFF (default): the connection survives past notAfter (byte-identical to the prior behavior).
 
     private void unenforcedCertSurvivesPastNotAfter(boolean netty) throws Exception {
         int port = startMtlsServer(netty, EdgeCertGate.OFF); // default posture
@@ -182,10 +182,6 @@ class EdgeCertExpiryTest {
         unenforcedCertSurvivesPastNotAfter(true);
     }
 
-    // -----------------------------------------------------------------------
-    // fixtures
-    // -----------------------------------------------------------------------
-
     private static CredentialExpiryPolicy leewayZero() {
         return new CredentialExpiryPolicy(0.20, 30_000L, 300_000L, 0.10, 300_000L, 3_600_000L, 0L);
     }
@@ -204,8 +200,8 @@ class EdgeCertExpiryTest {
         Map<Integer, CommitNotificationSource> sources = Map.of(0, buffer);
         Map<Integer, ReplaySource> replays = Map.of(0, new SnapshotReplaySource(replayState::get));
         Clock clock = Clock.system();
-        // Pure mTLS edge (edgeAuth = null): the cert gate is the only Gate-5 element in play. authorizer =
-        // null so the SUBSCRIBE in the OFF test is admitted (auth off on this plane).
+        // Pure mTLS edge (edgeAuth = null): the cert gate is the only enforcement element in play.
+        // authorizer = null so the SUBSCRIBE in the OFF test is admitted (auth off on this plane).
         server = netty
                 ? new NettyFanOutServer(sources, replays, new int[]{0}, SINGLE_SHARD,
                         WatchCursor.INITIAL_TOPOLOGY_EPOCH, bind, tlsManager, FanOutConfig.defaults(),
@@ -284,7 +280,7 @@ class EdgeCertExpiryTest {
         return false;
     }
 
-    // ---- TLS material helpers (mirror EdgeTokenAuthMtlsTest) ----
+    // TLS material helpers (mirror EdgeTokenAuthMtlsTest).
 
     private static SSLContext clientContext(Path clientKs, Path trustStorePath) throws Exception {
         KeyStore ks = loadStore(clientKs);

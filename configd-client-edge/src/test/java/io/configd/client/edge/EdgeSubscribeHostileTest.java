@@ -191,8 +191,6 @@ class EdgeSubscribeHostileTest {
         assertThrows(IllegalStateException.class, () -> view.get("k", 5L));
     }
 
-    // -----------------------------------------------------------------------
-
     private void assertFailClosed(KeyPair leader, MockEdgeServer.Handler script) throws Exception {
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(script)) {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(config(server.port(), leader))) {

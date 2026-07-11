@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# =============================================================================
-# game-day-drill.sh — Session-6 GAME-DAY DRILL, ops/nightly lane (charter §8).
-# -----------------------------------------------------------------------------
+# game-day-drill.sh — GAME-DAY DRILL, ops/nightly lane.
+#
 # The full multi-node drill: a healthy 3-CP + 3-edge cluster under load, then a
 # sequence of injected faults, each mapped to the alert that should fire and the
 # runbook whose VERBATIM steps resolve it — recovery verified within bound.
@@ -10,7 +9,7 @@
 # `gates/e2e-compose-scenario.sh` (a gate-3 step): it kills the leader, partitions
 # an edge, and joins a fresh edge, asserting failover with NO monotonic-read
 # violation, the staleness ladder + re-bootstrap, and post-heal byte-equality.
-# This wrapper layers the S6 OPERABILITY OVERLAY on top: the drill→alert→runbook
+# This wrapper layers an operability overlay on top: the drill→alert→runbook
 # mapping, so an operator running the drill sees exactly which alert each fault
 # trips and which runbook resolves it.
 #
@@ -19,7 +18,6 @@
 # multi-node lane — Docker-heavy, run on the nightly/ops schedule and CAPTURED.
 #
 # Requires: Docker. Run: bash gates/game-day-drill.sh   (logs the overlay + scenario)
-# =============================================================================
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

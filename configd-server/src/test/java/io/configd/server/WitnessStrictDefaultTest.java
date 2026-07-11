@@ -7,12 +7,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The anchor-witness VOTE mode default (Gate 3c). The BOOT gate is always strict (peer-majority) and is
- * not a toggle - it closes R-a' at N=3 out of the box. {@code witnessStrictEnabled()} controls only
- * strict-VOTE (deferring voteGranted until a peer-majority acks - the N&gt;=5 absolute close). It is
- * OPT-IN (default fast-vote), because deferral breaks single-fault leader failover (the CI smoke test
- * caught full-strict-default deadlocking a 3-node failover). Only an explicit {@code true} enables it,
- * so a typo cannot silently break failover.
+ * The anchor-witness VOTE mode default. The BOOT gate is always strict (peer-majority) and is not a
+ * toggle - it closes the peer-quorum rollback residual at N=3 out of the box.
+ * {@code witnessStrictEnabled()} controls only strict-VOTE (deferring voteGranted until a peer-majority
+ * acks - the N&gt;=5 absolute close). It is OPT-IN (default fast-vote), because deferral breaks
+ * single-fault leader failover (a CI smoke test caught full-strict-default deadlocking a 3-node
+ * failover). Only an explicit {@code true} enables it, so a typo cannot silently break failover.
  */
 final class WitnessStrictDefaultTest {
 

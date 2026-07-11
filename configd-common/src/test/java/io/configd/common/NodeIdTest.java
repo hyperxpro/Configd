@@ -7,8 +7,6 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class NodeIdTest {
 
-    // of() factory method
-
     @Nested
     class OfFactory {
 
@@ -35,8 +33,6 @@ class NodeIdTest {
             assertEquals(-1, node.id());
         }
     }
-
-    // compareTo ordering
 
     @Nested
     class CompareTo {
@@ -69,8 +65,6 @@ class NodeIdTest {
             assertTrue(neg.compareTo(pos) < 0);
         }
     }
-
-    // equals and hashCode
 
     @Nested
     class EqualsAndHashCode {
@@ -107,8 +101,6 @@ class NodeIdTest {
             assertEquals(a, a);
         }
     }
-
-    // toString
 
     @Nested
     class ToStringFormat {

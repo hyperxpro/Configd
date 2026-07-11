@@ -83,8 +83,6 @@ public final class ReplayGuard {
     }
 
     /**
-     * Creates a guard.
-     *
      * @param clock     time source (non-null)
      * @param windowMs  the half-width of the acceptance window in ms (&gt; 0)
      * @param maxNonces the hard size cap on the nonce store (&gt; 0)

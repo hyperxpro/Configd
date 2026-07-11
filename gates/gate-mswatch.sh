@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
-# =============================================================================
 # gate-mswatch.sh — the multi-shard client-facing WATCH non-vacuity seal.
-# -----------------------------------------------------------------------------
-# A green gate-mswatch SEALS the multi-shard watch plane that the watch arc built
-# (the server-side aggregating coordinator + the shard-complete _acl/ policy plane +
-# the guard flip). The coordinator/authz tests run today only inside the umbrella
-# `mvn install`, so a rename/delete would pass silently. This gate makes the plane
-# NON-VACUOUS: each proof ran >=1 test with zero failures, and the coordinator seam
-# is present in source (a refactor that deletes the multi-shard path FAILS this gate
-# rather than silently passing — the RR-012 lesson `gate-phase1` exists to prevent).
+#
+# A green gate-mswatch SEALS the multi-shard watch plane (the server-side
+# aggregating coordinator + the shard-complete _acl/ policy plane + the guard
+# flip). The coordinator/authz tests run today only inside the umbrella
+# `mvn install`, so a rename/delete would pass silently. This gate makes the
+# plane NON-VACUOUS: each proof ran >=1 test with zero failures, and the
+# coordinator seam is present in source (a refactor that deletes the
+# multi-shard path FAILS this gate rather than silently passing).
 #
 # WHAT A GREEN gate-mswatch PROVES:
 #   (a) coordinator  the fan-out/fan-in coordinator + per-shard completeness are green
 #                    non-vacuously: MultiShardCoordinatorTest, RealHashCompletenessTest,
 #                    ShardMapResolverTest, WatchMultiplexSinkTest.
-#   (b) authz-b6     the shard-complete _acl/ policy plane rejects a DENY that hashes to
+#   (b) authz        the shard-complete _acl/ policy plane rejects a DENY that hashes to
 #                    a NON-primary shard (the property that makes lifting the boot guard
 #                    authz-safe): AclConfigPolicyLoaderMultiShardTest, incl. the explicit
-#                    B6 regression method tB6_multiShard_appliesNonPrimaryShardDeny_watchRejected.
+#                    regression method tB6_multiShard_appliesNonPrimaryShardDeny_watchRejected.
 #   (c) guard-flip   the split: N>1 + edge BOOTS serving multi-shard WATCH, the legacy
 #                    whole-store SUBSCRIBE is refused per-connection unless the opt-in
 #                    (LegacySubscribePartialShardViewTest), and the real server boots at
@@ -30,7 +29,6 @@
 # Environment knobs:
 #   GATE_MSWATCH_SKIP_BUILD=1  reuse already-installed module jars (local convenience;
 #                              CI must not set it).
-# =============================================================================
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -66,13 +64,13 @@ run_tests() {
 assert_file() { [ -e "$ROOT/$1" ] || fail seam "missing multi-shard-watch seam file: $1"; echo "gate-mswatch   ✓ exists: $1"; }
 assert_grep() { grep -qE "$2" "$ROOT/$1" 2>/dev/null || fail seam "expected /$2/ in $1 (seam regressed?)"; echo "gate-mswatch   ✓ $1 :: $2"; }
 
-# --- 2-vCPU box discipline: never overlap another Maven workload --------------
+# 2-vCPU box discipline: never overlap another Maven workload.
 if pgrep -f "[s]urefirebooter" >/dev/null 2>&1; then
   echo "gate-mswatch: another Maven test workload is running — refusing to start (2-vCPU box)" >&2
   exit 1
 fi
 
-# --- build/install the modules' deps once (so the targeted test runs are offline) ---
+# build/install the modules' deps once (so the targeted test runs are offline)
 if [ "${GATE_MSWATCH_SKIP_BUILD:-0}" = "1" ]; then
   echo "gate-mswatch build: SKIPPED by GATE_MSWATCH_SKIP_BUILD=1 (reusing installed jars; CI must not do this)"
 else
@@ -81,7 +79,7 @@ else
     || { tail -30 "$LOGDIR/build.txt"; fail build "module build/install failed"; }
 fi
 
-# --- (a) the coordinator + per-shard completeness, NON-VACUOUS ----------------
+# (a) the coordinator + per-shard completeness, NON-VACUOUS
 echo "gate-mswatch coordinator: aggregating fan-out/fan-in + per-shard completeness..."
 COORD="$LOGDIR/coordinator.txt"
 run_tests coordinator "MultiShardCoordinatorTest,RealHashCompletenessTest,ShardMapResolverTest,WatchMultiplexSinkTest" "$COORD"
@@ -91,19 +89,19 @@ assert_class_green "$COORD" "ShardMapResolverTest"        # KEY->shardFor; PREFI
 assert_class_green "$COORD" "WatchMultiplexSinkTest"      # per-shard (gid,S) tagging + coalesced vectors
 echo "gate-mswatch coordinator: OK"
 
-# --- (b) the shard-complete _acl/ authz plane, incl. the B6 regression --------
+# (b) the shard-complete _acl/ authz plane, incl. the explicit regression test
 # The property that makes lifting the boot guard authz-safe: a DENY on a key hashing to a
 # NON-primary shard rejects/revokes the covered watch (fails with a primary-only loader).
 echo "gate-mswatch authz-b6: shard-complete _acl/ policy plane (DENY-on-non-primary-shard)..."
 AUTHZ="$LOGDIR/authz.txt"
 run_tests authz-b6 "AclConfigPolicyLoaderMultiShardTest" "$AUTHZ"
 assert_class_green "$AUTHZ" "AclConfigPolicyLoaderMultiShardTest"
-# Name the B6 regression explicitly (non-vacuity: its deletion FAILS the gate).
+# Name the regression test explicitly (non-vacuity: its deletion FAILS the gate).
 assert_grep "configd-server/src/test/java/io/configd/server/AclConfigPolicyLoaderMultiShardTest.java" \
   "tB6_multiShard_appliesNonPrimaryShardDeny_watchRejected"
 echo "gate-mswatch authz-b6: OK"
 
-# --- (c) the guard flip: the split + the real N>1+edge boot -------------------
+# (c) the guard flip: the split + the real N>1+edge boot
 echo "gate-mswatch guard-flip: legacy-SUBSCRIBE split + real N>1+edge boot..."
 FLIP="$LOGDIR/guard-flip.txt"
 run_tests guard-flip "LegacySubscribePartialShardViewTest,NGreaterThanOneBootSmokeTest" "$FLIP"
@@ -111,7 +109,7 @@ assert_class_green "$FLIP" "LegacySubscribePartialShardViewTest"  # split: refus
 assert_class_green "$FLIP" "NGreaterThanOneBootSmokeTest"         # the real ConfigdServer boots at N>1+edge
 echo "gate-mswatch guard-flip: OK"
 
-# --- (d) wire byte-stability: the v1/v2/v3 golden fixtures ran (non-vacuity) ---
+# (d) wire byte-stability: the v1/v2/v3 golden fixtures ran (non-vacuity)
 echo "gate-mswatch wire: v1/v2/v3 edge golden-fixture tests ran (zero wire change)..."
 WIRE="$LOGDIR/wire.txt"
 run_tests wire "EdgeFrameCodecGoldenFixtureTest,EdgeFrameCodecV2GoldenFixtureTest,EdgeFrameCodecV3GoldenFixtureTest" "$WIRE"
@@ -120,7 +118,7 @@ assert_class_green "$WIRE" "EdgeFrameCodecV2GoldenFixtureTest"  # v2 (0x02) watc
 assert_class_green "$WIRE" "EdgeFrameCodecV3GoldenFixtureTest"  # v3 filtered wire
 echo "gate-mswatch wire: OK"
 
-# --- (e) the coordinator seam EXISTS in source (a deletion FAILS the gate) -----
+# (e) the coordinator seam EXISTS in source (a deletion FAILS the gate)
 echo "gate-mswatch seam: the multi-shard coordinator seam is present in source..."
 assert_grep "configd-distribution-service/src/main/java/io/configd/distribution/fanout/FanOutConnectionDriver.java" \
   "class FanOutConnectionDriver implements WatchMultiplexSink.Coordinator"

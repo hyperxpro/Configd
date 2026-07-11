@@ -5,13 +5,13 @@
 
 The *write* topology in this ADR (global 5-voter cross-region Raft group, per-region write groups,
 closed-timestamp side-transport) is rejected by
-`adr-0030-quicksilver-shaped-topology.md` on cross-region write-latency (section 0.1 `< 150 ms`) and
+`adr-0030-quicksilver-shaped-topology.md` on cross-region write-latency grounds (the < 150ms target) and
 operational-complexity grounds; it was never implemented. The
 *read-locality concept* (follower reads via a safe/closed timestamp) is retained in spirit but
 delivered via async edge copies rather than in-Raft non-voting replicas.
 
 ## Context
-The system must support global deployment across 5+ regions with < 150ms p99 cross-region write commit, < 500ms p99 edge staleness, and < 1ms p99 edge reads. ZooKeeper was never designed for WAN deployment - ensemble across DCs requires RTT < 100ms p99, and observers cannot be auto-promoted or improve write throughput (the gap analysis). Consul's WAN federation requires average RTT <= 50ms with p99 <= 100ms, eliminating intercontinental federation for many deployments (the gap analysis). A single global Raft group imposes cross-region RTT on every write, making 10K/s throughput unachievable with realistic payloads.
+The system must support global deployment across 5+ regions with < 150ms p99 cross-region write commit, < 500ms p99 edge staleness, and < 1ms p99 edge reads. ZooKeeper was never designed for WAN deployment - ensemble across DCs requires RTT < 100ms p99, and observers cannot be auto-promoted or improve write throughput. Consul's WAN federation requires average RTT <= 50ms with p99 <= 100ms, eliminating intercontinental federation for many deployments. A single global Raft group imposes cross-region RTT on every write, making 10K/s throughput unachievable with realistic payloads.
 
 ## Decision
 We adopt a **three-tier multi-region topology** with scope-aware Raft group placement:

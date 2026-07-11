@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
  * The reserved-prefix ADMIN gate, write-time validation, and the auth-disabled refusal,
  * proven through the transport-agnostic {@link AdminApiHandler} decision core (both HTTP adapters delegate
  * to it, so this is the single source of truth for the gate logic). The cross-transport HTTP lift of the
- * security controls lives in {@link AbstractAdminApiServerContract} (Section 9); the prefix-evasion vectors
+ * security controls lives in {@link AbstractAdminApiServerContract}; the prefix-evasion vectors
  * that require real percent-decoding at the transport->handler boundary (e.g. {@code %5Facl/}) live there
  * too. This class drives the decoded-key gate decisions directly with full control over the ACL, the
  * authenticator, and - via a capturing proposer - whether a write ever reached Raft.
@@ -35,7 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
  * Raft commit + apply), so {@code calls == 0} after a request is a sound, pre-commit "store unchanged"
  * proof - stronger than inspecting an empty store, because it pins the rejection BEFORE the proposal.
  *
- * <p><b>Predicate-alignment in action (section 2.2).</b> The gate, the loader, and the store key off the SAME
+ * <p><b>Predicate-alignment in action.</b> The gate, the loader, and the store key off the SAME
  * post-strip key with the SAME {@code startsWith(PolicySerializer.ACL_PREFIX)} predicate (no normalization),
  * so a key that slips the gate (leading-slash {@code /_acl/...}, upper-case {@code _ACL/...}) is also a DISTINCT
  * store key the loader never matches - "evades the gate" and "is real policy" are mutually exclusive. The
@@ -45,9 +45,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
  */
 class ReservedPrefixAdminGateTest {
 
-    // ---------------------------------------------------------------------------------------------
     // Harness: a capturing proposer (store-unchanged proxy) + synthetic, token-bearing AdminRequests.
-    // ---------------------------------------------------------------------------------------------
 
     /** Records whether (and with which keys) a write reached the Raft proposal stage. */
     private static final class CapturingProposer implements ConfigWriteService.RaftProposer {
@@ -124,9 +122,7 @@ class ReservedPrefixAdminGateTest {
         return h.handle(req(method, key, token, body == null ? null : b(body))).status();
     }
 
-    // =============================================================================================
-    // Test 1 - No unprotected window: a WRITE-but-not-ADMIN principal cannot reach `_acl/` (escalation).
-    // =============================================================================================
+    // No unprotected window: a WRITE-but-not-ADMIN principal cannot reach `_acl/` (escalation).
 
     @Test
     void writeButNotAdminPrincipalCannotWriteReservedPrefix() throws Exception {
@@ -144,9 +140,7 @@ class ReservedPrefixAdminGateTest {
         assertEquals(0, proposer.calls.get(), "no reserved-prefix write may reach Raft without ADMIN");
     }
 
-    // =============================================================================================
-    // Test 2 - ADMIN allowed: an ADMIN grant (and root's allOf) reach `_acl/`.
-    // =============================================================================================
+    // ADMIN allowed: an ADMIN grant (and root's allOf) reach `_acl/`.
 
     @Test
     void adminPrincipalAndRootMayWriteReservedPrefix() throws Exception {
@@ -164,10 +158,8 @@ class ReservedPrefixAdminGateTest {
         assertEquals(3, proposer.calls.get(), "each authorized reserved write must reach the proposer");
     }
 
-    // =============================================================================================
-    // Test 3 (decoded boundary) - the dot-dot vector stays gated; leading-slash / upper-case are DISTINCT
+    // Decoded boundary: the dot-dot vector stays gated; leading-slash / upper-case are DISTINCT
     // keys (the percent-decoding vectors %5Facl/ etc. are proven over real HTTP in the contract suite).
-    // =============================================================================================
 
     @Test
     void dotDotInsideReservedPrefixStaysGated() throws Exception {
@@ -200,9 +192,7 @@ class ReservedPrefixAdminGateTest {
         assertEquals(List.of("_ACL/roles/x"), proposer.lastKeys, "routes to the verbatim upper-case key");
     }
 
-    // =============================================================================================
-    // Test 4 - non-ADMIN rejected for BOTH PUT and DELETE (a read-only principal too).
-    // =============================================================================================
+    // non-ADMIN is rejected for BOTH PUT and DELETE (a read-only principal too).
 
     @Test
     void nonAdminIsRejectedForBothPutAndDeleteOnReserved() throws Exception {
@@ -225,11 +215,9 @@ class ReservedPrefixAdminGateTest {
         assertEquals(0, proposer.calls.get(), "none of the denied reserved requests reached Raft");
     }
 
-    // =============================================================================================
-    // Test 5 - self-deny survivable via break-glass: an adversarial config policy denying adminP's ADMIN
+    // Self-deny is survivable via break-glass: an adversarial config policy denying adminP's ADMIN
     // (and even an attempt to carve root) does NOT lock root out. The HTTP/handler lift of
     // AclConfigPolicyLoaderTest#rootIsUncarveableByAnyConfigRole.
-    // =============================================================================================
 
     @Test
     void rootStillReachesReservedAfterAnAdversarialSelfDenyPolicy() throws Exception {
@@ -266,9 +254,7 @@ class ReservedPrefixAdminGateTest {
                 "binding root to a deny role is rejected wholesale — root remains authorized");
     }
 
-    // =============================================================================================
-    // Test 6 - bad policy rejected at write-time (pre-commit); well-formed-but-incomplete is NOT an error.
-    // =============================================================================================
+    // Bad policy is rejected at write-time (pre-commit); well-formed-but-incomplete is NOT an error.
 
     @Test
     void malformedOrReservedAclWriteIsRejected400PreCommit() throws Exception {
@@ -295,10 +281,8 @@ class ReservedPrefixAdminGateTest {
         assertEquals(1, proposer.calls.get(), "the well-formed incomplete binding commits");
     }
 
-    // =============================================================================================
-    // Test 7 - auth-disabled: reserved WRITES refused (footgun closed); ordinary writes + reserved READS
+    // Auth-disabled: reserved WRITES are refused (footgun closed); ordinary writes + reserved READS
     // are unaffected (auth-off stays otherwise fully open).
-    // =============================================================================================
 
     @Test
     void authDisabledRefusesReservedWritesButNotOrdinaryWritesOrReservedReads() throws Exception {
@@ -328,10 +312,8 @@ class ReservedPrefixAdminGateTest {
                 "auth-off: a reserved READ is not refused (reads stay open when auth is disabled)");
     }
 
-    // =============================================================================================
-    // Fail-closed corner - auth configured but NO ACL service: a reserved key requires ADMIN, which
+    // Fail-closed corner: auth configured but NO ACL service. A reserved key requires ADMIN, which
     // cannot be evaluated without an ACL, so it must DENY for every method (never fall through to ok).
-    // =============================================================================================
 
     @Test
     void reservedKeyFailsClosedWhenAuthOnButNoAclService() throws Exception {
@@ -355,10 +337,8 @@ class ReservedPrefixAdminGateTest {
         assertEquals(1, proposer.calls.get(), "only the ordinary write reached Raft");
     }
 
-    // =============================================================================================
-    // Test 8 - no over-gating: the rule is EXACTLY the `_acl/` prefix; ordinary writes by a WRITE-only
+    // No over-gating: the rule is EXACTLY the `_acl/` prefix; ordinary writes by a WRITE-only
     // principal are unchanged (byte-identity at the gate).
-    // =============================================================================================
 
     @Test
     void overGatingBoundsAreExactlyTheAclPrefix() throws Exception {

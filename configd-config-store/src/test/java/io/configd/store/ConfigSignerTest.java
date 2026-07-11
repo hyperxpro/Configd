@@ -25,10 +25,6 @@ class ConfigSignerTest {
         return s.getBytes(StandardCharsets.UTF_8);
     }
 
-    // -----------------------------------------------------------------------
-    // Sign and verify round-trip
-    // -----------------------------------------------------------------------
-
     @Test
     void signAndVerifyRoundtrip() throws Exception {
         ConfigSigner signer = new ConfigSigner(keyPair);
@@ -59,10 +55,6 @@ class ConfigSignerTest {
         assertTrue(signer.verify(payload, signature));
     }
 
-    // -----------------------------------------------------------------------
-    // Verification fails with wrong key
-    // -----------------------------------------------------------------------
-
     @Test
     void verifyFailsWithDifferentKey() throws Exception {
         KeyPairGenerator kpg = KeyPairGenerator.getInstance("Ed25519");
@@ -74,7 +66,6 @@ class ConfigSignerTest {
         byte[] payload = data("secret.config=42");
         byte[] signature = signer.sign(payload);
 
-        // Signature from one key should not verify with another
         assertFalse(otherVerifier.verify(payload, signature));
     }
 
@@ -94,15 +85,10 @@ class ConfigSignerTest {
         byte[] payload = data("db.host=localhost");
         byte[] signature = signer.sign(payload);
 
-        // Flip a bit in the signature
         byte[] corrupted = signature.clone();
         corrupted[0] ^= 0xFF;
         assertFalse(signer.verify(payload, corrupted));
     }
-
-    // -----------------------------------------------------------------------
-    // Verify-only mode
-    // -----------------------------------------------------------------------
 
     @Test
     void verifyOnlyModeCanVerify() throws Exception {
@@ -122,10 +108,6 @@ class ConfigSignerTest {
         assertThrows(IllegalStateException.class,
                 () -> edge.sign(data("should fail")));
     }
-
-    // -----------------------------------------------------------------------
-    // Null checks
-    // -----------------------------------------------------------------------
 
     @Test
     void constructorKeyPairNullThrows() {

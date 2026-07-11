@@ -26,16 +26,16 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Red-team re-audit PoC for the F1 fix on the <b>demotion</b> snapshot path (the slow-consumer
- * ladder's re-bootstrap), which is a <b>separate trigger</b> from the initial-subscribe snapshot
- * the sibling {@link WatchSnapshotAuthzRegressionTest} covers. The watch veneer drives the core
- * with a full-store subscribe, so a connection-level DEMOTION re-snapshot is, like the first
- * snapshot, the whole store unless filtered. Both triggers funnel through the single
+ * Pins the fix for the <b>demotion</b> snapshot path (the slow-consumer ladder's re-bootstrap),
+ * which is a <b>separate trigger</b> from the initial-subscribe snapshot the sibling
+ * {@link WatchSnapshotAuthzRegressionTest} covers. The watch veneer drives the core with a
+ * full-store subscribe, so a connection-level DEMOTION re-snapshot is, like the first snapshot,
+ * the whole store unless filtered. Both triggers funnel through the single
  * {@link FanOutSessionCore#performSnapshotTransfer} to {@link ReplaySource#replayFromSnapshot}
  * chokepoint, which is the {@link FilteringReplaySource} bound to the drain-owner's target - so a
- * narrow watch that DEMOTES must receive a target-filtered re-snapshot, never the whole store
- * (W5-10 / W7-4). This test forces a {@code TRANSPORT_BLOCK} demotion on a narrow KEY owner and
- * asserts the re-snapshot carries only the authorized key.
+ * narrow watch that demotes must receive a target-filtered re-snapshot, never the whole store.
+ * This test forces a {@code TRANSPORT_BLOCK} demotion on a narrow KEY owner and asserts the
+ * re-snapshot carries only the authorized key.
  */
 class WatchDemotionSnapshotAuthzTest {
 
@@ -93,8 +93,7 @@ class WatchDemotionSnapshotAuthzTest {
                 "the DEMOTION re-snapshot must NOT leak the unauthorized key (W5-10 / W7-4)");
     }
 
-    // ---- helpers (mirrors WatchSnapshotAuthzRegressionTest) ----
-
+    // Mirrors WatchSnapshotAuthzRegressionTest's helpers.
     private static CommitNotification commit(long seq, String key) {
         return new CommitNotification(seq, 1_000L + seq, new ConfigDelta(seq - 1, seq,
                 List.of(new ConfigMutation.Put(key, "v".getBytes(StandardCharsets.UTF_8)))));

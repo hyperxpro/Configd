@@ -19,18 +19,18 @@ import static org.junit.jupiter.api.Assertions.fail;
  * Runner I's anti-regression RATCHET (the protobuf {@code --failure_list} analog): runs every wire case
  * ({@link WireCases}) and asserts the ACTUAL outcome set EQUALS the checked-in expected-results manifest
  * ({@code /conformance/wire-manifest.txt}). An unexpected FAIL (a codec regression) AND an unexpected PASS
- * (a silently-changed reject / a stale manifest) BOTH fail the build — bidirectional drift detection is what
+ * (a silently-changed reject / a stale manifest) BOTH fail the build -- bidirectional drift detection is what
  * makes the corpus a frozen contract (§00 OV5-5). A deliberate wire change is landed by regenerating +
- * committing the manifest (the manifest is generated to {@code target/} when absent — the golden-file pattern).
+ * committing the manifest (the manifest is generated to {@code target/} when absent -- the golden-file pattern).
  */
-// Runner I genuinely exercises these codec clauses: the golden ACCEPT corpus proves the frame layouts, the
-// version pin, the vector cursor, the auth frames, and the error taxonomy encode/decode byte-for-byte; the
-// poison REJECT corpus proves the CRC / cap / trailing-bytes / unknown-type / type-version / version-pin
-// reject paths with their specific ErrorCode. The clause-directed additions (WireCases.boundsAndSanitizeCases)
-// extend that to the §06 F5 u64 field-range rejects (high-bit CURSOR_ACK.seq / SUBSCRIBE.resumeCursor ⇒
-// FRAME_CORRUPT; the failover-cursor sentinel; the cursor-vector topologyEpoch-0 reject via decodeCursor) and
-// the F6-9 ERROR_CLOSE message contract (unknown code ⇒ FRAME_CORRUPT; an untrusted control-byte message is
-// preserved byte-for-byte through decode→re-encode — the codec never sanitizes it).
+// Runner I exercises these codec clauses: the golden ACCEPT corpus proves the frame layouts, the version pin,
+// the vector cursor, the auth frames, and the error taxonomy encode/decode byte-for-byte; the poison REJECT
+// corpus proves the CRC / cap / trailing-bytes / unknown-type / type-version / version-pin reject paths with
+// their specific ErrorCode. WireCases.boundsAndSanitizeCases covers the §06 F5 u64 field-range rejects
+// (high-bit CURSOR_ACK.seq / SUBSCRIBE.resumeCursor rejects as FRAME_CORRUPT; the failover-cursor sentinel; the
+// cursor-vector topologyEpoch-0 reject via decodeCursor) and the F6-9 ERROR_CLOSE message contract (unknown
+// code rejects as FRAME_CORRUPT; an untrusted control-byte message is preserved byte-for-byte through decode
+// and re-encode -- the codec never sanitizes it).
 @Tag("clause:OV5-5")
 @Tag("clause:OV7-4_3")
 @Tag("clause:A9-1")

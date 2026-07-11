@@ -25,7 +25,7 @@ class IntegrityEnvelopeTest {
     private static final int SCOPE = 3;
     private static final int OTHER_SCOPE = 7;
 
-    // Payload begins right after header(8) + scopeId(4) in the NONE/HMAC postures.
+    // Payload begins right after the header (8 bytes) and scopeId (4 bytes) in the NONE and HMAC postures.
     private static final int PAYLOAD_START = IntegrityEnvelope.HEADER_SIZE + IntegrityEnvelope.SCOPE_ID_SIZE;
 
     private static SecretKey key() {
@@ -37,8 +37,6 @@ class IntegrityEnvelopeTest {
     private static byte[] payload() {
         return "hello-raft-payload".getBytes();
     }
-
-    // round-trip
 
     @Test
     void keyedRoundTrip() {
@@ -61,7 +59,7 @@ class IntegrityEnvelopeTest {
     void keyedWrapIsLongerByKeyTermAndMacThanKeyless() {
         byte[] keyed = new IntegrityEnvelope(key()).wrap(MAGIC, SCOPE, payload());
         byte[] keyless = IntegrityEnvelope.keyless().wrap(MAGIC, SCOPE, payload());
-        // v3 keyed HMAC adds the 4-byte keyTerm (after scopeId) plus the 32-byte MAC over keyless.
+        // The v3 keyed HMAC layout adds the 4-byte keyTerm (after scopeId) plus the 32-byte MAC over keyless.
         assertEquals(keyless.length + IntegrityEnvelope.KEY_TERM_SIZE + IntegrityEnvelope.MAC_SIZE,
                 keyed.length);
     }
@@ -72,7 +70,7 @@ class IntegrityEnvelopeTest {
         assertArrayEquals(new byte[0], env.unwrap(MAGIC, SCOPE, env.wrap(MAGIC, SCOPE, new byte[0])));
     }
 
-    // scopeId: the cross-shard/cross-scope splice control
+    // scopeId: the cross-shard/cross-scope splice control.
 
     @Test
     void scopeMismatchRefusedKeyed() {
@@ -88,7 +86,7 @@ class IntegrityEnvelopeTest {
 
     @Test
     void scopeMismatchRefusedKeyless() {
-        // The assert fires in EVERY posture, keyless included: an honestly cross-scope
+        // The assert fires in every posture, keyless included: an honestly cross-scope
         // artifact is refused even without a key (operational safety, not adversarial).
         IntegrityEnvelope env = IntegrityEnvelope.keyless();
         byte[] wrapped = env.wrap(MAGIC, SCOPE, payload());
@@ -100,9 +98,10 @@ class IntegrityEnvelopeTest {
     @Test
     void inPlaceScopeForgeFailsMac() {
         // An attacker re-stamps a shard-3 record's scopeId to the reader's expected 7 and
-        // repairs the CRC so the scope assert would PASS - but the MAC was computed over the
-        // original scopeId, so the keyed reader still refuses. Assert + unforgeable-scope
-        // together close the splice; the assert alone (as in keyless) would be bypassable.
+        // repairs the CRC so the scope assert would pass - but the MAC was computed over the
+        // original scopeId, so the keyed reader still refuses. The scope assert together with
+        // the unforgeable scope closes the splice; the assert alone (as in keyless) would be
+        // bypassable.
         IntegrityEnvelope env = new IntegrityEnvelope(key());
         byte[] wrapped = env.wrap(MAGIC, SCOPE, payload());
         ByteBuffer.wrap(wrapped).putInt(IntegrityEnvelope.HEADER_SIZE, OTHER_SCOPE); // re-stamp scopeId
@@ -122,13 +121,13 @@ class IntegrityEnvelopeTest {
         assertThrows(IntegrityException.class, () -> env.unwrap(MAGIC, SCOPE, wrapped));
     }
 
-    // tamper / forgery detection (keyed)
+    // Tamper and forgery detection (keyed).
 
     @Test
     void tamperedPayloadByteThrows() {
         IntegrityEnvelope env = new IntegrityEnvelope(key());
         byte[] wrapped = env.wrap(MAGIC, SCOPE, payload());
-        // Flip a payload byte AND recompute the CRC32C so only the MAC catches it -
+        // Flip a payload byte and recompute the CRC32C so only the MAC catches it -
         // proves the MAC, not the CRC, is the tamper control.
         wrapped[PAYLOAD_START] ^= 0x01;
         recomputeCrc(wrapped);
@@ -149,7 +148,7 @@ class IntegrityEnvelopeTest {
     void flippedAlgIdToNoneUnderKeyedThrows_downgrade() {
         IntegrityEnvelope env = new IntegrityEnvelope(key());
         byte[] wrapped = env.wrap(MAGIC, SCOPE, payload());
-        // algId is at offset 6 (after magic:4 + version:2). Force it to NONE and
+        // algId is at offset 6 (after the 4-byte magic and 2-byte version). Force it to NONE and
         // recompute the CRC; the keyed reader must still refuse (downgrade), even
         // though the bytes are now CRC-consistent.
         wrapped[6] = IntegrityEnvelope.ALG_NONE;
@@ -190,7 +189,7 @@ class IntegrityEnvelopeTest {
         assertThrows(IntegrityException.class, () -> wrongKey.unwrap(MAGIC, SCOPE, wrapped));
     }
 
-    // truncation / absence rules
+    // Truncation and absence rules.
 
     @Test
     void structurallyShortReturnsNullNotThrow() {
@@ -210,7 +209,7 @@ class IntegrityEnvelopeTest {
         assertThrows(IntegrityException.class, () -> env.unwrapOrNull(MAGIC, SCOPE, truncated));
     }
 
-    // keyless: foreign / non-envelope bytes
+    // Keyless: foreign, non-envelope bytes.
 
     @Test
     void keylessAcceptsForeignNonEnvelopedBytesAsNull() {
@@ -238,11 +237,11 @@ class IntegrityEnvelopeTest {
                 () -> new IntegrityEnvelope(key()).unwrapOrNull(MAGIC, SCOPE, foreign));
     }
 
-    // hardening regressions
+    // Hardening regressions.
 
     @Test
     void reservedByteTamperUnderKeyedThrows() {
-        // The reserved byte (offset 7) is MUST-be-zero: the dedicated MBZ check refuses a
+        // The reserved byte (offset 7) must be zero: the dedicated MBZ check refuses a
         // non-zero value before the MAC is even consulted. It fires in every posture, so a
         // reserved-byte tamper is a fail-closed refusal, not an incidental MAC mismatch.
         IntegrityEnvelope env = new IntegrityEnvelope(key());
@@ -258,7 +257,7 @@ class IntegrityEnvelopeTest {
     @Test
     void reservedNonZeroThrowsKeyless() {
         // The MBZ check is what makes the reserved byte a genuine forward-compat escape:
-        // it fails closed even in the KEYLESS posture, where no MAC covers it. A v3 reader
+        // it fails closed even in the keyless posture, where no MAC covers it. A v3 reader
         // can never silently mis-parse bytes a future writer stamped into this slot.
         IntegrityEnvelope env = IntegrityEnvelope.keyless();
         byte[] wrapped = env.wrap(MAGIC, SCOPE, payload());
@@ -273,7 +272,7 @@ class IntegrityEnvelopeTest {
     @Test
     void corruptHeaderReportsCrcNotVersion() {
         // CRC-before-version: a bit-flip in the version field (with the CRC left stale)
-        // must surface as CORRUPTION, not as a misleading "unsupported version". The
+        // must surface as corruption, not as a misleading "unsupported version". The
         // version is only read from CRC-validated bytes.
         IntegrityEnvelope env = new IntegrityEnvelope(key());
         byte[] wrapped = env.wrap(MAGIC, SCOPE, payload());
@@ -290,16 +289,14 @@ class IntegrityEnvelopeTest {
         // (header + scopeId + CRC = 16) is a deliberate IntegrityException under a key (not
         // an incidental downstream underflow). Keyless keeps the structurally-absent (null)
         // semantics.
-        byte[] subFloor = new byte[12]; // >= 4 (magic readable), < MIN_ENVELOPE_SIZE (16)
+        byte[] subFloor = new byte[12]; // at least 4 bytes (enough to read the magic), but under MIN_ENVELOPE_SIZE (16)
         ByteBuffer.wrap(subFloor).putInt(MAGIC);
         assertThrows(IntegrityException.class,
                 () -> new IntegrityEnvelope(key()).unwrapOrNull(MAGIC, SCOPE, subFloor));
         assertNull(IntegrityEnvelope.keyless().unwrapOrNull(MAGIC, SCOPE, subFloor));
     }
 
-    // helper
-
-    /** Recomputes the CRC32C trailer over [0, len-4) so only the MAC/version check fails. */
+    /** Recomputes the CRC32C trailer (all bytes but the last 4) so only the MAC or version check can fail. */
     private static void recomputeCrc(byte[] enveloped) {
         java.util.zip.CRC32C crc = new java.util.zip.CRC32C();
         crc.update(enveloped, 0, enveloped.length - IntegrityEnvelope.CRC_SIZE);

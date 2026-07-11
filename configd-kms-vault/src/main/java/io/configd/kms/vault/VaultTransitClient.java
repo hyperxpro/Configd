@@ -31,7 +31,7 @@ import javax.net.ssl.TrustManagerFactory;
  * {@code decrypt} honour {@code associated_data} on every Vault version, so a relocated/copied blob whose AAD
  * does not match FAILS to unseal - the node-binding defence. ({@code transit/datakey} would have Vault mint the
  * entropy but does not bind AEAD associated-data the same way.) Vault still holds the KEK and only ever returns
- * a small {@code vault:vN:} wrapped blob; Configd derives all keyring keys locally (KmsProvider R1).
+ * a small {@code vault:vN:} wrapped blob; Configd derives all keyring keys locally.
  *
  * <p>Not thread-safe by contract need: the provider calls it once at boot, then drops it.
  */
@@ -218,7 +218,7 @@ final class VaultTransitClient implements AutoCloseable {
             try {
                 c.close();
             } catch (Exception ignored) {
-                // best-effort release; the provider is being dropped anyway (R2)
+                // best-effort release; the provider is being dropped anyway
             }
         }
     }

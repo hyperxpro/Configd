@@ -75,7 +75,7 @@ class EdgeTransportMtlsTest {
     private FanOutServer server;
     private FanOutBuffer buffer;
     private EdgeNodeMain edge;
-    private ServerSocket blackhole; // A3-1: accept-then-black-hole endpoint
+    private ServerSocket blackhole; // accept-then-black-hole endpoint
 
     @BeforeAll
     static void generateTlsFixture() throws Exception {

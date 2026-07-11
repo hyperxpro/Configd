@@ -16,10 +16,10 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * The edge filtered-stream apply matrix (ADR-0045 test (f), edge half): forward-only gap
- * detection and the version-bridged store apply. A forward version jump is expected under
- * server-side filtering (dropped non-matching deltas bumped the global version), a regression
- * below the applied version is a genuine gap, and classic mode is unchanged.
+ * The edge filtered-stream apply matrix: forward-only gap detection and the version-bridged
+ * store apply. A forward version jump is expected under server-side filtering (dropped
+ * non-matching deltas bumped the global version), a regression below the applied version is
+ * a genuine gap, and classic mode is unchanged.
  */
 class DeltaApplierFilteredModeTest {
 
@@ -83,7 +83,7 @@ class DeltaApplierFilteredModeTest {
 
     @Test
     void classicModeStillRequiresStrictContiguity() {
-        // (f1) With filtering OFF, a forward jump (a dropped MATCHING delta on a full-chain stream)
+        // With filtering OFF, a forward jump (a dropped MATCHING delta on a full-chain stream)
         // is a genuine gap - classic contiguity is preserved.
         applier.setFilteredMode(false);
         assertEquals(DeltaApplier.ApplyResult.APPLIED, applier.offer(delta(0, 1, "svc/a"), clock.timeMs));

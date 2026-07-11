@@ -40,7 +40,7 @@ class ConfigdMetricsTest {
                 snapshot.get(ConfigdMetrics.NAME_SNAPSHOT_INSTALL_FAILED).type());
         assertEquals("counter",
                 snapshot.get(ConfigdMetrics.NAME_SNAPSHOT_REBUILD).type());
-        // WH-10: the inbound decode-drop counter is eager-created so it emits _total 0 from the first
+        // The inbound decode-drop counter is eager-created so it emits _total 0 from the first
         // scrape (anti-blind-dashboard), even before any frame is dropped.
         assertEquals("counter",
                 snapshot.get(ConfigdMetrics.NAME_RAFT_DECODE_DROPPED).type());

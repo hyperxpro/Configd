@@ -74,8 +74,6 @@ class MultiGroupBringupTest {
         }
     }
 
-    // ---- N=1 byte-identity foundation -------------------------------------------------------
-
     @Test
     void n1ReusesNodeStorageInstanceAndHasNoOutboundAdapterInNoPeerMode() throws Exception {
         pool = new OwnerExecutorPool(1);
@@ -91,11 +89,11 @@ class MultiGroupBringupTest {
                 /*groupCommit=*/false, 4096, 0L, driver);
 
         assertEquals(0, rt.groupId());
-        // N=1: the group MUST reuse the node-level storage instance (byte-identical WAL/snapshot + paths;
-        // the same instance the node-level AuditLog uses in production).
+        // At N=1 the group must reuse the node-level storage instance - the same instance the
+        // node-level AuditLog uses in production - for byte-identical WAL/snapshot bytes and paths.
         assertSame(nodeStorage, rt.storage(),
                 "at N=1 the single group must reuse the node-level Storage instance (byte-identity)");
-        // No peers => no-op transport => no outbound adapter / coalescer (exactly as today).
+        // No peers means a no-op transport, so there is no outbound adapter or coalescer to build.
         assertNull(rt.adapter(), "no-peer mode must have no outbound adapter");
         assertNull(rt.coalescingTransport(), "no-peer mode must have no coalescing transport");
         assertNotNull(rt.raftNode());
@@ -114,8 +112,6 @@ class MultiGroupBringupTest {
         assertEquals("v0", value(rt, "alpha"));
     }
 
-    // ---- N>1 independent bring-up + per-shard isolation -------------------------------------
-
     @Test
     void nGroupsBringUpIndependentlyWithDistinctPerShardStorage(@TempDir Path dataDir) throws Exception {
         final int n = 3;
@@ -129,11 +125,10 @@ class MultiGroupBringupTest {
             rts[gid] = bringUpLeader(driver, n, gid, dataDir, nodeStorage);
         }
 
-        // Each group is its own LEADER on its own owner thread.
         for (int gid = 0; gid < n; gid++) {
             assertEquals(RaftRole.LEADER, rts[gid].raftNode().role(), "group " + gid + " must self-elect");
         }
-        // At N>1 each group has its OWN storage (a distinct dataDir/shard-<gid>), NOT the node-level one.
+        // At N>1 each group has its own storage under a distinct dataDir/shard-<gid>, not the node-level one.
         for (int gid = 0; gid < n; gid++) {
             assertNotSame(nodeStorage, rts[gid].storage(),
                     "at N>1 group " + gid + " must NOT reuse the node-level storage");
@@ -156,13 +151,11 @@ class MultiGroupBringupTest {
             rts[gid] = bringUpLeader(driver, n, gid, dataDir, nodeStorage);
         }
 
-        // Commit a DISTINCT key to each shard.
         for (int gid = 0; gid < n; gid++) {
             proposeAndAwaitApply(driver, rts[gid], gid, "k" + gid,
                     ("val" + gid).getBytes(StandardCharsets.UTF_8));
         }
 
-        // Per-shard linearizability + ISOLATION: group k holds ONLY its own key; siblings never see it.
         for (int writer = 0; writer < n; writer++) {
             for (int observer = 0; observer < n; observer++) {
                 boolean present = rts[observer].configStore().get("k" + writer).found();
@@ -177,12 +170,8 @@ class MultiGroupBringupTest {
         }
     }
 
-    // ---- outbound half: per-group adapter stamps its gid ---------------------------
-
     @Test
     void perGroupOutboundAdapterStampsItsGid(@TempDir Path dataDir) {
-        // Build groups with a recording node-level transport endpoint; assert each group's OUTBOUND adapter
-        // stamps ITS gid on the wire - the latent N>1 correctness (pre-fix everything would carry gid 0).
         MultiRaftDriver driver = new MultiRaftDriver(NODE, Clock.system()); // no pool needed (groupCommit off)
         for (int gid : new int[] {0, 1, 7}) {
             RecordingEndpoint endpoint = new RecordingEndpoint();
@@ -202,8 +191,6 @@ class MultiGroupBringupTest {
                     "group " + gid + "'s outbound adapter must stamp gid=" + gid + " (not the captured 0)");
         }
     }
-
-    // ---- helpers ----------------------------------------------------------------------------
 
     /** Builds a group via the real {@link ConfigdServer#buildRaftGroup}, registers + owner-binds it, and
      *  drives its owner until it self-elects LEADER (single-node cluster, no peers). */

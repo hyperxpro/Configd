@@ -5,11 +5,11 @@
 **SLO:** edge staleness p99 < 500 ms (commit → visible at every edge)
 **Severity:** warn (500 ms) / page (2 s)
 
-> S6 reconciliation (D-2): the old ghost `configd_propagation_delay_seconds`
-> alert (`ConfigdPropagationFastBurn`) is **removed**. The real signal is the
-> served `edge_staleness_ms` gauge (per edge). Thresholds are the
-> consistency-contract state boundaries: CURRENT→STALE = 500 ms (warn),
-> STALE→DEGRADED = 2 s (page).
+> The old `configd_propagation_delay_seconds` alert (`ConfigdPropagationFastBurn`)
+> queried a series the app never emitted, so it could never fire, and has been
+> removed. The real signal is the served `edge_staleness_ms` gauge (per edge).
+> Thresholds are the consistency-contract state boundaries: CURRENT->STALE = 500 ms
+> (warn), STALE->DEGRADED = 2 s (page).
 
 ## Symptom
 
@@ -104,5 +104,5 @@ the partitioned edge returns to `edge_staleness_state = CURRENT`,
 
 - ADR-0039 — frontier / staleness gauge.
 - [edge-catchup-storm.md](edge-catchup-storm.md), [control-plane-down.md](control-plane-down.md)
-- RR-099 — do not page on the monotonic-read invariant counter alone;
+- Do not page on the monotonic-read invariant counter alone;
   `edge_staleness_ms` is the operator signal.

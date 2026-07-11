@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * same seed must produce a byte-identical execution - CP state AND edge state - and
  * distinct seeds must differ (non-vacuity).
  *
- * <h2>Digest scope (NOTE-2, design review section C)</h2>
+ * <h2>Digest scope</h2>
  * The per-tick fold folds, deterministically, the state that proves replayability of the
  * combined CP+edge machine, and DELIBERATELY OMITS state that is either redundant or not a
  * determinism signal:
@@ -35,11 +35,11 @@ import static org.junit.jupiter.api.Assertions.*;
  *   <li><b>Deliberately OMITTED:</b> per-key store <em>value bytes</em> (a deterministic
  *       function of the identical command stream, so version identity already implies them
  *       -  folding bytes would only slow the digest); the <em>commit timestamps</em> (the
- *       C-1 skewed-clock surface - they are an observability signal, not a determinism one,
+ *       skewed-clock surface - they are an observability signal, not a determinism one,
  *       and a future skew-config change must NOT spuriously flip this digest); and the
  *       edge-network <em>message schedule</em> (an internal detail; its EFFECT shows in
  *       cursor/inbox/version, which ARE folded). The digest thus proves "same seed => same
- *       CP+edge trajectory and applied state", which is the replayability guarantee
+ *       CP+edge trajectory and applied state", which is what the replayability guarantee
  *       requires, without over- or under-claiming.</li>
  * </ul>
  *

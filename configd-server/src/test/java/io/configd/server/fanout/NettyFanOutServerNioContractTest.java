@@ -24,14 +24,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * The {@link AbstractFanOutServerContract} bound to {@code NettyFanOutServer} with the transport tier
- * FORCED to NIO - the CI fail-loud fallback proof (charter section 3.2): the entire behaviour contract must
- * hold even on the portable NIO transport, not only the native io_uring/epoll tiers.
+ * forced to NIO: the entire behaviour contract must hold even on the portable NIO transport, not only
+ * the native io_uring/epoll tiers.
  *
  * <p>{@code NettyTransport.select()} reads {@link NettyTransport#PROP} in the {@code NettyFanOutServer}
- * constructor, so the property MUST be set before any {@link #newServer} call. It is set both in a
- * static initializer (runs at class-load, before JUnit's per-container {@code @BeforeAll}) AND in
+ * constructor, so the property must be set before any {@link #newServer} call. It is set both in a
+ * static initializer (runs at class-load, before JUnit's per-container {@code @BeforeAll}) and in
  * {@code @BeforeAll} (belt-and-suspenders against ordering), and cleared in {@code @AfterAll}. The
- * prior value is preserved/restored so a parallel/forked run cannot leak the override.
+ * prior value is preserved and restored so a parallel/forked run cannot leak the override.
  */
 class NettyFanOutServerNioContractTest extends AbstractFanOutServerContract {
 

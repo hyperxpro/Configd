@@ -23,9 +23,9 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * <b>Open-loop, coordinated-omission-corrected</b> HTTP write
- * load driver against a live Configd control-plane cluster (methodology section 3b).
+ * load driver against a live Configd control-plane cluster.
  *
- * <h2>Coordinated omission handling (methodology section 3b - open-loop intended-time scheduling)</h2>
+ * <h2>Coordinated omission handling: open-loop intended-time scheduling</h2>
  * Each request {@code i} has a <b>scheduled send time</b> {@code t_i = startNanos + i / rate}.
  * A submitter releases request {@code i} at its scheduled slot <em>regardless of how many prior
  * requests are still in flight</em>. Latency is recorded as {@code completion - t_i} (the
@@ -109,7 +109,6 @@ public final class OpenLoopWriteDriver {
             try {
                 HttpResponse<Void> r = client.send(put(e.getValue(), -1, value), HttpResponse.BodyHandlers.discarding());
                 if (r.statusCode() == 200) return e.getValue();
-                // follow a hint if present
                 var hint = r.headers().firstValue("X-Leader-Hint");
                 if (hint.isPresent()) {
                     String url = nodes.get(Integer.parseInt(hint.get()));
@@ -120,9 +119,7 @@ public final class OpenLoopWriteDriver {
         return nodes.values().iterator().next(); // fall back to any node
     }
 
-    // ------------------------------------------------------------------
     // calibrate: closed-loop max sustainable commit rate (precondition for at-rate runs)
-    // ------------------------------------------------------------------
     private static void calibrate(String[] args) throws Exception {
         Map<Integer, String> nodes = parseNodeMap(args[1]);
         int durationSec = Integer.parseInt(args[2]);
@@ -171,9 +168,7 @@ public final class OpenLoopWriteDriver {
         System.out.printf("CALIBRATE-STATUS %s%n", statusString(status));
     }
 
-    // ------------------------------------------------------------------
     // atrate: open-loop, CO-corrected, latency-at-rate
-    // ------------------------------------------------------------------
     private static void atRate(String[] args) throws Exception {
         Map<Integer, String> nodes = parseNodeMap(args[1]);
         double targetRate = Double.parseDouble(args[2]);
@@ -252,7 +247,6 @@ public final class OpenLoopWriteDriver {
         }
     }
 
-    // ------------------------------------------------------------------
     private static void record(Histogram h, Object lock, long latencyUs) {
         long v = Math.min(Math.max(latencyUs, 1), 120_000_000L);
         synchronized (lock) { h.recordValue(v); }

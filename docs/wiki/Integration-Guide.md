@@ -4,11 +4,11 @@ Configd ships runnable services (see [Getting Started](Getting-Started.md)), but
 embeddable libraries. This guide covers embedding each layer in your Java application. If you want a
 turnkey control plane, run `configd-server` instead of hand-wiring the consensus core.
 
-## Important v1 limitations (read first)
+## Limitations to know
 
 - **Watches: server-side plus a Java reference client.** The RFC section 2 watch protocol is implemented
   server-side (N≥1, including multi-shard via a server-side aggregating endpoint), and a conforming **Java
-  reference client** (`configd-client`) plus a `configd-conformance` suite now ship. Other-language drivers
+  reference client** (`configd-client`) plus a `configd-conformance` suite ship. Other-language drivers
   are buildable from the RFC. You may also poll (edge reads are in-process and sub-millisecond) via
   `LocalConfigStore.get(...)` (edge) or the control-plane `GET`, and apply deltas from your replication layer
   (below). Ordering is per-shard, never global. See

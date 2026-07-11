@@ -23,11 +23,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The verification-machinery-FIRST test (charter section 2). Proves the multi-shard
- * simulator + the six new invariants are both <b>sound</b> (GREEN under a correct router) and
- * <b>NON-VACUOUS</b> (a deliberately-broken router / injected bug drives a RED for each new invariant).
- * This test is the backlog made executable; nothing starts until it is green and proven
- * non-vacuous (an injected mis-route / wrong-shard-write goes RED).
+ * The verification-machinery-first test. Proves the multi-shard simulator and the six
+ * invariants are both <b>sound</b> (GREEN under a correct router) and <b>NON-VACUOUS</b> (a
+ * deliberately-broken router / injected bug drives a RED for each invariant). This test is the
+ * backlog made executable; nothing starts until it is green and proven non-vacuous.
  *
  * <p>Invariant - test map:
  * <ul>
@@ -161,10 +160,10 @@ class MultiShardSimTest {
     }
 
     /**
-     * NON-VACUITY for the cross-shard-isolation liveness WITNESS (red-team find): the prior
-     * sum-of-replica-versions witness rose on stale-replica CATCH-UP and falsely reported progress even
-     * when every shard had lost quorum. Kill ALL shards, drain so laggards catch up (where the old witness
-     * would falsely rise), and assert the corrected max-version witness reports NO progress for any shard.
+     * NON-VACUITY for the cross-shard-isolation liveness witness: the prior sum-of-replica-versions
+     * witness rose on stale-replica catch-up and falsely reported progress even when every shard had
+     * lost quorum. Kill all shards, drain so laggards catch up (where the old witness would falsely
+     * rise), and assert the corrected max-version witness reports no progress for any shard.
      */
     @Test
     void nonVacuity_allShardsDead_isolationWitnessReportsNoProgress() {
@@ -238,8 +237,8 @@ class MultiShardSimTest {
         assertTrue(multi.size() >= 5,
                 "N=1 equivalence would be vacuous if nothing committed (seed=" + seed + ", committed="
                         + multi.size() + ") — the cluster must elect + commit for the comparison to mean anything");
-        // FULL-MAP comparison is load-bearing: a size-only check is vacuous (red-team Exp 3b - a dropped
-        // write re-written by a later op keeps the key count identical while the value diverges).
+        // FULL-MAP comparison is load-bearing: a size-only check is vacuous (a dropped write re-written
+        // by a later op keeps the key count identical while the value diverges).
         assertEquals(control, multi,
                 "N=1 multi-shard committed state must be byte-identical to the single-group control");
     }

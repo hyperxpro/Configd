@@ -46,8 +46,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Docker daemon and pulls the Keycloak image). Keycloak serves plain HTTP in the container, so the JWKS
  * source is built directly via the in-package builder (the config layer's https requirement is a separate,
  * unit-tested boot policy); everything else - signature verification, claims, rotation - is the production
- * path against a real authorization server. Keycloak stamps {@code typ: JWT} on access tokens, so the
- * relaxed {@code requireTypeAtJwt=false} mode is used (the finding's real-world softening).
+ * path against a real authorization server. Keycloak stamps {@code typ: JWT} on access tokens rather
+ * than {@code at+jwt}, so the relaxed {@code requireTypeAtJwt=false} mode is used here - a genuine
+ * example of the real-world IdP behavior that relaxed mode exists to accommodate.
  */
 @EnabledIfSystemProperty(named = "configd.it.containers", matches = "true")
 final class KeycloakOidcIT {

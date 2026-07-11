@@ -13,13 +13,13 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Independent red-team pass over the frozen snapshot magic-TLV trailer in {@link ConfigStateMachine}.
+ * Independent red-team pass over the snapshot magic-TLV trailer in {@link ConfigStateMachine}.
  *
- * <p>The builder exhaustively pinned the decode boundaries (legacy forms a/c refused, TLV lengths,
- * truncation, unknown-tail tolerance). This pass adds two things the builder did not:
+ * <p>Decode-boundary cases (legacy forms refused, TLV lengths, truncation, unknown-tail tolerance)
+ * are covered elsewhere; this class adds two checks:
  * <ol>
  *   <li>an independent spot-check that the WRITER ({@code snapshot()}) only ever emits the canonical
- *       form (b) — the clean-break claim that no path emits form a or c;</li>
+ *       trailer form, never a trailer-less or bare-8-byte-epoch snapshot;</li>
  *   <li>a positional-parse confusion probe: an ENTRY VALUE whose bytes are byte-for-byte a fake TLV
  *       trailer must NOT be mistaken for the real trailer. The decoder consumes the trailer by
  *       position (after all entries), never by scanning for the magic, so a value that looks like a
@@ -38,9 +38,8 @@ class SnapshotTrailerRedteamTest {
     @Test
     void writerAlwaysEmitsCanonicalTlvTrailerNeverLegacyForms() throws Exception {
         // Spot-check the SOURCE of truth: the writer. Whatever the store holds, snapshot() must end in
-        // exactly [MAGIC:4][trailerLen=8:4][signingEpoch:8] — form (b). If any path emitted a
-        // trailer-less (a) or bare-8-byte-epoch (c) snapshot, the clean break would be a lie and a
-        // reader could be steered onto a deleted path.
+        // exactly [MAGIC:4][trailerLen=8:4][signingEpoch:8]. If any path emitted a trailer-less or
+        // bare-8-byte-epoch snapshot, a reader could be steered onto a rejected legacy form.
         ConfigStateMachine sm = new ConfigStateMachine(new VersionedConfigStore(), Clock.system(), signer());
         sm.apply(1, 1, CommandCodec.encodePut("db.host", "localhost".getBytes()));
         sm.apply(2, 1, CommandCodec.encodePut("db.port", "5432".getBytes()));

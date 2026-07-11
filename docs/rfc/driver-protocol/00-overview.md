@@ -89,8 +89,8 @@ composed document.
   connection (§06 F4); the dedicated **auth-phase `0x04`** version (the `AUTH`/`REFRESH_AUTH` frames, §06 §6A) is
   **version-pin-exempt** and additive. There is **no** hello/capabilities frame and **no** downgrade. A future
   revision bumps the version byte; the auth-phase `0x04` frames are the worked example of an **additive**
-  version-byte extension — an mTLS-only client that never sends `0x04` is byte-identical to a pre-auth-arc
-  client.
+  version-byte extension — an mTLS-only client that never sends `0x04` is byte-identical to a client from
+  before authentication was added.
 
 **OV4-2 (correcting "negotiation").** Earlier drafts described the version as "negotiated at connection setup."
 That is **aspirational and inaccurate** — there is **no** negotiation round-trip on either plane. The HTTP
@@ -210,7 +210,8 @@ contract has three rules a conforming SDK relies on:
    error-code byte) — **never** a silent misparse and **never** a downgrade to a weaker reading (OV7-3, §06 F11).
 3. **The auth surface is additive.** The `AUTH`/`REFRESH_AUTH` frames and `ErrorCode 13 CREDENTIAL_EXPIRED` were
    added on the new `0x04` wire version and a new code value **without touching** any `0x01`/`0x02`/`0x03` byte,
-   so an **mTLS-only client that never sends a `0x04` frame is byte-identical to a pre-auth-arc client**, and an
+   so an **mTLS-only client that never sends a `0x04` frame is byte-identical to a client from before
+   authentication was added**, and an
    older driver that fails closed on the unknown `0x04` / code-13 keeps working.
 
 The **whole-system** format contract — including the **internal** Raft (node↔node) and at-rest formats a driver

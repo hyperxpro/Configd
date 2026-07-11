@@ -3,13 +3,13 @@ package io.configd.client;
 import java.nio.charset.StandardCharsets;
 
 /**
- * The driver-side path grammar and canonicalization, per driver-protocol RFC §01 (Paths and Access) A3. A
+ * The driver-side path grammar and canonicalization, per driver-protocol RFC §01 (Paths and Access). A
  * driver <b>MUST</b> reject, client-side, any path that is not in its single canonical form BEFORE it goes on
- * the wire (A3-3 / A3-4) — otherwise non-canonical spellings such as {@code /a/../b}, {@code /a//b}, a trailing
+ * the wire — otherwise non-canonical spellings such as {@code /a/../b}, {@code /a//b}, a trailing
  * slash, or a byte outside the segment alphabet reach the server as distinct literal keys, silently aliasing
  * and fragmenting the keyspace (two drivers that spell "the same" key differently disagree about it).
  *
- * <p>The grammar (A3-1..A3-5):
+ * <p>The grammar:
  * <ul>
  *   <li>a path is a slash-delimited sequence of non-empty segments;</li>
  *   <li>{@code seg-char = [A-Za-z0-9._-]} (ASCII) — any other byte is rejected (control bytes, spaces,
@@ -22,22 +22,22 @@ import java.nio.charset.StandardCharsets;
  *
  * <p>This validator is tolerant of a leading slash so it serves both planes: the binary edge addresses an
  * <b>absolute</b> path ({@code /app/name}); the HTTP control plane takes a <b>flat</b> key ({@code app/name})
- * that is the same path relative to the root (§01 A8-1). The empty path and the bare root {@code /} denote the
+ * that is the same path relative to the root. The empty path and the bare root {@code /} denote the
  * whole store (a valid FULL/subtree target) and are accepted; each caller keeps its own absolute-vs-relative
  * policy on top of this shared segment grammar.
  */
 public final class PathGrammar {
 
-    /** The deployed key-length limit (A3-5) — the MUST. */
+    /** The deployed key-length limit — a MUST, not just a default. */
     public static final int MAX_PATH_BYTES = 1024;
 
     private PathGrammar() {
     }
 
     /**
-     * Validate that {@code path} is in canonical form per §01 A3, throwing {@link IllegalArgumentException} on any
+     * Validate that {@code path} is in canonical form, throwing {@link IllegalArgumentException} on any
      * violation. Accepts both the absolute ({@code /a/b}) and flat/relative ({@code a/b}) spellings, and the
-     * whole-store forms (empty or {@code /}). A single trailing slash is tolerated (A3-4 permits stripping one).
+     * whole-store forms (empty or {@code /}). A single trailing slash is tolerated.
      */
     public static void validateCanonical(String path) {
         if (path == null) {
@@ -48,7 +48,7 @@ public final class PathGrammar {
             throw new IllegalArgumentException(
                     "path exceeds " + MAX_PATH_BYTES + " bytes (" + totalBytes + "): " + path);
         }
-        // A3-4: a single trailing slash may be stripped (but the root "/" is itself the whole store).
+        // A single trailing slash may be stripped (but the root "/" is itself the whole store).
         String p = path;
         if (p.length() > 1 && p.endsWith("/")) {
             p = p.substring(0, p.length() - 1);

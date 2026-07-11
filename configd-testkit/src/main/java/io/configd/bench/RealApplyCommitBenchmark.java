@@ -20,19 +20,20 @@ import java.util.concurrent.TimeUnit;
  * <ul>
  *   <li><b>{@code -prof gc}</b> reports the true allocation rate (B/op + MB/s) for the
  *       GC bake-off.</li>
- *   <li><b>{@code -Xlog:gc*}</b> alongside it carries a populated GC pause distribution
- *       (the methodology's "no ZGC-because-low-pause without the pause histogram").</li>
+ *   <li><b>{@code -Xlog:gc*}</b> alongside it carries a populated GC pause distribution, so
+ *       a "low pause" claim for a collector is never accepted without an actual pause
+ *       histogram behind it.</li>
  *   <li><b>{@code Mode.SampleTime}</b> reports the local quorum-commit latency
  *       distribution ({@code local_commit_component}) as an HdrHistogram -
  *       in-memory transport + storage, so it is the in-process consensus CPU cost,
  *       no real network, no fsync.</li>
  * </ul>
  *
- * <p><b>CO note (methodology section 3a):</b> Throughput/SampleTime here time per-invocation
+ * <p><b>Coordinated omission:</b> Throughput/SampleTime here time per-invocation
  * service time with no externally-imposed arrival schedule, so coordinated omission is
  * structurally absent (same argument as the read-path JMH benches). The cross-region total
- * is {@code local_commit_component + RTT} per methodology section 2, computed in the result
- * doc. This benchmark proves ONLY the local component.
+ * is {@code local_commit_component + RTT}; this benchmark proves ONLY the local component,
+ * not the network leg.
  *
  * <p>Default mode is {@link Mode#Throughput}; override per phase, e.g.
  * {@code -bm sample} for the latency distribution. Run under one collector at a time and

@@ -40,15 +40,13 @@ public sealed interface EdgeFrame
     /** The wire type code carried in the frame header. */
     FrameType type();
 
-    // ---------------------------------------------------------------------------
     // Watch-frame constants (W5-2 / W5-4a). The wire carries raw u8 fields with these
     // named values; the semantic enums (target kind, scope, mutation kind) live in the
     // veneer layer, keeping this wire model dependency-free.
-    // ---------------------------------------------------------------------------
 
     /** {@link WatchCreate} flag bit0: full_chain_verify (untrusted-edge verbatim mode; W8-4). */
     int WATCH_FLAG_FULL_CHAIN_VERIFY = 0x01;
-    /** {@link WatchCreate} flag bit1: prev_value (pre-image; MAY be unsupported in v1; W5-4a). */
+    /** {@link WatchCreate} flag bit1: prev_value (pre-image; the server MAY leave it unsupported; W5-4a). */
     int WATCH_FLAG_PREV_VALUE = 0x02;
     /** {@link WatchCreate} flag bit2: with_initial_snapshot (request existing state; W5-4a). */
     int WATCH_FLAG_WITH_INITIAL_SNAPSHOT = 0x04;
@@ -77,7 +75,7 @@ public sealed interface EdgeFrame
      *                             (0 = fresh subscriber)
      * @param failoverResumeCursor RESERVED: the cursor obtained from a PREVIOUS fan-out
      *                             endpoint, for the edge-failover clause. The edge populates
-     *                             it; v1 servers treat it as the resume cursor when it exceeds
+     *                             it; the server treats it as the resume cursor when it exceeds
      *                             {@code resumeCursor}. {@code -1} means "not present".
      * @param edgeId               the edge identity (bound to the mTLS cert identity)
      * @param acceptsFiltered      the edge advertises it understands the server-side-filtered
@@ -109,7 +107,7 @@ public sealed interface EdgeFrame
                 throw new IllegalArgumentException(
                         "full-store subscription must not accept server-side filtering");
             }
-            // The resume token binds the topology epoch (A4): 0 is reserved-illegal (pre-epoch).
+            // The resume token binds the topology epoch: 0 is reserved-illegal (pre-epoch).
             if (topologyEpoch <= WatchCursor.EPOCH_UNSET) {
                 throw new IllegalArgumentException(
                         "topologyEpoch must be in [1, 2^63) (0 is reserved-illegal): " + topologyEpoch);
@@ -125,9 +123,10 @@ public sealed interface EdgeFrame
         }
 
         /**
-         * A subscription at the v1 static topology epoch ({@link WatchCursor#INITIAL_TOPOLOGY_EPOCH})
-         * that does not opt into server-side filtering - the legacy shape. A v2 multi-epoch caller
-         * MUST use the canonical constructor and pass the live epoch.
+         * A subscription at the static topology epoch ({@link WatchCursor#INITIAL_TOPOLOGY_EPOCH})
+         * that does not opt into server-side filtering - the convenience shape for a single-epoch
+         * deployment. A caller tracking multiple topology epochs MUST use the canonical constructor
+         * and pass the live epoch.
          */
         public Subscribe(boolean fullStore, List<String> prefixes, long resumeCursor,
                          long failoverResumeCursor, String edgeId) {
@@ -136,9 +135,9 @@ public sealed interface EdgeFrame
         }
 
         /**
-         * A subscription at the v1 static topology epoch ({@link WatchCursor#INITIAL_TOPOLOGY_EPOCH})
-         * with an explicit {@code acceptsFiltered} opt-in. A v2 multi-epoch caller MUST use the
-         * canonical constructor and pass the live epoch.
+         * A subscription at the static topology epoch ({@link WatchCursor#INITIAL_TOPOLOGY_EPOCH})
+         * with an explicit {@code acceptsFiltered} opt-in. A caller tracking multiple topology epochs
+         * MUST use the canonical constructor and pass the live epoch.
          */
         public Subscribe(boolean fullStore, List<String> prefixes, long resumeCursor,
                          long failoverResumeCursor, String edgeId, boolean acceptsFiltered) {
@@ -147,7 +146,7 @@ public sealed interface EdgeFrame
         }
 
         /**
-         * The effective resume cursor a v1 server tails from: the larger of
+         * The effective resume cursor the server tails from: the larger of
          * {@code resumeCursor} and {@code failoverResumeCursor} (the latter ignored when
          * absent, i.e. {@code -1}).
          */
@@ -390,9 +389,7 @@ public sealed interface EdgeFrame
         }
     }
 
-    // =======================================================================
     // Auth-phase frames (0x04 only, version-pin-exempt; AU3-3).
-    // =======================================================================
 
     /**
      * Client->server auth-phase frame presenting a credential to authenticate the connection (AU3-3).
@@ -447,10 +444,8 @@ public sealed interface EdgeFrame
         }
     }
 
-    // =======================================================================
     // Watch frames (0x02 only). Payload byte layouts are normative (sections
     // 5.2-5.8 of the RFC); see EdgeFrameCodec for the encode/decode discipline.
-    // =======================================================================
 
     /**
      * Client->server create/resume of a watch. Wire payload:

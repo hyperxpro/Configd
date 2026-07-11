@@ -57,8 +57,8 @@ public interface LeaderBalanceMetrics {
 
     /**
      * A sink backed by the server's {@link MetricsRegistry}. Counters and the per-reason skip series are
-     * eager-created so they emit {@code _total 0} from the first scrape (the anti-blind-dashboard
-     * property). The two gauges read {@link AtomicLong}s the loop updates each cadence.
+     * eager-created so they emit {@code _total 0} from the first scrape rather than only appearing once
+     * the first event fires. The two gauges read {@link AtomicLong}s the loop updates each cadence.
      */
     static LeaderBalanceMetrics forRegistry(MetricsRegistry registry) {
         return new RegistryLeaderBalanceMetrics(registry);

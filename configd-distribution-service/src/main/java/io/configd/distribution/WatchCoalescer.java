@@ -94,7 +94,6 @@ public final class WatchCoalescer {
         }
 
         if (pending.isEmpty()) {
-            // Lazy initialization of batch start time
             batchStartNanos = clock.nanoTime();
         }
         pending.addAll(mutations);

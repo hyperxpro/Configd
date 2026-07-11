@@ -21,16 +21,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Bounded watch revocation under live ACL reload (W7-7). The veneer re-authorizes every live watch
- * when the authorizer's policy version advances and force-closes any whose grant was revoked -
- * {@code WATCH_CANCELED(NOT_AUTHORIZED)} - within a bounded latency, at ZERO cost when the
- * policy is unchanged. Driven deterministically through the {@link FanOutConnectionDriver#maybeReauthorizeWatches}
- * test seam (the session loop's per-tick step) + a mutable fake {@link WatchAuthorizer}.
+ * Bounded watch revocation under live ACL reload. The veneer re-authorizes every live
+ * watch when the policy version of the authorizer advances, and force-closes any watch
+ * whose grant was revoked, {@code WATCH_CANCELED(NOT_AUTHORIZED)}, within a bounded
+ * latency, at zero cost when the policy is unchanged. Driven deterministically through the
+ * {@link FanOutConnectionDriver#maybeReauthorizeWatches} test seam, the per-tick step of
+ * the session loop, and a mutable fake {@link WatchAuthorizer}.
  */
 @DisplayName("Watch revocation (W7-7) — re-authorize on ACL policy-version change")
 class WatchRevocationTest {
 
-    /** A mutable authorizer: a settable monotonic version + a settable per-target verdict + a call counter. */
+    /** A mutable authorizer: a settable monotonic version, a settable per-target verdict, and a call counter. */
     private static final class FakeAuthorizer implements WatchAuthorizer {
         volatile long version = 0L;
         Predicate<WatchTarget> allow = t -> true;
@@ -54,7 +55,7 @@ class WatchRevocationTest {
     private FanOutConnectionDriver driver;
 
     private FanOutConnectionDriver newDriver(WatchAuthorizer authz) {
-        FanOutBuffer buffer = new FanOutBuffer(64); // empty store => from-now watches TAIL
+        FanOutBuffer buffer = new FanOutBuffer(64); // empty store, so from-now watches TAIL
         ReplaySource replay = new SnapshotReplaySource(() -> ConfigSnapshot.EMPTY);
         SlowConsumerGovernor gov =
                 new SlowConsumerGovernor(SlowConsumerPolicyConfig.defaults(), FanOutSessionMetrics.NOOP);
@@ -77,10 +78,10 @@ class WatchRevocationTest {
         assertEquals(1, out.sentOfType(EdgeFrame.WatchCreated.class).size(), "watch authorized + created");
         out.clear();
 
-        // _acl/ reload revokes the grant: deny + advance the policy version.
+        // An _acl/ reload revokes the grant: deny, and advance the policy version.
         authz.allow = t -> false;
         authz.version = 5L;
-        driver.maybeReauthorizeWatches(); // the session-loop re-auth step (bounded latency ≈ one tick)
+        driver.maybeReauthorizeWatches(); // the session-loop re-auth step (bounded latency, about one tick)
 
         List<EdgeFrame.WatchCanceled> cancels = out.sentOfType(EdgeFrame.WatchCanceled.class);
         assertEquals(1, cancels.size(), "the revoked watch is force-closed");
@@ -111,7 +112,7 @@ class WatchRevocationTest {
         FakeAuthorizer authz = new FakeAuthorizer();
         driver = newDriver(authz);
         createWatch(1L, "/a");
-        int callsAfterCreate = authz.authorizeCalls; // the create's single authorize call
+        int callsAfterCreate = authz.authorizeCalls; // the single authorize call from the create
 
         driver.maybeReauthorizeWatches();
         driver.maybeReauthorizeWatches();
@@ -145,12 +146,13 @@ class WatchRevocationTest {
     @Test
     @DisplayName("seed TOCTOU — a revoking reload racing the create is caught on the first re-auth")
     void revocationRacingTheCreateIsCaughtOnFirstReauth() {
-        // Models an `_acl/` reload that REVOKES committing on the apply thread in the create's
-        // authorize-to-seed window: the create authorizes against the pre-revoke snapshot, then the
-        // version advances and the verdict flips to deny. Because the seed is read BEFORE the authorize
-        // gate, it is < the post-create version, so the FIRST re-auth detects the change and force-closes.
-        // (This FAILS if the seed is read AFTER authorize - it would bake in the post-revoke version and
-        // never re-check, the W7-7 TOCTOU guard.)
+        // Models an _acl/ reload whose revocation commits on the apply thread during the
+        // authorize-to-seed window of the create: the create authorizes against the
+        // pre-revoke snapshot, then the version advances and the verdict flips to deny.
+        // Because the seed is read before the authorize gate, it is behind the
+        // post-create version, so the first re-auth detects the change and force-closes.
+        // This is the TOCTOU guard: if the seed were read after authorize, it would bake
+        // in the post-revoke version and never re-check.
         WatchAuthorizer racingReload = new WatchAuthorizer() {
             long version = 10L;
             boolean denyNow = false;
@@ -169,10 +171,10 @@ class WatchRevocationTest {
             }
         };
         driver = newDriver(racingReload);
-        createWatch(1L, "/a"); // authorized at v10; the reload to v20+deny lands during the create
+        createWatch(1L, "/a"); // authorized at v10; the reload to v20 with deny lands during the create
         out.clear();
 
-        driver.maybeReauthorizeWatches(); // policyVersion()=20 != seed(10) => re-auth => now denied => close
+        driver.maybeReauthorizeWatches(); // policyVersion() is 20, different from the seed (10), so it re-authorizes, is now denied, and closes
 
         List<EdgeFrame.WatchCanceled> cancels = out.sentOfType(EdgeFrame.WatchCanceled.class);
         assertEquals(1, cancels.size(),
@@ -183,7 +185,8 @@ class WatchRevocationTest {
     @Test
     @DisplayName("a no-policy authorizer (default policyVersion 0) never triggers re-auth")
     void defaultPolicyVersionNeverReauths() {
-        // A lambda authorizer uses the SPI default policyVersion()==0 => the version never advances.
+        // A lambda authorizer uses the SPI default policyVersion() of 0, so the version
+        // never advances.
         WatchAuthorizer constant = (p, r, t) -> true;
         assertEquals(0L, constant.policyVersion(), "the SPI default policy version is the constant 0");
         driver = newDriver(constant);

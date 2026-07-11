@@ -43,7 +43,6 @@ public class PlumtreeFanOutBenchmark {
         node = new PlumtreeNode(NodeId.of(0), 10_000, 100);
         sharedPayload = new byte[256];
 
-        // Add all peers as eager peers (spanning tree)
         for (int i = 1; i <= fanOut; i++) {
             node.addEagerPeer(NodeId.of(i));
         }
@@ -85,7 +84,6 @@ public class PlumtreeFanOutBenchmark {
     public void receiveAndForward(Blackhole bh) {
         versionCounter++;
         MessageId id = new MessageId(versionCounter, System.nanoTime());
-        // Receive from peer 1 - should forward to all other eager peers
         boolean isNew = node.receiveEagerPush(NodeId.of(1), id, sharedPayload);
         bh.consume(isNew);
 

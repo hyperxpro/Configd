@@ -13,9 +13,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Unit tests for {@link StaticShardMap} - the v1 hash-within-scope shard map. Proves the routing
+ * Unit tests for {@link StaticShardMap} - the hash-within-scope shard map. Proves the routing
  * invariants: a stable function, opaque ids in {@code [0,N)} (no {@code 0} special-casing),
- * {@code epoch()==0}, the N=1 single-group equivalence, and a non-degenerate spread. The sim-level
+ * {@code epoch()==1}, the N=1 single-group equivalence, and a non-degenerate spread. The sim-level
  * routing-correctness / disjoint-ownership / N=1-equivalence proof lives in {@code MultiShardSimTest}.
  */
 class StaticShardMapTest {
@@ -59,8 +59,8 @@ class StaticShardMapTest {
 
     @Test
     void epochIsInitialTopologyEpochUnderStaticN() {
-        // Gate 2b: epoch() now returns the deploy-time topology-descriptor epoch (v1 = 1), not the
-        // old hardcoded 0. Static-N never bumps it; 0 is reserved-illegal.
+        // epoch() returns the deploy-time topology-descriptor epoch; static-N never bumps it.
+        // 0 is reserved-illegal.
         assertEquals(1L, new StaticShardMap(16).epoch());
         assertEquals(1L, new StaticShardMap(1).epoch());
         // The explicit-epoch constructor threads the descriptor's epoch through unchanged.

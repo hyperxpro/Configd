@@ -84,20 +84,13 @@ class RaftSimulationTest {
             AtomicInteger deliverCount = new AtomicInteger();
             sim.network().setDeliveryHandler((to, msg) -> deliverCount.incrementAndGet());
 
-            // Use fixed latency for the network in the simulation (default is 1-10ms)
-            // Send a message that should arrive within the tick window
             long currentTime = sim.clock().currentTimeMillis();
-            // After tick, time will be currentTime+1. With min latency 1ms,
-            // a message sent at currentTime should be deliverable at currentTime+1.
             sim.network().send(NodeId.of(0), NodeId.of(1), "msg", currentTime);
 
-            // Tick advances by 1ms, then delivers due messages
             sim.tick();
 
-            // The message might or might not be delivered depending on random latency (1-10ms).
-            // With latency=1, delivery time = currentTime+1, which equals the new time.
-            // With higher latency, it won't be delivered yet.
-            // We just verify the mechanism works -- deliver enough ticks to guarantee delivery.
+            // Delivery latency is randomized (1-10ms), so the message may not arrive on
+            // the very next tick; keep ticking until it does.
             for (int i = 0; i < 10; i++) {
                 sim.tick();
             }
@@ -209,10 +202,8 @@ class RaftSimulationTest {
         @Test
         void injectRandomPartitionIsolatesTwoNodes() {
             RaftSimulation sim = new RaftSimulation(42L, 5);
-            // injectRandomPartition uses PRNG to pick two nodes and calls isolate
             sim.injectRandomPartition();
 
-            // Verify stats reflect the partition injection
             String stats = sim.stats();
             assertTrue(stats.contains("partitions=1") || stats.contains("partitions=0"),
                     "Stats should reflect partition count: " + stats);
@@ -221,13 +212,11 @@ class RaftSimulationTest {
         @Test
         void healAllPartitionsRemovesAllPartitions() {
             RaftSimulation sim = new RaftSimulation(42L, 5);
-            // Use the network directly to set up known partitions
             sim.network().isolate(NodeId.of(0), NodeId.of(1));
             sim.network().isolate(NodeId.of(2), NodeId.of(3));
 
             sim.healAllPartitions();
 
-            // Verify by sending messages in all previously partitioned directions
             AtomicInteger deliverCount = new AtomicInteger();
             sim.network().setDeliveryHandler((to, msg) -> deliverCount.incrementAndGet());
 
@@ -277,7 +266,6 @@ class RaftSimulationTest {
             long nextDelivery = sim.network().nextDeliveryTime();
             sim.advanceToNextEvent();
 
-            // Clock should be at the delivery time
             assertEquals(nextDelivery, sim.clock().currentTimeMillis());
             assertEquals(1, deliverCount.get());
         }

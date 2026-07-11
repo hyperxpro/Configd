@@ -31,27 +31,27 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Gate 5 composition — the frozen-format features exercised TOGETHER on a real, in-process,
- * three-node ConfigdServer cluster over loopback TCP: <b>encryption at rest ON × N&gt;1 (3 real
- * nodes) × multi-shard (2 shards) × the peer-quorum AnchorWitness armed (strict-boot default) ×
- * live watches</b>, plus a real node restart that recovers through the term-versioned anchors and
- * keyring. This is the interaction test the per-gate suites cannot be: each gate proved its own
- * mechanism in isolation; here the mechanisms have to coexist on one running cluster.
+ * Exercises the frozen-format features TOGETHER on a real, in-process, three-node ConfigdServer
+ * cluster over loopback TCP: <b>encryption at rest ON x N&gt;1 (3 real nodes) x multi-shard (2
+ * shards) x the peer-quorum AnchorWitness armed (strict-boot default) x live watches</b>, plus a
+ * real node restart that recovers through the term-versioned anchors and keyring. Each mechanism
+ * has its own suite proving it in isolation; this is the interaction test proving they still work
+ * when they have to coexist on one running cluster.
  *
  * <h2>What each assertion proves is composed</h2>
  * <ul>
- *   <li><b>Witness × N&gt;1</b>: the witness is armed on every group (real peer addresses ⇒
- *       {@code tcpTransport != null} ⇒ {@code armAnchorWitness}). A node cannot start an election
+ *   <li><b>Witness x N&gt;1</b>: the witness is armed on every group (real peer addresses mean
+ *       {@code tcpTransport != null}, which means {@code armAnchorWitness}). A node cannot start an election
  *       or grant a vote until its strict-boot gate clears at a peer quorum, so a stable elected
  *       leader per shard is itself the proof the boot gate cleared at quorum on a fresh cluster.</li>
- *   <li><b>Encryption × replication</b>: every node persists its WAL/anchor/keyring under AES-256-GCM
+ *   <li><b>Encryption x replication</b>: every node persists its WAL/anchor/keyring under AES-256-GCM
  *       (encryption ON). A committed write replicates and applies on ALL THREE nodes (each node's
- *       {@code lastApplied} reaches the committed index) — replication works end-to-end while every
+ *       {@code lastApplied} reaches the committed index), so replication works end-to-end while every
  *       node is writing ciphertext to disk.</li>
  *   <li><b>Multi-shard</b>: writes to shard 0 and shard 1 each commit + replicate on their own group,
  *       and a shard-0 write does not advance shard 1 (independent groups).</li>
- *   <li><b>Watches × replication × encryption</b>: a watch registered on a FOLLOWER of shard 0 fires
- *       when a shard-0 write replicates to it — the change travels leader→follower over the wire,
+ *   <li><b>Watches x replication x encryption</b>: a watch registered on a FOLLOWER of shard 0 fires
+ *       when a shard-0 write replicates to it: the change travels from leader to follower over the wire,
  *       applies against an encrypting state machine, and drives the follower's WatchService.</li>
  *   <li><b>Restart recovery</b>: a follower is stopped and restarted from the same data dir; it
  *       recovers through the encrypted keyring + term-versioned anchors (no fail-closed REFUSE, no
@@ -61,7 +61,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>The Raft wire here is plaintext loopback: this proof isolates the FUNCTIONAL composition
  * (boot-gate quorum, replication, watch, recovery); the witness's anti-spoof guarantee is a
  * separate mTLS concern proven by the transport contract tests. Deadlines are generous for the
- * throttled 2-vCPU box and everything is deadline-polled — no sleep-as-synchronization; the
+ * throttled 2-vCPU box and everything is deadline-polled, no sleep-as-synchronization; the
  * per-method {@link Timeout} is pure hang detection. The election budget is widened via system
  * properties to the ratio proven stable by {@code NettyConsensusLivenessTest} so scheduling jitter
  * on a busy box cannot manufacture spurious churn.
@@ -142,8 +142,9 @@ class EncryptedMultiShardClusterCompositionTest {
     @Test
     void encryptedThreeNodeMultiShardClusterCommitsReplicatesWatchesAndRecovers(@TempDir Path root)
             throws Exception {
-        // ONE shared cluster signing key, OUTSIDE every node's data dir (satisfies the D-1 co-location
-        // guard) and pre-created so the three concurrent boots never race to mint it.
+        // ONE shared cluster signing key, kept outside every node's data dir (a co-located key would
+        // be readable by anyone with access to the data dir, defeating the at-rest integrity
+        // guarantee it backs) and pre-created so the three concurrent boots never race to mint it.
         Path signingKey = root.resolve("secrets").resolve("signing-key.bin");
         Files.createDirectories(signingKey.getParent());
         SigningKeyStore.loadOrCreate(signingKey); // mint once; all nodes load this same key
@@ -154,7 +155,6 @@ class EncryptedMultiShardClusterCompositionTest {
             configs[i] = nodeConfig(i, bindPorts, root.resolve("node-" + i), signingKey);
         }
 
-        // --- boot all three encrypted nodes ---
         ConfigdServer[] servers = new ConfigdServer[NODES];
         for (int i = 0; i < NODES; i++) {
             servers[i] = ConfigdServer.start(configs[i]);
@@ -171,11 +171,11 @@ class EncryptedMultiShardClusterCompositionTest {
                     "node " + i + " must persist the authenticated topology descriptor at N>1");
         }
 
-        // --- the armed strict-boot witness gate does NOT wrongly block a healthy cluster: with the
-        //     witness armed on every group, a stable leader per shard is still reachable, i.e. the gate
-        //     clears at a peer quorum instead of deadlocking progress. (That the gate correctly REFUSES a
-        //     rolled-back node is a distinct property, proven by the Gate 3c AnchorWitness red-team tests;
-        //     a successful election here does not by itself prove that enforcement.) ---
+        // The armed strict-boot witness gate must not wrongly block a healthy cluster: with the
+        // witness armed on every group, a stable leader per shard is still reachable, i.e. the gate
+        // clears at a peer quorum instead of deadlocking progress. (That the gate correctly REFUSES a
+        // rolled-back node is a distinct property, proven by the AnchorWitness red-team tests; a
+        // successful election here does not by itself prove that enforcement.)
         for (int gid = 0; gid < SHARDS; gid++) {
             int leader = awaitStableLeader(servers, gid, STABILIZE_MS);
             assertTrue(leader >= 0, "shard " + gid + " must elect a single stable leader within "
@@ -183,8 +183,8 @@ class EncryptedMultiShardClusterCompositionTest {
                     + leadershipSnapshot(servers, gid));
         }
 
-        // --- a write commits on the shard-0 leader and REPLICATES + applies on all three encrypted
-        //     nodes; a co-committed shard-1 write proves independent multi-shard replication ---
+        // A write commits on the shard-0 leader and replicates + applies on all three encrypted
+        // nodes; a co-committed shard-1 write proves independent multi-shard replication.
         // First let shard 1 fully converge (all nodes at the same applied index) so the cross-shard
         // isolation check below cannot race a still-applying shard-1 leader no-op and spuriously fail.
         assertTrue(awaitUntil(STABILIZE_MS, () -> {
@@ -207,7 +207,7 @@ class EncryptedMultiShardClusterCompositionTest {
         long committed1 = commitAndAwaitReplication(servers, 1, "cfg/beta", "v-beta");
         assertTrue(committed1 > 0, "shard-1 write must reach a committed index");
 
-        // --- a watch registered on a FOLLOWER of shard 0 fires when a shard-0 write replicates to it ---
+        // A watch registered on a FOLLOWER of shard 0 fires when a shard-0 write replicates to it.
         int leader0 = leaderFor(servers, 0);
         int follower0 = firstFollower(servers, 0, leader0);
         assertTrue(follower0 >= 0, "shard 0 must have at least one follower node");
@@ -224,8 +224,8 @@ class EncryptedMultiShardClusterCompositionTest {
         assertTrue(watchFired, "the follower's watch must fire on the replicated shard-0 write; fired="
                 + fired.get() + " events=" + events.size());
 
-        // --- restart a follower: it recovers through the encrypted keyring + term-versioned anchors
-        //     and rejoins, catching its shards' applied indexes back up to the cluster ---
+        // Restart a follower: it recovers through the encrypted keyring + term-versioned anchors and
+        // rejoins, catching its shards' applied indexes back up to the cluster.
         // Pick a node that leads NEITHER shard, so dropping it triggers no re-election (the two
         // survivors keep their leadership and still form a 2-of-3 commit quorum). With <=2 leaders
         // across 3 nodes such a node always exists.
@@ -260,18 +260,17 @@ class EncryptedMultiShardClusterCompositionTest {
     }
 
     /**
-     * The encrypted <b>leader-kill</b> failover fold (companion to the follower-restart composition above):
-     * on the SAME encrypted 3-node × 2-shard cluster, a genuine <b>shard leader</b> is killed (not a
-     * follower). This upgrades cell 5 (encryption × failover) from restart-recovery to a real leadership
-     * change, and folds cell 12's multi-shard residual (a leader-kill co-tested across two shards, where the
-     * single-shard {@code RealClusterFailoverIT} stops).
+     * The encrypted <b>leader-kill</b> failover companion to the follower-restart composition above: on
+     * the SAME encrypted 3-node x 2-shard cluster, a genuine <b>shard leader</b> is killed (not a
+     * follower): a real leadership change under encryption, co-tested across two shards where the
+     * single-shard {@code RealClusterFailoverIT} stops.
      *
      * <p>Proves, all under encryption at rest ON: (1) the two survivors <b>re-elect</b> a NEW leader for
-     * every shard the victim led; (2) <b>no committed data is lost</b> — each survivor still holds the
+     * every shard the victim led; (2) <b>no committed data is lost</b>: each survivor still holds the
      * pre-kill commit indexes (applied index never regresses); (3) a <b>post-kill write commits</b> on the
      * new leader and replicates to the survivors at a higher index; (4) the killed leader, restarted from
      * its own data dir, <b>recovers by decrypting</b> its term-versioned anchors + keyring (no fail-closed
-     * REFUSE) and catches BOTH shards up past the post-kill commits — then the whole restored cluster
+     * REFUSE) and catches BOTH shards up past the post-kill commits: then the whole restored cluster
      * commits again. The mechanism is proven plaintext + single-shard by {@code RealClusterFailoverIT};
      * this is its encrypted, multi-shard sibling.
      */
@@ -293,7 +292,7 @@ class EncryptedMultiShardClusterCompositionTest {
             running.add(servers[i]);
         }
 
-        // --- elect a stable leader per shard, then commit a pre-kill write on each shard to all three ---
+        // Elect a stable leader per shard, then commit a pre-kill write on each shard to all three.
         for (int gid = 0; gid < SHARDS; gid++) {
             assertTrue(awaitStableLeader(servers, gid, STABILIZE_MS) >= 0,
                     "shard " + gid + " must elect a stable leader before the kill: "
@@ -302,14 +301,14 @@ class EncryptedMultiShardClusterCompositionTest {
         long preKill0 = commitAndAwaitReplication(servers, 0, "cfg/kill-alpha", "v-alpha");
         long preKill1 = commitAndAwaitReplication(servers, 1, "cfg/kill-beta", "v-beta");
 
-        // --- KILL the shard-0 LEADER (crash equivalent). Any shard it also led must re-elect too. ---
+        // Kill the shard-0 LEADER (crash equivalent). Any shard it also led must re-elect too.
         int victim = leaderFor(servers, 0);
         assertTrue(victim >= 0, "shard 0 must have a single stable leader to kill: " + leadershipSnapshot(servers, 0));
         servers[victim].shutdown();
         running.remove(servers[victim]);
 
-        // --- the two survivors re-elect a NEW leader for shard 0 (and shard 1, whether or not the victim
-        //     led it) — a genuine leadership change, not just a follower rejoin ---
+        // The two survivors re-elect a NEW leader for shard 0 (and shard 1, whether or not the victim
+        // led it): a genuine leadership change, not just a follower rejoin.
         int newLeader0 = awaitStableLeaderExcluding(servers, 0, victim, STABILIZE_MS);
         assertTrue(newLeader0 >= 0 && newLeader0 != victim,
                 "the two survivors must elect a NEW shard-0 leader after killing node " + victim + ": "
@@ -319,8 +318,8 @@ class EncryptedMultiShardClusterCompositionTest {
                 "shard 1 must have a live leader among the survivors after the kill: "
                         + leadershipSnapshot(servers, 1));
 
-        // --- no committed data lost: each survivor still holds the pre-kill commits (applied index is
-        //     monotonic — a leadership change never rolls a committed entry back) ---
+        // No committed data lost: each survivor still holds the pre-kill commits (applied index is
+        // monotonic; a leadership change never rolls a committed entry back).
         for (int i = 0; i < NODES; i++) {
             if (i == victim) {
                 continue;
@@ -333,15 +332,15 @@ class EncryptedMultiShardClusterCompositionTest {
                             + ", got " + appliedIndex(servers[i], 1) + ")");
         }
 
-        // --- a post-kill write commits on the NEW leader and replicates to the two survivors ---
+        // A post-kill write commits on the NEW leader and replicates to the two survivors.
         long postKill0 = commitAndAwaitReplicationExcluding(servers, 0, victim, "cfg/kill-gamma", "v-gamma");
         long postKill1 = commitAndAwaitReplicationExcluding(servers, 1, victim, "cfg/kill-delta", "v-delta");
         assertTrue(postKill0 > preKill0, "a post-kill shard-0 write must commit at a higher index on the new leader");
         assertTrue(postKill1 > preKill1, "a post-kill shard-1 write must commit on the survivors");
 
-        // --- rejoin: restart the killed EX-LEADER from its data dir. Recovery through the encrypted
-        //     keyring + term-versioned anchors must NOT fail closed; it catches BOTH shards up past the
-        //     post-kill commits (proving it decrypted its persisted state and replayed the gap). ---
+        // Rejoin: restart the killed EX-LEADER from its data dir. Recovery through the encrypted
+        // keyring + term-versioned anchors must NOT fail closed; it catches BOTH shards up past the
+        // post-kill commits (proving it decrypted its persisted state and replayed the gap).
         ConfigdServer rejoined = ConfigdServer.start(configs[victim]);
         servers[victim] = rejoined;
         running.add(rejoined);
@@ -352,15 +351,11 @@ class EncryptedMultiShardClusterCompositionTest {
                 "the rejoined ex-leader must catch shard 1 up to " + postKill1
                         + " (got " + appliedIndex(rejoined, 1) + ")");
 
-        // --- the whole restored cluster commits again ---
+        // The whole restored cluster commits again.
         long finalCommit = commitAndAwaitReplication(servers, 0, "cfg/kill-epsilon", "v-epsilon");
         assertTrue(finalCommit > postKill0,
                 "a post-recovery write commits + replicates across the whole restored cluster");
     }
-
-    // =======================================================================
-    // cluster helpers (deadline-polled; no sleep-as-sync)
-    // =======================================================================
 
     private ServerConfig nodeConfig(int nodeId, int[] bindPorts, Path dataDir, Path signingKey) {
         StringBuilder peers = new StringBuilder();
@@ -407,7 +402,7 @@ class EncryptedMultiShardClusterCompositionTest {
             RaftNode node = servers[i].driver().getGroup(gid);
             if (node != null && node.monitorView().role() == RaftRole.LEADER) {
                 if (leader >= 0) {
-                    return -1; // two leaders observed (transient) — not stable
+                    return -1; // two leaders observed (transient), not stable
                 }
                 leader = i;
             }
@@ -464,7 +459,7 @@ class EncryptedMultiShardClusterCompositionTest {
     }
 
     /** {@link #leaderFor} but skipping {@code excluded} (a killed node whose stale monitorView still reads
-     *  LEADER after shutdown — reading it would manufacture a spurious split). {@code excluded == -1}
+     *  LEADER after shutdown; reading it would manufacture a spurious split). {@code excluded == -1}
      *  behaves exactly like {@link #leaderFor}. */
     private static int leaderForExcluding(ConfigdServer[] servers, int gid, int excluded) {
         int leader = -1;
@@ -475,7 +470,7 @@ class EncryptedMultiShardClusterCompositionTest {
             RaftNode node = servers[i].driver().getGroup(gid);
             if (node != null && node.monitorView().role() == RaftRole.LEADER) {
                 if (leader >= 0) {
-                    return -1; // two leaders observed (transient) — not stable
+                    return -1; // two leaders observed (transient), not stable
                 }
                 leader = i;
             }

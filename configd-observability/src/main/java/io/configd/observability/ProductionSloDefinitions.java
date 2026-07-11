@@ -3,7 +3,7 @@ package io.configd.observability;
 import java.time.Duration;
 
 /**
- * Instantiates all production SLO definitions from PROMPT.md Section 0.1.
+ * Instantiates the production SLO definitions used for burn-rate alerting.
  * Call {@link #register(SloTracker)} at system startup.
  */
 public final class ProductionSloDefinitions {

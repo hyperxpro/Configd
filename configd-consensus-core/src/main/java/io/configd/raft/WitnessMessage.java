@@ -3,9 +3,9 @@ package io.configd.raft;
 import io.configd.common.NodeId;
 
 /**
- * Peer-quorum anchor-witness gossip (Gate 3c, R-a&#39; closer). A node announces its per-group
- * {@code anchorSeq} to a peer so that a within-term {@code votedFor} rollback — which, under the
- * frozen merge, lowers {@code anchorSeq} — is witnessed across the cluster. See the design addendum
+ * Peer-quorum anchor-witness gossip. A node announces its per-group {@code anchorSeq} to a peer
+ * so that a within-term {@code votedFor} rollback — which lowers {@code anchorSeq} — is witnessed
+ * across the cluster. See the design addendum
  * {@code docs/design/anchor-witness-peer-quorum-2026-07-04.md} and {@link AnchorWitness}.
  *
  * <p>The 29-byte on-wire body is {@code [selfAnchorSeq:8][selfTerm:8][selfVotedFor:4][seenOfYouSeq:8]

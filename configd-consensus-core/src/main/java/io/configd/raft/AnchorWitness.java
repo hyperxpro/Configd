@@ -8,15 +8,15 @@ package io.configd.raft;
  * {@code storedSeq < lastSeen} means the local anchor was rolled back to a state the witness knows is
  * stale, and the node refuses to start (fail-closed).
  *
- * <p>Because casting a vote is, under the frozen merge, an {@code anchorSeq}-raising anchor write, a
- * within-term {@code votedFor} rollback is an {@code anchorSeq} rollback — so witnessing
- * {@code anchorSeq} monotonicity witnesses the vote, and this scalar SPI needs no {@code votedFor}
- * dimension. See {@code docs/design/anchor-witness-peer-quorum-2026-07-04.md}.
+ * <p>Because casting a vote is an {@code anchorSeq}-raising anchor write, a within-term
+ * {@code votedFor} rollback is an {@code anchorSeq} rollback — so witnessing {@code anchorSeq}
+ * monotonicity witnesses the vote, and this scalar SPI needs no {@code votedFor} dimension. See
+ * {@code docs/design/anchor-witness-peer-quorum-2026-07-04.md}.
  *
- * <p>The v1 provider is {@link PeerQuorumAnchorWitness}: the substrate is the peers' in-memory
+ * <p>The provider today is {@link PeerQuorumAnchorWitness}: the substrate is the peers' in-memory
  * witness tables, re-established by continuous re-announce. The interface is deliberately provider-
  * agnostic so a later external-store provider (TPM/RPMB NV-counter, cloud monotonic counter) — which
- * also closes the single-node residual R-a — drops in behind the same seam, and a deployment may run
+ * also closes the single-node residual gap — drops in behind the same seam, and a deployment may run
  * both (refuse if either reports {@code lastSeen > stored}).
  *
  * @see PeerQuorumAnchorWitness

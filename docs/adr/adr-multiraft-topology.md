@@ -1,33 +1,40 @@
-# ADR (multi-Raft, D-B): Static-N Shards Behind a `ShardMap` Seam; Dynamic Resharding Deferred to v2; the Single-Tick-Thread Fix is a Co-Delivery Prerequisite
+# ADR: Static-N Shards Behind a `ShardMap` Seam; Dynamic Resharding Is Not Built; the Single-Tick-Thread Fix Is a Co-Delivery Prerequisite
 
 ## Status
 
-**Proposed** (2026-06-21). Not yet Accepted - awaits operator sign-off.
-Part of the multi-Raft arc. Pairs with `adr-multiraft-partitioning.md` (D-A),
-`adr-multiraft-cross-shard.md` (D-C), `adr-throughput-target.md`.
+Accepted. This is the design as built: static-N Raft shards behind a `ShardMap` routing seam, shipped
+together with the single-tick-thread fix (coalesced heartbeats and a sharded owner-executor pool), which
+are both built and wired on `main` (`HeartbeatCoalescer`, `CoalescingRaftTransport`, `OwnerExecutorPool`).
+Online dynamic resharding (split/merge/rebalance) is not built; the `ShardMap` interface leaves a seam
+for it, but it is a deliberate scope choice, not a scheduled future release. Pairs with
+[adr-multiraft-partitioning](adr-multiraft-partitioning.md), [adr-multiraft-cross-shard](adr-multiraft-cross-shard.md),
+and [adr-throughput-target](adr-throughput-target.md).
 
 ## Context
 
-Two topology questions: (1) **STATIC-N** (fixed shard count chosen at deploy; no online
-split/merge/rebalance) vs **DYNAMIC** (shards split when hot/large, merge when cold, rebalance online -
-the full TiKV/CockroachDB model). (2) **The threading model** under which N groups run - which is *not*
-a free variable, because Configd's measured single-group ceiling (~800/s) is **heartbeat
-starvation on one tick thread**, and `MultiRaftDriver.tick()` ticks all groups on one thread
-(`MultiRaftDriver.java:100`; `ConfigdServer.java:367` single-thread `tickExecutor`).
+Two topology questions: (1) static-N (fixed shard count chosen at deploy; no online
+split/merge/rebalance) vs dynamic (shards split when hot/large, merge when cold, rebalance online - the
+full TiKV/CockroachDB model). (2) The threading model under which N groups run - which is *not* a free
+variable, because Configd's measured single-group ceiling (~800/s) is **heartbeat starvation on one tick
+thread**, and a naive `MultiRaftDriver.tick()` that ticks all groups on one thread makes this worse as N
+grows.
 
-The threading analysis proves: **naive N-group multi-Raft on today's single-threaded driver is
-strictly worse than the single group we have** (aggregate <= 800/s shared N ways ~ 50/s/shard at N=16,
-with each group's heartbeat slip able to trigger an election). So D-B must decide both the shard-count
-policy *and* mandate the threading fix that makes any N>1 safe.
+The threading analysis proves: **naive N-group multi-Raft on a single-threaded driver would be strictly
+worse than the single group we started with** (aggregate <= 800/s shared N ways ~ 50/s/shard at N=16,
+with each group's heartbeat slip able to trigger an election). So this decision covers both the
+shard-count policy and mandates the threading fix that makes any N>1 safe.
 
 ## Decision
 
-**Ship v1 with STATIC-N Raft shards (N ~ 16, **deploy-derived - see Red-Team; do not bake "16" before
-the dedicated-host knee re-measure**) behind a thin `ShardMap` routing indirection. Defer online split/merge/rebalance to v2 as a drop-in `ShardMap` implementation swap.
-Mandatorily co-deliver the single-tick-thread fix** (coalesced heartbeats + a small sharded
-tick-executor pool + per-tick broadcast-coalescing) - without it, multi-Raft is a regression.
+**Configd ships static-N Raft shards** (N is a deploy-time constant, capped at 16 - see Known
+limitations; do not treat 16 as a target throughput number before a dedicated-host re-measure of the
+per-shard knee) behind a thin `ShardMap` routing indirection. Online split/merge/rebalance is not built;
+the `ShardMap` seam leaves room for a dynamic implementation to be swapped in later without a rewrite of
+callers, but that is not part of what ships today. **The single-tick-thread fix is co-delivered**
+(coalesced heartbeats + a sharded tick-executor pool + per-tick broadcast-coalescing) - without it,
+multi-Raft would be a regression.
 
-### The `ShardMap` abstraction (the v1/v2 seam)
+### The `ShardMap` abstraction (the static/dynamic seam)
 
 ```
 interface ShardMap {
@@ -37,206 +44,200 @@ interface ShardMap {
 }
 ```
 
-- **v1 `StaticShardMap`:** `shardFor = hash(scope, key) mod N` (D-A); `shardIds = [0..N)`; `epoch = 0`
-  forever. Online resharding is OUT. N is a deploy-time constant, identical on all nodes.
-- **v2 `DynamicShardMap` (slot):** same interface; `shardFor` consults a versioned table that
-  PD-style placement mutates on split/merge/rebalance; `epoch` bumps on every change. Swapping the
-  implementation is the *entire* v2 routing delta - no caller changes.
+- **The `StaticShardMap` that ships today:** `shardFor = hash(scope, key) mod N` (see the partitioning
+  decision); `shardIds = [0..N)`; `epoch` is read from the deploy-time `TopologyDescriptor` and does not
+  change while the deployment's shard count is stable. Online resharding is not built. N is a deploy-time
+  constant, identical on all nodes.
+- **A dynamic shard map is not built.** If one is added later, the interface stays the same: `shardFor`
+  would consult a versioned table that placement logic mutates on split/merge/rebalance, and `epoch`
+  would bump on every change. Swapping the implementation would be the entire routing delta for a future
+  dynamic mode - no caller changes.
 
-### Three v1 invariants that make v2 additive (not a rewrite)
+### Three invariants that keep a future dynamic mode additive (not a rewrite)
 
-1. **Opaque, stable shard IDs.** `groupId` is an identity, never a source of behavior - **no
-   `groupId == 0` special-casing, no "GLOBAL is always group 0."** A split must mint a brand-new ID
-   without disturbing siblings. *(This is the one thing today's "-> group 0" code does wrong for the
-   future.)*
+1. **Opaque, stable shard IDs.** `groupId` is an identity, never a source of behavior - no
+   `groupId == 0` special-casing, no "GLOBAL is always group 0." A split must be able to mint a brand-new
+   ID without disturbing siblings. (This is the one thing early "-> group 0" code got wrong for the
+   future, and it has been cleaned up as sharding was wired.)
 2. **Routing is always `ShardMap.shardFor(...)`, never an inlined `mod N`.** The day a caller hardcodes
-   `mod 16`, v2 dynamic routing becomes a rewrite.
-3. **An epoch / membership-version field on the routing/wire envelope.** Carry `epoch()` so a stale
-   router that sends a key to a shard that split is told "wrong epoch, re-resolve" instead of
-   mis-committing. v1 never bumps it; v2 depends on it existing. This is the **TiKV
-   `RegionEpoch{ConfVer,Version}` + error-driven client-cache-update** pattern - cheap
-   routing correctness with *no* transaction machinery. **Red-team caveat (verified): this is a
-   WIRE-FORMAT BREAK, not a free reservation.** `FrameCodec` (HEADER_SIZE=18 = length+version+type+
-   `groupId`+term; `WIRE_VERSION=0x01`; header changes fail the wire-compat CI) has **no epoch field and
-   no reserved bytes**. So v1 must either reserve the epoch field and bump `WIRE_VERSION` **once,
-   deliberately, now** (a cost paid in v1 for a field it does not yet bump), or accept that v2 breaks the
-   wire. The clean seam is the `ShardMap` *interface*; the *wire* seam is not reserved - do not claim "no
-   wire change in v2" without reserving epoch now.
+   `mod 16`, a future dynamic router becomes a rewrite.
+3. **An epoch / membership-version field on the routing/wire envelope.** Carrying `epoch()` lets a stale
+   router that sends a key to a shard that split be told "wrong epoch, re-resolve" instead of
+   mis-committing - the same shape as TiKV's `RegionEpoch{ConfVer,Version}` plus error-driven
+   client-cache-update, cheap routing correctness with no transaction machinery. This was a wire-format
+   change, not a free reservation: `FrameCodec`'s header carries an explicit 8-byte reserved epoch field
+   (`HEADER_SIZE=26`, `WIRE_VERSION=0x02`), currently must-be-zero and CI-enforced as such. The field is
+   reserved and the wire version was bumped once, deliberately, so a future dynamic mode can activate it
+   without another wire break.
 
 ### The co-delivery prerequisite (the threading fix)
 
-- **(i) Coalesced heartbeats** - one heartbeat message *per peer-node per tick* carrying all
-  co-located groups' beats. Collapses idle heartbeat traffic from `40.N`/s to `40`/s/peer-pair,
-  **constant in N**. *(CockroachDB coalesced heartbeats; TiKV merged store heartbeats #5620.)*
-  **Prerequisite.**
-- **(iii) Sharded tick-executor pool** (2-4 threads, each owning `shardId % poolSize`) **+ per-tick
-  broadcast-coalescing** (broadcast per tick, not per propose - the RR-113 lever, **recommended in
-  recommended but UNBUILT/unvalidated**: `RaftNode.propose():460` broadcasts inline per-proposal and
-  no coalesced heartbeat exists). *Projects* the aggregate ceiling to ~ `pool x knee` instead of one
-  thread shared N ways (a projection over unbuilt mechanisms, to be proven on hardware). *(CockroachDB MultiRaft:
-  "a small, constant number of goroutines (currently 3) instead of one goroutine per range"; TiKV
-  raftstore worker pool.)* **Prerequisite.**
-- **The marshalling boundary (R-01-critical, verified).** The sharded pool only stays safe if
-  **`ownerExecutor(shardId) = pool[shardId % poolSize]`** and *every* path touching a shard's `RaftNode`
-  runs on that shard's owner thread: `tick`, inbound `routeMessage` (demuxed by `groupId` *before*
-  dispatch), `propose`, commit-callback, group-commit `flush`, `maybeCompact`, ReadIndex `completeRead`,
-  and the non-volatile `commitIndex/lastApplied` metric reads. Today the single `tickExecutor` *is* the
-  synchronization for the non-synchronized `RaftNode` (R-01, `ConfigdServer.java:362-365`); the pool
-  replaces it and must rebuild this per-shard, **re-opening the S2-S4 integration-verification surface**.
-  This is partly-greenfield consensus-core work - see Red-Team section.
-- **(ii) Hibernation is OUT for v1** (see Rejected/Red-Team): at N~16 with coalesced heartbeats the
-  idle cost is already flat in N, and TiKV #34906 shows hibernation can cause 20-minute leaderless
-  failover windows - unacceptable against the 99.999% write SLO. If ever adopted (large N), it MUST be
-  paired with proactive health-driven wake.
+- **Coalesced heartbeats** - one heartbeat message *per peer-node per tick* carrying all co-located
+  groups' beats. Collapses idle heartbeat traffic from `40.N`/s to `40`/s/peer-pair, constant in N.
+  Built (`HeartbeatCoalescer`, `CoalescingRaftTransport`). *(CockroachDB coalesced heartbeats; TiKV merged
+  store heartbeats #5620.)*
+- **Sharded tick-executor pool** (each group owner-executed via `ownerExecutor(shardId) =
+  pool[shardId % poolSize]`). Built (`OwnerExecutorPool`, wired through `MultiRaftDriver` and
+  `ConfigdServer`). This raises the aggregate ceiling toward ~`pool x knee` instead of one thread shared
+  N ways. *(CockroachDB MultiRaft: "a small, constant number of goroutines (currently 3) instead of one
+  goroutine per range"; TiKV raftstore worker pool.)*
+- **Per-tick broadcast-coalescing for real (non-heartbeat) replication traffic** is a separate, narrower
+  question: `RaftNode.propose()` still broadcasts `AppendEntries` inline per proposal, which is correct
+  for real log replication (a proposal should go out immediately, not wait for the next tick) - the
+  coalescing that matters for the N-scaling story is the heartbeat path above, which is built.
+- **The marshalling boundary.** The sharded pool only stays safe because
+  `ownerExecutor(shardId) = pool[shardId % poolSize]` and every path touching a shard's `RaftNode` runs
+  on that shard's owner thread: tick, inbound `routeMessage` (demuxed by `groupId` before dispatch),
+  `propose`, commit-callback, group-commit `flush`, `maybeCompact`, ReadIndex `completeRead`, and the
+  non-volatile `commitIndex`/`lastApplied` metric reads. This is the per-shard synchronization model
+  `docs/architecture/raft-threading-contract.md` documents; building it out from the earlier
+  single-tick-executor design was consensus-core work, not a drop-in pool swap.
+- **Hibernation is not built and is not planned as a default.** At N~16 with coalesced heartbeats the
+  idle cost is already flat in N, and TiKV #34906 showed hibernation can cause 20-minute leaderless
+  failover windows - unacceptable against the write-availability target. If ever adopted (for much
+  larger N), it would need to be paired with proactive health-driven wake.
 
-### Shard count (coordinate with `adr-throughput-target.md`)
+### Shard count
 
-`N = ceil( target / (per-group stable knee x efficiency) )`. With target 10k/s, knee ~800/s (measured, co-location-confounded), efficiency ~0.75: `10000 / (800 x 0.75) ~ 16.7`. **Recommend
-N = 16** (power-of-two for clean `hash mod N`; ~5-6 led shards/node on 3 nodes; headroom for the
-hottest shard). N is a deploy-time constant precisely so a higher dedicated-host knee can drop N
-without a reshard-rewrite.
+`N = ceil( target / (per-group stable knee x efficiency) )`. With target 10k/s, knee ~800/s (measured,
+co-location-confounded), efficiency ~0.75: `10000 / (800 x 0.75) ~ 16.7`. The shard count is capped at 16
+in the server (`configd.raft.shardCount` must be in `[1, 16]`) - a power-of-two ceiling that keeps
+`hash mod N` clean and gives headroom against the hottest shard. N is a deploy-time constant precisely so
+a higher dedicated-host knee can move the operator's chosen N without a reshard-rewrite; in practice,
+roughly ten or eleven busy leaders saturate a 16-vCPU box, so 16 is a ceiling operators approach rather
+than a number every deployment runs at.
 
 ## Rationale
 
-- **Static-N delivers both target wins** - throughput (~ poolxknee) and blast-radius containment (a
+- **Static-N delivers both target wins** - throughput (~ pool x knee) and blast-radius containment (a
   churning shard contains 1/N of writes, not all) - at minimal surface, reusing the existing
   `propose(scope)` / `propose(int groupId)` seams.
-- **The threading fix is prerequisite *regardless* of static-vs-dynamic.** Shipping dynamic-from-day-one
-  adds the entire online-resharding machinery (placement, split/merge state machines, epoch
-  invalidation, rebalance-under-fault) *on top of* the prerequisite, for **zero** extra throughput -
-  dynamic only redistributes load, it does not raise the ceiling.
+- **The threading fix is prerequisite *regardless* of static-vs-dynamic.** Shipping dynamic resharding
+  from day one would add the entire online-resharding machinery (placement, split/merge state machines,
+  epoch invalidation, rebalance-under-fault) *on top of* the prerequisite, for **zero** extra
+  throughput - dynamic only redistributes load, it does not raise the ceiling.
 - **Dynamic split/merge is the richest production-bug vein in the prior-art survey**: CRDB
   split-nemesis Jepsen inconsistency, the 20.2 closed-timestamp-past-subsumption follower-read
   corruption, over-aggressive quiescing, TiKV tombstone-region panics / raw split keys /
-  hotspot-outruns-split / meta-corruption-under-nemesis. A generic OSS config plane gains little from
-  online auto-split and inherits this entire class.
-- **The seam gives the v2 option for free.** Static-N with the three invariants *becomes* dynamic by
-  swapping `StaticShardMap -> DynamicShardMap`; there is no rewrite tax being deferred, only feature
-  work. This is exactly the charter's "simplest design with dynamic as a clean future seam."
+  hotspot-outruns-split / meta-corruption-under-nemesis. A generic config plane gains little from online
+  auto-split and would inherit this entire class of bugs.
+- **The seam gives a future dynamic mode for free, if it's ever needed.** Static-N with the three
+  invariants *becomes* dynamic by swapping `StaticShardMap -> DynamicShardMap`; there is no rewrite tax
+  being deferred, only feature work that has not been undertaken because nothing has demanded it yet.
 
 ## Prior-Art Mechanism Borrowed
 
 - **Threading:** CockroachDB **MultiRaft scheduler** (small fixed worker pool, not one goroutine per
-  range) + **coalesced heartbeats** (per peer-node per tick); TiKV **raftstore** worker pool. The exact
-  antidote to the single-thread ceiling - and the "store pattern" `MultiRaftDriver`'s javadoc already
-  cites.
+  range) + **coalesced heartbeats** (per peer-node per tick); TiKV **raftstore** worker pool - the exact
+  antidote to the single-thread ceiling, and the model `MultiRaftDriver`'s own documentation cites.
 - **Routing correctness:** TiKV **`RegionEpoch{ConfVer,Version}`** + error-driven client-cache update.
-- **Deferred dynamic path:** Spanner **`movedir`** (background bulk move + tiny atomic Raft-committed
-  cutover) - the lowest-disruption repartition, preferred over TiKV/CRDB online split when v2 lands.
-- **Avoided:** TiKV **Hibernate Region** as a v1 default (failover foot-gun #34906).
+- **A possible future dynamic path:** Spanner **`movedir`** (background bulk move + tiny atomic
+  Raft-committed cutover) - the lowest-disruption repartition, preferable to TiKV/CRDB online split if a
+  dynamic mode is ever built.
+- **Avoided:** TiKV **Hibernate Region** as a default (failover foot-gun #34906).
 
 ## Rejected Alternatives
 
-- **Dynamic-from-v1 (online split/merge/rebalance in the first ship).** Rejected: (1) no incremental
-  throughput over static-N - both top out at poolxknee; dynamic only redistributes; (2) online split
-  is the single hardest, most-bug-prone operation in multi-Raft (atomically divide a key range, hand
-  part of the log/snapshot to a new group, keep linearizability across the boundary mid-split, survive
-  faults during the split) - months of work + a combinatorial fault matrix gating the throughput win;
-  (3) contradicts the charter's simplest-thing bias; (4) reachable later via the seam - nothing is
-  foreclosed.
-- **Naive multi-Raft on the existing single tick thread** (no threading fix). Rejected: strictly worse
-  than the status quo (the threading analysis proves this).
-- **Hibernation in v1.** Rejected for v1 (TiKV #34906 failover risk; benefit already captured by
-  coalesced heartbeats at N~16).
+- **Dynamic resharding in the first ship.** Rejected: (1) no incremental throughput over static-N - both
+  top out at pool x knee; dynamic only redistributes; (2) online split is the single hardest,
+  most-bug-prone operation in multi-Raft (atomically divide a key range, hand part of the log/snapshot to
+  a new group, keep linearizability across the boundary mid-split, survive faults during the split) -
+  months of work plus a combinatorial fault matrix, gating the throughput win; (3) reachable later via
+  the seam - nothing is foreclosed.
+- **Naive multi-Raft on a single tick thread** (no threading fix). Rejected: strictly worse than the
+  status quo (the threading analysis proves this).
+- **Hibernation as a default.** Rejected for now (TiKV #34906 failover risk; the benefit it targets is
+  already captured by coalesced heartbeats at N~16).
 
 ## Consequences
 
-- (+) Aggregate ceiling *projects* to ~ poolxknee (the coalesced-HB/broadcast levers are unbuilt - see
-  Red-Team); a *churning* shard contains 1/N of writes (**but under *node loss* on a 3-node deploy the
-  blast radius is 1/3, not 1/N** - Red-Team); v2 dynamic = swap `StaticShardMap -> DynamicShardMap`, no
-  *caller* changes (the *wire* needs an epoch field - Red-Team).
-- (-) A hot shard cannot be auto-split (mitigated: D-A hash partitioner spreads prefix-skew;
-  per-principal rate limiting already exists; N-headroom; an interim manual-reshard runbook).
-- (-) Node add/remove => manual reshard in v1 - and absent vnodes/`movedir`, "manual reshard" is a
-  **full-keyspace rehash with no online-move tooling, i.e. plausibly a downtime re-bootstrap** of up to
-  10^9 keys (Red-Team). A documented, tested reshard procedure is a v1 deliverable.
-- (-) **NEW failure mode:** a node leading many shards loses them all on crash -> correlated election
-  storm across its led shards (must be tested; coalesced heartbeats + per-shard *staggered* election
-  timeouts mitigate).
-- (-) N WALs/snapshots per node => linear memory/fsync working-set growth (fine <=32; watch >=64).
-- (-) **Day-2 per-shard observability is a v1 deliverable (Red-Team):** today's health metrics
-  (`raft_elections`, `pendingApply`, `fanout.buffer.dropped`) are **group-0-only** (`ConfigdServer.java:779`);
-  N shards need per-shard election/apply-lag series + a leader-count-per-node view, or the
-  correlated-election-storm this ADR introduces is invisible.
-- (-) Reconciliation with ADR-0030 Reasoning #4 ("avoided a PlacementDriver / scope-aware routing"):
-  static-N needs only a deterministic shard-map, **not** a dynamic PlacementDriver, so the operational
-  complexity ADR-0030 rejected is *not* re-imported in v1 (it would be in v2 - another reason to defer).
+- (+) The aggregate ceiling is raised toward ~ pool x knee with the coalesced-heartbeat and
+  owner-executor-pool mechanisms now built; a *churning* shard contains 1/N of writes (but under *node
+  loss* on a 3-node deploy the blast radius is 1/3, not 1/N - see below); a future dynamic mode would be
+  a `StaticShardMap -> DynamicShardMap` swap with no *caller* changes (the wire epoch field is already
+  reserved for it).
+- (-) A hot shard cannot be auto-split (mitigated: the hash partitioner spreads prefix-skew;
+  per-principal rate limiting already exists; N-headroom; an interim manual-reshard runbook is still
+  owed - see below).
+- (-) Node add/remove requires a manual reshard, and absent vnodes or a `movedir`-style mechanism,
+  "manual reshard" is a full-keyspace rehash with no online-move tooling - plausibly a downtime
+  re-bootstrap of up to 10^9 keys. A documented, tested reshard procedure has not been written yet.
+- (-) A node leading many shards loses them all on crash, which can trigger a correlated election storm
+  across its led shards; coalesced heartbeats and per-shard staggered election timeouts mitigate this,
+  and it needs dedicated chaos testing (see Verification Extension).
+- (-) N WALs/snapshots per node means a linear memory/fsync working-set growth (fine at <=32; watch at
+  >=64).
+- (-) Per-shard observability (per-shard election/apply-lag series, a leader-count-per-node view) is
+  required for the correlated-election-storm risk above to be visible; this has since shipped (see
+  `raft_node_leader_count`, `raft_shard_leader_<gid>` and related per-shard metrics in
+  `docs/operations/known-limitations.md`).
+- (-) Reconciliation with ADR-0030 ("avoided a PlacementDriver / scope-aware routing"): static-N needs
+  only a deterministic shard map, not a dynamic PlacementDriver, so the operational complexity ADR-0030
+  rejected is not re-imported by this decision - it would be if a dynamic mode were ever built.
 
-## Red-Team Critique (surviving)
+## Known limitations
 
-- **"A generic config system has an unpredictable, skewed keyspace. With static-N you get a single hot
+- **A generic config system has an unpredictable, skewed keyspace. With static-N you get a single hot
   shard (the 99th-pct tenant, or one hot prefix) that exceeds ~800/s alone. You can't auto-split it, so
-  that tenant is throttled to one group's ceiling while N-1 shards idle, and your aggregate 10k/s is a
-  fiction that assumes uniform load."** *Surviving - the real limit of static-N, stated honestly.*
-  Rebuttal: (1) D-A **hash** turns hot-*prefix* skew into per-key spread across shards; (2) per-principal
-  rate limiting (already in `ConfigWriteService`) stops one tenant starving others; (3) pick N with
-  headroom; (4) the seam makes the v2 escape cheap + a manual-reshard runbook covers the interim. And:
-  a single hot **key** is unsplittable by *any* sharding (dynamic included), so dynamic does not rescue
-  the genuine pathological case. We defer *online adaptivity*, not correctness.
-- **"A node leading many shards loses them ALL at once on crash/partition -> blast radius is per-node,
-  not per-shard."** *Surviving.* Handled as a NEW chaos cell (correlated leadership loss); coalesced
-  heartbeats + staggered per-shard election timeouts bound the election storm. Blast-radius-per-shard
-  holds for *partition of one shard's quorum*; node loss is a distinct, tested scenario.
-- **[#1 - the single largest hidden cost] The sharded tick-pool re-opens R-01.** *Surviving (verified).*
-  The post-R-01 server makes the non-synchronized `RaftNode` safe by funnelling **all** access onto the
-  **single** `tickExecutor` (`ConfigdServer.java:362-365`). A sharded pool DELETES that guarantee; the
-  prerequisite is `ownerExecutor(shardId)=pool[shardId%poolSize]` with every shard-touching path on its
-  owner (Decision -> co-delivery), which **re-opens the S2-S4 integration-verification surface** (the
-  concurrent tick+inbound+propose+flush stress test) and must
-  precede shard-routing. Partly-greenfield consensus-core work, not a drop-in pool.
-- **The coalesced-HB and per-tick-broadcast levers are UNBUILT.** *Surviving (verified).*
-  `RaftNode.propose():460` broadcasts inline per-proposal; heartbeats are per-peer; the existing measurement validated only admission control. So `aggregate ~ poolxknee` is a **projection over unbuilt code**, and the throughput
-  target is a measurement plan, not a result (`adr-throughput-target.md`). Coalesced-HB assembly also
-  crosses pool threads (reads every co-located group's state each tick) and one lost coalesced frame
-  de-livens all N co-located groups at once - it *causes* the correlated-election-storm cell, not only
-  node loss.
-- **Blast radius on a 3-node deploy is 1/3, not 1/N.** *Surviving (verified).* Each node leads ~5-6 of 16
-  shards; a node crash removes ~1/3 of write capacity until re-election - the *common* fault. 1/N holds
-  only for the rare single-shard-quorum partition. The throughput aggregate is `(2/3)Nxknee` during a
-  node outage (carried into `adr-throughput-target.md`).
-- **The epoch field is a WIRE-FORMAT BREAK** (seam invariant #3, verified): `FrameCodec` HEADER_SIZE=18,
-  no epoch, no reserved bytes, WIRE_VERSION-gated. Reserve+bump now or drop the "no wire change in v2"
-  claim; the clean seam is the `ShardMap` interface, not the wire.
-- **N~16 is deploy-derived, doubly forward-referential.** It rests on a co-location-confounded ~800/s
-  knee AND the (unbuilt) threading model meant to raise that knee. N is a deploy-time constant,
-  re-derived from the dedicated-host re-measure; do not bake "16" prematurely.
-- **The interim manual reshard is a downtime re-bootstrap.** Absent vnodes/`movedir`, a reshard rehashes
-  the keyspace and moves ~(N-1)/N of ownership with no online-move tool. A documented, tested procedure
-  is a v1 deliverable - state the cost out loud.
-- **Day-2 per-shard observability is a v1 deliverable.** Today's metrics are group-0-only
-  (`ConfigdServer.java:779`); without per-shard election/lag/leader-distribution series the
-  correlated-election-storm this ADR introduces is unobservable.
+  that tenant is throttled to one group's ceiling while other shards idle, and the aggregate target
+  assumes uniform load.** This is the real limit of static-N, stated honestly. Mitigations: (1) hash
+  partitioning turns hot-*prefix* skew into per-key spread across shards (see
+  [adr-multiraft-partitioning](adr-multiraft-partitioning.md)); (2) per-principal rate limiting (already
+  in `ConfigWriteService`) stops one tenant starving others; (3) N is chosen with headroom; (4) the seam
+  keeps a future dynamic mode cheap, and a manual-reshard runbook would cover the interim once written.
+  A single hot **key** is unsplittable by *any* sharding scheme, dynamic included, so dynamic resharding
+  would not rescue that pathological case either - what's deferred here is online adaptivity, not
+  correctness.
+- **A node leading many shards loses them all at once on crash or partition, so blast radius is
+  per-node, not per-shard, for that failure mode.** Handled as a distinct chaos scenario (correlated
+  leadership loss); coalesced heartbeats and staggered per-shard election timeouts bound the resulting
+  election storm. Blast-radius-per-shard holds for partition of one shard's quorum; node loss is a
+  separate, and more common, scenario that needs its own chaos coverage.
+- **Blast radius on a 3-node deploy is 1/3, not 1/N.** Each node leads ~5-6 of 16 shards; a node crash
+  removes ~1/3 of write capacity until re-election - the common fault. 1/N holds only for the rarer
+  single-shard-quorum partition. The throughput aggregate during a node outage is `(2/3) x N x knee`
+  (carried into [adr-throughput-target](adr-throughput-target.md)).
+- **N~16 rests on a co-location-confounded ~800/s knee.** N is a deploy-time constant, re-derivable once
+  a dedicated-host re-measure exists; that re-measure has not been done as a clean, isolated single-host
+  test (a related cross-machine measurement exists - see
+  `docs/archive/measurement/ec2-horizontal-2026-07-01/` - but it changes the network topology at the same
+  time, so it does not cleanly isolate the co-location effect). Do not treat 16 as validated throughput
+  headroom; treat it as the current hard ceiling.
+- **The interim manual reshard would be a downtime re-bootstrap.** Absent vnodes or a `movedir`-style
+  tool, a reshard rehashes the keyspace and moves ~(N-1)/N of ownership with no online-move mechanism. A
+  documented, tested procedure for this has not been written.
 
-## Verification Extension (extend, do not replace)
+## Verification Extension
 
-- **Sim:** instantiate N groups under one driver; **amplification guard** - assert per-tick
-  heartbeat-emit latency stays under the election floor as N scales (the section 3 guarantee); seed
-  cross-group proposal mixes.
-- **TLA+:** routing-correctness invariant - a key resolves to exactly one live shard under a given
-  epoch; for v2, a split/merge **refinement** proving no key is dropped or double-owned across an epoch
-  change (extends `ConsensusSpec`/`SnapshotInstallSpec`).
+- **Sim:** instantiate N groups under one driver; assert per-tick heartbeat-emit latency stays under the
+  election floor as N scales; seed cross-group proposal mixes.
+- **TLA+:** routing-correctness invariant - a key resolves to exactly one live shard under a given epoch;
+  for a future dynamic mode, a split/merge refinement proving no key is dropped or double-owned across an
+  epoch change (extends `ConsensusSpec`/`SnapshotInstallSpec`).
 - **configd-linz:** per-key registers unchanged; add the cross-shard router; assert per-key
   linearizability with N groups (no cross-group order asserted - the model encodes that).
-- **Chaos / fault matrix (NEW cells static-N introduces):** (a) correlated leadership loss (kill a node
-  leading many shards -> no aggregate election storm); (b) routing under reconfiguration (stale `epoch`
-  sheds/redirects, never mis-routes); (c) per-shard partition (blast radius is exactly 1/N - the
-  containment claim); (d) v2 only: split/merge under partition / fsync-lie / ENOSPC (the hardest cell).
+- **Chaos / fault matrix:** (a) correlated leadership loss (kill a node leading many shards -> no
+  aggregate election storm); (b) routing under reconfiguration (stale `epoch` sheds/redirects, never
+  mis-routes); (c) per-shard partition (blast radius is exactly 1/N - the containment claim); (d) if a
+  dynamic mode is ever built: split/merge under partition / fsync-lie / ENOSPC (the hardest cell).
 
 ## Open Questions for the Operator
 
-1. **SCOPE-DEFINING (flagged): is online dynamic resharding IN or OUT of v1?** Recommendation: **OUT**
-   (v2 extension via the seam). If IN, the rejected-alternative cost (online split state machine + its
-   fault matrix) lands in v1 and gates the throughput win.
-2. **Is the per-group knee really ~800/s on a *dedicated* host?** N (baked into v1 deploys) depends on
-   it; the measurement flags co-location confound. A one-node-per-host re-measure before freezing N is recommended
-   (mitigated by N being a deploy-time constant).
+1. **Is online dynamic resharding worth building?** Recommendation: no, absent a concrete need - the
+   `ShardMap` seam keeps it cheap to add later. Building it now would land the rejected-alternative cost
+   (an online split state machine and its fault matrix) for no throughput gain.
+2. **Is the per-group knee really ~800/s on a *dedicated* host?** N depends on it; the measurement flags
+   a co-location confound that a one-node-per-host re-measure would resolve. Not yet done.
 3. **Do GLOBAL/REGIONAL/LOCAL map to *distinct* shard pools, or is `ConfigScope` orthogonal to
    sharding?** Cleanest model: scope selects a pool, `hash mod N_pool` selects within. Confirm whether
-   scope-isolation is a v1 requirement.
-4. **Is `429`-shedding a single hot tenant (vs auto-splitting it) acceptable for v1?**
+   scope-isolation is a requirement.
+4. **Is `429`-shedding a single hot tenant (vs auto-splitting it) an acceptable steady state?**
 
 ## Related
 
-ADR-0009 (single-I/O-thread store pattern), ADR-0023 (multi-raft deferred - reserved the concept),
-ADR-0030 (centralized root; operational-simplicity axis), `adr-multiraft-partitioning.md` (hash),
-`adr-throughput-target.md` (N derivation), the measured ceiling (see measurement results).
+ADR-0009 (single-I/O-thread store pattern), ADR-0023 (multi-raft - reserved the concept, superseded by
+this arc), ADR-0030 (centralized root; operational-simplicity axis),
+[adr-multiraft-partitioning](adr-multiraft-partitioning.md) (hash),
+[adr-throughput-target](adr-throughput-target.md) (N derivation),
+`docs/architecture/raft-threading-contract.md` (the owner-executor model as built), the measured ceiling
+(see `docs/measurement/` and `docs/archive/measurement/`).

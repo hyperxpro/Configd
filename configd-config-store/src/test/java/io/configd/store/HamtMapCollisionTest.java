@@ -20,8 +20,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class HamtMapCollisionTest {
 
-    // -- Test key type that forces controlled hash collisions ---------------
-
     /**
      * A key wrapper that lets tests control the exact hashCode value returned,
      * while keeping equals based solely on the string value. This lets us
@@ -43,10 +41,6 @@ class HamtMapCollisionTest {
             return o instanceof CollisionKey ck && value.equals(ck.value);
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Deep collision: identical full 32-bit hash
-    // -----------------------------------------------------------------------
 
     @Nested
     class DeepCollision {
@@ -97,7 +91,6 @@ class HamtMapCollisionTest {
             assertNull(after.get(key("bravo")));
             assertEquals("C", after.get(key("charlie")));
 
-            // Original unchanged (immutability)
             assertEquals(3, map.size());
             assertEquals("B", map.get(key("bravo")));
         }
@@ -154,7 +147,6 @@ class HamtMapCollisionTest {
             assertEquals("B-updated", updated.get(key("bravo")));
             assertEquals("C", updated.get(key("charlie")));
 
-            // Original unchanged
             assertEquals("B", map.get(key("bravo")));
         }
 
@@ -200,7 +192,6 @@ class HamtMapCollisionTest {
             map = map.put(key("c"), "3");
             assertEquals(3, map.size());
 
-            // Overwrite does not change size
             map = map.put(key("b"), "2-new");
             assertEquals(3, map.size());
 
@@ -228,7 +219,6 @@ class HamtMapCollisionTest {
                 assertEquals(i, map.get(key("key-" + i)), "Missing key-" + i);
             }
 
-            // Remove every other one
             HamtMap<CollisionKey, Integer> reduced = map;
             for (int i = 0; i < count; i += 2) {
                 reduced = reduced.remove(key("key-" + i));
@@ -244,10 +234,6 @@ class HamtMapCollisionTest {
             }
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Shallow collision: same 5-bit prefix at level 0, different deeper bits
-    // -----------------------------------------------------------------------
 
     @Nested
     class ShallowCollision {
@@ -329,10 +315,6 @@ class HamtMapCollisionTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Mixed: collision keys coexisting with normal keys
-    // -----------------------------------------------------------------------
-
     @Nested
     class MixedCollisionAndNormal {
 
@@ -380,7 +362,6 @@ class HamtMapCollisionTest {
 
         @Test
         void addCollisionKeyToExistingNonCollidingMap() {
-            // Start with non-colliding keys, then add collision keys
             CollisionKey nk1 = new CollisionKey("n1", 100);
             CollisionKey nk2 = new CollisionKey("n2", 200);
             CollisionKey ck1 = new CollisionKey("c1", 300);
@@ -424,7 +405,6 @@ class HamtMapCollisionTest {
             assertEquals("C3", map.get(ck3));
             assertEquals("D", map.get(diff));
 
-            // Removing the different-hash key should leave the collision keys
             HamtMap<CollisionKey, String> afterRemove = map.remove(diff);
             assertEquals(3, afterRemove.size());
             assertEquals("C1", afterRemove.get(ck1));
@@ -433,10 +413,6 @@ class HamtMapCollisionTest {
             assertNull(afterRemove.get(diff));
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Deep vs Shallow collision comparison
-    // -----------------------------------------------------------------------
 
     @Nested
     class DeepVsShallowComparison {
@@ -470,16 +446,13 @@ class HamtMapCollisionTest {
 
             assertEquals(5, map.size());
 
-            // All deep collision keys retrievable
             assertEquals("D1", map.get(deep1));
             assertEquals("D2", map.get(deep2));
             assertEquals("D3", map.get(deep3));
 
-            // All shallow collision keys retrievable
             assertEquals("S1", map.get(shallow1));
             assertEquals("S2", map.get(shallow2));
 
-            // forEach visits all
             Map<String, String> collected = new HashMap<>();
             map.forEach((k, v) -> collected.put(k.value(), v));
             assertEquals(5, collected.size());

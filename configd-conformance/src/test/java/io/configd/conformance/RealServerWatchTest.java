@@ -56,14 +56,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Real-server conformance for the Gate-3 watch plane: drives the thin reference client's {@link Watch} against a
- * live {@link FanOutServer} (the actual {@code 0x02} WATCH_CREATE→CREATED→EVENT path, per-shard cursor advance,
- * and CURSOR_ACK) — not a mock. At v1 static-N this is one shard (gid 0), so it exercises the vector-native
- * cursor machinery at its degenerate single-component width.
+ * Real-server conformance for the watch plane: drives the thin reference client's {@link Watch} against a
+ * live {@link FanOutServer} (the actual {@code 0x02} WATCH_CREATE->CREATED->EVENT path, per-shard cursor
+ * advance, and CURSOR_ACK), not a mock. With static sharding this is one shard (gid 0), so it exercises the
+ * vector-native cursor machinery at its degenerate single-component width.
  */
-// Server-obeys + client-conforms on the 0x02 watch plane: WATCH_CREATE→CREATED→EVENT with a per-shard cursor
-// vector + CURSOR_ACK (from-now tail), the shared-connection multiplex where a sibling survives, and the
-// loud refuse of a cursored share (§06 F10-1b / W8-6a), all against a live FanOutServer.
+// Server-obeys + client-conforms on the 0x02 watch plane: WATCH_CREATE->CREATED->EVENT with a per-shard cursor
+// vector plus CURSOR_ACK (from-now tail), the shared-connection multiplex where a sibling survives, and the
+// loud refuse of a cursored share, all against a live FanOutServer.
 @Timeout(60)
 @Tag("clause:W1-2")
 @Tag("clause:W3-4")
@@ -96,7 +96,7 @@ class RealServerWatchTest {
                 .endpoint("127.0.0.1", port)
                 .allowPlaintext(true)
                 .trustUnverified()
-                .credentialSource(CredentialSource.staticBearer(TOKEN)) // watches require a real principal (W7)
+                .credentialSource(CredentialSource.staticBearer(TOKEN)) // watches require a real principal
                 .retryPolicy(new RetryPolicy(Duration.ofMillis(10), Duration.ofMillis(100), 5))
                 .limits(longIdle())
                 .build();
@@ -151,7 +151,7 @@ class RealServerWatchTest {
             shared.awaitCreated(Duration.ofSeconds(20));
 
             publish(1, "/multi/key", "v");
-            // The real server fans the commit to BOTH watch_ids over the ONE shared connection (W6-4).
+            // The real server fans the commit to BOTH watch_ids over the ONE shared connection.
             await("host watch received the commit", () -> countChanges(hostEvents) >= 1);
             await("shared watch received the same commit on the same connection", () -> countChanges(sharedEvents) >= 1);
         }
@@ -163,7 +163,7 @@ class RealServerWatchTest {
         try (ConfigdEdgeClient client = ConfigdEdgeClient.open(clientConfig(port))) {
             Watch host = client.watch(WatchTarget.full(), WatchOptions.defaults());
             host.awaitCreated(Duration.ofSeconds(20));
-            // W8-6a: an independently-cursored watch is refused a shared drain (never silently frontier-resumed).
+            // An independently-cursored watch is refused a shared drain (never silently frontier-resumed).
             assertThrows(IllegalStateException.class, () -> client.watch(WatchTarget.full(),
                     WatchOptions.defaults().resume(WatchCursor.of(0, 3)).shareConnectionOf(host)));
         }

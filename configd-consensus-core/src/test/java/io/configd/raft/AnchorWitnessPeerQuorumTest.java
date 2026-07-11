@@ -29,13 +29,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * REAL-ATTACK proof (Gate 3c) of the peer-quorum {@link AnchorWitness} R-a&#39; closure. Every test
- * stands up file-backed {@link RaftNode}s over a delivering in-memory network, arms the witness, and -
- * for the headline - performs a genuine on-disk anchor rollback (restoring a captured earlier durable
- * image) and reboots, asserting the boot gate REFUSES so the victim can never cast a second, conflicting
- * vote at the same term. The negative cases (W1/W2/W4/W6/W7) assert the gate does NOT brick a healthy
- * node on a legal crash or a legal Raft transition. See
- * {@code docs/design/anchor-witness-peer-quorum-2026-07-04.md} §6.2.
+ * Real-attack proof of the peer-quorum {@link AnchorWitness}. Every test stands up file-backed
+ * {@link RaftNode}s over a delivering in-memory network, arms the witness, and - for the headline -
+ * performs a genuine on-disk anchor rollback (restoring a captured earlier durable image) and reboots,
+ * asserting the boot gate refuses so the victim can never cast a second, conflicting vote at the same
+ * term. The other cases assert the gate does not brick a healthy node on a legal crash or a legal Raft
+ * transition. See {@code docs/design/anchor-witness-peer-quorum-2026-07-04.md} section 6.2.
  */
 class AnchorWitnessPeerQuorumTest {
 
@@ -47,9 +46,7 @@ class AnchorWitnessPeerQuorumTest {
         return SnapshotIntegrityTest.keyedEnvelope();
     }
 
-    // ---------------------------------------------------------------------------------------------
     // Test harness: N file-backed nodes on a shared, queue-driven "network".
-    // ---------------------------------------------------------------------------------------------
 
     /** A captured rollback detection from a node's fail-closed handler. */
     private record Rollback(int gid, long bootAnchorSeq, long witnessedSeq, NodeId reporter) {}
@@ -212,9 +209,7 @@ class AnchorWitnessPeerQuorumTest {
         return new RequestVoteRequest(term, candidate, 0, 0, false);
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // 1. THE HEADLINE - R-a' double-vote blocked by a real on-disk rollback + reboot (N=3).
-    // ---------------------------------------------------------------------------------------------
+    // The headline: a double vote blocked by a real on-disk rollback + reboot (N=3).
 
     @Test
     void headline_raPrimeDoubleVoteBlocked_realDiskRollback(@TempDir Path base) {
@@ -267,9 +262,7 @@ class AnchorWitnessPeerQuorumTest {
                 "V must NOT grant a second, conflicting vote at term " + T + " - split-brain blocked");
     }
 
-    // ---------------------------------------------------------------------------------------------
     // 2. Grant -> announce crash race: a crash before the announce+voteGranted leaves the vote UNUSABLE.
-    // ---------------------------------------------------------------------------------------------
 
     @Test
     void grantAnnounceCrashRace_unusableVoteHasNoDoubleUse(@TempDir Path base) {
@@ -306,9 +299,7 @@ class AnchorWitnessPeerQuorumTest {
         assertTrue(v.grantedVoteTo(P), "V's ONE usable vote goes to Y - the earlier vote was never used");
     }
 
-    // ---------------------------------------------------------------------------------------------
     // 3. W1 - legit reboot, no rollback: PASSES and votes (no false positive).
-    // ---------------------------------------------------------------------------------------------
 
     @Test
     void w1_legitReboot_passesAndVotes(@TempDir Path base) {
@@ -334,9 +325,7 @@ class AnchorWitnessPeerQuorumTest {
         assertTrue(v.grantedVoteTo(P), "after a clean reboot V votes normally");
     }
 
-    // ---------------------------------------------------------------------------------------------
     // 4. W2 - advanced past peers (local ahead of the witnessed floor): PASSES (writes lead witnessing).
-    // ---------------------------------------------------------------------------------------------
 
     @Test
     void w2_advancedPastPeers_passes(@TempDir Path base) {
@@ -364,9 +353,7 @@ class AnchorWitnessPeerQuorumTest {
         assertTrue(v.raft.votingClearedForTest(), "an advanced-past-peers node still clears");
     }
 
-    // ---------------------------------------------------------------------------------------------
     // 5. W4 - partition at boot: refuse-to-vote (no brick), then heals when the quorum returns.
-    // ---------------------------------------------------------------------------------------------
 
     @Test
     void w4_partitionAtBoot_noBrick_thenHeals(@TempDir Path base) {
@@ -389,9 +376,7 @@ class AnchorWitnessPeerQuorumTest {
         assertTrue(v.raft.votingClearedForTest(), "V clears the instant a quorum becomes reachable");
     }
 
-    // ---------------------------------------------------------------------------------------------
     // 6. W6 - torn higher slot on crash: dual-slot recovery picks the intact slot; the witness PASSES.
-    // ---------------------------------------------------------------------------------------------
 
     @Test
     void w6_tornHigherSlot_recoversIntactAndPasses(@TempDir Path base) {
@@ -419,9 +404,7 @@ class AnchorWitnessPeerQuorumTest {
         assertTrue(v.raft.votingClearedForTest());
     }
 
-    // ---------------------------------------------------------------------------------------------
     // 7. W7 - legal conflict truncation / compaction only RAISES anchorSeq: the witness never trips.
-    // ---------------------------------------------------------------------------------------------
 
     @Test
     void w7_truncationAndCompaction_onlyRaiseSeq_noTrip(@TempDir Path base) {
@@ -447,9 +430,7 @@ class AnchorWitnessPeerQuorumTest {
         assertTrue(v.raft.votingClearedForTest());
     }
 
-    // ---------------------------------------------------------------------------------------------
     // 8. Strict mode - a granted vote is unusable until a peer-majority acks the announce.
-    // ---------------------------------------------------------------------------------------------
 
     @Test
     void strictMode_voteDeferredUntilPeerMajorityAcks(@TempDir Path base) {
@@ -479,9 +460,7 @@ class AnchorWitnessPeerQuorumTest {
         assertTrue(v.grantedVoteTo(X), "once a peer-majority acked s1, the deferred voteGranted is released");
     }
 
-    // ---------------------------------------------------------------------------------------------
     // 9. N=1 - the gate is disabled (a single voter cannot split-brain); it self-elects normally.
-    // ---------------------------------------------------------------------------------------------
 
     @Test
     void n1_gateDisabled_selfElectsNormally(@TempDir Path base) {
@@ -496,12 +475,10 @@ class AnchorWitnessPeerQuorumTest {
         assertEquals(RaftRole.LEADER, solo.raft.role(), "the single node still becomes leader (gate disabled)");
     }
 
-    // ---------------------------------------------------------------------------------------------
     // 9b. NO-FALSE-REFUSE (rolling restart): a HEALTHY node that CATCHES UP (replication advances its
     //     anchorSeq) DURING its boot window - before the gate clears - must PASS, not brick. While
     //     latched a node advertises its FROZEN bootAnchorSeq, so its own legitimate post-boot advance
     //     is not reflected back by peers as a phantom rollback.
-    // ---------------------------------------------------------------------------------------------
 
     @Test
     void catchUpDuringBoot_healthyNode_notFalseRefused(@TempDir Path base) {
@@ -528,11 +505,9 @@ class AnchorWitnessPeerQuorumTest {
                 "the caught-up healthy node clears its boot gate (no brick on rolling restart)");
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // 9c. DEFAULT (fast-vote) FAILOVER: a running survivor grants a vote IMMEDIATELY with a peer down,
-    //     so a leader can be re-elected on a single fault. This is the failover the CI smoke test caught
-    //     full-strict-default deadlocking (strict-VOTE would defer voteGranted until a peer-majority ack).
-    // ---------------------------------------------------------------------------------------------
+    // Default (fast-vote) failover: a running survivor grants a vote immediately with a peer down, so a
+    //     leader can be re-elected on a single fault. Strict-vote mode defers voteGranted until a
+    //     peer-majority ack, which would deadlock a failover with a peer down.
 
     @Test
     void defaultFastVote_survivorGrantsImmediatelyWithPeerDown_failoverWorks(@TempDir Path base) {
@@ -554,9 +529,7 @@ class AnchorWitnessPeerQuorumTest {
                 "fast-vote default: a survivor grants immediately with a peer down (single-fault failover works)");
     }
 
-    // ---------------------------------------------------------------------------------------------
     // 10. DEFAULT handler halts fail-closed: it throws AnchorRollbackException with the right fields.
-    // ---------------------------------------------------------------------------------------------
 
     @Test
     void defaultHandler_throwsAnchorRollbackException(@TempDir Path base) {

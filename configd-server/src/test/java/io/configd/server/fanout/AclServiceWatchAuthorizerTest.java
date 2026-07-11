@@ -19,11 +19,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The watch-authorization matrix (RFC section 2 W7; scoping matrix items 1-7, 15) for the production
- * {@link AclServiceWatchAuthorizer} - the security-critical adapter branch (KEY uses the single-key
- * floor; PREFIX/FULL/{@code full_chain_verify} use the whole-subtree cover; FULL/{@code
- * full_chain_verify} map to the root effective target {@code ""}). Drives a real {@link AclService}
- * with grants/denies/roles and asserts the {@code authorizeWatch} verdict.
+ * The watch-authorization matrix for the production {@link AclServiceWatchAuthorizer} - the
+ * security-critical adapter branch (KEY uses the single-key floor; PREFIX/FULL/{@code
+ * full_chain_verify} use the whole-subtree cover; FULL/{@code full_chain_verify} map to the root
+ * effective target {@code ""}). Drives a real {@link AclService} with grants/denies/roles and asserts
+ * the {@code authorizeWatch} verdict.
  */
 @DisplayName("AclServiceWatchAuthorizer — the RFC §2 W7 watch-authorization matrix")
 class AclServiceWatchAuthorizerTest {
@@ -73,7 +73,7 @@ class AclServiceWatchAuthorizerTest {
     void interiorDenyRejectsNotNarrowed() {
         AclService acl = new AclService();
         acl.grant("a.", "p", Set.of(READ, WATCH));
-        acl.deny("a.secret.", "p", Set.of(READ)); // a hole carved INSIDE the subtree
+        acl.deny("a.secret.", "p", Set.of(READ)); // a hole carved inside the subtree
         assertFalse(authz(acl, "p", prefix("a.")),
                 "the interior DENY on the descendant a.secret. must reject the whole-subtree watch");
     }
@@ -91,7 +91,7 @@ class AclServiceWatchAuthorizerTest {
     @DisplayName("4 — an over-broad target (grant ⊊ target) is rejected, never narrowed to the subset")
     void overBroadTargetRejectedNotFiltered() {
         AclService acl = new AclService();
-        acl.grant("a.b.", "p", Set.of(READ, WATCH)); // the grant is a STRICT SUBSET of the target a.
+        acl.grant("a.b.", "p", Set.of(READ, WATCH)); // the grant is a strict subset of the target a.
         assertFalse(authz(acl, "p", prefix("a.")),
                 "no ancestor-or-equal ALLOW covers a.; the watch is rejected, not narrowed to a.b.");
     }
@@ -100,7 +100,7 @@ class AclServiceWatchAuthorizerTest {
     @DisplayName("5 — full_chain_verify by a subtree-only principal is rejected (maps to root, W7-3)")
     void fullChainVerifyBySubtreePrincipalRejected() {
         AclService acl = new AclService();
-        acl.grant("a.", "p", Set.of(READ, WATCH)); // a subtree grant, NOT the root ""
+        acl.grant("a.", "p", Set.of(READ, WATCH)); // a subtree grant, not the root ""
         assertFalse(authz(acl, "p", fcvPrefix("a.")),
                 "full_chain_verify streams the whole signed chain ⇒ requires a root-scope grant");
     }
@@ -141,14 +141,12 @@ class AclServiceWatchAuthorizerTest {
         assertFalse(authz(acl, "mallory", full()), "ungranted principal ⇒ reject (FULL)");
     }
 
-    // ---- the KEY-vs-PREFIX/FULL asymmetry (the security-critical branch distinction) ----
-
     @Test
     @DisplayName("KEY is the exact-key floor — NOT blocked by a DENY on a different descendant key")
     void keyWatchNotBlockedByDescendantKeyDeny() {
         AclService acl = new AclService();
         acl.grant("a.", "p", Set.of(READ, WATCH));
-        acl.deny("a.b.c", "p", Set.of(READ)); // a.b.c is a DIFFERENT (descendant) key, not a.b itself
+        acl.deny("a.b.c", "p", Set.of(READ)); // a.b.c is a different (descendant) key, not a.b itself
         assertTrue(authz(acl, "p", key("a.b")),
                 "a KEY watch on the exact path a.b is unaffected by a DENY on the descendant key a.b.c");
         assertFalse(acl.isAllowed("p", "a.b.c", WATCH), "the descendant key a.b.c itself is correctly denied");
@@ -185,8 +183,6 @@ class AclServiceWatchAuthorizerTest {
         assertTrue(authz(acl, "p", prefix("svc.")),
                 "a role granting READ∧WATCH over svc. authorizes the subtree watch");
     }
-
-    // ---- legacy full-store SUBSCRIBE: the whole-store READ cover (READ-only, root prefix) ----
 
     private static boolean authzSubscribe(AclService acl, String principal) {
         return new AclServiceWatchAuthorizer(acl).authorizeSubscribe(principal, Set.of());

@@ -53,12 +53,11 @@ public final class RaftSimulation {
     /**
      * Returns a deterministic per-node {@link RandomGenerator} for driving a
      * node's election timeout, seeded purely from the master simulation seed
-     * and the node id. Previously the harness constructed
-     * the election RNG entropy-seeded ({@code RandomGenerator.of(name)}), so a
-     * fixed seed produced divergent election schedules and failing seeds were
-     * unreplayable. Threading the seed here makes "same seed = same execution"
-     * actually hold for the election RNG too - the master seed is the single
-     * source of all simulated randomness.
+     * and the node id. This keeps "same seed = same execution" holding for the
+     * election RNG too: an entropy-seeded generator (e.g. {@code RandomGenerator.of(name)})
+     * would produce divergent election schedules on every run even with a fixed
+     * simulation seed, making a failing seed unreplayable. The master seed is the
+     * single source of all simulated randomness.
      * <p>
      * Production seeding is unaffected: this lives in the test simulation
      * harness; the live server keeps its own {@link RandomGenerator}.

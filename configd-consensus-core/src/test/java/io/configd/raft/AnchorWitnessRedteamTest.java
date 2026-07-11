@@ -29,31 +29,31 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * RED-TEAM attack suite (Gate 3c) for the peer-quorum {@link AnchorWitness} election-safety guarantee
- * (closes R-a', a within-term votedFor rollback -> double-vote -> split-brain). These go BEYOND
- * {@link AnchorWitnessPeerQuorumTest}: every test PERFORMS an attack on real file-backed {@link RaftNode}s
- * with a genuine on-disk anchor rollback, and - crucially - drives the network with per-frame SELECTIVE
- * delivery so a boot-reply race can be reproduced (the synchronous lock-step {@code settle()} in the
- * builder test cannot express one peer answering before another).
+ * Red-team attack suite for the peer-quorum {@link AnchorWitness} election-safety guarantee: closes a
+ * within-term votedFor rollback that would otherwise let a node double-vote and cause a split-brain.
+ * These go beyond {@link AnchorWitnessPeerQuorumTest}: every test performs an attack on real file-backed
+ * {@link RaftNode}s with a genuine on-disk anchor rollback, and - crucially - drives the network with
+ * per-frame selective delivery so a boot-reply race can be reproduced (the synchronous lock-step
+ * {@code settle()} in the builder test cannot express one peer answering before another).
  *
  * <p>Two classes of claim are attacked:
  * <ul>
- *   <li>SAFETY: a real rollback is REFUSED and the victim never casts a second, conflicting vote.</li>
- *   <li>NO-FALSE-REFUSE: a legal reboot / partition / Raft rewrite is NOT bricked.</li>
+ *   <li>SAFETY: a real rollback is refused and the victim never casts a second, conflicting vote.</li>
+ *   <li>NO-FALSE-REFUSE: a legal reboot / partition / Raft rewrite is not bricked.</li>
  * </ul>
  *
- * <p>The boot gate is ALWAYS strict (peer-MAJORITY of QUERY replies). An earlier design cleared it on a
+ * <p>The boot gate is always strict (peer-majority of QUERY replies). An earlier design cleared it on a
  * self-counting cluster quorum (self + a single peer), which had an adversary-reachable boot-reply race:
- * a peer that missed the vote announce (ordinary packet loss - NOT a peer crash) answering first cleared
- * the gate before a healthy-but-slower witness replied -> a rolled-back node false-passed. The operator
- * ruled the peer-majority boot gate the DEFAULT (two witness quorums then always intersect, so a witness
- * is always in the boot-reply set), so that race is now REFUSED by default
- * ({@link #defaultBoot_singleNonWitnessReplyRace_refusedByPeerMajorityBootGate}). Vote DEFERRAL (full
+ * a peer that missed the vote announce (ordinary packet loss - not a peer crash) answering first cleared
+ * the gate before a healthy-but-slower witness replied, so a rolled-back node false-passed. The
+ * peer-majority boot gate is the default (two witness quorums then always intersect, so a witness is
+ * always in the boot-reply set), so that race is now refused by default
+ * ({@link #defaultBoot_singleNonWitnessReplyRace_refusedByPeerMajorityBootGate}). Vote deferral (full
  * strict) is a separate opt-in ({@link #strictMode_singleNonWitnessReplyRace_closed} /
- * {@link #strictMode_voteDeferredUntilPeerMajorityAcks}); it is NOT the default because deferring
+ * {@link #strictMode_voteDeferredUntilPeerMajorityAcks}); it is not the default because deferring
  * voteGranted breaks single-fault leader failover.
  *
- * <p>See {@code docs/design/anchor-witness-peer-quorum-2026-07-04.md} (design) and the red-team report.
+ * <p>See {@code docs/design/anchor-witness-peer-quorum-2026-07-04.md}.
  */
 class AnchorWitnessRedteamTest {
 
@@ -66,9 +66,7 @@ class AnchorWitnessRedteamTest {
         return SnapshotIntegrityTest.keyedEnvelope();
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // Harness: file-backed nodes on a queue network with PER-FRAME selective delivery + real disk ops.
-    // ---------------------------------------------------------------------------------------------
+    // Harness: file-backed nodes on a queue network with per-frame selective delivery and real disk ops.
 
     private record Rollback(int gid, long bootAnchorSeq, long witnessedSeq, NodeId reporter) {}
 
@@ -263,10 +261,8 @@ class AnchorWitnessRedteamTest {
         return new RequestVoteRequest(term, candidate, 0, 0, false);
     }
 
-    // =============================================================================================
-    // 1. HEADLINE - a real disk rollback is REFUSED; the victim never double-votes, and cannot be
-    //    coaxed back into voting by adopting higher terms (the "stay latched forever" claim).
-    // =============================================================================================
+    // Headline: a real disk rollback is refused; the victim never double-votes, and cannot be
+    // coaxed back into voting by adopting higher terms (it stays latched forever).
 
     @Test
     void headline_realRollbackRefused_andAdoptForwardCannotUnlatch(@TempDir Path base) {
@@ -316,10 +312,8 @@ class AnchorWitnessRedteamTest {
         assertFalse(v.raft.votingClearedForTest(), "V is latched forever until an operator intervenes");
     }
 
-    // =============================================================================================
-    // 2. Announce-before-grant ordering is LOAD-BEARING: the witness announce to peers is emitted
-    //    BEFORE the voteGranted to the candidate. (A crash in that window leaves the vote unusable.)
-    // =============================================================================================
+    // Announce-before-grant ordering is load-bearing: the witness announce to peers is emitted
+    // before the voteGranted to the candidate. A crash in that window leaves the vote unusable.
 
     @Test
     void announceBeforeGrant_orderingIsLoadBearing(@TempDir Path base) {
@@ -373,12 +367,10 @@ class AnchorWitnessRedteamTest {
         assertTrue(v.grantedVoteTo(P), "V's ONE usable vote goes to P - the never-delivered vote is not a double-USE");
     }
 
-    // =============================================================================================
-    // 3. The boot-reply race is CLOSED BY DEFAULT. An earlier self-counting boot quorum (self + one
-    //    peer) let a single NON-witness peer answering first false-pass a rolled-back node. The DEFAULT
-    //    is now a peer-MAJORITY boot gate, so the same scenario (ordinary announce packet-loss + a
-    //    boot-reply race, NO peer crash) is REFUSED - even in the default fast-vote mode.
-    // =============================================================================================
+    // The boot-reply race is closed by default. An earlier self-counting boot quorum (self + one
+    // peer) let a single non-witness peer answering first false-pass a rolled-back node. The default
+    // is now a peer-majority boot gate, so the same scenario (ordinary announce packet-loss plus a
+    // boot-reply race, no peer crash) is refused - even in the default fast-vote mode.
 
     @Test
     void defaultBoot_singleNonWitnessReplyRace_refusedByPeerMajorityBootGate(@TempDir Path base) {
@@ -424,7 +416,7 @@ class AnchorWitnessRedteamTest {
         assertEquals(s1, v.rollback.witnessedSeq());
         assertFalse(v.raft.votingClearedForTest());
 
-        // No R-a' double-vote at term T: V stays latched and denies a second candidate.
+        // No double-vote at term T: V stays latched and denies a second candidate.
         v.sent.clear();
         v.raft.handleMessage(voteReq(T, P));
         assertFalse(v.grantedVoteTo(P),
@@ -497,9 +489,7 @@ class AnchorWitnessRedteamTest {
         assertTrue(v.grantedVoteTo(X), "peer-majority acked s1 -> the deferred voteGranted is released");
     }
 
-    // =============================================================================================
-    // 4. NO-FALSE-REFUSE battery - a spurious refuse bricks a HEALTHY node, which is as bad as a miss.
-    // =============================================================================================
+    // No-false-refuse battery: a spurious refuse bricks a healthy node, which is as bad as a miss.
 
     @Test
     void w1_cleanReboot_passesAndVotes(@TempDir Path base) {
@@ -672,9 +662,7 @@ class AnchorWitnessRedteamTest {
         assertFalse(v.raft.votingClearedForTest(), "the safe direction: refuse-and-escalate, not silent accept");
     }
 
-    // =============================================================================================
-    // 5. N=1 / N=2 boundary.
-    // =============================================================================================
+    // N=1 / N=2 boundary.
 
     @Test
     void n1_gateDisabled_selfElects(@TempDir Path base) {
@@ -718,12 +706,10 @@ class AnchorWitnessRedteamTest {
         assertFalse(v.raft.votingClearedForTest());
     }
 
-    // =============================================================================================
-    // 6. CHANGE VALIDATION - advertisedAnchorSeq() boot-window FREEZE (the brick-on-rolling-restart fix).
-    //    While latched, a node advertises its FROZEN bootAnchorSeq (not its live, possibly-caught-up seq),
-    //    so a healthy node replicated-to during its boot window is not FALSE-refused. Must not (a) brick a
-    //    healthy caught-up node, nor (b) let a real rollback hide behind a boot-window catch-up.
-    // =============================================================================================
+    // advertisedAnchorSeq() freezes during the boot window: while latched, a node advertises its
+    // frozen bootAnchorSeq, not its live (possibly caught-up) seq, so a healthy node replicated to
+    // during its boot window is not falsely refused. Must not (a) brick a healthy caught-up node,
+    // nor (b) let a real rollback hide behind a boot-window catch-up.
 
     /** A leader AppendEntries a booting follower applies - raises its LIVE anchorSeq above bootAnchorSeq. */
     private static AppendEntriesRequest catchUpAppend(long term, NodeId leader) {

@@ -46,11 +46,11 @@ final class ChainedWal {
      * <p>
      * It also lays down a matching {@code raft-anchor} beside the WAL, maintaining the anchor invariants
      * exactly as {@link RaftLog} does on append - {@code currentTerm} rises to the appended term (a
-     * standalone term write) and {@code lastDurableIndex/Term} tracks the head. So a WELL-FORMED crafted
-     * WAL recovers cleanly (the anchor is consistent), while a crafted ATTACK (a tail rolled back to an
-     * older term, a front truncation) trips an anchor gate - which is exactly what Gate 3 exists to
-     * catch. Tests that simulate a compaction call {@link #setSnapshot} (replacing the removed bare
-     * {@code raft-log.snapshot-meta}).
+     * standalone term write) and {@code lastDurableIndex/Term} tracks the head. So a well-formed crafted
+     * WAL recovers cleanly (the anchor is consistent), while a crafted attack (a tail rolled back to an
+     * older term, a front truncation) trips the anchor gate that guards against exactly that. Tests
+     * that simulate a compaction call {@link #setSnapshot}, which writes the anchor's snapshot
+     * boundary directly.
      */
     static final class Writer {
         private final Storage storage;
@@ -87,7 +87,7 @@ final class ChainedWal {
             return chainHead;
         }
 
-        /** Sets the anchor's authenticated snapshot boundary (replaces the removed bare snapshot-meta). */
+        /** Sets the anchor's authenticated snapshot boundary. */
         void setSnapshot(long snapshotIndex, long snapshotTerm) {
             anchor.writeSnapshot(snapshotIndex, snapshotTerm,
                     anchor.current().lastDurableIndex(), anchor.current().lastDurableTerm());

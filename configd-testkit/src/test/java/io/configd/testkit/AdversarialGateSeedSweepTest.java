@@ -13,10 +13,10 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Gate seed sweep (design section 5, gate tier): runs the full adversarial configuration
+ * Gate seed sweep: runs the full adversarial configuration
  * (all fault classes + concurrent workload) over a <b>fixed, committed</b> set of
  * >=500 seeds with continuous invariant checking after every tick. This is the
- * Fast, deterministic, no-flake safety sweep. A safety violation on any seed
+ * fast, deterministic, no-flake safety sweep. A safety violation on any seed
  * fails the build naming that seed (replayable forever).
  * <p>
  * Runs as a single surefire invocation (one {@code @Test}). Runtime target <=2 min

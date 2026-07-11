@@ -43,19 +43,19 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The LIVE write/read routing proof. Drives the REAL production seams
+ * The live write/read routing proof. Drives the real production seams
  * ({@link ConfigdServer#raftProposer(MultiRaftDriver, StaticShardMap, long, ConfigdMetrics)} and
- * {@link ConfigdServer#shardedConfigReader}) over N real single-node groups (built via the Seam-C
- * {@code buildRaftGroup} + owner pool), so this is live routing - not a sim.
+ * {@link ConfigdServer#shardedConfigReader}) over N real single-node groups (built via
+ * {@code buildRaftGroup} + owner pool), so this is live routing, not a simulation.
  *
  * <ul>
- *   <li><b>Write routing + isolation (S2/S4):</b> a write for key k routes to {@code shardFor(GLOBAL,k)}'s
- *       group and applies to THAT shard's store only; no sibling shard sees it.</li>
- *   <li><b>Read routing:</b> the sharded reader resolves the SAME shard the writer used, so a read of k
+ *   <li><b>Write routing + isolation:</b> a write for key k routes to {@code shardFor(GLOBAL,k)}'s
+ *       group and applies to that shard's store only; no sibling shard sees it.</li>
+ *   <li><b>Read routing:</b> the sharded reader resolves the same shard the writer used, so a read of k
  *       returns the committed value; {@code getPrefix} scatter-gathers across shards.</li>
- *   <li><b>Cross-shard DISCLAIM guard:</b> a multi-key write whose keys span shards is rejected
+ *   <li><b>Cross-shard guard:</b> a multi-key write whose keys span shards is rejected
  *       ({@code CrossShardRejected}) before any Raft work.</li>
- *   <li><b>Shard-aware redirect:</b> the leader hint resolves the OWNING shard's leader.</li>
+ *   <li><b>Shard-aware redirect:</b> the leader hint resolves the owning shard's leader.</li>
  *   <li><b>N=1 byte-identity:</b> the sharded reader over one group is the single store.</li>
  * </ul>
  */
@@ -74,8 +74,6 @@ class ShardedRoutingTest {
         }
     }
 
-    // ---- write routing + per-shard isolation ------------------------------------------------
-
     @Test
     void writeRoutesToOwningShardAndIsolatesAcrossShards(@TempDir Path dataDir) throws Exception {
         final int n = 4;
@@ -83,7 +81,7 @@ class ShardedRoutingTest {
         ConfigWriteService.RaftProposer proposer =
                 ConfigdServer.raftProposer(fx.driver, fx.shardMap, TIMEOUT_MS, metrics());
 
-        // Use keys that demonstrably spread across shards; commit each via the PRODUCTION proposer.
+        // Use keys that demonstrably spread across shards; commit each via the production proposer.
         List<String> keys = List.of("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf");
         boolean sawMultipleShards = false;
         int firstShard = fx.shardMap.shardFor(SCOPE, keys.get(0));
@@ -95,10 +93,10 @@ class ShardedRoutingTest {
             if (shard != firstShard) {
                 sawMultipleShards = true;
             }
-            // The key lands in its OWNING shard's store...
+            // The key lands in its owning shard's store...
             assertTrue(fx.runtimes.get(shard).configStore().get(key).found(),
                     "key '" + key + "' must be applied to its owning shard " + shard);
-            // ...and in NO other shard's store (cross-shard isolation).
+            // ...and in no other shard's store (cross-shard isolation).
             for (int g = 0; g < n; g++) {
                 if (g != shard) {
                     assertFalse(fx.runtimes.get(g).configStore().get(key).found(),
@@ -108,8 +106,6 @@ class ShardedRoutingTest {
         }
         assertTrue(sawMultipleShards, "vacuity: the test keys must span more than one shard at N=" + n);
     }
-
-    // ---- read routing: the sharded reader resolves the same shard the writer used -----------
 
     @Test
     void shardedReaderReadsTheOwningShardAndScatterGathersPrefix(@TempDir Path dataDir) throws Exception {
@@ -125,7 +121,7 @@ class ShardedRoutingTest {
             assertInstanceOf(ConfigWriteService.ProposeCommitResult.Committed.class,
                     proposer.propose(SCOPE, List.of(key), put(key, "val-" + key)));
         }
-        // The reader resolves the SAME shard the writer used -> every committed key is visible.
+        // The reader resolves the same shard the writer used -> every committed key is visible.
         for (String key : keys) {
             io.configd.store.ReadResult rr = reader.get(key);
             assertTrue(rr.found(), "sharded reader must find committed key '" + key + "'");
@@ -153,8 +149,6 @@ class ShardedRoutingTest {
         assertEquals(1, fx.runtimes.size(), "N=1 ⇒ exactly one shard");
     }
 
-    // ---- cross-shard DISCLAIM guard on the live write path ----------------------------------
-
     @Test
     void crossShardMultiKeyWriteIsRejected(@TempDir Path dataDir) throws Exception {
         final int n = 4;
@@ -162,7 +156,6 @@ class ShardedRoutingTest {
         ConfigWriteService.RaftProposer proposer =
                 ConfigdServer.raftProposer(fx.driver, fx.shardMap, TIMEOUT_MS, metrics());
 
-        // Find two keys that resolve to DIFFERENT shards.
         String[] spanning = twoKeysOnDifferentShards(fx.shardMap);
         var result = proposer.propose(SCOPE, List.of(spanning[0], spanning[1]),
                 put(spanning[0], "x")); // command body is irrelevant - rejected pre-append
@@ -171,14 +164,12 @@ class ShardedRoutingTest {
         assertTrue(rejected.reason().contains("cross-shard"),
                 "rejection must carry a clear cross-shard reason: " + rejected.reason());
 
-        // And a co-located multi-key write (both keys on ONE shard) is NOT rejected by the guard.
+        // And a co-located multi-key write (both keys on one shard) is not rejected by the guard.
         String[] coLocated = twoKeysOnSameShard(fx.shardMap);
         var ok = proposer.propose(SCOPE, List.of(coLocated[0], coLocated[1]), put(coLocated[0], "y"));
         assertFalse(ok instanceof ConfigWriteService.ProposeCommitResult.CrossShardRejected,
                 "a co-located multi-key write must NOT be cross-shard rejected");
     }
-
-    // ---- shard-aware leader redirect --------------------------------------------------------
 
     @Test
     void leaderHintResolvesTheOwningShardLeader(@TempDir Path dataDir) throws Exception {
@@ -189,8 +180,8 @@ class ShardedRoutingTest {
             io.configd.raft.RaftNode owner = fx.driver.getGroup(fx.shardMap.shardFor(scope, key));
             return owner != null ? owner.leaderId() : null;
         };
-        // Every group is its own single-node leader (NODE), so the hint for ANY key is NODE - but the
-        // point is that it is resolved on the OWNING shard's node, not a captured group-0 node.
+        // Every group is its own single-node leader (NODE), so the hint for any key is NODE - but the
+        // point is that it is resolved on the owning shard's node, not a captured group-0 node.
         for (String key : List.of("alpha", "bravo", "charlie", "delta", "echo")) {
             int shard = fx.shardMap.shardFor(SCOPE, key);
             assertEquals(fx.driver.getGroup(shard).leaderId(), hint.currentLeader(SCOPE, key),
@@ -198,8 +189,6 @@ class ShardedRoutingTest {
             assertEquals(NODE, hint.currentLeader(SCOPE, key), "single-node leader is NODE");
         }
     }
-
-    // ---- the LIVE HTTP read path is sharded (closes the reviewers' test-gap) ----------------
 
     @Test
     void staleGetIsShardedThroughTheHttpHandler(@TempDir Path dataDir) throws Exception {
@@ -209,10 +198,12 @@ class ShardedRoutingTest {
                 ConfigdServer.raftProposer(fx.driver, fx.shardMap, TIMEOUT_MS, metrics());
         ConfigReadService.ConfigReader reader =
                 ConfigdServer.shardedConfigReader(fx.shardMap, fx.runtimesByGid, fx.runtimes, SCOPE);
-        // Stale path doesn't confirm leadership, but the service requires a (now keyed+scoped) confirmer.
+        // The stale path doesn't confirm leadership, but the service still requires a keyed, scoped
+        // confirmer.
         ConfigReadService readService = new ConfigReadService(reader, (scope, key) -> true);
 
-        // A key on a shard k!=0 - so reading the captured GROUP-0 store (the pre-fix bug) would 404.
+        // A key on shard k != 0: reading the captured group-0 store directly (instead of routing
+        // through the sharded reader) would 404.
         String key = keyOnNonZeroShard(fx.shardMap);
         int shard = fx.shardMap.shardFor(SCOPE, key);
         assertNotEquals(0, shard, "test key must be on a non-zero shard for non-vacuity");
@@ -223,8 +214,9 @@ class ShardedRoutingTest {
         assertFalse(group0Store.get(key).found(),
                 "control: a shard-" + shard + " key must NOT be in the group-0 store");
 
-        // Wire the handler EXACTLY as the server does: stale reads via the sharded readService, keyed hint,
-        // and the legacy group-0 configStore as the (now-unused for sharded reads) direct field. Auth off.
+        // Wire the handler exactly as the server does: stale reads go through the sharded readService
+        // with a keyed hint; the group-0 configStore is passed as the direct-field parameter but
+        // sharded reads do not use it. Auth off.
         AdminApiHandler handler = new AdminApiHandler(
                 new HealthService(), /* exporter */ null, group0Store, /* writeService */ null,
                 readService, /* auth */ null, /* acl */ null, StrongReadPolicy.defaultPolicy(),
@@ -241,8 +233,6 @@ class ShardedRoutingTest {
         assertEquals("sharded-value", new String(resp.body(), StandardCharsets.UTF_8));
     }
 
-    // ---- Wiring Increment 1: read-your-writes per scope (the same (scope,key) routes write + read) ----
-
     @Test
     void scopeAwareReadYourWritesAtN1ForEveryScope(@TempDir Path dataDir) throws Exception {
         Fixture fx = bringUp(1, dataDir);
@@ -252,9 +242,9 @@ class ShardedRoutingTest {
                 ConfigdServer.shardedConfigReader(fx.shardMap, fx.runtimesByGid, fx.runtimes, ConfigScope.GLOBAL);
         ConfigReadService readService = new ConfigReadService(reader, (scope, key) -> true);
 
-        // For EVERY scope, a write to (scope, key) is read back from (scope, key). At N=1 every scope =>
-        // group 0, so read-your-writes holds and is byte-identical regardless of scope (the increment is
-        // a no-op on routing at N=1).
+        // For every scope, a write to (scope, key) is read back from (scope, key). At N=1 every scope
+        // maps to group 0, so read-your-writes holds regardless of scope: scope has no effect on
+        // routing at N=1.
         for (ConfigScope scope : ConfigScope.values()) {
             String key = "ryow-" + scope;
             assertInstanceOf(ConfigWriteService.WriteResult.Committed.class,
@@ -277,7 +267,7 @@ class ShardedRoutingTest {
                 ConfigdServer.shardedConfigReader(fx.shardMap, fx.runtimesByGid, fx.runtimes, ConfigScope.GLOBAL);
 
         // A key whose REGIONAL shard differs from its GLOBAL shard (scope folds into the hash, so the
-        // wiring is NON-vacuous: scope genuinely selects a different shard at N>1).
+        // wiring is non-vacuous: scope genuinely selects a different shard at N>1).
         String key = keyWithDifferentShardPerScope(fx.shardMap, ConfigScope.GLOBAL, ConfigScope.REGIONAL);
         int regionalShard = fx.shardMap.shardFor(ConfigScope.REGIONAL, key);
         int globalShard = fx.shardMap.shardFor(ConfigScope.GLOBAL, key);
@@ -287,8 +277,8 @@ class ShardedRoutingTest {
         assertInstanceOf(ConfigWriteService.WriteResult.Committed.class,
                 writeService.put(key, "regional-value".getBytes(StandardCharsets.UTF_8), ConfigScope.REGIONAL));
 
-        // Read-your-writes holds ONLY for the matching scope: a REGIONAL read hits its shard; a GLOBAL
-        // read routes to a DIFFERENT shard and misses. This proves the read path actually routes by the
+        // Read-your-writes holds only for the matching scope: a REGIONAL read hits its shard; a GLOBAL
+        // read routes to a different shard and misses. This proves the read path actually routes by the
         // caller's scope (not vacuously GLOBAL) - the core read-your-writes-per-scope guarantee at N>1.
         io.configd.store.ReadResult matched = reader.get(ConfigScope.REGIONAL, key);
         assertTrue(matched.found(), "a REGIONAL read of a REGIONAL write must hit its shard " + regionalShard);
@@ -308,8 +298,6 @@ class ShardedRoutingTest {
         }
         throw new AssertionError("could not find a key routing differently for " + a + " vs " + b);
     }
-
-    // ---- fixture / helpers ------------------------------------------------------------------
 
     private record Fixture(MultiRaftDriver driver, StaticShardMap shardMap,
                            List<ConfigdServer.RaftGroupRuntime> runtimes,

@@ -18,8 +18,7 @@ import java.util.stream.Collectors;
 /**
  * Resolves a {@link Credential} against an ORDERED, TYPE-DISPATCHED, FAIL-CLOSED set of
  * {@link Authenticator}s. This is the security core: it never "tries each until one says yes" (that is how
- * a forged or unavailable credential slips through a weaker path). The rules (from the auth-SPI design's
- * RA-1..RA-4 contract):
+ * a forged or unavailable credential slips through a weaker path). The rules:
  *
  * <ul>
  *   <li>{@link Authenticator#canAttempt} is a cheap type filter; an authenticator that does not handle the
@@ -103,8 +102,6 @@ public final class AuthenticatorChain {
         return authenticators.stream().map(Authenticator::type).collect(Collectors.toUnmodifiableList());
     }
 
-    // ---- construction from config (hybrid name-selection + ServiceLoader, fail-loud) --------------
-
     /**
      * The ordered provider names the operator configured: {@code configd.auth.providers} (a comma list, the
      * chain) if set, else {@code configd.auth.mode} (a single provider) if set, else empty (authentication
@@ -139,7 +136,7 @@ public final class AuthenticatorChain {
     /**
      * Builds a chain for the given ordered provider {@code names}. Built-in providers ({@code none},
      * {@code bearer}, {@code basic}, {@code mtls}) are wired directly; any other name is discovered via
-     * {@link ServiceLoader}&lt;{@link AuthenticatorFactory}&gt;. Fail-loud (RA-7): an unknown name is a
+     * {@link ServiceLoader}&lt;{@link AuthenticatorFactory}&gt;. Fail-loud: an unknown name is a
      * startup error, as is a ServiceLoader factory that duplicates or shadows another provider's type.
      */
     public static AuthenticatorChain build(List<String> names, ConfigSource cfg) {
@@ -147,7 +144,7 @@ public final class AuthenticatorChain {
             throw new IllegalStateException("no authentication providers configured (empty chain is not allowed)");
         }
         // 'none' (authentication disabled) is an all-or-nothing posture: mixing it with real authenticators
-        // is an ambiguous "optional auth" that v1 does not support. Reject it loudly rather than guess.
+        // is an ambiguous "optional auth" that is not supported. Reject it loudly rather than guess.
         if (names.contains("none") && names.size() > 1) {
             throw new IllegalStateException("authentication provider 'none' (auth disabled) cannot be combined "
                     + "with other providers - it is all-or-nothing; got: " + names);

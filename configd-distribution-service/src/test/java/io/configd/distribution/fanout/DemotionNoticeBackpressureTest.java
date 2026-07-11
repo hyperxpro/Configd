@@ -25,20 +25,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Pins the demotion-notice backpressure contract: {@code demote()} must not emit the
- * DEMOTED_TO_CATCHUP notice through the regular {@code emit()} path, whose refusal semantics
- * mark the session CLOSED and record a phantom {@code onSessionClosed("transport_gone")} -
- * and the demote tail would then resurrect the session to CATCHUP. Under a full outbound
- * queue the refusal is near-certain when the demotion reason is TRANSPORT_BLOCK (the queue
- * is full by definition).
+ * DEMOTED_TO_CATCHUP notice through the regular {@code emit()} path, whose refusal
+ * semantics mark the session CLOSED and record a phantom
+ * {@code onSessionClosed(transport_gone)}, with the demote tail then resurrecting the
+ * session to CATCHUP. Under a full outbound queue the refusal is near-certain when the
+ * demotion reason is TRANSPORT_BLOCK, since the queue is full by definition.
  *
- * <p><b>Pinned behavior (the WOULD-BLOCK doctrine):</b> a refused demotion-notice offer is
- * transport backpressure, not transport death. The notice is advisory (the snapshot that
- * follows is the load-bearing signal); it is retained and re-offered each tick AHEAD of the
- * snapshot transfer, so the wire order (notice, BEGIN..chunks..END) is preserved, the notice
- * is delivered exactly once, and the session never records a close it did not perform.
+ * <p><b>Pinned behavior, the would-block doctrine:</b> a refused demotion-notice offer is
+ * transport backpressure, not transport death. The notice is advisory, since the snapshot
+ * that follows is the load-bearing signal; it is retained and re-offered each tick ahead of
+ * the snapshot transfer, so the wire order (notice, then BEGIN through chunks through END)
+ * is preserved, the notice is delivered exactly once, and the session never records a
+ * close it did not perform.
  *
- * <p>Deterministic, no threads - follows the {@link BootstrapSnapshotBackpressureTest}
- * pattern: the test plays the writer's role by draining the bounded sink between ticks.
+ * <p>Deterministic, no threads, following the {@link BootstrapSnapshotBackpressureTest}
+ * pattern: the test plays the role of the writer by draining the bounded sink between
+ * ticks.
  */
 class DemotionNoticeBackpressureTest {
 
@@ -59,7 +61,7 @@ class DemotionNoticeBackpressureTest {
         @Override
         public boolean offer(EdgeFrame frame) {
             if (closed || queued.size() >= capacity) {
-                return false; // non-blocking bounded queue: full = would-block
+                return false; // a non-blocking bounded queue treats full as would-block
             }
             queued.addLast(frame);
             return true;
@@ -87,7 +89,7 @@ class DemotionNoticeBackpressureTest {
         }
     }
 
-    /** Records the metric stream the register row indicts (phantom session closes). */
+    /** Records the metric stream, to catch phantom session closes. */
     private static final class RecordingMetrics implements FanOutSessionMetrics {
         final List<String> sessionClosedReasons = new ArrayList<>();
         final List<String> demotionReasons = new ArrayList<>();
@@ -112,7 +114,7 @@ class DemotionNoticeBackpressureTest {
                 List.of(new ConfigMutation.Put(key, val.getBytes(StandardCharsets.UTF_8))))));
     }
 
-    /** A ~1 KiB value so each notification exceeds batchMaxBytes => one NOTIFY frame each. */
+    /** A value of about 1 KiB so each notification exceeds batchMaxBytes, giving one NOTIFY frame each. */
     private static String fatValue(int i) {
         return ("v" + i + "-").repeat(180);
     }
@@ -120,9 +122,9 @@ class DemotionNoticeBackpressureTest {
     private FanOutSessionCore newSession(FanOutBuffer buffer, TransportSink sink,
                                          FanOutSessionMetrics metrics) {
         ReplaySource replay = new SnapshotReplaySource(() -> new ConfigSnapshot(auth, version, 0L));
-        // batchMaxBytes 64 => each ~1 KiB notification is its own NOTIFY frame, so a
-        // capacity-1 sink refuses the SECOND frame => TRANSPORT_BLOCK demotion with the
-        // queue genuinely full (the queue-full-at-TRANSPORT_BLOCK condition this test pins).
+        // With batchMaxBytes at 64, each notification of about 1 KiB is its own NOTIFY
+        // frame, so a capacity-1 sink refuses the second frame, giving a TRANSPORT_BLOCK
+        // demotion with the queue genuinely full, the condition this test pins.
         FanOutConfig cfg = new FanOutConfig(64, 80, 64, 64, 8_192L, 250L, 5L, 1_024);
         return new FanOutSessionCore(buffer, replay, sink, cfg, metrics, clock);
     }
@@ -134,15 +136,15 @@ class DemotionNoticeBackpressureTest {
         RecordingMetrics metrics = new RecordingMetrics();
         FanOutSessionCore session = newSession(buffer, sink, metrics);
 
-        // Subscribe on the empty buffer => TAIL/STREAMING mode.
+        // Subscribe on the empty buffer, giving TAIL/STREAMING mode.
         session.onSubscribe(new EdgeFrame.Subscribe(true, List.of(), 0L, -1L, "edge-rr104"));
         sink.drain(1); // SUBSCRIBE_OK onto the wire
         assertEquals(EdgeFrame.Mode.TAIL,
                 sink.delivered(EdgeFrame.SubscribeOk.class).get(0).mode());
 
-        // Three fat commits => three would-be NOTIFY frames. The capacity-1 sink accepts the
-        // first and refuses the second => demote(TRANSPORT_BLOCK) with the queue FULL, so the
-        // demotion-notice offer inside demote() is also refused.
+        // Three fat commits would produce three NOTIFY frames. The capacity-1 sink accepts
+        // the first and refuses the second, demoting with TRANSPORT_BLOCK while the queue
+        // is full, so the demotion-notice offer inside demote() is also refused.
         commit(buffer, "rr104/k1", fatValue(1));
         commit(buffer, "rr104/k2", fatValue(2));
         commit(buffer, "rr104/k3", fatValue(3));
@@ -151,9 +153,9 @@ class DemotionNoticeBackpressureTest {
 
         assertEquals(List.of(DemotionEvent.REASON_TRANSPORT_BLOCK), metrics.demotionReasons,
                 "the full sink must demote with TRANSPORT_BLOCK");
-        // Pre-fix, the refused notice routed through emit() marked the session CLOSED +
-        // recorded a phantom onSessionClosed("transport_gone"), and the demote tail
-        // resurrected it - a close the session never performed.
+        // A refused notice must never route through emit() and mark the session CLOSED,
+        // or record a phantom onSessionClosed(transport_gone), or let the demote tail
+        // resurrect the session - that would be a close the session never performed.
         assertEquals(List.of(), metrics.sessionClosedReasons,
                 "a refused ADVISORY demotion notice is WOULD-BLOCK, not transport death — "
                         + "no session-close may be recorded (RR-104)");
@@ -161,7 +163,8 @@ class DemotionNoticeBackpressureTest {
                 "the demoted session owes a snapshot (CATCHUP), with no close/resurrect");
 
         // Play the writer: drain and tick until the owed snapshot lands. The retained
-        // notice must go out FIRST (wire order preserved), then BEGIN..chunks..END.
+        // notice must go out first, preserving wire order, then BEGIN through chunks
+        // through END.
         int guard = 0;
         while (sink.delivered(EdgeFrame.SnapshotEnd.class).isEmpty()) {
             assertTrue(++guard < 10_000, "transfer must complete once the writer drains");
@@ -192,16 +195,16 @@ class DemotionNoticeBackpressureTest {
 
     @Test
     void acceptedDemotionNoticeBehaviorIsUnchangedWhenTheSinkNeverRefuses() {
-        // Baseline: when the transport never refuses,
-        // the notice is emitted at demote() time in the same tick, exactly as before.
+        // Baseline: when the transport never refuses, the notice is emitted at demote()
+        // time in the same tick, immediately.
         FanOutBuffer buffer = new FanOutBuffer(4); // tiny ring: evictions force a GAP
         BoundedDrainingSink sink = new BoundedDrainingSink(Integer.MAX_VALUE);
         RecordingMetrics metrics = new RecordingMetrics();
         FanOutSessionCore session = newSession(buffer, sink, metrics);
 
         session.onSubscribe(new EdgeFrame.Subscribe(true, List.of(), 0L, -1L, "edge-rr104b"));
-        // Overflow the 4-slot ring so readSince(0) is a GAP => demote(GAP) with a sink that
-        // accepts everything.
+        // Overflow the 4-slot ring so readSince(0) is a gap, demoting with GAP, against a
+        // sink that accepts everything.
         for (int i = 1; i <= 8; i++) {
             commit(buffer, "rr104b/k" + i, "v" + i);
         }
@@ -210,7 +213,7 @@ class DemotionNoticeBackpressureTest {
 
         assertEquals(List.of(DemotionEvent.REASON_GAP), metrics.demotionReasons);
         assertEquals(List.of(), metrics.sessionClosedReasons);
-        // The owed transfer runs on the NEXT tick (the established demote->tick flow).
+        // The owed transfer runs on the next tick, the established demote-then-tick flow.
         clock.advance(1);
         session.tick(clock.now());
         sink.drain(Integer.MAX_VALUE);

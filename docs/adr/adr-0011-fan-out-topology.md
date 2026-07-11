@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-Config changes committed to Raft groups must reach 10K-1M edge nodes within < 500ms p99 globally. The propagation mechanism must handle slow consumers, network partitions, and node churn while maintaining O(N) message complexity. Cloudflare Quicksilver's hierarchical replication tree exhibits 30-second failover thresholds when intermediate nodes fail, and the additive latency of tree depth makes sub-second global propagation unreliable at scale (the gap analysis). The system targets < 500ms p99 edge staleness and < 1ms p99 edge reads (section 0.1).
+Config changes committed to Raft groups must reach 10K-1M edge nodes within < 500ms p99 globally. The propagation mechanism must handle slow consumers, network partitions, and node churn while maintaining O(N) message complexity. Cloudflare Quicksilver's hierarchical replication tree exhibits 30-second failover thresholds when intermediate nodes fail, and the additive latency of tree depth makes sub-second global propagation unreliable at scale. The system targets < 500ms p99 edge staleness and < 1ms p99 edge reads.
 
 ## Decision
 We adopt a **two-layer fan-out topology**:

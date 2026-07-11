@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * -> readmitted with the snapshot-first re-bootstrap forced -> CATCHUP -> HEALTHY, with the
  * edge invariants checked every tick and the edge converging at the end.
  *
- * <p>Also the screen C4-3 scenario: a HEALTHY edge that flaps purely from injected network
+ * <p>Also covers the C4-3 scenario: a HEALTHY edge that flaps purely from injected network
  * loss (partition/heal cycles crossing the replay horizon - GAP recoveries, not slowness)
  * recovers every time and never escalates: zero refusals, zero quarantines, zero
  * governor transitions.
@@ -39,8 +39,8 @@ import static org.junit.jupiter.api.Assertions.fail;
 class SlowConsumerStateMachineWalkTest {
 
     private static final int CP_NODES = 3;
-    /** One edge: the walking actor. (Identity independence is the process test's leg - 
-     *  {@code FanOutServerQuarantineTest}; a bystander here would only add it own
+    /** One edge: the walking actor. (Identity independence is covered by
+     *  {@code FanOutServerQuarantineTest}; a bystander here would only add its own
      *  walk-threshold noise to the recorded evidence.) */
     private static final int EDGES = 1;
     private static final long SEED = 31L;
@@ -83,7 +83,7 @@ class SlowConsumerStateMachineWalkTest {
         sim.enableEdgeRecovery(0);
         assertEquals(ConsumerState.HEALTHY, governor.state(victimIdentity), "walk start");
 
-        // --- HEALTHY -> SLOW -> CATCHUP -> QUARANTINED: the victim lags and commits keep
+        // HEALTHY -> SLOW -> CATCHUP -> QUARANTINED: the victim lags and commits keep
         // flowing. Each commit lands ~1-2 seqs as unacked 1-seq frames: the queue crosses
         // warn (6) and stays there past the 20 ms window (-> SLOW, fires mid-flow), then
         // overflows at 8 (-> the C1 queue_overflow demotion, -> CATCHUP); the 3rd distress
@@ -100,7 +100,7 @@ class SlowConsumerStateMachineWalkTest {
         assertEquals(1, metrics.slowTransitions, "the sustained-warn SLOW leg fired");
         assertEquals(1, metrics.quarantines);
 
-        // --- Refused reconnects through the cooldown: the (now unlagged) edge processes
+        // Refused reconnects through the cooldown: the (now unlagged) edge processes
         // the ERROR_CLOSE through the REAL core reaction -> reconnect directive -> the
         // driver's resubscribe is REFUSED at admission and retried - observably.
         victim.unlag();
@@ -109,12 +109,12 @@ class SlowConsumerStateMachineWalkTest {
         assertEquals(ConsumerState.QUARANTINED, governor.state(victimIdentity),
                 "refusals must not mutate the state");
 
-        // --- Cooldown exit -> forced snapshot-first re-bootstrap -> CATCHUP -> HEALTHY.
+        // Cooldown exit -> forced snapshot-first re-bootstrap -> CATCHUP -> HEALTHY.
         tickUntil(sim, () -> governor.state(victimIdentity) == ConsumerState.HEALTHY,
                 "post-cooldown readmission re-bootstraps and resolves to HEALTHY");
         assertEquals(1, metrics.readmissions);
 
-        // --- Converged: the readmitted edge serves the latest committed value.
+        // Converged: the readmitted edge serves the latest committed value.
         commit(sim, victim.subscribedCpNode(), "walk/final", "converged");
         tickUntil(sim, () -> hasValue(victim, "walk/final", "converged"),
                 "the readmitted edge converges to post-quarantine commits");
@@ -127,8 +127,8 @@ class SlowConsumerStateMachineWalkTest {
     void laggingEdgeWalksTheFullStateMachineEndToEnd() {
         WalkEvidence evidence = runFullWalk();
 
-        // The exact walk, in order, with the design section 2 reasons (charter section 4 C4: every
-        // transition observed; the structured events ARE the evidence).
+        // The exact walk, in order: every transition observed; the structured events ARE
+        // the evidence.
         List<String> legs = evidence.transitions().stream()
                 .map(t -> t.from() + "->" + t.to() + ":" + t.reason())
                 .toList();
@@ -151,7 +151,7 @@ class SlowConsumerStateMachineWalkTest {
     @Test
     void theWalkIsDeterministic_sameSeedReplaysIdentically() {
         // The governor folds into the sim's determinism story: the same seed must replay
-        // the SAME structured transition events - timestamps, cursors, window counts - 
+        // the SAME structured transition events - timestamps, cursors, window counts -
         // and the same refusal/quarantine/readmission counts. (The gate digest itself is
         // governor-free because the governor is opt-in and absent on the gate path.)
         WalkEvidence first = runFullWalk();
@@ -241,7 +241,7 @@ class SlowConsumerStateMachineWalkTest {
     }
 
     /**
-     * Screen condition C4-3 (couples to C4-2's reason weighting): a HEALTHY edge that
+     * Condition C4-3 (couples to C4-2's reason weighting): a HEALTHY edge that
      * flaps purely from injected network loss - partition/heal cycles whose misses cross
      * the replay horizon (ring cap 8), i.e. GAP recoveries, not slowness - recovers every
      * cycle through the C3 resubscribe path and NEVER escalates: the governor records no

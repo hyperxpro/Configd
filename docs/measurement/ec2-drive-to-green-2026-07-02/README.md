@@ -1,22 +1,21 @@
-# Drive-to-green EC2 measurement (2026-07-02)
+# EC2 measurement: release commit 9e1f191 (2026-07-02)
 
-Gate 4 of the drive-to-green arc. One paid box (c6i.2xlarge, 8 vCPU, 15 GB, ap-south-1,
-Ubuntu 26.04, JDK 25) built the release commit `9e1f191` and ran two measurements: the
-faulted-linearizability matrix (condition C3) and the edge-staleness-under-load
-distribution (INV-S2). The box was terminated and API-verified clean (instance
-terminated, both EBS volumes gone via DeleteOnTermination, no orphan by tag, no
+One paid box (c6i.2xlarge, 8 vCPU, 15 GB, ap-south-1, Ubuntu 26.04, JDK 25) built the
+release commit `9e1f191` and ran two measurements: the release-commit linearizability run
+and the staleness bound under load. The box was terminated and API-verified clean
+(instance terminated, both EBS volumes gone via DeleteOnTermination, no orphan by tag, no
 allocated EIP). Nothing billable remained.
 
-## C3 - faulted linearizability: GREEN
+## Release-commit linearizability run: GREEN
 
 The `linearizability-under-fault` job could never be captured green because the
 `configd-linz` harness launched each spawned server with its signing key co-located in
-the server's own data dir, which the D-1 co-location guard (`enforceSigningKeyNotColocated`)
-fail-closes on. Every node crashed before electing, so every seed reported
-`VERDICT: INDETERMINATE (no leader elected)`. This was never a consensus defect - the
-histories were never produced.
+the server's own data dir, which the signing-key co-location guard
+(`enforceSigningKeyNotColocated`) fail-closes on. Every node crashed before electing, so
+every seed reported `VERDICT: INDETERMINATE (no leader elected)`. This was never a
+consensus defect - the histories were never produced.
 
-The fix (this branch) mounts each test node's signing key OUTSIDE its data dir via
+The fix mounts each test node's signing key outside its data dir via
 `--signing-key-file`, satisfying the real guard rather than disabling it (no
 `allowColocatedSigningKey` opt-out). With the fix, the matrix runs green on the release
 commit `9e1f191`:
@@ -33,17 +32,18 @@ commit `9e1f191`:
 | 5 | 2004 | LINEARIZABLE | 5 | 799 |
 
 Reproducibility gate (iv) passed: `schedule-777-n3.json` byte-identical across two runs.
-Full log: `artifacts/c3-faulted-linz-green.log`. Because Gates 5 and 6 of this arc change
-consensus and storage code after this capture, the definitive C3 for the shipped bytes
+Full log: `artifacts/c3-faulted-linz-green.log`. Because later work changes consensus and
+storage code after this capture, the definitive linearizability run for the shipped bytes
 must be re-run on the final release SHA.
 
-## INV-S2 - edge staleness under load: measurement blocked by a discovered finding
+## Staleness bound under load: measurement blocked by a discovered finding
 
-INV-S2 (consistency-contract section 2): under normal conditions, edge-read staleness
-p99 < 500 ms and p9999 < 2 s. The staleness mechanism was validated directly - a
-freshly-subscribed edge reads `edge_staleness_ms=30001` (DISCONNECTED floor) with zero
-writes, and drops to single-digit ms (CURRENT) within one heartbeat of the first
-committed write, thereafter hovering 2-251 ms bounded by the 250 ms heartbeat cadence.
+The staleness bound (`docs/operations/consistency-contract.md`, section 2): under normal
+conditions, edge-read staleness p99 < 500 ms and p9999 < 2 s. The staleness mechanism was
+validated directly - a freshly-subscribed edge reads `edge_staleness_ms=30001`
+(DISCONNECTED floor) with zero writes, and drops to single-digit ms (CURRENT) within one
+heartbeat of the first committed write, thereafter hovering 2-251 ms bounded by the 250 ms
+heartbeat cadence.
 
 The distribution-under-sustained-load run, however, could not complete: under sustained
 writes the subscribed edges are spuriously demoted and quarantined by the
@@ -76,9 +76,8 @@ Governor evidence: `artifacts/invs2-governor-gap-quarantine-excerpt.log`.
 ### Impact
 
 This is an edge-fan-out reliability finding, not a measurement artifact: a caught-up edge
-on an idle box under trivial load is quarantined. It bears on the v1 edge-hydration story
-for any deployment with sustained writes past the buffer capacity. The mechanism-level
+on an idle box under trivial load is quarantined. It bears on the edge-hydration story for
+any deployment with sustained writes past the buffer capacity. The mechanism-level
 staleness guarantee holds while an edge is subscribed; the open question the operator must
-decide is whether to fix the transient-GAP-counted-as-demotion accounting before v1, treat
-it as a documented known limitation, or investigate further. See the arc handoff for the
-disposition decision.
+decide is whether to fix the transient-GAP-counted-as-demotion accounting, treat it as a
+documented known limitation, or investigate further.

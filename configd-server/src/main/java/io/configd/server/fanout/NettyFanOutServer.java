@@ -84,10 +84,10 @@ public final class NettyFanOutServer implements FanOutEndpoint {
 
     private static final Logger LOG = Logger.getLogger(NettyFanOutServer.class.getName());
 
-    /** Named config: per-connection outbound transport queue depth (frames). Design section 4 (== JDK). */
+    /** Named config: per-connection outbound transport queue depth (frames); same as the JDK transport. */
     public static final int DEFAULT_TRANSPORT_QUEUE_FRAMES = FanOutServer.DEFAULT_TRANSPORT_QUEUE_FRAMES;
 
-    /** Named config {@code edge.fanout.transport.maxSessions} (== JDK; hard rule 4). */
+    /** Named config {@code edge.fanout.transport.maxSessions} (same bound as the JDK transport). */
     public static final int DEFAULT_MAX_SESSIONS = FanOutServer.DEFAULT_MAX_SESSIONS;
 
     /** The single-shard resolver the single-source constructors bind: every target -> gid 0. */
@@ -103,12 +103,12 @@ public final class NettyFanOutServer implements FanOutEndpoint {
     private final int[] allGids;
     /** Resolves a watch target to its covered shard set; {@link #SINGLE_SHARD} for the single-shard ctors. */
     private final ShardResolver shardResolver;
-    /** The server's topology epoch ({@code ShardMap.epoch()}), threaded into every session driver (A4). */
+    /** The server's topology epoch ({@code ShardMap.epoch()}), threaded into every session driver. */
     private final long topologyEpoch;
     private final FanOutConfig config;
     private final int transportQueueFrames;
     private final int maxSessions;
-    /** WH-11 pre-SUBSCRIBE first-frame deadline (ms); shared config with the JDK transport. */
+    /** Pre-SUBSCRIBE first-frame deadline (ms); shared config with the JDK transport. */
     private final int firstFrameDeadlineMs = FanOutServer.firstFrameDeadlineMs();
     private final SlowConsumerGovernor governor;
     private final RegistryFanOutSessionMetrics metrics;
@@ -444,10 +444,6 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Per-connection handler (the JDK FanOutServer.Connection's Netty twin)
-    // -----------------------------------------------------------------------
-
     /**
      * One edge subscriber connection: the event-loop body + the {@link TransportSink}; the brain is
      * the shared {@link FanOutConnectionDriver} on a dedicated virtual session thread. A new instance
@@ -482,7 +478,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         private boolean firstInboundSeen;
 
         /**
-         * WH-11: the one-shot pre-SUBSCRIBE first-frame reap task, armed on session start
+         * The one-shot pre-SUBSCRIBE first-frame reap task, armed on session start
          * (post-mTLS / plaintext admission) and cancelled when the first routed frame arrives.
          * Event-loop-only (armed, cancelled, and fired all on the event loop).
          */
@@ -607,7 +603,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
             connectedCounted = true;
             Thread.ofVirtual().name("edge-netty-session-" + identity)
                     .start(() -> driver.runSessionLoop(() -> alive.get() && running.get()));
-            // WH-11: arm the pre-SUBSCRIBE first-frame deadline now that the connection is admitted
+            // Arm the pre-SUBSCRIBE first-frame deadline now that the connection is admitted
             // (post-mTLS / plaintext). A one-shot event-loop task reaps a peer that never sends its
             // first routed frame; channelRead0 cancels it on the first frame (an established
             // subscriber is idle by design and relies on the server->client HEARTBEAT for liveness).
@@ -615,7 +611,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                     () -> onFirstFrameDeadline(ctx), firstFrameDeadlineMs, TimeUnit.MILLISECONDS);
         }
 
-        /** WH-11 reap: fires on the event loop if no routed frame arrived within the deadline. */
+        /** Reap task: fires on the event loop if no routed frame arrived within the deadline. */
         private void onFirstFrameDeadline(ChannelHandlerContext ctx) {
             if (!firstInboundSeen && alive.get()) {
                 metrics.onFirstFrameTimeout();
@@ -625,8 +621,8 @@ public final class NettyFanOutServer implements FanOutEndpoint {
 
         /**
          * Arms the mTLS-only cert-{@code notAfter} expiry one-shot on the event loop. A
-         * {@link AuthState#NO_EXPIRY} deadline (enforcement off) arms nothing - byte-identical to Gate 3.
-         * The delay is {@code max(0, deadline - now)} so a clock already past {@code notAfter} fires
+         * {@link AuthState#NO_EXPIRY} deadline (enforcement off) arms nothing. The delay is
+         * {@code max(0, deadline - now)} so a clock already past {@code notAfter} fires
          * promptly rather than scheduling a negative delay.
          */
         private void armCertExpiry(ChannelHandlerContext ctx, long deadlineMillis) {
@@ -643,7 +639,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         protected void channelRead0(ChannelHandlerContext ctx, EdgeFrame frame) {
             if (!firstInboundSeen) {
                 firstInboundSeen = true;
-                // WH-11 disarm: the first routed frame arrived; cancel the reap task so an
+                // Disarm: the first routed frame arrived; cancel the reap task so an
                 // established, legitimately-idle subscriber is never read-idle-reaped.
                 if (firstFrameDeadline != null) {
                     firstFrameDeadline.cancel(false);
@@ -651,7 +647,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                 }
                 // Outbound flip: a WATCH_CREATE-first connection is a 0x02 watch connection, so the
                 // encoder must stamp 0x02 for the client to decode the server's WATCH_* frames. A
-                // 0x03-stamped SUBSCRIBE is a filtered-fan-out connection (ADR-0045), so the encoder
+                // 0x03-stamped SUBSCRIBE is a filtered-fan-out connection, so the encoder
                 // stamps 0x03 for the SUBSCRIBE_OK filtered confirm and every subsequent frame the
                 // edge's 0x03-pinned reader decodes. A plain 0x01 SUBSCRIBE stays 0x01 (byte-
                 // identical). Flip BEFORE routing, so it happens-before any outbound frame the driver
@@ -688,9 +684,8 @@ public final class NettyFanOutServer implements FanOutEndpoint {
             // the real ErrorCode is one link down the cause chain. Unwrap it (matching the JDK reader,
             // which catches the CodecException directly) so a corrupt/oversize/bad-version frame closes
             // with its true code (FRAME_CORRUPT / FRAME_TOO_LARGE / BAD_WIRE_VERSION) rather than the
-            // catch-all SERVER_SHUTDOWN. Wire-behavior change on the mTLS/plaintext edge: a post-admission
-            // decode error that previously (buggily) closed SERVER_SHUTDOWN now closes with the frame's
-            // real code, matching the JDK transport; no correct client depends on the old catch-all code.
+            // catch-all SERVER_SHUTDOWN, matching the JDK transport; no correct client depends on the
+            // specific close code.
             EdgeFrameCodec.CodecException ce = CodecExceptions.unwrap(cause);
             if (ce != null) {
                 teardown(ce.code(), "decode error: " + ce.getMessage());
@@ -702,8 +697,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
             }
         }
 
-        // ---- TransportSink (called from the session thread) ----
-
+        // TransportSink, called from the session thread.
         @Override
         public boolean offer(EdgeFrame frame) {
             Channel ch = channel;
@@ -726,8 +720,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
             teardown(code, message);
         }
 
-        // ---- teardown (idempotent; callable from the event loop or the session thread) ----
-
+        // Teardown is idempotent and callable from either the event loop or the session thread.
         private void teardown(ErrorCode code, String message) {
             if (!alive.compareAndSet(true, false)) {
                 return; // already torn down

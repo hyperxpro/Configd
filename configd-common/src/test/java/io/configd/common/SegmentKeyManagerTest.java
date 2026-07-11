@@ -52,7 +52,7 @@ class SegmentKeyManagerTest {
             if (firstSegment == null) {
                 firstSegment = seal.segmentId();
             } else {
-                // one boot session -> one WAL segment (no rekey below the ceiling)
+                // one boot session means one WAL segment (no rekey below the ceiling)
                 assertArrayEquals(firstSegment, seal.segmentId(),
                         "all records of one stream share the session segment");
             }
@@ -67,13 +67,13 @@ class SegmentKeyManagerTest {
         AtRestKeys.Seal b = km.nextSeal(MAGIC_B);
         assertFalse(Arrays.equals(a.segmentId(), b.segmentId()),
                 "WAL and snapshot streams must be different segments");
-        // different segmentId -> different derived DEK
+        // a different segmentId means a different derived DEK
         assertFalse(Arrays.equals(a.dek().getEncoded(), b.dek().getEncoded()));
     }
 
     @Test
     void freshManagerDrawsAFreshSegment_soRestartCounterResetIsSafe() {
-        // Two managers over the SAME root (a restart re-deriving the same root) still draw
+        // Two managers over the same root (a restart re-deriving the same root) still draw
         // independent random segmentIds, so both starting the counter at 0 is safe.
         SegmentKeyManager first = new SegmentKeyManager(root(1));
         SegmentKeyManager second = new SegmentKeyManager(root(1));

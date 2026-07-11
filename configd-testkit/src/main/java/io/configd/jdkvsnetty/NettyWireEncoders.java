@@ -96,11 +96,11 @@ final class NettyWireEncoders {
         out.writeInt(ns.size());
         for (CommitNotification n : ns) {
             ConfigDelta d = n.delta();
-            // ---- message-building term (codec-internal; not removed by a pooled buffer) ----
+            // message-building term (codec-internal; not removed by a pooled buffer):
             byte[] batch = CommandCodec.encodeBatch(d.mutations());
             byte[] sig = d.signature(); // defensive clone (null if unsigned)
             byte[] nonce = d.nonce();   // defensive clone (never null)
-            // ---- framing written straight into the pooled buffer (no intermediates) ----
+            // framing written straight into the pooled buffer, no intermediates:
             out.writeLong(n.seq());
             out.writeLong(n.commitTimestampMillis());
             out.writeLong(d.fromVersion());

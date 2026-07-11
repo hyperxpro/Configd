@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * These drive {@link EdgeConnection} directly (bypassing the reconnect policy) so each hostile input is
  * asserted to fail <b>clean</b>: the right exception type + edge code, the connection torn down, the reader
  * thread gone (no leak), and never a hang, OOM, or misparse. Bounds 1–6 are the shared codec's; the deadlines
- * and sanitize are the state machine's (§04 of the client-architecture design).
+ * and sanitize are the state machine's.
  */
 @Timeout(30)
 class EdgeHostileServerTest {
@@ -124,8 +124,6 @@ class EdgeHostileServerTest {
             conn.closedFuture().get(10, TimeUnit.SECONDS); // completed normally (client-initiated close)
         }
     }
-
-    // -----------------------------------------------------------------------
 
     private static EdgeConnection connect(MockEdgeServer server) {
         EdgeConnection conn = new EdgeConnection(

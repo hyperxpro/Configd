@@ -14,8 +14,8 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * The edge node's <b>in-process read path</b>
- * ({@link LocalConfigStore#get}): the section 3 hot-path law binds THIS path (lock-free, zero
- * steady-state allocation, no reflection). Run with {@code -prof gc} and verify:
+ * ({@link LocalConfigStore#get}) must stay lock-free, allocate nothing in steady state, and
+ * avoid reflection. Run with {@code -prof gc} and verify:
  * <pre>
  *   getMiss            gc.alloc.rate.norm == 0 B/op   (pre-allocated NOT_FOUND singleton)
  *   getIntoHit         gc.alloc.rate.norm == 0 B/op   (the strict-zero-alloc API)
@@ -39,9 +39,9 @@ import java.util.concurrent.TimeUnit;
  *
  * <p><b>Scope honesty:</b> the HTTP serving shell above this path
  * ({@code EdgeHttpServer}) allocates per request (exchange, headers, strings) and is
- * deliberately NOT measured here - it is not the section 3 library read path and is honestly
- * priced as non-hot-path in the edge client design (section 3.8). The contract's zero-steady-state-
- * allocation claim is made for, and proven on, the in-process paths above.
+ * deliberately NOT measured here - it sits outside this library's read-path contract and is
+ * honestly priced as non-hot-path in the edge client design. The zero-steady-state-allocation
+ * claim is made for, and proven on, the in-process paths above.
  *
  * <p>Smoke run (~2 min on the 2-vCPU box):
  * <pre>

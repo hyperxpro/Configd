@@ -21,9 +21,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Runner II — CLIENT-CONFORMS, §05 routing / leader-following: drives the reference {@link ConfigdHttpClient}
+ * Runner II -- CLIENT-CONFORMS, §05 routing / leader-following: drives the reference {@link ConfigdHttpClient}
  * against the scriptable {@link MockControlPlane} (reused via the configd-client-http test-jar) and asserts the
- * client obeys the normative routing MUSTs — read the hint from the {@code X-Leader-Hint} <b>header</b> only
+ * client obeys the normative routing MUSTs -- read the hint from the {@code X-Leader-Hint} <b>header</b> only
  * (never the body), resolve the bare numeric {@code NodeId} through its own map (anti-SSRF), follow-and-retry
  * even at N = 1, be ready for a {@code 503} on any read, do <b>no</b> client-side sharding (and never cache a
  * hint across keys), and fail closed on an HTTP {@code 3xx} / a richer wire-supplied address.
@@ -40,10 +40,10 @@ class ClauseRoutingTest {
     @Tag("clause:R2-1")
     @Tag("clause:R2-2")
     void hintIsReadFromTheHeaderNotTheBodyAndResolvedThroughTheMap() throws Exception {
-        // R2-1: the redirect is advisory via the X-Leader-Hint HEADER — never the 503 body (plaintext under a
+        // R2-1: the redirect is advisory via the X-Leader-Hint HEADER -- never the 503 body (plaintext under a
         // misleading application/json, rendering Node-<id> and echoing the key). Here the header names node 2
         // while the body misleadingly names node 1 (self); the client MUST follow the HEADER (node 2). A client
-        // that parsed the body would retry self (node 1) and NEVER contact node 2 — so node-2-committed is
+        // that parsed the body would retry self (node 1) and NEVER contact node 2 -- so node-2-committed is
         // proof the header, not the body, was read. R2-2: the hint "2" is a bare numeric NodeId resolved to a
         // connection target ONLY through the operator NodeEndpoints map (the wire never supplies an address).
         try (MockControlPlane n1 = new MockControlPlane(); MockControlPlane n2 = new MockControlPlane()) {
@@ -60,11 +60,11 @@ class ClauseRoutingTest {
     @Test
     @Tag("clause:R2-2")
     void unresolvableHintDegradesToHintlessNeverAWireAddress() throws Exception {
-        // Anti-SSRF (R2-2): a hint naming a NodeId absent from the driver's map is NOT chased — it degrades to a
+        // Anti-SSRF (R2-2): a hint naming a NodeId absent from the driver's map is NOT chased -- it degrades to a
         // hintless 503 (retry the endpoints it DOES know). A compromised node cannot steer the driver anywhere
         // outside the operator-configured set.
         try (MockControlPlane s = new MockControlPlane()) {
-            s.enqueue(Response.of(503, Map.of("X-Leader-Hint", "99"), "Not Leader")); // 99 ∉ map
+            s.enqueue(Response.of(503, Map.of("X-Leader-Hint", "99"), "Not Leader")); // 99 is not in the map
             s.enqueue(Response.committed(7));
             try (ConfigdHttpClient c = client(s)) {
                 assertEquals(7L, c.blocking().put("k", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults()).seq());
@@ -78,9 +78,9 @@ class ClauseRoutingTest {
     void leaderFollowingIsRequiredEvenAtN1AndTheHintlessLoopIsBounded() throws Exception {
         // R4-1/R4-2: a single node is NOT exempt. Before it wins its initial election a write returns a
         // HINTLESS 503 (leaderId() is null), and the ONLY correct action is back off + retry the SAME endpoint
-        // until it becomes leader. A v1 (N=1) driver therefore MUST implement the 503→backoff-retry loop.
+        // until it becomes leader. A driver MUST implement the 503-then-backoff-retry loop even at N=1.
         try (MockControlPlane s = new MockControlPlane()) {
-            s.enqueue(Response.text(503, "Not Leader")); // no X-Leader-Hint — the normal N=1 election window
+            s.enqueue(Response.text(503, "Not Leader")); // no X-Leader-Hint -- the normal N=1 election window
             s.enqueue(Response.committed(9));
             try (ConfigdHttpClient c = client(s)) {
                 assertEquals(9L, c.blocking().put("k", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults()).seq());
@@ -88,7 +88,7 @@ class ClauseRoutingTest {
             }
         }
         // Bounded: a node stuck mid-election (always 503) terminates as a bounded Unavailable, never an infinite
-        // hang (R6-3) — the loop is finite even at N=1.
+        // hang (R6-3) -- the loop is finite even at N=1.
         try (MockControlPlane s = new MockControlPlane()) {
             for (int i = 0; i < FAST.maxAttempts(); i++) {
                 s.enqueue(Response.text(503, "Not Leader"));
@@ -107,7 +107,7 @@ class ClauseRoutingTest {
         // R4-4: a driver MUST NOT assume a read avoids the redirect loop just because it did not request
         // ?consistency=linearizable. The server's strong-read prefix set is invisible to the driver and
         // fail-closes a stale-requested read with 503 + X-Fail-Closed: strong-read. A conforming driver applies
-        // R6 (back off + retry) to a plain read and completes when the key can be served — it does not crash or
+        // R6 (back off + retry) to a plain read and completes when the key can be served -- it does not crash or
         // treat the 503 as an error unique to writes.
         try (MockControlPlane s = new MockControlPlane()) {
             s.enqueue(Response.of(503, Map.of("X-Fail-Closed", "strong-read"), "Fail-closed: strong-read"));
@@ -125,8 +125,8 @@ class ClauseRoutingTest {
     @Tag("clause:R5-1..R5-4")
     void noClientSideShardingTheFullKeyGoesInThePathWithNoShardOrNParameter() throws Exception {
         // R5-1/R5-2: key placement is decided server-side by hashing the full (scope, path); the driver never
-        // computes a shard, replicates the hash, or needs N. The request carries only the literal key path —
-        // no ?shard=, no shard-count param — and routing is byte-for-byte identical at N=1 and N>1.
+        // computes a shard, replicates the hash, or needs N. The request carries only the literal key path --
+        // no ?shard=, no shard-count param -- and routing is byte-for-byte identical at N=1 and N>1.
         try (MockControlPlane s = new MockControlPlane()) {
             s.enqueue(Response.value("v", 1));
             try (ConfigdHttpClient c = client(s)) {
@@ -143,11 +143,11 @@ class ClauseRoutingTest {
         // R5-3: the X-Leader-Hint is resolved as the leader of the shard that owns THIS (scope, key); a
         // different key may live on a different shard with a different leader. A driver MUST NOT cache a hint and
         // reuse it for another key. Here key "a" is redirected to node 2; the very next op on key "b" MUST start
-        // at the configured entry node (node 1), not reuse node 2 — proving each request routes independently.
+        // at the configured entry node (node 1), not reuse node 2 -- proving each request routes independently.
         try (MockControlPlane n1 = new MockControlPlane(); MockControlPlane n2 = new MockControlPlane()) {
-            n1.enqueue(Response.of(503, Map.of("X-Leader-Hint", "2"), "Not Leader")); // key "a" → follow to node 2
+            n1.enqueue(Response.of(503, Map.of("X-Leader-Hint", "2"), "Not Leader")); // key "a" follows to node 2
             n2.enqueue(Response.committed(1));
-            n1.enqueue(Response.committed(2));                                         // key "b" → served at entry node 1
+            n1.enqueue(Response.committed(2));                                         // key "b" served at entry node 1
             try (ConfigdHttpClient c = twoNodeClient(n1, n2)) {
                 assertEquals(1L, c.blocking().put("a", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults()).seq());
                 assertEquals(2L, c.blocking().put("b", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults()).seq());
@@ -162,7 +162,7 @@ class ClauseRoutingTest {
     @Tag("clause:R7-1_R7-2")
     void failsClosedOnAn3xxRedirectAndOnARicherWireSuppliedAddress() throws Exception {
         // R7-2: named forward extensions a driver MUST fail closed on. (a) An HTTP 3xx / Location redirect is
-        // NOT part of the contract (the redirect surface is the 503 X-Leader-Hint header only, R2-1) — a 301 is
+        // NOT part of the contract (the redirect surface is the 503 X-Leader-Hint header only, R2-1) -- a 301 is
         // a permanent request error the client refuses to chase, never following Location.
         try (MockControlPlane s = new MockControlPlane()) {
             s.enqueue(Response.of(301, Map.of("Location", "http://evil.example/v1/config/k"), "Moved"));
@@ -172,7 +172,7 @@ class ClauseRoutingTest {
                 assertEquals(1, s.requestCount(), "a 3xx is terminal — the client never chases Location");
             }
         }
-        // (b) A "richer" hint that carries a host:port instead of a bare numeric NodeId is unparseable → the
+        // (b) A "richer" hint that carries a host:port instead of a bare numeric NodeId is unparseable, so the
         // client degrades it to hintless (R2-2 anti-SSRF: it MUST NOT accept a wire-supplied address) and
         // retries the endpoints it knows.
         try (MockControlPlane s = new MockControlPlane()) {
@@ -184,8 +184,6 @@ class ClauseRoutingTest {
             }
         }
     }
-
-    // -----------------------------------------------------------------------
 
     private static ConfigdHttpClient client(MockControlPlane server) {
         return ConfigdHttpClient.builder()

@@ -19,9 +19,9 @@ and the **golden vectors** in
 name is cited next to each frame so a driver author can use the golden bytes as the cross-language conformance
 vector. **Wire-format ADR note:** [`adr-0029-wire-format-v1.md`](../../adr/adr-0029-wire-format-v1.md) is
 the canonical origin of the framing **discipline** — a version byte, a CRC32C-Castagnoli trailer, CRC-before-
-type validation, and fail-closed forward-compat — but its *concrete* diagram predates the Gate-2 hardening: the
-as-built **Raft** frame is `HEADER_SIZE = 26`, 16 MiB, with Group-Id/Term **and an 8-byte reserved
-`epoch` MBZ slot** (§13 here specifies it byte-for-byte against `FrameCodec.java`). The **edge** layout
+type validation, and fail-closed forward-compat — but its *concrete* diagram predates the reserved-epoch
+hardening: the **Raft** frame as implemented is `HEADER_SIZE = 26`, 16 MiB, with Group-Id/Term **and an
+8-byte reserved `epoch` MBZ slot** (§13 here specifies it byte-for-byte against `FrameCodec.java`). The **edge** layout
 (`HEADER_SIZE = 6`, 2 MiB, no group/term) is `EdgeFrameCodec`'s own (the edge codec attributes it to the
 ADR-0037 transport decision). **Take the edge byte layout from F2-1 here and the Raft byte layout from §13
 here, not from ADR-0029's Raft diagram**; ADR-0028 is the snapshot body. Where this section and a prior RFC (or
@@ -83,7 +83,8 @@ is **not** a business version and it does **not** participate in the first-frame
 **version-pin-exempt** — it may interleave on a connection whose business version is pinned to `0x01`, `0x02`,
 or `0x03` (F6A-4). Conversely a **business/watch type stamped `0x04`, or an `AUTH`/`REFRESH_AUTH` type stamped
 `0x01`/`0x02`/`0x03`, is `FRAME_CORRUPT`** (F6A-3). The auth frames are **purely additive**: a driver that
-authenticates only by mTLS (never sending a `0x04` frame) is **byte-identical to a pre-auth-arc client**.
+authenticates only by mTLS (never sending a `0x04` frame) is **byte-identical to a client from before
+authentication was added**.
 
 ---
 
@@ -251,7 +252,7 @@ produces a frame the server rejects as `FRAME_CORRUPT`).
 > only `0xFFFF…FF` as the failover sentinel, and may use the full `u64` range only for `watch_id` / the two
 > `latestSeq` fields.
 
-**F5-3 (`topologyEpoch` — `[1, 2^63)`, `0` is reserved-illegal; the A4 topology-generation binding).** The
+**F5-3 (`topologyEpoch` — `[1, 2^63)`, `0` is reserved-illegal; the topology-generation binding).** The
 `topologyEpoch:u64` that prefixes both the `SUBSCRIBE` payload (F6-1) and every cursor vector (F8) is
 constrained to **`[1, 2^63)`** — **stricter** than the F5-1 non-negative rule: **`0` is reserved-illegal** and
 decodes as **`FRAME_CORRUPT`** (`EdgeFrame.Subscribe`/`WatchCursor` ctors and `decodeSubscribe` :729–733 /
@@ -280,18 +281,18 @@ names are cited for cross-language verification.
 
 ```
 [1  u8 ] fullStore        (1 = whole-store subscription; 0 = prefix-filtered)
-[4  u32] prefixCount      (element cap MAX_PREFIXES = 4096; count > 4096 ⇒ FRAME_CORRUPT — WH-12/F3-2)
+[4  u32] prefixCount      (element cap MAX_PREFIXES = 4096; count > 4096 ⇒ FRAME_CORRUPT — F3-2)
   repeated prefixCount times:
     [4 u32] prefixLen
     [prefixLen] prefix    (UTF-8)
-[8  u64] topologyEpoch         (A4 — REQUIRED; [1, 2^63); 0 ⇒ FRAME_CORRUPT — F5-3; v1 static-N = 1)
+[8  u64] topologyEpoch         (REQUIRED; [1, 2^63); 0 ⇒ FRAME_CORRUPT — F5-3; v1 static-N = 1)
 [8  u64] resumeCursor          ([0, 2^63); high-bit ⇒ FRAME_CORRUPT — F5-1)
 [8  u64] failoverResumeCursor  ([0, 2^63) ∪ {0xFFFFFFFFFFFFFFFF = none}; any other high bit ⇒ FRAME_CORRUPT — F5-2)
 [4  u32] edgeIdLen
 [edgeIdLen] edgeId        (UTF-8; ADVISORY — the server overrides identity with the mTLS cert DN, §03 AU3-2)
 ```
 
-> **`topologyEpoch` position (frozen-format A4 rebaseline — do NOT omit).** The `topologyEpoch:u64` sits
+> **`topologyEpoch` position (REQUIRED — do NOT omit).** The `topologyEpoch:u64` sits
 > **between the last prefix and `resumeCursor`** and is present on **every** version (`0x01`/`0x02`/`0x03`) —
 > it is NOT version-gated. The golden `subscribe_full_store.bin` v1 image is
 > `00000031 01 01 01 00000000 `**`0000000000000001`**` 0000000000000000 ffffffffffffffff 00000006 656467652d41 1f55c56f` —
@@ -334,7 +335,7 @@ gap; a regression below the applied version **is** a gap). Golden `subscribe_ok_
 **F6-3 `NOTIFY` (`0x03`)** — *server→client*; golden `notify_single_unsigned.bin`, `notify_batch_signed.bin`,
 `notify_empty.bin`. A batch of commit notifications (the *encoder* caps it at **64** = `MAX_NOTIFY_BATCH` and
 **256 KiB** = `MAX_NOTIFY_BATCH_BYTES`; the **decoder** enforces **both** — `count ≤ 64` **and** the **256 KiB**
-payload cap (WH-14, `FRAME_TOO_LARGE` above it), for canonical-encoding parity. The 256 KiB cap is nested under
+payload cap (`FRAME_TOO_LARGE` above it), for canonical-encoding parity. The 256 KiB cap is nested under
 the **2 MiB frame cap** (F3-2); a driver MAY additionally apply its own tighter bound):
 
 ```
@@ -441,7 +442,7 @@ detected server-side and healed by a re-snapshot).
 ```
 
 > The taxonomy is **codes 1..13** (`ErrorCode.java` :14–116): `1 BAD_WIRE_VERSION` … `11 NOT_AUTHORIZED`,
-> `12 STALE_TOPOLOGY` (the v2-only frozen-format A4 code — F5-3 / §07), `13 CREDENTIAL_EXPIRED` (the token-TTL /
+> `12 STALE_TOPOLOGY` (the v2-only topology-generation code — F5-3 / §07), `13 CREDENTIAL_EXPIRED` (the token-TTL /
 > cert-`notAfter` / refresh-reject expiry close on a token-auth edge — §6A / §07). An unknown code byte decodes
 > as `FRAME_CORRUPT`. `error_bad_wire_version.bin` … `error_protocol_violation.bin` pin codes 1–10;
 > `error_not_authorized.bin` pins code 11 (carried here as an `ERROR_CLOSE` in the v2 fixture so the byte value
@@ -527,7 +528,8 @@ connection pinned to any of `0x01`/`0x02`/`0x03`. A driver **MUST** stamp `0x04`
 `REFRESH_AUTH` frames and a business version on **exactly** its business frames; crossing the two
 (`0x04` on a business frame, or `0x01`/`0x02`/`0x03` on an auth frame) is `FRAME_CORRUPT` (F6A-3). Because the
 auth frames live on their own version, the surface is **purely additive**: an **mTLS-only driver that never
-sends a `0x04` frame is byte-identical to a pre-auth-arc client**, and every `0x01`/`0x02`/`0x03` golden image
+sends a `0x04` frame is byte-identical to a client from before authentication was added**, and every
+`0x01`/`0x02`/`0x03` golden image
 is unchanged.
 
 **F6A-5 (receive-side credential caps — server policy, not fixed wire constants).** While a token connection is
@@ -620,7 +622,7 @@ length is a **signed `i32`** bounded to `[0, 1 MiB]`.
 (`encodeCursorInto` :445–453 / `decodeCursor` :903–926):
 
 ```
-[8 u64] topologyEpoch  (A4 — REQUIRED; [1, 2^63); 0 ⇒ FRAME_CORRUPT — F5-3; v1 static-N = 1)
+[8 u64] topologyEpoch  (REQUIRED; [1, 2^63); 0 ⇒ FRAME_CORRUPT — F5-3; v1 static-N = 1)
 [4 u32] count
   repeated count times:
     [4 u32] gid      (shard group id; compared/ordered UNSIGNED; opaque full-range)
@@ -710,7 +712,7 @@ window, the server responds with a **full snapshot** (`SUBSCRIBE_OK.mode = 1`, s
 tail. A driver **MUST** be prepared for a snapshot re-bootstrap (and its bandwidth/"replay-storm") on a stale
 resume, not just an incremental tail. (An unrecoverable gap is `GAP_UNRECOVERABLE`, §07.)
 
-**F10-1d (the post-handshake pre-SUBSCRIBE first-frame deadline — WH-11).** After a successful mTLS handshake,
+**F10-1d (the post-handshake pre-SUBSCRIBE first-frame deadline).** After a successful mTLS handshake,
 an admitted connection **MUST send its first routed control frame (`SUBSCRIBE` or `WATCH_CREATE`) within the
 pre-SUBSCRIBE first-frame deadline** — **`configd.edge.firstFrameDeadlineMs`**, default **10000 ms**
 (`FanOutServer.DEFAULT_FIRST_FRAME_DEADLINE_MS`; enforced on **both** the JDK and Netty edge transports) — or
@@ -752,13 +754,13 @@ lifecycle — misuse ⇒ `PROTOCOL_VIOLATION`, `REFRESH_AUTH` renews the same id
 A driver **MUST** distinguish the **silent, pre-handshake session-cap refusal** (retry/backoff — a routine
 capacity condition) from the **frame-bearing** per-connection rejects.
 
-**F10-2a (the aggregate in-flight buffer ceiling — WH-16, documented-and-bounded).** There is **no** single
+**F10-2a (the aggregate in-flight buffer ceiling — documented-and-bounded).** There is **no** single
 global in-flight-bytes counter across connections; the aggregate worst-case receive buffer is bounded by
 **(session cap) × (max frame)** = **1024 × 2 MiB ≈ 2 GiB** for the edge plane (the Raft plane's analogous
 bound is **1024 × 16 MiB ≈ 16 GiB**, §13). This is **bounded but generous** — each individual frame is
 reject-before-allocate length-gated (F3-2) and each connection is independently capped, so no single peer can
 exceed `1 × max-frame` at a time, but a full fleet of `maxSessions` hostile connections each mid-frame is the
-ceiling. **Gate 2 deliberately deferred a cross-connection global ceiling to here (WH-16):** an operator who
+ceiling. **A cross-connection global ceiling is deliberately not enforced here:** an operator who
 needs a tighter aggregate bound **SHOULD** lower `edge.fanout.transport.maxSessions` and/or front the edge with
 a connection-count limiter (the product, not either factor alone, is the memory budget). The driver contract is
 unaffected — this is an operator sizing note, not a wire rule.
@@ -800,7 +802,8 @@ rejects it. This is the **deliberate asymmetry vs. HTTP** (§04), which ignores 
 To evolve the edge wire a deployment **MUST bump the version byte** (a new frame type or field rides a new
 version); older drivers then fail closed on the unknown version rather than mis-parsing. **The auth-phase `0x04`
 frames (§6A) are the worked example of an additive version-byte extension**: they added two new frame types on
-a new version without touching any `0x01`/`0x02`/`0x03` byte, so a pre-auth-arc driver is byte-identical and a
+a new version without touching any `0x01`/`0x02`/`0x03` byte, so a driver written before these frames existed
+is byte-identical, and a
 driver that does not speak `0x04` simply never emits it. A driver **MUST** treat any unknown
 version/type/illegal-type-for-version/trailing-byte as a hard error, never as a forward-compatible extension.
 
@@ -831,7 +834,8 @@ F6-1…F6-9; a watch driver additionally needs §02 + F7.
       `[scheme u8][len-prefixed fields]` payload (bearer=1 / basic=2; §6A); `0x04` is **version-pin-exempt**
       (interleaves on any business pin), auth types are legal **only** under `0x04`, business/watch types are
       **never** legal under `0x04`, and crossing the two ⇒ `FRAME_CORRUPT` (F6A-3/F6A-4). An mTLS-only driver
-      sends **no** `0x04` frame and is byte-identical to a pre-auth-arc client. Lifecycle/expiry ⇒ §03.
+      sends **no** `0x04` frame and is byte-identical to a client from before authentication was added.
+      Lifecycle/expiry ⇒ §03.
 - [ ] Keep **sequence/timestamp `u64` fields in `[0, 2^63)`** (incl. the client-emitted `CURSOR_ACK.seq` and
       `SUBSCRIBE.resumeCursor`) — high bit ⇒ `FRAME_CORRUPT`; `failoverResumeCursor`'s only legal high-bit value
       is the `0xFFFF…FF` "none" sentinel; only `SUBSCRIBE_OK`/`HEARTBEAT` `latestSeq` and `watch_id`/`gid` are
@@ -875,7 +879,7 @@ node-to-node consensus transport (or an auditor) can build/verify it from the RF
 [`PeerIdentityPolicy.java`](../../../configd-transport/src/main/java/io/configd/transport/PeerIdentityPolicy.java),
 and [`MessageType.java`](../../../configd-transport/src/main/java/io/configd/transport/MessageType.java), pinned
 by `WireCompatGoldenBytesTest`. Where this section and ADR-0029's diagram disagree, **the code wins** (ADR-0029
-predates the Gate-2 reserved-`epoch` addition).
+predates the reserved-`epoch` addition).
 
 ### 13.1 The Raft frame envelope (byte-for-byte)
 
@@ -938,7 +942,7 @@ version/type/epoch byte reads as **corruption**, never as a misleading version/t
 6. `Epoch == 0` (else `IllegalArgumentException` — reserved-epoch MBZ, fail closed).
 
 **`Term` and `GroupId` are opaque pass-through at the framing layer** — `FrameCodec` does **not** range-check
-them (a Gate-2 layering decision, WH-07: the byte-identity tests exercise the full `i64` `Term` range including
+them (a deliberate layering decision: the byte-identity tests exercise the full `i64` `Term` range including
 `Long.MIN_VALUE`, so the framing codec treats live semantic header fields as opaque). Their invariants are
 enforced **above** the codec: a negative/stale `Term` is ignored by the consensus layer (`RaftNode` treats
 `term < currentTerm` as stale), and `GroupId` is bounded to `[0, shardCount)` **at the demux**
@@ -968,10 +972,10 @@ rate-limited drop at the demux**, not a codec error.
 
 The `0x08`–`0x0E` codes are **dormant**: `fromCode` accepts them (they are defined enum values) but no payload
 codec exists, so a frame of one of these types is a **counted, rate-limited drop** (`raft_unknown_type_drop`),
-**not** a per-frame stack-trace print (WH-10). A conformant consensus peer **MUST NOT** emit them in v1.
+**not** a per-frame stack-trace print. A conformant consensus peer **MUST NOT** emit them in v1.
 
 **F13-5 (payloads — big-endian; `RaftMessageCodec`).** Every count/length is bounded before allocation and every
-fixed-shape decoder is **strict-end** (trailing bytes ⇒ `IllegalArgumentException`, WH-06). Caps:
+fixed-shape decoder is **strict-end** (trailing bytes ⇒ `IllegalArgumentException`). Caps:
 `MAX_ENTRIES_PER_APPEND = 10000`, `MAX_COMMAND_LEN = 1 MiB`, `MAX_SNAPSHOT_BLOB_LEN = 4 MiB` (**per blob**),
 `MAX_COALESCED_GROUPS = 1024`.
 
@@ -993,7 +997,7 @@ fixed-shape decoder is **strict-end** (trailing bytes ⇒ `IllegalArgumentExcept
   [4 u32] leaderId  [8 u64] lastIncludedIndex  [8 u64] lastIncludedTerm  [4 u32] offset  [1 u8] done
   [4 u32] dataLen  [dataLen] data  [4 u32] configLen  [configLen] configData
   ```
-  `offset ≥ 0` (rejected at decode, WH-05); `dataLen ≤ 4 MiB` and `configLen ≤ 4 MiB`; the **combined**
+  `offset ≥ 0` (rejected at decode); `dataLen ≤ 4 MiB` and `configLen ≤ 4 MiB`; the **combined**
   payload + header/trailer **MUST** fit `16 MiB` (`checkInstallSnapshotFitsFrame`). The `configData` blob is
   **optional-trailing** (absent ⇒ decode consumes nothing after `data`); any bytes past it are strict-end
   rejected. Snapshots larger than one chunk are split into ordered chunks each ≤ this bound.
@@ -1011,8 +1015,8 @@ fixed-shape decoder is **strict-end** (trailing bytes ⇒ `IllegalArgumentExcept
   ```
   `count ≤ 1024` and `count * 40 ≤ remaining`; **duplicate `gid` is rejected**; strict-end. Each entry is an
   **empty** AppendEntries (no log entries may be coalesced).
-- **F13-5i `RAFT_WITNESS` / `RAFT_WITNESS_REPLY` (`0x12` / `0x13`).** A fixed **29-byte** body (peer-quorum
-  anchor-witness, Gate 3c). The frame `Term` = `selfTerm`.
+- **F13-5i `RAFT_WITNESS` / `RAFT_WITNESS_REPLY` (`0x12` / `0x13`).** A fixed **29-byte** body (the
+  peer-quorum anchor-witness). The frame `Term` = `selfTerm`.
   ```
   [8 u64] selfAnchorSeq  [8 u64] selfTerm  [4 u32] selfVotedFor  [8 u64] seenOfYouSeq  [1 u8] flags
   ```
@@ -1021,7 +1025,7 @@ fixed-shape decoder is **strict-end** (trailing bytes ⇒ `IllegalArgumentExcept
   `from` at decode; the receiver keys its witness tables on that authenticated origin, not a spoofable body
   field.
 
-### 13.5 Identity & pre-auth discipline (WH-08 / WH-09)
+### 13.5 Identity & pre-auth discipline
 
 **F13-6 (mTLS + peer-identity binding).** The consensus transport **requires mutual TLS** (node certificates;
 `setNeedClientAuth` on both the JDK `TcpRaftTransport` and the Netty transport). The self-declared sender-id
@@ -1064,7 +1068,7 @@ inbound socket carries a **read-idle deadline** (15 s ≫ the heartbeat interval
 its read and releases the FD rather than parking a reader (the slow-loris control). The bounded outbound queue
 drops the oldest undeliverable frames (counted) rather than blocking — Raft re-sends on the next heartbeat.
 
-**F13-8 (the aggregate ceiling — WH-16, Raft side).** As on the edge (F10-2a), there is no global in-flight-bytes
+**F13-8 (the aggregate ceiling — Raft side).** As on the edge (F10-2a), there is no global in-flight-bytes
 counter; the aggregate worst case is **`maxInboundConnections × MAX_FRAME_SIZE` = 1024 × 16 MiB ≈ 16 GiB**.
 Bounded but generous; an operator needing a tighter bound lowers `configd.raft.maxInboundConnections` (the
 product, not either factor alone, is the memory budget).

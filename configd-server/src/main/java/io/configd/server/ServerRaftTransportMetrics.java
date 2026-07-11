@@ -13,7 +13,7 @@ import java.util.Objects;
  *
  * <p>Shared by the transport (Layer-1 handshake rejection, Layer-2 {@code senderId} mismatch) and the
  * {@link RaftTransportAdapter} (in-body {@code leaderId}/{@code candidateId} mismatch), so all three
- * WH-08/09 rejection sites increment the single {@code configd_raft_peer_identity_mismatch} counter.
+ * rejection sites increment the single {@code configd_raft_peer_identity_mismatch} counter.
  */
 final class ServerRaftTransportMetrics implements RaftTransportMetrics {
 

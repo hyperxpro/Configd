@@ -16,9 +16,8 @@
       The conformance / real-server E2E module: it is the one place that sees BOTH the thin reference client
       (configd-client-*) and the real server (configd-server + the fan-out data plane), so it drives the client
       against a live FanOutServer. This keeps the thin client's own test scope free of the server (the
-      thin-client thesis) while still proving real interop. Seeded in Gate 2 for the subscribe/hydrate + Gate-1
-      auth interop; it grows into the full two-runner conformance suite (client-conforms / server-obeys-RFC) at
-      Gate 5. Deps are compile-scope so the (test-only) sources see both sides.
+      thin-client thesis) while still proving real interop, and hosts the two-runner conformance suite
+      (client-conforms / server-obeys-RFC). Deps are compile-scope so the (test-only) sources see both sides.
     -->
     <dependencies>
         <dependency>

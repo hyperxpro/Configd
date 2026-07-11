@@ -47,7 +47,6 @@ public class RaftCommitBenchmark {
             allNodeIds.add(NodeId.of(i));
         }
 
-        // Create nodes with in-memory transports
         for (int i = 0; i < clusterSize; i++) {
             NodeId nodeId = allNodeIds.get(i);
             Set<NodeId> peers = new LinkedHashSet<>(allNodeIds);
@@ -64,24 +63,20 @@ public class RaftCommitBenchmark {
             transports.put(nodeId, transport);
         }
 
-        // Wire transports together
         for (var entry : transports.entrySet()) {
             entry.getValue().setCluster(nodes, transports);
         }
 
-        // Elect a leader by ticking enough to trigger election timeout
         electLeader();
     }
 
     private void electLeader() {
-        // Tick all nodes until one becomes leader
         for (int tick = 0; tick < 1000; tick++) {
             for (RaftNode node : nodes.values()) {
                 node.tick();
             }
             deliverAllMessages();
 
-            // Check for leader
             for (var entry : nodes.entrySet()) {
                 if (entry.getValue().role() == RaftRole.LEADER) {
                     leaderId = entry.getKey();
@@ -116,7 +111,6 @@ public class RaftCommitBenchmark {
         ProposeOutcome result = leader.propose(proposalData);
         bh.consume(result);
 
-        // Deliver messages and tick until commit advances
         for (int i = 0; i < 50; i++) {
             deliverAllMessages();
             for (RaftNode node : nodes.values()) {
@@ -174,7 +168,6 @@ public class RaftCommitBenchmark {
     private static final class NoOpStateMachine implements StateMachine {
         @Override
         public long apply(long index, long term, byte[] command) {
-            // No-op for benchmarking
             return StateMachine.NON_MUTATING;
         }
 
@@ -185,7 +178,6 @@ public class RaftCommitBenchmark {
 
         @Override
         public void restoreSnapshot(byte[] snapshot) {
-            // No-op
         }
     }
 }

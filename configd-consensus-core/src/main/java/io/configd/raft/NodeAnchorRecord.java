@@ -17,8 +17,8 @@ import java.util.TreeMap;
  *   <li>the security audit chain head {@code (auditRecordCount, auditHeadHash)} - anchored on a
  *       periodic cadence so a chain truncated below the anchored head is DETECTED (§A1.6);</li>
  *   <li>the {@code shardAnchorDigest} - SHA-256 over the sorted {@code (gid, lastDurableIndex)} pairs
- *       of every per-shard {@code raft-anchor}, the R-f closer (a shard wiped to index 0 changes the
- *       digest; ratification item 12).</li>
+ *       of every per-shard {@code raft-anchor}: a shard wiped to index 0 changes the digest, so a
+ *       boot cross-check catches it.</li>
  * </ul>
  *
  * <p>Fixed 92-byte wire payload (big-endian), wrapped in the node-level
@@ -31,7 +31,7 @@ import java.util.TreeMap;
  *   [shardCount:4]         bound copy of N (deploy tamper/rollback guard)
  *   [auditRecordCount:8]   audit-log high-water at the last periodic anchor
  *   [auditHeadHash:32]     the last anchored audit record's recordHash (the chain head)
- *   [shardAnchorDigest:32] SHA-256 over the sorted (gid, lastDurableIndex) pairs (R-f closer)
+ *   [shardAnchorDigest:32] SHA-256 over the sorted (gid, lastDurableIndex) pairs
  * </pre>
  *
  * <p>Immutable value type. The two 32-byte fields are defensively cloned on construction and
@@ -128,7 +128,7 @@ public record NodeAnchorRecord(long nodeAnchorSeq, long topologyEpoch, int shard
 
     /**
      * Copy advancing the audit head and refreshing the shard-liveness digest (the periodic-cadence
-     * update). Topology fields are unchanged - a topology change is a v2 reshard, not a periodic tick.
+     * update). Topology fields are unchanged - a topology change is a full reshard, not a periodic tick.
      */
     public NodeAnchorRecord withAuditAndDigest(long newAuditCount, byte[] newAuditHead, byte[] newDigest) {
         return new NodeAnchorRecord(nodeAnchorSeq, topologyEpoch, shardCount,
@@ -139,8 +139,8 @@ public record NodeAnchorRecord(long nodeAnchorSeq, long topologyEpoch, int shard
      * SHA-256 over the sorted {@code (gid, lastDurableIndex)} pairs. Canonicalized by ascending gid so
      * the digest is independent of the caller's iteration order; each pair contributes 12 big-endian
      * bytes {@code [gid:4][lastDurableIndex:8]}. This is the frozen shard-liveness fingerprint: a shard
-     * whose durable head resets (the R-f wipe → index 0) changes the digest, and a boot cross-check
-     * turns that into a detected node-anchor rollback.
+     * whose durable head resets (a wipe to index 0) changes the digest, and a boot cross-check turns
+     * that into a detected node-anchor rollback.
      *
      * @param perShardDurableIndex gid → the shard's {@code raft-anchor.lastDurableIndex}
      * @return the 32-byte digest

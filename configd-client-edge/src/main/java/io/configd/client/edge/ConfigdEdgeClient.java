@@ -18,17 +18,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * The edge-plane reference client: it owns the credential/TLS/endpoints and vends the streaming surfaces. Gate
- * 1 — {@link #connect()}, {@link #authenticate()}, {@link #connectAndAuthenticate()}, {@link #refreshAuthNow()},
- * lifecycle-driven reconnect; Gate 2 — {@link #subscribeFullStore(SubscribeOptions)} /
- * {@link #subscribePrefixes(List, SubscribeOptions)}; Gate 3 — {@link #watch}. The connection + auth + reconnect
- * lifecycle lives in {@link EdgeSession}: this client drives a <b>primary</b> session (the Gate-1/2
- * single-connection surface) and one <b>additional</b> session per independently-resumed watch (§06 F10-1b:
- * one connection per independently-resumed watch).
+ * The edge-plane reference client: it owns the credential/TLS/endpoints and vends the streaming surfaces —
+ * {@link #connect()}, {@link #authenticate()}, {@link #connectAndAuthenticate()}, {@link #refreshAuthNow()} with
+ * lifecycle-driven reconnect; {@link #subscribeFullStore(SubscribeOptions)} /
+ * {@link #subscribePrefixes(List, SubscribeOptions)}; and {@link #watch}. The connection + auth + reconnect
+ * lifecycle lives in {@link EdgeSession}: this client drives a <b>primary</b> session (the single-connection
+ * subscribe surface) and one <b>additional</b> session per independently-resumed watch, so an independent
+ * resume is always honored by giving it its own connection.
  *
- * <p>The reconnect/hot-loop contract is unchanged and documented on {@link EdgeSession}: recoverable terminals
- * reconnect under the {@link ConfigdClientConfig#retryPolicy()} backoff (budget reset only on a positive
- * server frame), terminal ones fail closed on {@link #terminalFuture()}.
+ * <p>The reconnect/hot-loop contract is documented on {@link EdgeSession}: recoverable terminals reconnect
+ * under the {@link ConfigdClientConfig#retryPolicy()} backoff (budget reset only on a positive server frame),
+ * terminal ones fail closed on {@link #terminalFuture()}.
  */
 public final class ConfigdEdgeClient implements AutoCloseable {
 
@@ -116,10 +116,6 @@ public final class ConfigdEdgeClient implements AutoCloseable {
         return primary.reconnectCount();
     }
 
-    // -----------------------------------------------------------------------
-    // Gate 2: subscribe / hydrate
-    // -----------------------------------------------------------------------
-
     /** Subscribes to the whole store and hydrates a verified {@link LocalConfigView}. */
     public Subscription subscribeFullStore(SubscribeOptions options) {
         return subscribe(true, List.of(), options);
@@ -156,13 +152,9 @@ public final class ConfigdEdgeClient implements AutoCloseable {
         return sub;
     }
 
-    // -----------------------------------------------------------------------
-    // Gate 3: watch
-    // -----------------------------------------------------------------------
-
     /**
-     * Creates a watch on {@code target}. Each watch runs on its <b>own</b> dedicated connection (§06 F10-1b:
-     * one connection per independently-resumed watch), so a single multi-shard watch fans in over that one
+     * Creates a watch on {@code target}. Each watch runs on its <b>own</b> dedicated connection — one
+     * connection per independently-resumed watch — so a single multi-shard watch fans in over that one
      * connection while independent watches never share a drain and never silently drop each other's backfill.
      * The {@link Watch} is returned immediately; use {@link Watch#awaitCreated} or subscribe to its stream.
      */
@@ -182,7 +174,7 @@ public final class ConfigdEdgeClient implements AutoCloseable {
             return shareWatch(ws, options, options.shareConnectionOf().get());
         }
 
-        // The default: a dedicated connection (F10-1b holds by construction).
+        // The default: a dedicated connection, so the independent-resume guarantee holds by construction.
         EdgeSession session = new EdgeSession(config, scheduler, mode,
                 "configd-watch-" + watchSeq.incrementAndGet(), ws);
         session.setOnAuthenticated(ws::onConnected);
@@ -198,9 +190,9 @@ public final class ConfigdEdgeClient implements AutoCloseable {
     }
 
     /**
-     * Joins {@code ws} onto {@code host}'s connection (§06 W6-4). Refuses a cursored/persisted share loudly
-     * (W8-6a): a shared drain has a single position and cannot honour an independent resume (F10-1b). Converts
-     * {@code host}'s dedicated session to a multiplex on the first share (its watch keeps streaming).
+     * Joins {@code ws} onto {@code host}'s connection. Refuses a cursored/persisted share loudly: a shared
+     * drain has a single position and cannot honour an independent resume. Converts {@code host}'s dedicated
+     * session to a multiplex on the first share (its watch keeps streaming).
      */
     private Watch shareWatch(WatchSession ws, WatchOptions options, Watch host) {
         if (!options.isFromNow()) {
@@ -244,7 +236,7 @@ public final class ConfigdEdgeClient implements AutoCloseable {
         return config;
     }
 
-    /** Registers a per-watch session (Gate 3) so {@link #close()} tears it down. */
+    /** Registers a per-watch session so {@link #close()} tears it down. */
     void trackWatchSession(EdgeSession session) {
         watchSessions.add(session);
     }

@@ -39,7 +39,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * Multi-endpoint failover with consistent refusal: two fan-out endpoints over the SAME
  * commit-notification boundary (as a second fan-out node would in production), the
  * subscribed one killed mid-stream. The edge reconnects to the other carrying its resume
- * cursor (the section 3 {@code failoverResumeCursor} reserved field); reads stay
+ * cursor (the {@code failoverResumeCursor} reserved field); reads stay
  * cursor-monotonic across the reconnect; and during catch-up, cursor-behind reads REFUSE
  * (404 + {@code X-Configd-Refused: cursor-behind}) — NEVER block-and-serve-stale.
  */

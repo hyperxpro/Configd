@@ -110,15 +110,16 @@ public final class NettyHttpApiServer {
     private static final int MAX_CHUNK = 8192;
 
     private final int port;
-    // The interface to bind. null = the wildcard (all interfaces), byte-identical to the historical
+    // The interface to bind. null means the wildcard (all interfaces), matching the default of
     // `new InetSocketAddress(port)`. ConfigdServer passes ServerConfig.bindAddress() so the admin
-    // read/write API honours the SAME bind as the Raft + edge planes - otherwise the B5 guard keys on a
-    // value the most security-sensitive plane ignores (the API would sit on all interfaces regardless).
+    // read/write API honours the SAME bind as the Raft + edge planes - otherwise the no-silent-public-bind
+    // guard would key on a value this, the most security-sensitive plane, ignores (the API would sit on
+    // all interfaces regardless of what was configured).
     private final String bindAddress;
     private final SSLContext sslContext; // nullable: plain HTTP when null
     private final AdminApiHandler handler;
     // true when the auth chain includes mtls: the admin TLS then requests (optionally) a client cert so the
-    // mtls authenticator can identify the caller. false = server-side TLS only (byte-identical to before).
+    // mtls authenticator can identify the caller. false = server-side TLS only (client cert not requested).
     private final boolean requestClientCert;
     private final NettyTransport.Selection transport;
     private final int workerThreads;
@@ -126,8 +127,8 @@ public final class NettyHttpApiServer {
     private final long requestTimeoutNanos;
     private final long idleTimeoutMillis;
     private final int maxRequestBytes;
-    // Ingress-reject counters (400 malformed / 413 oversize) on the shared metrics registry the exporter
-    // reads. Previously these rejects were silent (only the 429 write-overload shed was counted).
+    // Ingress-reject counters (400 malformed / 413 oversize) on the shared metrics registry the
+    // exporter reads, so a malformed/oversize-request storm is observable alongside the 429 write-overload shed.
     private final MetricsRegistry.Counter rejectedBadRequest;
     private final MetricsRegistry.Counter rejectedPayloadTooLarge;
 
@@ -197,8 +198,8 @@ public final class NettyHttpApiServer {
                               ReplayGuard replayGuard,
                               AdminApiHandler.LeadershipAdmin leadershipAdmin,
                               AuthenticatorChain chain) {
-        // Historical signature, preserved byte-identically: a null bindAddress binds the wildcard
-        // (all interfaces) exactly as before. ConfigdServer uses the bindAddress overload below.
+        // This signature binds the wildcard address (null bindAddress binds all interfaces) for
+        // callers that don't specify one. ConfigdServer uses the bindAddress overload below.
         this(null, port, sslContext, healthService, prometheusExporter, configStore, writeService,
                 readService, authInterceptor, aclService, strongReadPolicy, leaderHintSupplier,
                 auditLog, replayGuard, leadershipAdmin, chain);
@@ -207,7 +208,7 @@ public final class NettyHttpApiServer {
     /**
      * As the chain constructor, plus an explicit {@code bindAddress} for the listener so the admin
      * read/write API honours the SAME interface as the Raft + edge planes. {@code null} binds the wildcard,
-     * byte-identical to the historical {@code new InetSocketAddress(port)}. Mirrors {@code HttpApiServer}'s
+     * matching the default of {@code new InetSocketAddress(port)}. Mirrors {@code HttpApiServer}'s
      * bindAddress constructor so the drop-in adapter swap keeps an identical arg list.
      */
     public NettyHttpApiServer(String bindAddress,
@@ -304,7 +305,7 @@ public final class NettyHttpApiServer {
         boolean bound = false;
         try {
             serverChannel = b.bind(bindAddress == null
-                    ? new InetSocketAddress(port)                       // wildcard, byte-identical to before
+                    ? new InetSocketAddress(port)                       // wildcard (all interfaces)
                     : new InetSocketAddress(bindAddress, port)).sync().channel();
             bound = true;
         } finally {

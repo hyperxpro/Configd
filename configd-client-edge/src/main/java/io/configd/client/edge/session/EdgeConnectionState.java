@@ -2,8 +2,8 @@ package io.configd.client.edge.session;
 
 /**
  * The {@link EdgeConnection} lifecycle states. A connection advances monotonically toward {@link #CLOSED}; it
- * never re-opens (a reconnect is a fresh connection, §06 F10-1). Steady-state streaming (subscribe / watch) is
- * layered on {@link #AUTHENTICATED} by the later gates.
+ * never re-opens (a reconnect is a fresh connection). Steady-state streaming (subscribe / watch) is
+ * layered on {@link #AUTHENTICATED}.
  */
 public enum EdgeConnectionState {
 

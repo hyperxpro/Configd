@@ -1,23 +1,20 @@
 #!/usr/bin/env bash
-# =============================================================================
-# gate-3.sh — Configd Session-3 cumulative machine-verifiable gate
-# -----------------------------------------------------------------------------
-# Authored by the Session-3 lead. Cumulative with gates 1+2: a green gate-3
-# REQUIRES a green gate-2 (step a; gate-2 itself runs gate-1). Exits non-zero
-# on ANY failure; NO silent placeholders (the RR-012/RR-085 lesson, inherited
-# from gate-2's charter).
+# gate-3.sh — cumulative machine-verifiable gate (edge data plane)
 #
-# WHAT A GREEN GATE-3 PROVES (charter §5):
+# Cumulative with gates 1+2: a green gate-3 REQUIRES a green gate-2 (step a;
+# gate-2 itself runs gate-1). Exits non-zero on ANY failure; no silent
+# placeholders.
+#
+# WHAT A GREEN GATE-3 PROVES:
 #   (a) gate2       gates 1+2 still green (cumulative; no regression of the
 #                   control-plane guarantees while the data plane was built).
 #   (b) map         the contract→test map's end state: ZERO failing-captured,
 #                   ZERO unimplemented rows, and the CONTRACT-MAP-SUMMARY line
 #                   exactly matches the committed expectation
-#                   (gates/gate3-map-expectation.txt, owned by contract-qa —
-#                   any map drift is LOUD, and PARTIAL rows are tolerated only
-#                   because each carries an explicit future-session owner,
-#                   audited in the contract-qa audit).
-#   (c) edgeseeds   the committed 507-seed gate set with the FULL V1 edge
+#                   (gates/gate3-map-expectation.txt — any map drift is LOUD,
+#                   and PARTIAL rows are tolerated only because each carries
+#                   an explicit owner).
+#   (c) edgeseeds   the committed 507-seed gate set with the full edge
 #                   invariant set (monotonicity, no-stale-overwrite, eventual
 #                   delivery, snapshot–delta equivalence): zero safety
 #                   violations (EdgeAdversarialGateSeedSweepTest) AND the
@@ -29,17 +26,16 @@
 #                   --mode boundary AND --mode edge, each emitting
 #                   PROBE-HISTOGRAM: lines; edge mode drives a REAL in-process
 #                   EdgeNodeMain through the wire path).
-#   (e) walk        the slow-consumer state machine walk (charter §4 C4):
+#   (e) walk        the slow-consumer state machine walk:
 #                   SlowConsumerStateMachineWalkTest — the full documented
 #                   machine in recorded order + byte-equal replay determinism.
 #   (f) e2e         the Compose E2E scenario (gates/e2e-compose-scenario.sh):
 #                   3 CP + 3 edges + bootstrap joiner, four adversarial phases,
 #                   throttle-robust, no sleeps-as-sync.
-#   (g) gc          the CT-34 hot-path law, mechanically: jmh-gc-check.sh
+#   (g) gc          the hot-path allocation law, mechanically: jmh-gc-check.sh
 #                   asserts gc.alloc.rate.norm == 0 B/op on the structurally-
 #                   zero edge read-path legs and saves the artifact.
-#   (h) mutation3   PIT floors for the modules this session built or reworked
-#                   (>= 65 from day one, charter §5): configd-edge-cache and
+#   (h) mutation3   PIT floors (>= 65) for configd-edge-cache and
 #                   configd-edge-node (-Pmutation per-module poms;
 #                   configd-distribution-service's floor is enforced by
 #                   gate-2 step (e) and is not duplicated here).
@@ -51,7 +47,6 @@
 #   GATE3_SKIP_GATE2=1      skip step (a) — reported LOUDLY (local iteration
 #                           only; CI runs gate-2 as its own job, see ci.yml)
 #   GATE2_* / GATE1_*       forwarded to the underlying gates
-# =============================================================================
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -175,7 +170,7 @@ step_mutation3() {
     return 0
   fi
   cd "$ROOT"
-  # Floors live in each module's -Pmutation pom config (>= 65, charter §5).
+  # Floors live in each module's -Pmutation pom config (>= 65).
   # distribution-service's floor is gate-2 step (e)'s — not duplicated here.
   $MVN -q -pl configd-edge-cache,configd-edge-node -am install -Dmaven.test.skip=true \
     2>&1 | tee "$LOGDIR/mutation3-install.log" | tail -3

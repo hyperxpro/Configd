@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * The Gate-2 read / subscribe / hydrate happy paths over the plaintext loopback mock: TAIL hydration + signed
+ * The read / subscribe / hydrate happy paths over the plaintext loopback mock: TAIL hydration + signed
  * delta apply, SNAPSHOT_FIRST hydration + cutover, the reactive change stream, the {@code CURSOR_ACK} cadence,
  * and resume-after-disconnect.
  */
@@ -148,8 +148,6 @@ class EdgeSubscribeHydrateTest {
             }
         }
     }
-
-    // -----------------------------------------------------------------------
 
     private static ConfigdClientConfig verifyingConfig(int port, KeyPair leader) {
         return ConfigdClientConfig.builder()

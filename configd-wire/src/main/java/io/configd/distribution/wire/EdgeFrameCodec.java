@@ -139,7 +139,7 @@ public final class EdgeFrameCodec {
     public static final int MAX_NOTIFY_BATCH_BYTES = 256 * 1024;
 
     /**
-     * Hard ceiling on a SUBSCRIBE {@code prefixCount} (WH-12). A real SUBSCRIBE carries a
+     * Hard ceiling on a SUBSCRIBE {@code prefixCount}. A real SUBSCRIBE carries a
      * handful of prefixes; this generous production cap ({@value}) bounds the pre-authorization
      * element-count amplifier on top of the tight {@code prefixCount * 4 <= remaining} byte
      * pre-check (min prefix = a {@code u32} length of a zero-length string = 4 bytes). A valid
@@ -171,9 +171,7 @@ public final class EdgeFrameCodec {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Encode (single pass into a FrameSink)
-    // -----------------------------------------------------------------------
 
     /**
      * One reused {@link CRC32C} per thread for the trailer. A {@code new CRC32C()} per encode
@@ -378,7 +376,7 @@ public final class EdgeFrameCodec {
     private static void encodeSubscribeInto(EdgeFrame.Subscribe f, FrameSink sink, byte version) {
         // [1B fullStore][4B prefixCount][prefixes][8B topologyEpoch][8B resume][8B failoverResume]
         // [4B edgeIdLen][edgeId] and, ONLY under 0x03, a trailing [1B acceptsFiltered] (ADR-0045).
-        // The topologyEpoch (A4) binds this scalar resume token to its topology generation, uniform
+        // The topologyEpoch binds this scalar resume token to its topology generation, uniform
         // with the watch cursor.
         sink.writeByte(f.fullStore() ? 1 : 0);
         sink.writeInt(f.prefixes().size());
@@ -387,7 +385,7 @@ public final class EdgeFrameCodec {
             sink.writeInt(b.length);
             sink.writeBytes(b);
         }
-        sink.writeLong(f.topologyEpoch()); // A4 epoch prefix, before the resume fields
+        sink.writeLong(f.topologyEpoch()); // epoch prefix, before the resume fields
         sink.writeLong(f.resumeCursor());
         sink.writeLong(f.failoverResumeCursor());
         byte[] edgeId = f.edgeId().getBytes(StandardCharsets.UTF_8);
@@ -480,14 +478,12 @@ public final class EdgeFrameCodec {
         sink.writeBytes(msg);
     }
 
-    // -----------------------------------------------------------------------
     // Encode - watch frames (0x02 only). Layouts per sections 5.2-5.8 of the RFC.
-    // -----------------------------------------------------------------------
 
     /** Bytes per encoded cursor component on the wire: gid(u32) + S(u64). */
     private static final int CURSOR_COMPONENT_BYTES = 12;
 
-    /** RT-5 cursor floor: the fixed prefix [topologyEpoch:u64][count:u32] = 12 bytes (count may be 0). */
+    /** Cursor floor: the fixed prefix [topologyEpoch:u64][count:u32] = 12 bytes (count may be 0). */
     private static final int CURSOR_MIN_BYTES = 12;
 
     /** Bytes per encoded {@link EdgeFrame.ShardMode}: gid(u32) + latestSeq(u64) + mode(u8). */
@@ -515,12 +511,12 @@ public final class EdgeFrameCodec {
 
     /**
      * Encodes a {@link WatchCursor} as {@code [topologyEpoch u64][count u32]( gid u32  S u64 )*count}
-     * (W3-5, A4). The epoch prefix binds the whole resume token to its topology generation. The
+     * (W3-5). The epoch prefix binds the whole resume token to its topology generation. The
      * cursor's construction-time invariant guarantees the components are already strictly ascending
      * by unsigned {@code gid}, so they are written in list order with no re-sort.
      */
     private static void encodeCursorInto(WatchCursor cursor, FrameSink sink) {
-        sink.writeLong(cursor.topologyEpoch()); // A4 epoch prefix (binds the token's topology generation)
+        sink.writeLong(cursor.topologyEpoch()); // epoch prefix (binds the token's topology generation)
         List<WatchCursor.Component> cs = cursor.components();
         sink.writeInt(cs.size());
         for (WatchCursor.Component c : cs) {
@@ -620,9 +616,7 @@ public final class EdgeFrameCodec {
         sink.writeLong(f.snapshotSeq());
     }
 
-    // -----------------------------------------------------------------------
     // Decode
-    // -----------------------------------------------------------------------
 
     /**
      * Decodes a single complete frame, accepting any negotiated version ({@code 0x01}/{@code 0x02}
@@ -816,9 +810,9 @@ public final class EdgeFrameCodec {
     private static EdgeFrame decodeSubscribe(ByteBuffer p, byte version) {
         boolean fullStore = p.get() != 0;
         int prefixCount = p.getInt();
-        // Tight bounds-before-allocation (WH-12): each prefix is >= 4 bytes (a u32 length of a
+        // Tight bounds-before-allocation: each prefix is >= 4 bytes (a u32 length of a
         // zero-length string), so prefixCount * 4 is the minimum encoded size - a far tighter
-        // pre-check than the legacy `> remaining` (bytes, not elements), parity with the watch
+        // pre-check than a plain `> remaining` (bytes, not elements), parity with the watch
         // decoders (cursor / shards / changes). The (long) cast binds before the multiply, so no
         // overflow. MAX_PREFIXES then caps the element count itself: a real SUBSCRIBE is well
         // under it, so this rejects only a hostile amplifier, never a well-formed frame.
@@ -833,7 +827,7 @@ public final class EdgeFrameCodec {
         for (int i = 0; i < prefixCount; i++) {
             prefixes.add(readString(p, "prefix"));
         }
-        // A4 topology epoch prefix (before the resume fields). 0 is reserved-illegal -> FRAME_CORRUPT.
+        // Topology epoch prefix (before the resume fields). 0 is reserved-illegal -> FRAME_CORRUPT.
         long topologyEpoch = p.getLong();
         if (topologyEpoch == WatchCursor.EPOCH_UNSET) {
             throw new CodecException(ErrorCode.FRAME_CORRUPT,
@@ -881,7 +875,7 @@ public final class EdgeFrameCodec {
     }
 
     private static EdgeFrame decodeNotify(ByteBuffer p) {
-        // WH-14: enforce the encode-side MAX_NOTIFY_BATCH_BYTES cap on decode too, for canonical-
+        // Enforce the encode-side MAX_NOTIFY_BATCH_BYTES cap on decode too, for canonical-
         // encoding parity. The payload window handed to a decoder is exactly [count u32][notifications]
         // (the frame's strict-end is checked by the caller), which is the identical span the encoder
         // measures (encodeNotifyInto captures payloadStart BEFORE the count int), so this rejects the
@@ -986,7 +980,6 @@ public final class EdgeFrameCodec {
         return new EdgeFrame.ErrorClose(ec, msg);
     }
 
-    // -----------------------------------------------------------------------
     // Decode - watch frames. Bounds-before-allocation discipline as above; the
     // WatchCursor / WatchChange / ShardMode constructors enforce value invariants,
     // and their IllegalArgumentException is mapped to FRAME_CORRUPT.
@@ -998,18 +991,17 @@ public final class EdgeFrameCodec {
     // high-bit-set u64 decodes as FRAME_CORRUPT. A Rust/Go driver using a true u64
     // MUST keep these fields in [0, 2^63). watch_id and gid stay opaque full-range
     // u64/u32 (no such constraint).
-    // -----------------------------------------------------------------------
 
     /**
      * Decodes a {@link WatchCursor} from {@code [topologyEpoch u64][count u32]( gid u32  S u64 )*count}
-     * (W3-5, A4). Enforces the RT-5 minimum-length floor (a cursor payload below the fixed
+     * (W3-5). Enforces the minimum-length floor (a cursor payload below the fixed
      * {@code topologyEpoch:u64 + count:u32} = 12 bytes is truncated {@code ->} FRAME_CORRUPT, never an
      * uncaught underflow), rejects the reserved-illegal epoch {@code 0}, bounds {@code count} against
      * the remaining bytes BEFORE allocating, and maps an unsorted/duplicate {@code gid} (or a negative
      * {@code S}) to {@link ErrorCode#FRAME_CORRUPT} via the {@link WatchCursor} constructor's invariant.
      */
     private static WatchCursor decodeCursor(ByteBuffer p) {
-        // RT-5 floor: the frozen cursor's fixed prefix is [topologyEpoch:u64][count:u32] = 12 bytes.
+        // Floor: the cursor's fixed prefix is [topologyEpoch:u64][count:u32] = 12 bytes.
         if (p.remaining() < CURSOR_MIN_BYTES) {
             throw new CodecException(ErrorCode.FRAME_CORRUPT, "truncated reading cursor epoch+count");
         }
@@ -1242,9 +1234,7 @@ public final class EdgeFrameCodec {
         return chars;
     }
 
-    // -----------------------------------------------------------------------
     // peekLength / peekVersion - cheap pre-decode header reads
-    // -----------------------------------------------------------------------
 
     /**
      * Reads and bounds-checks the declared frame length from the first 4 bytes, so a

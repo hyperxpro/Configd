@@ -12,9 +12,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Regression guard for the D-1 co-location fix: every spawned node must be handed a
+ * Regression guard for the signing-key co-location fix: every spawned node must be handed a
  * {@code --signing-key-file} that lives OUTSIDE its {@code --data-dir}, so the server's
- * PA-2021 co-location guard is SATISFIED (the server would otherwise default the key into the
+ * co-location guard is SATISFIED (the server would otherwise default the key into the
  * data dir and refuse to start, leaving the faulted-linz cluster leaderless).
  *
  * <p>Asserts against the exact launch command ({@link ClusterNode} builds it deterministically)
@@ -41,8 +41,8 @@ class ClusterSigningKeyTest {
                 int dataFlag = cmd.indexOf("--data-dir");
                 Path dataDir = Path.of(cmd.get(dataFlag + 1)).toAbsolutePath().normalize();
 
-                // Mirror the server's D-1 check (ConfigdServer.isInsideDataDir): the key path must
-                // NOT be inside the data dir, otherwise the co-location guard fails the node closed.
+                // Mirror the server's co-location check (ConfigdServer.isInsideDataDir): the key
+                // path must NOT be inside the data dir, otherwise the guard fails the node closed.
                 assertFalse(keyFile.startsWith(dataDir),
                         "signing key " + keyFile + " must live OUTSIDE data dir " + dataDir);
                 // The harness convention: a stable per-node file under a sibling secrets/ dir.

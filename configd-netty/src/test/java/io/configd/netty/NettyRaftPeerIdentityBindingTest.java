@@ -38,11 +38,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Netty twin of {@code RaftTransportMtlsAttackTest}'s peer-identity coverage: the WH-08/09 identity
- * binding must reject the SAME hostile inputs on {@link NettyRaftTransport} as on the JDK
- * {@code TcpRaftTransport} (tier-parity discipline, cf. PR #66). Mirrors the four scenarios in
- * {@code RaftPeerIdentityBindingTest}; the attacker is a raw mTLS {@link SSLSocket}, so the client
- * side is transport-agnostic and only the server pipeline differs.
+ * Netty twin of {@code RaftTransportMtlsAttackTest}'s peer-identity coverage: the identity binding
+ * must reject the same hostile inputs on {@link NettyRaftTransport} as on the JDK
+ * {@code TcpRaftTransport}. Mirrors the four scenarios in {@code RaftPeerIdentityBindingTest}; the
+ * attacker is a raw mTLS {@link SSLSocket}, so the client side is transport-agnostic and only the
+ * server pipeline differs.
  */
 class NettyRaftPeerIdentityBindingTest {
 
@@ -52,9 +52,9 @@ class NettyRaftPeerIdentityBindingTest {
     private static Path node2Ks;
     private static Path clientKs;
     private static Path trustStore;
-    /** A SEPARATE peer trust store containing ONLY the real node leaves (node1, node2) - R3. */
+    /** A SEPARATE peer trust store containing ONLY the real node leaves (node1, node2). */
     private static Path peerTrust;
-    /** An impostor {@code CN=raft-node-1} with a DIFFERENT key, NOT in {@link #peerTrust} (T5). */
+    /** An impostor {@code CN=raft-node-1} with a DIFFERENT key, NOT in {@link #peerTrust}. */
     private static Path impostorKs;
     /** A node cert whose identity is carried in a SAN URI (SPIFFE), not the CN (SAN-URI marker mode). */
     private static Path sanNode2Ks;
@@ -91,8 +91,8 @@ class NettyRaftPeerIdentityBindingTest {
         importCert(trustStore, "node2", node2Cert);
         importCert(trustStore, "client", clientCert);
 
-        // R3 separate peer trust anchor: trusts ONLY the real node leaves. An impostor CN=raft-node-1
-        // (different key) is not in it, so it fails the peer handshake despite the matching CN (T5).
+        // Separate peer trust anchor: trusts ONLY the real node leaves. An impostor CN=raft-node-1
+        // (different key) is not in it, so it fails the peer handshake despite the matching CN.
         peerTrust = fixtureDir.resolve("peer-trust.p12");
         impostorKs = fixtureDir.resolve("impostor-ks.p12");
         importCert(peerTrust, "node1", node1Cert);
@@ -247,7 +247,7 @@ class NettyRaftPeerIdentityBindingTest {
                 "an enforced allow-list without mTLS must fail loud at startup, never fail open");
     }
 
-    // ---- Test 7: separate peer CA (R3) - a client-CA cert with a matching CN fails the HANDSHAKE. ----
+    // Separate peer CA: a client cert with a matching CN but the wrong CA fails the handshake.
 
     @Test
     @Timeout(120)
@@ -282,7 +282,7 @@ class NettyRaftPeerIdentityBindingTest {
         assertEquals(0, rejections.get());
     }
 
-    // ---- Test 8: SAN-URI (SPIFFE) marker mode - identity carried in a SAN URI, not the CN. ----
+    // SAN-URI (SPIFFE) marker mode: identity carried in a SAN URI, not the CN.
 
     @Test
     @Timeout(120)
@@ -314,7 +314,7 @@ class NettyRaftPeerIdentityBindingTest {
         assertTrue(rejections.get() >= 1, "a missing SAN-URI marker must increment the mismatch counter");
     }
 
-    // ---- helpers ----
+    // Helpers.
 
     private NettyRaftTransport startClientTransport(NodeId peerId, int peerPort, PeerIdentityPolicy policy,
             AtomicInteger inbound, AtomicInteger rejections) throws Exception {
@@ -368,7 +368,7 @@ class NettyRaftPeerIdentityBindingTest {
         return startServer(policy, null, inbound, rejections);
     }
 
-    /** Starts the server (node-1) with a SEPARATE peer trust store (R3) for the Raft interior. */
+    /** Starts the server (node-1) with a SEPARATE peer trust store for the Raft interior. */
     private int startServerWithPeerTrust(PeerIdentityPolicy policy, Path peerTrustStore,
             AtomicInteger inbound, AtomicInteger rejections) throws Exception {
         return startServer(policy, peerTrustStore, inbound, rejections);

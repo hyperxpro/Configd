@@ -10,10 +10,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class VersionCursorTest {
 
-    // -----------------------------------------------------------------------
-    // INITIAL sentinel
-    // -----------------------------------------------------------------------
-
     @Nested
     class InitialCursor {
 
@@ -27,10 +23,6 @@ class VersionCursorTest {
             assertEquals(0, VersionCursor.INITIAL.timestamp());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // isNewerThan
-    // -----------------------------------------------------------------------
 
     @Nested
     class IsNewerThan {
@@ -75,10 +67,6 @@ class VersionCursorTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Record accessors
-    // -----------------------------------------------------------------------
-
     @Nested
     class RecordAccessors {
 
@@ -94,10 +82,6 @@ class VersionCursorTest {
             assertEquals(99999, cursor.timestamp());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Validation
-    // -----------------------------------------------------------------------
 
     @Nested
     class Validation {
@@ -121,10 +105,6 @@ class VersionCursorTest {
             assertEquals(0, cursor.timestamp());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Equality (record semantics)
-    // -----------------------------------------------------------------------
 
     @Nested
     class Equality {

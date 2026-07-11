@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
-# =============================================================================
-# gate-6.sh — Configd Session-6 cumulative machine-verifiable gate (OPERABILITY)
-# -----------------------------------------------------------------------------
+# gate-6.sh — cumulative machine-verifiable gate (operability & deployment readiness)
+#
 # Cumulative with gates 1..5: a green gate-6 REQUIRES a green gate-5 (which chains
 # 4→3→2→1). In CI gate-5 runs as its own job, so the gate-6 job sets
 # GATE6_SKIP_GATE5=1 (cumulative coverage via the job dependency, not a redundant
-# re-run) — reported LOUDLY. Exits non-zero on ANY failure; NO silent placeholders;
+# re-run) — reported LOUDLY. Exits non-zero on ANY failure; no silent placeholders;
 # every step asserts a REAL result and FAILS if its summary line is absent
-# (non-vacuity — the RR-012/RR-085 lesson).
+# (non-vacuity).
 #
-# WHAT A GREEN GATE-6 PROVES (charter §9 — locks in the operability bar):
+# WHAT A GREEN GATE-6 PROVES (locks in the operability bar):
 #   (b) metric-contract  EVERY dashboard panel + alert series is PROVEN EMITTED
 #                        (EdgeMetricsContractTest.everyDashboardAndAlertSeriesIs
 #                        ProvenEmitted) and the SLO series are RECORDED with real
 #                        data on their real paths (MetricsWiringContractTest) —
-#                        the S1 blind-dashboard / hardwired-to-zero defect is dead.
+#                        no blind dashboards, no series hardwired to zero.
 #   (c) alert-tests      every alert rule FIRES on its injected condition and STAYS
 #                        QUIET on normal operation (promtool test rules) + rules lint.
 #   (d) wire-compat      serialized messages are byte-stable within the wire version
@@ -35,7 +34,6 @@
 #   GATE6_SKIP_GATE5=1   skip step (a) — LOUD (CI runs gate-5 as its own job).
 #   GATE6_SKIP_BUILD=1   reuse already-installed module jars (local convenience).
 #   PROMTOOL             path to a promtool binary (else a pinned one is downloaded).
-# =============================================================================
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -62,13 +60,13 @@ assert_class_green() {
   echo "GATE-6   ✓ ${cls}: ${line#*-- in }"
 }
 
-# --- 2-vCPU box discipline: never overlap another Maven workload --------------
+# 2-vCPU box discipline: never overlap another Maven workload.
 if pgrep -f "[s]urefirebooter" >/dev/null 2>&1; then
   echo "GATE-6: another Maven test workload is running — refusing to start (2-vCPU box)" >&2
   exit 1
 fi
 
-# --- (a) cumulative: gate-5 (chains 4→3→2→1) ----------------------------------
+# (a) cumulative: gate-5 (chains 4→3→2→1)
 if [ "${GATE6_SKIP_GATE5:-0}" = "1" ]; then
   echo "GATE-6 gate5: SKIPPED by GATE6_SKIP_GATE5=1 (LOUD: gates 1..5 NOT verified this run; CI supplies them via the gate-5 job)"
 else
@@ -77,7 +75,7 @@ else
   echo "GATE-6 gate5: OK (gates 1..5 green)"
 fi
 
-# --- build/install the modules' deps once (so the targeted test run is offline)
+# build/install the modules' deps once (so the targeted test run is offline)
 if [ "${GATE6_SKIP_BUILD:-0}" = "1" ]; then
   echo "GATE-6 build: SKIPPED by GATE6_SKIP_BUILD=1 (reusing installed jars; CI must not do this)"
 else
@@ -86,7 +84,7 @@ else
     || { tail -30 "$LOGDIR/build.txt"; fail build "module build/install failed"; }
 fi
 
-# --- (b)(d)(e)(f)(g): the operability + deployment test classes (one run) ------
+# (b)(d)(e)(f)(g): the operability + deployment test classes (one run)
 echo "GATE-6 tests: metric-contract + wire-compat + bootstrap + backup-restore + drill..."
 TESTS="EdgeMetricsContractTest,MetricsWiringContractTest,WireCompatGoldenBytesTest,EdgeFrameCodecGoldenFixtureTest,BootstrapColdStartTest,BackupRestoreRoundTripTest,GameDayDrillTest"
 TL="$LOGDIR/tests.txt"
@@ -102,7 +100,7 @@ assert_class_green "$TL" "BackupRestoreRoundTripTest"       # (f) backup/restore
 assert_class_green "$TL" "GameDayDrillTest"                 # (g) alert→runbook→recovery loop closes
 echo "GATE-6 tests: OK"
 
-# --- (c) alert rules: lint + fires/quiet (promtool) ---------------------------
+# (c) alert rules: lint + fires/quiet (promtool)
 echo "GATE-6 alerts: promtool check rules + fires/quiet test rules..."
 PT="${PROMTOOL:-}"
 if [ -z "$PT" ]; then

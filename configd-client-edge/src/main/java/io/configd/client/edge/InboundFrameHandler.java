@@ -4,18 +4,18 @@ import io.configd.client.ConfigdException;
 import io.configd.distribution.wire.EdgeFrame;
 
 /**
- * The demultiplexer seam the reader thread dispatches decoded server frames to. Gate 1 (connection + auth)
- * uses the heartbeat and terminal callbacks; the subscribe / hydrate (Gate 2) and watch (Gate 3) gates fill
- * {@link #onFrame} and the catch-up / per-watch callbacks. Every method has a no-op default so a gate
- * overrides only what it consumes.
+ * The demultiplexer seam the reader thread dispatches decoded server frames to. The connection + auth phase
+ * uses the heartbeat and terminal callbacks; the subscribe / hydrate and watch surfaces fill {@link #onFrame}
+ * and the catch-up / per-watch callbacks. Every method has a no-op default so a consumer overrides only what
+ * it needs.
  *
  * <p><b>Threading:</b> all callbacks are invoked on the connection's single reader thread, in frame-arrival
- * order. An implementation MUST NOT block it (that stalls draining and risks a slow-consumer demotion, §06
- * F10-3); hand off to another executor if work is heavy.
+ * order. An implementation MUST NOT block it (that stalls draining and risks a slow-consumer demotion); hand
+ * off to another executor if work is heavy.
  */
 public interface InboundFrameHandler {
 
-    /** A {@code HEARTBEAT} (0x08) — the liveness/staleness clock (§06 F6-8). */
+    /** A {@code HEARTBEAT} (0x08) — the liveness/staleness clock. */
     default void onHeartbeat(EdgeFrame.Heartbeat heartbeat) {
     }
 
@@ -27,13 +27,13 @@ public interface InboundFrameHandler {
     default void onCatchUp() {
     }
 
-    /** A per-watch terminal ({@code WATCH_CANCELED}, 0x0F): one watch ended; the connection survives (Gate 3). */
+    /** A per-watch terminal ({@code WATCH_CANCELED}, 0x0F): one watch ended; the connection survives. */
     default void onPerWatch(ConfigdException watchError) {
     }
 
     /**
      * A per-watch terminal carrying the {@code watch_id}, so a connection multiplexing several watches can
-     * terminate <b>only</b> that watch and keep its siblings streaming (§06 W6-4). The default routes to the
+     * terminate <b>only</b> that watch and keep its siblings streaming. The default routes to the
      * {@code watch_id}-agnostic {@link #onPerWatch(ConfigdException)}, so a single-watch handler is unaffected.
      */
     default void onPerWatch(long watchId, ConfigdException watchError) {
@@ -57,7 +57,7 @@ public interface InboundFrameHandler {
      * Whether the handler currently wants more frames read from the socket. Returning {@code false} parks the
      * reader (reactive backpressure) until the handler regains demand and calls
      * {@link io.configd.client.edge.session.EdgeConnection#wakeReader()}. The default always wants frames (no
-     * backpressure) — the Gate-1 auth path and any drain-promptly consumer.
+     * backpressure) — the auth path and any drain-promptly consumer.
      */
     default boolean wantsMoreFrames() {
         return true;

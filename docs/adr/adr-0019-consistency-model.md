@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-The system must provide strong consistency guarantees for config writes (correctness) while achieving < 1ms p99 edge reads (performance). These are inherently conflicting requirements: linearizable reads require leader contact (adding network RTT), while sub-millisecond reads require local serving without coordination. Cloudflare Quicksilver provides only sequential consistency per-node with no cross-node read-your-writes, no causal consistency, and no linearizable operations (the gap analysis). etcd provides linearizable reads via ReadIndex but at the cost of leader RTT on every read. The system targets: < 150ms write commit p99, < 500ms edge staleness p99, < 1ms edge read p99, 10K/s sustained writes.
+The system must provide strong consistency guarantees for config writes (correctness) while achieving < 1ms p99 edge reads (performance). These are inherently conflicting requirements: linearizable reads require leader contact (adding network RTT), while sub-millisecond reads require local serving without coordination. Cloudflare Quicksilver provides only sequential consistency per-node with no cross-node read-your-writes, no causal consistency, and no linearizable operations. etcd provides linearizable reads via ReadIndex but at the cost of leader RTT on every read. The system targets: < 150ms write commit p99, < 500ms edge staleness p99, < 1ms edge read p99, 10K/s sustained writes.
 
 ## Decision
 We adopt a **split consistency model**: linearizable writes via Raft consensus in the control plane, with bounded-staleness reads at the edge and explicit monotonic-read guarantees per client session.

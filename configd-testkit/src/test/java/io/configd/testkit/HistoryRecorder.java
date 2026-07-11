@@ -6,9 +6,8 @@ import java.util.List;
 /**
  * Records a checker-neutral operation history from an adversarial sim run, in the
  * exact invoke/ok/fail/info format the configd-linz Porcupine checker already
- * consumes from the real-binary harness (adversarial-sim-design section 6;
- * {@code docs/a3-harness-design.md:43-49,85-99}). Emitting the same format lets the
- * B5 linz round check sim histories without re-instrumenting.
+ * consumes from the real-binary harness. Emitting the same format lets the linz
+ * checker check sim histories without re-instrumenting.
  * <p>
  * <b>Ack semantics (gates correctness).</b> A {@code propose}-accepted write is
  * {@code :info} (ack != commit) - it is promoted to "happened" only when a
@@ -51,8 +50,8 @@ final class HistoryRecorder {
 
     /** Marks the run complete (records the final real-time bound). */
     void finish(long endTs) {
-        // No-op for now; kept as the section 6 capture point should a closing marker be
-        // needed by the checker. Present so callers have a stable lifecycle hook.
+        // No-op for now; kept as a stable lifecycle hook in case a closing marker is
+        // later needed by the checker.
     }
 
     List<Entry> entries() {

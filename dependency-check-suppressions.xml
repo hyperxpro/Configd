@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  OWASP dependency-check suppression file (S7 / supply-chain, E-1).
+  OWASP dependency-check suppression file.
 
   Referenced by the `-Pcve-scan` profile in the root pom. Empty by design:
   the gate-7 CVE step fails the build on CVSS >= 7.0, and any suppression
   added here MUST cite a triage decision (an ADR or a Decision-Log entry)
   explaining WHY the finding is not exploitable in Configd's usage. Do NOT
   suppress a finding to make the gate green without that justification —
-  that is a §8.18 honesty-rule violation, the same class as pretend-
-  allowlisting a real secret in .gitleaks.toml.
+  it is the same class of dishonesty as pretend-allowlisting a real secret
+  in .gitleaks.toml.
 
   Schema: https://jeremylong.github.io/DependencyCheck/general/suppression.html
 -->

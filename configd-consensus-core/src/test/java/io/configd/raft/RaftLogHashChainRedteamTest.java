@@ -27,11 +27,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * FOCUSED re-verification of the per-record WAL hash chain that closes the interior stale-content
- * rollback the earlier Gate 2a pass surfaced. The chain binds each authenticated record to
- * {@code prevHash = SHA-256(predecessor payload)}, stored INSIDE the envelope's authenticated body
- * ({@code [index][term][prevHash][command]}), so a splice that keeps a valid incoming link is still
- * caught by the SUCCESSOR's authenticated prevHash, and re-linking the successor breaks its MAC/tag.
+ * Re-verification of the per-record WAL hash chain that closes an interior stale-content rollback.
+ * The chain binds each authenticated record to {@code prevHash = SHA-256(predecessor payload)},
+ * stored INSIDE the envelope's authenticated body ({@code [index][term][prevHash][command]}), so a
+ * splice that keeps a valid incoming link is still caught by the SUCCESSOR's authenticated prevHash,
+ * and re-linking the successor breaks its MAC/tag.
  * <p>
  * All attacks run on REAL on-disk bytes through the real {@link RaftLog} recovery path, in BOTH the
  * keyed (HMAC) and encrypting (GCM) postures. {@link ChainedWal} is the chaining test kit.
@@ -39,11 +39,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RaftLogHashChainRedteamTest {
 
     private static final int GID = 0;
-
-    // ---------------------------------------------------------------------------------------------
-    // 1. The interior stale-content splice (my prior finding) now REFUSES - the SUCCESSOR's
-    //    authenticated prevHash still binds the ORIGINAL interior record, so recovery detects a break.
-    // ---------------------------------------------------------------------------------------------
 
     @Test
     void interiorStaleSpliceRefusedByChain_hmac(@TempDir Path tempDir) throws Exception {
@@ -79,12 +74,10 @@ class RaftLogHashChainRedteamTest {
                 "the interior stale-content splice must now be refused by the chain, got: " + ex.getMessage());
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // 2. THE bypass hunt: try to make the spliced chain VALID by re-stamping the successor's prevHash
-    //    to point at the spliced record. Because prevHash lives inside the authenticated body, this
-    //    breaks the successor's MAC (HMAC) / GCM tag - you cannot forge a valid-chain-valid-auth
-    //    rollback without the key.
-    // ---------------------------------------------------------------------------------------------
+    // The bypass hunt: try to make the spliced chain valid by re-stamping the successor's prevHash to
+    // point at the spliced record. Because prevHash lives inside the authenticated body, this breaks
+    // the successor's MAC (HMAC) / GCM tag - a valid-chain-valid-auth rollback cannot be forged
+    // without the key.
 
     @Test
     void restampingSuccessorPrevHashBreaksAuth_hmac(@TempDir Path tempDir) throws Exception {
@@ -163,13 +156,13 @@ class RaftLogHashChainRedteamTest {
     }
 
     /**
-     * DOCUMENTED RESIDUAL (not a chain hole): rolling the TAIL back to a genuinely-prior VALID chain
-     * continuation that chains from the SAME unchanged prefix produces a self-consistent valid chain,
-     * so recovery ACCEPTS it. The hash chain closes an interior splice whose successor is unchanged;
-     * it cannot detect a rollback to a wholly prior valid chain state - that is the head-anchor's
-     * monotonic-floor / AnchorWitness job (design residual (a), deferred to Gate 3). In Raft the
-     * rolled-back suffix was necessarily UNCOMMITTED when it was overwritten (a committed entry is
-     * never overwritten), so the anchor's durable floor is what bounds it, not the chain.
+     * Documented residual, not a chain hole: rolling the tail back to a genuinely prior valid chain
+     * continuation that chains from the same unchanged prefix produces a self-consistent valid chain,
+     * so recovery accepts it. The hash chain closes an interior splice whose successor is unchanged;
+     * it cannot detect a rollback to a wholly prior valid chain state - that is the head anchor's
+     * monotonic-floor / AnchorWitness job. In Raft the rolled-back suffix was necessarily uncommitted
+     * when it was overwritten (a committed entry is never overwritten), so the anchor's durable floor
+     * is what bounds it, not the chain.
      */
     @Test
     void tailRollbackToPriorValidChainAccepted_documentsAnchorResidual(@TempDir Path tempDir) throws Exception {
@@ -194,22 +187,18 @@ class RaftLogHashChainRedteamTest {
         frames.set(2, a3Frame);
         Files.write(walPath(tempDir), reassemble(header(wal), frames), StandardOpenOption.TRUNCATE_EXISTING);
 
-        // Gate 3a CLOSES this residual: the per-record chain still accepts the rollback (every link is
-        // valid), but the merged anchor's durable head now names index 3 at the CURRENT term (3), while
-        // the rolled-back tail re-terms index 3 to the older term (2). Recovery's WAL-head-term check
-        // (WAL[head].term == anchor.lastDurableTerm) refuses the tail-content rollback. What remains a
-        // residual is only a WHOLE-suffix rollback to a wholly-prior valid chain that ALSO rolls the
-        // anchor back (the monotonic-floor / AnchorWitness case), not this same-head re-term.
+        // The anchor closes this residual: the per-record chain still accepts the rollback (every link
+        // is valid), but the merged anchor's durable head now names index 3 at the current term (3),
+        // while the rolled-back tail re-terms index 3 to the older term (2). Recovery's WAL-head-term
+        // check (WAL[head].term == anchor.lastDurableTerm) refuses the tail-content rollback. What
+        // remains a residual is only a whole-suffix rollback to a wholly prior valid chain that also
+        // rolls the anchor back (the monotonic-floor / AnchorWitness case), not this same-head re-term.
         IntegrityException ex = assertThrows(IntegrityException.class,
                 () -> new RaftLog(Storage.file(tempDir), env, GID));
         assertTrue(ex.getMessage().contains("tail content rollback")
                         || ex.getMessage().contains("head-term mismatch"),
                 "Gate 3a anchor must refuse the tail-content rollback, got: " + ex.getMessage());
     }
-
-    // ---------------------------------------------------------------------------------------------
-    // 3. Genesis fabrication: an index-1 first record whose prevHash is not GENESIS => REFUSE.
-    // ---------------------------------------------------------------------------------------------
 
     @Test
     void genesisFabricationRefused_hmac(@TempDir Path tempDir) {
@@ -235,10 +224,8 @@ class RaftLogHashChainRedteamTest {
                 "a non-GENESIS prevHash on the index-1 record must be refused, got: " + ex.getMessage());
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // 4. No false-positives - legitimate shapes must RECOVER cleanly (a false chain break is a
-    //    liveness bug, treated as first-class here).
-    // ---------------------------------------------------------------------------------------------
+    // No false positives: legitimate WAL shapes must recover cleanly too - a false chain break is a
+    // liveness bug in its own right.
 
     /** A legitimate compaction (firstIndex>1; the first survivor's prevHash refers to a compacted record). */
     @Test
@@ -312,10 +299,8 @@ class RaftLogHashChainRedteamTest {
         assertEquals(2, log.lastTerm());
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // 5. Keyless divergence: a keyless WAL is byte-identical (no prevHash) and recovers with NO chain
-    //    verification (keyless carries no adversarial guarantee by design).
-    // ---------------------------------------------------------------------------------------------
+    // Keyless divergence: a keyless WAL is byte-identical (no prevHash) and recovers with no chain
+    // verification (keyless carries no adversarial guarantee by design).
 
     @Test
     void keylessWalHasNoPrevHashAndRecoversWithoutChainCheck(@TempDir Path tempDir) throws Exception {
@@ -366,9 +351,7 @@ class RaftLogHashChainRedteamTest {
         assertFalse(env.isKeyed() || env.isEncrypting(), "sanity: this is the keyless posture");
     }
 
-    // ---------------------------------------------------------------------------------------------
     // Posture builders + on-disk byte helpers (identical frame arithmetic to FileStorage).
-    // ---------------------------------------------------------------------------------------------
 
     private static IntegrityEnvelope hmacEnvelope() {
         byte[] k = new byte[32];

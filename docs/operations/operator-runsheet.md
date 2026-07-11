@@ -1,31 +1,25 @@
-# Operator Runsheet - Configd v1 (secure-by-CONFIG release gates)
+# Operator Runsheet (secure-by-config release gates)
 
-> **Supersedes** the prior v0.1-GA hardening runsheet (the April-2026 "40-day
-> harness" artifact from the self-healing-loop era). That document's
-> calendar-bounded soak/burn/shadow/longevity harnesses are retired: the DR and
-> soak **evidence now lives in [`../archive/measurement/`](../archive/measurement/)** (the two paid EC2
-> runs - [`ec2-2026-06-30/`](../archive/measurement/ec2-2026-06-30/) single-box durability +
-> 6 h soak, and [`ec2-horizontal-2026-07-01/`](../archive/measurement/ec2-horizontal-2026-07-01/)
-> multi-machine horizontal scale), and the first-30-days operating posture is the
-> **[burn-in contract](burn-in-contract.md)** (see the readiness review,
-> [`../archive/readiness/v1-go-no-go-2026-07-01.md`](../archive/readiness/v1-go-no-go-2026-07-01.md), section 0 and section 5.1).
+> DR and soak evidence lives in [`../archive/measurement/`](../archive/measurement/) - the two paid EC2
+> runs, [`ec2-2026-06-30/`](../archive/measurement/ec2-2026-06-30/) (single-box durability plus a 6 h
+> soak) and [`ec2-horizontal-2026-07-01/`](../archive/measurement/ec2-horizontal-2026-07-01/)
+> (multi-machine horizontal scale). The first-30-days operating posture is the
+> [burn-in contract](burn-in-contract.md).
 
 **Audience:** the release engineer / SRE who signs off that a cluster is
 production-ready.
 
-**What this file is.** A checklist you run **before** declaring a Configd v1
+**What this file is.** A checklist you run **before** declaring a Configd
 cluster production-ready. It verifies every server-side security control is on
 and observable. Read it together with its companion
 [`deployer-must-know.md`](deployer-must-know.md) -- the
 "know-this-or-you-create-a-vulnerability" list of deployment conditions the server
 does not enforce for you.
 
-## The one thing to internalize: secure-by-CONFIG, not by-default
+## The one thing to internalize: secure-by-config, not by-default
 
-v1 is a **deliberate posture choice: secure-by-config, not secure-by-default**
-(see the readiness review,
-[section 4](../archive/readiness/v1-go-no-go-2026-07-01.md)). **Except rate limiting,
-every security control is OFF until you turn it on**, and each off control emits
+This is a **deliberate posture choice: secure-by-config, not secure-by-default**.
+**Except rate limiting, every security control is OFF until you turn it on**, and each off control emits
 a loud startup warning or a `disabled` banner line. An out-of-the-box node is
 **plaintext, unauthenticated, unaudited, no replay protection**. None of the
 gates below are optional for a production node.
@@ -51,9 +45,7 @@ the banner.
 | 9 | **Shard-aware readiness + drain** | *(none)* | lost-quorum shard -> `/health/ready` **NOT-ready**; SIGTERM -> draining first | **ON** (correctness) |
 | -- | **Rate limiting** | *(none -- unconditionally ON)* | `Write rate   : 10000/s (burst 10000)` . sustained flood -> **429** | **ON** (the one control on-by-default) |
 | -- | **Auth modes** (Basic/OIDC/mTLS/node-join) | see Gate 1b | positive+negative probe per configured mode | -- |
-| -- | **Key-material custody (F3)** + **fsync probe (D8)** | deploy-level (`ulimit -c 0`, swap off; run fsync probe) | see sections below | -- (operator) |
-
-Source of truth for the gate set: the readiness review, [section 4](../archive/readiness/v1-go-no-go-2026-07-01.md).
+| -- | **Key-material custody** + **fsync probe** | deploy-level (`ulimit -c 0`, swap off; run fsync probe) | see sections below | -- (operator) |
 
 ---
 
@@ -98,11 +90,19 @@ the simplest mode (a single `root` identity); the chain also supports:
   frame; usernames map to Configd roles via `_acl/` policy.
 - **Bearer / OAuth2-OIDC.** Configure the OIDC authenticator (`configd-authn-oidc`, ServiceLoader) with the
   issuer + JWKS; a bearer token is validated as an OIDC/JWT access token and its claims mapped to roles
-  (`ClaimsRoleMapper`). **Fail-closed:** if the issuer/JWKS is unreachable the request is rejected (`401`/`503`),
-  never downgraded to anonymous. A `503`-class outcome is retryable.
+  (`ClaimsRoleMapper`). The JWKS set is cached for 600 s by default
+  (`configd.auth.oidc.issuer.<name>.jwks.ttlSeconds`), refreshed 60 s ahead of expiry, and tolerates up to
+  1 h of issuer outage by serving the last-known-good set. **Fail-closed:** if the issuer/JWKS is
+  unreachable and no cached set is usable, the request is rejected (`401`/`503`), never downgraded to
+  anonymous. A `503`-class outcome is retryable.
 - **mTLS.** On the edge and Raft-peer surfaces the verified client-cert DN is the authoritative identity
   (Gate 2). The edge accepts an mTLS cert **and/or** a token/basic `AUTH` frame; credentials carry
-  **expiry/revocation** (`CREDENTIAL_EXPIRED` close, proactive `REFRESH_AUTH`).
+  **expiry/revocation** (`CREDENTIAL_EXPIRED` close, proactive `REFRESH_AUTH`). The proactive refresh window
+  is a fraction of the credential's remaining lifetime, clamped to a floor and ceiling
+  (`configd.auth.expiry.*`): 20% for a bearer token, clamped to 30 s-5 min, and 10% for a certificate,
+  clamped to 5 min-1 h. Revocation checking is **off by default**
+  (`configd.auth.revocation.mode=off`); turning it on (`lax`/`strict`) checks a CRL file that is
+  re-parsed whenever it changes on disk (`configd.auth.revocation.crlFile`).
 - **Node-join (Raft interior) is mTLS-only.** A node's membership identity is a certificate marker (default
   Subject-DN CN; optionally SAN-URI/SPIFFE via `configd.raft.peerIdentity.markerType`), matched against a
   per-node allow-list `configd.raft.peerIdentity.allowedNodes`. There is **no** token path to consensus.
@@ -111,9 +111,9 @@ the simplest mode (a single `root` identity); the chain also supports:
   to start rather than downgrade). Selecting an unavailable provider is a fail-loud startup refusal.
 
 **Verify:** exercise the mode(s) your deployment configures with a positive and a negative probe (a valid
-credential → `200`; a missing/invalid one → `401`; an unauthorized-but-authenticated principal → `403`). For
+credential -> `200`; a missing/invalid one -> `401`; an unauthorized-but-authenticated principal -> `403`). For
 OIDC, additionally confirm a token from the **wrong issuer/audience** is rejected. See
-[`../design/group-b/`](../design/group-b/) for the as-built auth surface.
+[`../design/group-b/`](../design/group-b/) for the full auth surface design.
 
 ## Gate 2 - mTLS ON (Raft peer + edge fan-out)
 
@@ -196,7 +196,7 @@ OIDC, additionally confirm a token from the **wrong issuer/audience** is rejecte
   **Scope of protection (be honest with yourself):** this defends **only against
   passive capture-and-replay**. A holder of the bearer token can still mint a
   **fresh** request (new nonce + current timestamp) - per-request content signing
-  is an S8/v2 follow-up (`ReplayGuard.java:17-24`). It is not a substitute for
+  is a follow-up, not built yet (`ReplayGuard.java:17-24`). It is not a substitute for
   Gate 1.
 - **How to VERIFY:**
   - **Startup line:** `Replay guard : ON (window 300000ms, nonce cap 1000000)`
@@ -270,19 +270,19 @@ OIDC, additionally confirm a token from the **wrong issuer/audience** is rejecte
 
 ## Gate 7 - No silent unauthenticated public bind (default loopback)
 
-- **What to set:** nothing, if you run with auth ON (Gate 1) — bind whatever interface you need. The default
+- **What to set:** nothing, if you run with auth ON (Gate 1) - bind whatever interface you need. The default
   bind is **loopback (`127.0.0.1`)**. To bind a **non-loopback** interface with **auth OFF**, you must pass
   `--allow-insecure-public-bind` (sysprop `configd.security.allowInsecurePublicBind=true`), which logs a loud
-  warning and continues. This is a **footgun-fix, not "auth required by default"** — a deliberate no-auth
+  warning and continues. This is a **footgun-fix, not "auth required by default"** - a deliberate no-auth
   public deployment stays possible via the flag.
 - **How to VERIFY:** a non-loopback bind with auth OFF and no override **refuses to start**; with the override
   it starts and prints the insecure-public-bind warning. An auth-ON public bind needs no override.
 - **Failure mode if mis-set:** setting the override in production with auth OFF exposes an unauthenticated
-  store publicly — segregate the port at the network boundary and only use the flag knowingly.
+  store publicly - segregate the port at the network boundary and only use the flag knowingly.
 
 ## Gate 8 - Write-admission control (ON by default)
 
-- **What to set:** nothing — `configd.write.maxInflightProposals` is **ON by default** with a conservative
+- **What to set:** nothing - `configd.write.maxInflightProposals` is **ON by default** with a conservative
   tuned value; tune with `-Dconfigd.write.maxInflightProposals=N` (`0` disables).
 - **How to VERIFY:** a sustained write flood is shed with **HTTP 429 + `Retry-After`** (a pre-commit reject),
   bounding leader memory; watch `configd_write_rejected_overloaded_total`.
@@ -291,31 +291,31 @@ OIDC, additionally confirm a token from the **wrong issuer/audience** is rejecte
 
 ## Gate 9 - Readiness is shard-aware and drains on SIGTERM
 
-- **What to set:** nothing — `/health/ready` reflects **every** shard this node should serve (a node that lost
+- **What to set:** nothing - `/health/ready` reflects **every** shard this node should serve (a node that lost
   quorum on any hosted shard reports NOT-ready), and SIGTERM flips readiness to draining **before** closing.
 - **How to VERIFY:** point the orchestrator readiness probe at `/health/ready`; on SIGTERM the node reports
   NOT-ready first so the LB stops routing and in-flight work drains. At N>1, kill a shard's quorum and confirm
   the node reports NOT-ready (it no longer lies via a group-0-only check).
 
-## Deploy-level key-material custody (F3) - core dumps and swap
+## Deploy-level key-material custody - core dumps and swap
 
 - **What to set (the server cannot enforce this):** JVM zeroization of key material is platform-bounded, so
   belt-and-braces custody is deploy-level. Set **`ulimit -c 0`** (or systemd `LimitCORE=0`) for the Configd
-  unit; keep **`-XX:-HeapDumpOnOutOfMemoryError`** (heap dumps expose config values —
-  [`security-heap-dump-policy.md`](security-heap-dump-policy.md)); run with **swap off** (`swapoff -a`) or
+  unit; keep **`-XX:-HeapDumpOnOutOfMemoryError`** (heap dumps expose config values,
+  see [`security-heap-dump-policy.md`](security-heap-dump-policy.md)); run with **swap off** (`swapoff -a`) or
   encrypted swap on nodes that hold the signing key or an encrypted data dir.
 - **Why:** a core dump or a swapped-out page can persist raw key/root bytes to disk, defeating the at-rest and
   audit integrity guarantees (threat A2/T3). Treat these as part of the signing-key custody procedure alongside
-  the Gate-5 co-location guard. This is a **tested boundary**, not an in-JVM guarantee.
+  the Gate 5 co-location guard. This is a **tested boundary**, not an in-JVM guarantee.
 
-## Verify fsync on the target hardware (D8)
+## Verify fsync on the target hardware
 
 - **What to run (on the target storage, before production):** a `pg_test_fsync`-equivalent probe to confirm the
   WAL device's fsync method and latency (`fdatasync`/`O_DSYNC`), and that fsync actually reaches durable media
   (no lying write cache). A reference wrapper is [`../../ops/scripts/fsync-probe.sh`](../../ops/scripts/fsync-probe.sh);
   the durability runbook is [`../../ops/runbooks/disk-full-fsync.md`](../../ops/runbooks/disk-full-fsync.md).
 - **Why:** Configd acknowledges a write only after a durable majority fsync; a device that buffers or reorders
-  fsync silently weakens the 0-loss durability contract. **Run this on the actual production storage** — do not
+  fsync silently weakens the 0-loss durability contract. **Run this on the actual production storage** - do not
   assume the CI/dev environment's characteristics.
 
 ---
@@ -353,7 +353,7 @@ OIDC, additionally confirm a token from the **wrong issuer/audience** is rejecte
 A cluster is **not** production-ready until Gates 1-9 are each **verified by their
 behavioral probe** (not merely by a config flag being present), the always-on
 controls show their startup lines, the configured **auth modes** (Gate 1b) pass a positive+negative probe,
-and the deploy-level **key-material custody (F3)** and **fsync probe (D8)** steps have been run on the target
+and the deploy-level **key-material custody** and **fsync probe** steps have been run on the target
 hardware. Record the verifying command output per gate.
 
 Then read [`deployer-must-know.md`](deployer-must-know.md) -- ten system-boundary
@@ -366,8 +366,6 @@ admission).
 ## Cross-references
 
 - [`deployer-must-know.md`](deployer-must-know.md) -- companion list of deployment conditions.
-- [`../archive/readiness/v1-go-no-go-2026-07-01.md`](../archive/readiness/v1-go-no-go-2026-07-01.md) --
-  section 4 is the source for this gate set.
 - [`../archive/measurement/ec2-horizontal-2026-07-01/03-mtls-bringup.md`](../archive/measurement/ec2-horizontal-2026-07-01/03-mtls-bringup.md)
   -- the worked cross-box mTLS bring-up.
 - [`burn-in-contract.md`](burn-in-contract.md) -- the first-30-days burn-in

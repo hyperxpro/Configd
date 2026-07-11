@@ -16,7 +16,7 @@ import java.util.Objects;
  * at N=1 (a single-group drain sends the plain {@link AppendEntriesRequest}, so {@code FrameCodec} /
  * {@code MessageType} / the sealed {@link RaftMessage} set are all unchanged). A {@code CoalescedHeartbeat}
  * arises only when more than one group on an owner heartbeats the same peer in a tick - the N&gt;1
- * multi-group surface, which is test-only until Phase-1 sharding wires it onto the wire. The receiver
+ * multi-group surface, which today is test-only and not yet wired onto the production wire. The receiver
  * demultiplexes it back into per-group {@code routeMessage(groupId, ae)} calls
  * (see {@code MultiRaftDriver.routeCoalescedHeartbeat}).
  *

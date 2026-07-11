@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
-# =============================================================================
-# gate-7.sh — Configd Session-7 cumulative machine-verifiable gate (SECURITY)
-# -----------------------------------------------------------------------------
+# gate-7.sh — cumulative machine-verifiable gate (security & supply chain)
+#
 # Cumulative with gates 1..6: a green gate-7 REQUIRES a green gate-6 (which chains
 # 5→4→3→2→1). In CI gate-6 runs as its own job, so the gate-7 job sets
 # GATE7_SKIP_GATE6=1 (cumulative coverage via the job dependency, not a redundant
-# re-run) — reported LOUDLY. Exits non-zero on ANY failure; NO silent placeholders;
+# re-run) — reported LOUDLY. Exits non-zero on ANY failure; no silent placeholders;
 # every test step asserts a REAL result via assert_class_green and FAILS if its
-# summary line is absent (non-vacuity — the RR-012/RR-085 lesson).
+# summary line is absent (non-vacuity).
 #
-# PRIME DIRECTIVE (charter §2.1): a security control is proven ONLY by a passing
-# negative test that performs the attack and asserts it is REFUSED — never by
-# reading its config. Every test below is such a negative test.
+# PRIME DIRECTIVE: a security control is proven ONLY by a passing negative test
+# that performs the attack and asserts it is REFUSED — never by reading its
+# config. Every test below is such a negative test.
 #
-# WHAT A GREEN GATE-7 PROVES (charter §9):
-#   (a) PA-2021   tampered snapshot byte / tampered WAL record / forged version /
+# WHAT A GREEN GATE-7 PROVES:
+#   (a) at-rest   tampered snapshot byte / tampered WAL record / forged version /
 #                 algId=NONE downgrade / forged DurableRaftState / forged
 #                 install-snapshot → all REFUSED (HMAC at-rest integrity, ADR-0042);
-#                 AND the S4 durability cells still pass (no regression — torn tail
+#                 AND the durability cells still pass (no regression — torn tail
 #                 still tolerated, not mistaken for tamper).
 #   (b) mTLS      plaintext / expired-cert / wrong-SAN / TLSv1.2-downgrade → REFUSED
 #                 on BOTH planes (control-plane Raft + data-plane edge fan-out).
@@ -32,7 +31,7 @@
 #                 the byte-identical two-build proof runs on the nightly/full path.
 #   (g) CVE       OWASP dependency-check fails the build on CVSS>=7 — runs where an
 #                 NVD_API_KEY + network exist (CI nightly); ENV-BLOCKED loud-skip
-#                 otherwise (charter §10.8 — never assumed-passing).
+#                 otherwise (never assumed-passing).
 #   (h) secret    gitleaks over repo+history — runs where the binary exists (CI);
 #                 ENV-BLOCKED loud-skip otherwise.
 #
@@ -78,13 +77,13 @@ run_tests() {
   grep -q "BUILD SUCCESS" "$log" || { tail -50 "$log"; fail "$label" "no BUILD SUCCESS"; }
 }
 
-# --- 2-vCPU box discipline: never overlap another Maven workload --------------
+# 2-vCPU box discipline: never overlap another Maven workload.
 if pgrep -f "[s]urefirebooter" >/dev/null 2>&1; then
   echo "GATE-7: another Maven test workload is running — refusing to start (2-vCPU box)" >&2
   exit 1
 fi
 
-# --- cumulative: gate-6 (chains 5→4→3→2→1) ------------------------------------
+# cumulative: gate-6 (chains 5→4→3→2→1)
 if [ "${GATE7_SKIP_GATE6:-0}" = "1" ]; then
   echo "GATE-7 gate6: SKIPPED by GATE7_SKIP_GATE6=1 (LOUD: gates 1..6 NOT verified this run; CI supplies them via the gate-6 job)"
 else
@@ -93,7 +92,7 @@ else
   echo "GATE-7 gate6: OK (gates 1..6 green)"
 fi
 
-# --- build/install the modules' deps once (so the targeted test runs are offline)
+# build/install the modules' deps once (so the targeted test runs are offline)
 if [ "${GATE7_SKIP_BUILD:-0}" = "1" ]; then
   echo "GATE-7 build: SKIPPED by GATE7_SKIP_BUILD=1 (reusing installed jars; CI must not do this)"
 else
@@ -102,7 +101,7 @@ else
     || { tail -30 "$LOGDIR/build.txt"; fail build "module build/install failed"; }
 fi
 
-# --- (a) PA-2021: at-rest integrity negatives + S4 durability re-run ----------
+# (a) at-rest integrity negatives + durability re-run
 echo "GATE-7 pa2021: snapshot/WAL/raft-state tamper+forge+downgrade refused; S4 cells still green..."
 PA="$LOGDIR/pa2021.txt"
 run_tests pa2021 "HkdfTest,IntegrityEnvelopeTest,IntegrityEnvelopeEncryptionTest,SegmentKeyManagerTest,LocalKmsEncryptionIntegrationTest,NodeKeyringTest,KeyringCodecTest,KeyringFileTest,KeyringKeyTermSelectionTest,EncryptionAtRestWiringTest,SnapshotIntegrityTest,WalRecordIntegrityTest,RaftLogEncryptionTest,AnchorFileTest,RaftAnchorRecoveryTest,AnchorRollbackRedteamTest,SnapshotCrashRecoveryTest,WalSyncCrashTest,VotePersistenceCrashTest,RaftLogUnitTest" "$PA"
@@ -110,7 +109,7 @@ assert_class_green "$PA" "IntegrityEnvelopeTest"        # codec: tamper/downgrad
 assert_class_green "$PA" "IntegrityEnvelopeEncryptionTest" # AES-256-GCM codec: no-plaintext/tamper/downgrade refused
 assert_class_green "$PA" "SegmentKeyManagerTest"        # no-(key,nonce)-reuse invariant + fail-closed unknown term
 assert_class_green "$PA" "LocalKmsEncryptionIntegrationTest" # KMS-SPI end-to-end: restart round-trip + rotation
-# Gate 4 (crash-atomic key rotation, §2.6/§A2): the keyring real-attack proofs.
+# Crash-atomic key rotation: the keyring real-attack proofs.
 assert_class_green "$PA" "NodeKeyringTest"             # rotate-then-crash recovers; old data decrypts post-rotate; prior-KEK/tamper REFUSE
 assert_class_green "$PA" "KeyringCodecTest"            # wrap-AAD replay / unknown wrapAlgId / term0 / outer-MAC strip / slot overflow REFUSED
 assert_class_green "$PA" "KeyringFileTest"            # dual-slot: highest-seq wins, torn stale slot -> intact slot, both-invalid REFUSE
@@ -120,34 +119,34 @@ assert_class_green "$PA" "HkdfTest"                     # HKDF RFC-5869 vectors
 assert_class_green "$PA" "SnapshotIntegrityTest"        # tampered/forged/downgrade/install-snapshot refused
 assert_class_green "$PA" "WalRecordIntegrityTest"       # tamper refused; torn tail tolerated
 assert_class_green "$PA" "RaftLogEncryptionTest"        # at-rest AES-GCM at the real WAL/snapshot seam
-# raft.persistent_state (DurableRaftState) merged into the per-shard anchor (Gate 3a); the
-# forged-votedFor/term-refused obligation moved to the anchor surface (design SS3 res#5):
+# raft.persistent_state (DurableRaftState) is merged into the per-shard anchor; the
+# forged-votedFor/term-refused obligation lives on the anchor surface:
 assert_class_green "$PA" "AnchorFileTest"              # anchor codec: forged/corrupt slot, cross-shard, torn slot refused (merged term/vote)
 assert_class_green "$PA" "RaftAnchorRecoveryTest"      # recovery: rolled-back term (Step-2.5) / W<A / tampered anchor refused
 assert_class_green "$PA" "AnchorRollbackRedteamTest"   # real-attack: tail-truncation / whole-file & genesis rollback / slot-forge refused
-assert_class_green "$PA" "SnapshotCrashRecoveryTest"    # S4 no-regression (durable-prefix)
-assert_class_green "$PA" "WalSyncCrashTest"             # S4 no-regression (WAL fsync crash)
-assert_class_green "$PA" "VotePersistenceCrashTest"     # S4 no-regression (vote durability)
+assert_class_green "$PA" "SnapshotCrashRecoveryTest"    # no-regression (durable-prefix)
+assert_class_green "$PA" "WalSyncCrashTest"             # no-regression (WAL fsync crash)
+assert_class_green "$PA" "VotePersistenceCrashTest"     # no-regression (vote durability)
 # RaftLogUnitTest also runs in this set (BUILD SUCCESS covers it); it is @Nested so
 # its aggregate line is 0-test — asserted via its nested cells above, not directly.
 echo "GATE-7 pa2021: OK"
 
-# --- (b) mTLS negatives (both planes) ----------------------------------------
+# (b) mTLS negatives (both planes)
 echo "GATE-7 mtls: plaintext/expired/wrong-SAN/downgrade refused on both planes..."
 ML="$LOGDIR/mtls.txt"
 run_tests mtls "RaftTransportMtlsAttackTest,JdkFanOutServerContractTest,NettyFanOutServerContractTest,NettyFanOutServerNioContractTest,EdgeTransportSanMismatchTest,EdgeTransportMtlsTest,TlsManagerTest" "$ML"
 assert_class_green "$ML" "RaftTransportMtlsAttackTest"  # control plane: plaintext/expired/downgrade
-# Data-plane fan-out mTLS (M3): the FanOutServerMtls*Test classes were folded into the
+# Data-plane fan-out mTLS: the FanOutServerMtls*Test classes were folded into the
 # AbstractFanOutServerContract, so the negatives (plaintext/no-cert/untrusted-CA/expired/downgrade
-# refused; trusted accepted) are now gated on the JDK + production-Netty + forced-NIO transports.
+# refused; trusted accepted) are gated on the JDK + production-Netty + forced-NIO transports.
 assert_class_green "$ML" "JdkFanOutServerContractTest"        # data plane mTLS on the JDK transport
 assert_class_green "$ML" "NettyFanOutServerContractTest"      # ...re-proven on the production Netty transport
 assert_class_green "$ML" "NettyFanOutServerNioContractTest"   # ...and on the forced-NIO fallback tier
 assert_class_green "$ML" "EdgeTransportSanMismatchTest" # data plane: wrong-SAN refused by client
-assert_class_green "$ML" "EdgeTransportMtlsTest"        # existing: untrusted client/server refused
+assert_class_green "$ML" "EdgeTransportMtlsTest"        # untrusted client/server refused
 echo "GATE-7 mtls: OK"
 
-# --- (c) wire-protocol fuzz (resource oracle) --------------------------------
+# (c) wire-protocol fuzz (resource oracle)
 echo "GATE-7 fuzz: malformed/oversized/length-lie → bounded reject, no crash/OOM/hang..."
 FZ="$LOGDIR/fuzz.txt"
 run_tests fuzz "FrameCodecFuzzTest,EdgeFrameCodecFuzzTest,InboundReadDeadlineFuzzTest" "$FZ"
@@ -156,23 +155,23 @@ assert_class_green "$FZ" "EdgeFrameCodecFuzzTest"       # edge wire fuzz
 assert_class_green "$FZ" "InboundReadDeadlineFuzzTest"  # slowloris mechanism pinned
 echo "GATE-7 fuzz: OK"
 
-# --- (d) API authn/authz + audit + replay ------------------------------------
+# (d) API authn/authz + audit + replay
 echo "GATE-7 api: 401/403, verbatim-replay 409, keyed-HMAC tamper-evident audit, strong-read fail-closed (ADR-0043 M2: re-proven on JDK + Netty + forced-NIO)..."
 AP="$LOGDIR/api.txt"
-# ADR-0043 M2: the admin S7 HTTP controls (401/403, replay 409, audit completeness, strong-read
-# fail-closed incl. the C6 path-normalization vectors) moved from ConfigHandler{Auth,Replay,Audit}Test
+# ADR-0043: the admin HTTP controls (401/403, replay 409, audit completeness, strong-read
+# fail-closed incl. the path-normalization vectors) moved from ConfigHandler{Auth,Replay,Audit}Test
 # + StrongReadFailClosedTest into the single AbstractAdminApiServerContract, run on all three
 # transports by these subclasses. Gating ALL THREE proves the controls hold on the PRODUCTION (Netty)
 # transport, not just the JDK incumbent — a strengthening of this gate, not just a rename.
 run_tests api "AuditLogTest,ReplayGuardTest,JdkAdminApiServerContractTest,NettyAdminApiServerContractTest,NettyAdminApiServerNioFallbackTest" "$AP"
 assert_class_green "$AP" "AuditLogTest"                          # keyed-HMAC chain defeats a log editor
 assert_class_green "$AP" "ReplayGuardTest"                       # nonce+window replay reject
-assert_class_green "$AP" "JdkAdminApiServerContractTest"         # S7 API set on the JDK transport (401/403, replay 409, audit, strong-read)
+assert_class_green "$AP" "JdkAdminApiServerContractTest"         # API set on the JDK transport (401/403, replay 409, audit, strong-read)
 assert_class_green "$AP" "NettyAdminApiServerContractTest"       # ...re-proven on the production Netty transport
 assert_class_green "$AP" "NettyAdminApiServerNioFallbackTest"    # ...and on the forced-NIO fallback tier
 echo "GATE-7 api: OK"
 
-# --- (e) SBOM: committed CycloneDX matches a freshly-generated one ------------
+# (e) SBOM: committed CycloneDX matches a freshly-generated one
 echo "GATE-7 sbom: regenerate CycloneDX + normalized-diff vs the committed SBOM..."
 SBOM_COMMITTED="$ROOT/gates/sbom/bom.json"
 [ -f "$SBOM_COMMITTED" ] || fail sbom "committed SBOM missing at $SBOM_COMMITTED"
@@ -192,7 +191,7 @@ else
   echo "GATE-7 sbom: LOUD-SKIP — CycloneDX plugin unavailable offline ($(tail -1 "$LOGDIR/sbom-gen.txt" 2>/dev/null)); CI (network) regenerates+diffs. The committed SBOM exists."
 fi
 
-# --- (f) build reproducibility ------------------------------------------------
+# (f) build reproducibility
 echo "GATE-7 repro: reproducible-build config present..."
 grep -qE "<project.build.outputTimestamp>[^<]+</project.build.outputTimestamp>" "$ROOT/pom.xml" \
   || fail repro "project.build.outputTimestamp is not set in the root pom (reproducible-build config missing)"
@@ -213,7 +212,7 @@ else
   echo "GATE-7 repro: byte-identical two-build proof runs on the FULL/nightly path (GATE7_FULL=1); captured in the nightly CI lane."
 fi
 
-# --- (g) CVE scan (OWASP dependency-check) ------------------------------------
+# (g) CVE scan (OWASP dependency-check)
 echo "GATE-7 cve: dependency-check fails on CVSS>=7..."
 if [ -n "${NVD_API_KEY:-}" ]; then
   $MVN -Pcve-scan org.owasp:dependency-check-maven:aggregate -DfailBuildOnCVSS=7 \
@@ -224,7 +223,7 @@ else
   echo "GATE-7 cve: ENV-BLOCKED loud-skip — no NVD_API_KEY (NVD feed update is impractical without it; charter §10.8). CI nightly sets the key. -Pcve-scan profile is wired (pom.xml)."
 fi
 
-# --- (h) secret scan (gitleaks) ----------------------------------------------
+# (h) secret scan (gitleaks)
 echo "GATE-7 secret: gitleaks over repo + history..."
 GL="${GITLEAKS:-$(command -v gitleaks || true)}"
 if [ -n "$GL" ]; then

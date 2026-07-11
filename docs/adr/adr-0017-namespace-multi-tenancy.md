@@ -5,8 +5,20 @@ Accepted, superseded in part by [adr-multiraft-partitioning](adr-multiraft-parti
 
 The namespace model, the per-namespace isolation dimensions, and the multi-tenancy rationale below all stand. The one part that does not reflect the built system is the "Raft group affinity" idea - pinning a namespace to a specific Raft shard group (the "Raft group affinity" row and the "namespace-scoped Raft shard groups" reasoning). The shipped router hashes the full path within a scope; it does not pin a namespace onto one owner thread. Pinning a whole namespace to one group would collapse that tenant onto a single owner thread (a hot shard) and defeat even hash distribution, so it was not built. Read the affinity and pinning discussion below as a considered-and-rejected alternative, not as current behavior.
 
+> **Note (2026-07-11):** This ADR's namespace *lifecycle* and *quota* machinery is also not
+> built as specified: there is no admin API to create, configure, drain, or delete a
+> namespace (no `/_system/namespaces/{name}` endpoint), and no per-namespace key-count or
+> value-size quota enforcement (there is no notion of "quota" anywhere in the codebase).
+> Write-rate limiting that does exist is global and per-principal (`RateLimiter`,
+> `ConfigWriteService`), not per-namespace. What is real and shipped is the access-control
+> half of this design: a hierarchical path/namespace model with scope-based ACLs - union
+> grants, absolute deny-precedence, default-deny (`AclService`) - enforced at both the API
+> and state-machine layers. A namespace exists today as an ACL prefix convention (a tenant
+> rooted at a top subtree, `/tenant/**`), not as an administered, quota-bounded lifecycle
+> object.
+
 ## Context
-Multi-tenancy is required for shared deployments where multiple teams, services, or organizational units use the same Configd cluster. Consul gates multi-tenancy (Admin Partitions), read scaling (non-voting servers), gossip isolation (Network Segments), and AZ-aware failover (Redundancy Zones) behind Enterprise licensing - indicating these capabilities were bolted onto an architecture not designed for them (the gap analysis). The system must provide tenant isolation for reads, writes, ACLs, rate limits, and storage quotas without requiring separate cluster deployments per tenant. Target: 10K/s aggregate writes across all tenants, with per-tenant rate limiting and fair scheduling.
+Multi-tenancy is required for shared deployments where multiple teams, services, or organizational units use the same Configd cluster. Consul gates multi-tenancy (Admin Partitions), read scaling (non-voting servers), gossip isolation (Network Segments), and AZ-aware failover (Redundancy Zones) behind Enterprise licensing - indicating these capabilities were bolted onto an architecture not designed for them. The system must provide tenant isolation for reads, writes, ACLs, rate limits, and storage quotas without requiring separate cluster deployments per tenant. Target: 10K/s aggregate writes across all tenants, with per-tenant rate limiting and fair scheduling.
 
 ## Decision
 We adopt **namespace-based multi-tenancy** as a first-class architectural primitive, integrated with Multi-Raft shard groups:
@@ -22,7 +34,7 @@ We adopt **namespace-based multi-tenancy** as a first-class architectural primit
 |---|---|
 | **Key visibility** | Keys in namespace A are invisible to clients authenticated to namespace B. No cross-namespace reads. |
 | **Write authorization** | ACL policies are namespace-scoped. A token grants permissions within one or more namespaces. |
-| **Rate limiting** | Per-namespace write rate limit (configurable, default: 10K writes/s - matches the wired global limiter, see F-0054). Enforced at control plane API before Raft proposal. |
+| **Rate limiting** | Per-namespace write rate limit (configurable, default: 10K writes/s). Enforced at control plane API before Raft proposal. |
 | **Storage quota** | Per-namespace key count limit and total value size limit. Enforced at state machine apply time. |
 | **Raft group affinity** | Namespaces can be pinned to specific Raft shard groups for performance isolation. |
 | **Subscription isolation** | Edge nodes subscribe to prefixes within their authorized namespaces only. Plumtree fan-out filters events by namespace. |

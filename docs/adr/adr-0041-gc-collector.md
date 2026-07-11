@@ -1,17 +1,17 @@
 # ADR-0041 - GC collector for the Configd serving JVM: ZGC (generational)
 
-> **Status:** Accepted (2026-06-14, `load-test-engineer` + `gc-runtime-engineer`).
+> **Status:** Accepted (2026-06-14).
 > Decided early because the collector choice affects every later latency/throughput number;
-> all subsequent performance measurement phases run under the collector chosen here and state it.
+> all subsequent performance measurement runs under the collector chosen here and state it.
 
 ## Context
 
 The write path allocates per commit (log entry + command serialization + state-machine
-apply: a HAMT `put` with root-to-leaf path copy). The serving JVM must keep the section 0.1
+apply: a HAMT `put` with root-to-leaf path copy). The serving JVM must keep the
 control-plane write p99 (< 150 ms cross-region) and the data-plane read p99 (< 1 ms)
 free of GC-pause contamination. JDK 25 Corretto ships three production collectors:
 G1 (default), **ZGC (generational by default in JDK 25** - the removed `-XX:+ZGenerational`
-flag is NOT passed), and Shenandoah. We ran a comparative bake-off of all three on the same
+flag is *not* passed), and Shenandoah. We ran a comparative bake-off of all three on the same
 box, same allocating workload, same heap.
 
 ## Decision
@@ -23,19 +23,19 @@ box, same allocating workload, same heap.
 - **Workload:** `RealApplyCommitBenchmark` (committed, `configd-testkit`) - a real 3-node
   in-memory Raft cluster whose nodes run a **real `ConfigStateMachine`** (decode command +
   HAMT `put` on every apply), so the allocation profile matches the production write path
-  (~ 9 KB/op measured, in the charter's "~2-5 KB/op log entry + serialization + apply" range;
+  (~ 9 KB/op measured, in the expected ~2-5 KB/op log entry + serialization + apply range;
   the higher figure includes the HAMT path-copy). A no-op state machine would under-price
   allocation and is rejected for this purpose.
 - **Box:** AWS t3a.large, 2 vCPU / 7.7 GB, JDK 25 Corretto (`25+36-LTS`), burstable
-  (CPU-credit throttling real - methodology section 0). One workload at a time under `flock`.
+  (CPU-credit throttling is real on this box). One workload at a time under `flock`.
 - **Heap:** `-Xms96m -Xmx96m` for the pause-distribution capture. **Rationale (stated
   honestly):** at the box-bound op rate the allocation rate is ~ 5-9 MB/s, so a large heap
   produces only 0-2 GCs per fork - too sparse for a pause *distribution*. A small fixed heap
   applies identical allocation pressure to all three collectors and forces enough GC cycles
   (7-45 per fork) that each collector's STW pause character is populated and comparable. This
-  is a **comparative** bake-off; the absolute heap and absolute throughput at fleet scale are
-  **ENV-BLOCKED** (production-class hosts, larger heaps) - the comparison, not the absolutes,
-  is what selects the collector.
+  is a **comparative** bake-off; the absolute heap size and absolute throughput at fleet
+  scale were not measured here (that needs production-class hosts with larger heaps) - the
+  comparison, not the absolutes, is what selects the collector.
 - **Capture:** JMH `-prof gc` (allocation) + `-Xlog:gc*:file=...:time,uptime,level,tags`
   (STW pause durations parsed from the log). f=2, wi=3, i=4, 3 s/iter.
 - Raw: the bakeoff capture files (bakeoff-{g1,zgc,shen}-96m.{txt,json} and corresponding GC logs).
@@ -57,8 +57,8 @@ log (G1 `Pause Young`; ZGC `Pause Mark Start/End`, `Pause Relocate Start`; Shena
 which conflates concurrent work (ZGC's `gc.time` is 1383 ms but its STW sum is **1.0 ms** -
 the rest is concurrent and does not stop the application).
 
-> **"No ZGC-because-low-pause without the pause histogram" (methodology):** the table above
-> IS the pause distribution, parsed per collector, not a single max. The G1 distribution is
+> **"No ZGC-because-low-pause without the pause histogram":** the table above
+> *is* the pause distribution, parsed per collector, not a single max. The G1 distribution is
 > 8 multi-ms young pauses (p50 17.6 ms, max 20.6 ms, single-fork worst 28.9 ms); the ZGC
 > distribution is 55 sub-50-us pauses (max 0.045 ms); the Shenandoah distribution is 32
 > sub-ms pauses (max 0.905 ms).
@@ -68,8 +68,8 @@ the rest is concurrent and does not stop the application).
 Application throughput was **statistically identical** across the three collectors
 (JMH `Score` 0.001 ops/us for all). This is because the tick-driven in-memory harness is
 CPU-sim-bound, not GC-bound, at this scale - so **no collector pays a throughput penalty**
-here, and the choice turns entirely on pause behavior. (Fleet-scale throughput is
-ENV-BLOCKED - this bake-off does not claim an absolute ops/s.)
+here, and the choice turns entirely on pause behavior. (Fleet-scale throughput was not
+measured here - this bake-off does not claim an absolute ops/s.)
 
 ## Rationale
 
@@ -92,7 +92,7 @@ ENV-BLOCKED - this bake-off does not claim an absolute ops/s.)
 
 ## Read path is collector-robust (cross-reference)
 
-Workstream A proved the read path is **0-alloc / lock-free** on the in-process hot path
+The read path is **0-alloc / lock-free** on the in-process hot path
 (`getMiss`/`getInto` structurally 0 B/op; `getHit` ~32 B nursery) and ran its p99<1 ms /
 p999<5 ms verdict **on G1**. Because the read path does not allocate in steady state, the
 verdict holds under **any** collector - the read path does not feed the collector. Moving to
@@ -105,17 +105,17 @@ improves. No re-run of the read gate is required for the collector change.
 - The **bake-off** used `-Xms96m -Xmx96m` (to force a populated pause distribution - see above).
 - The **serving JVM** (live cluster measurements) runs ZGC with
   `-Xms1g -Xmx1g` (fixed, no resize jitter) on this box. The production heap is a
-  capacity-planning input that depends on the working-set size (10^6 vs 10^9 keys) and is
-  **ENV-BLOCKED** (`infrastructure-manifest.md`): 10^9 keys do not fit in 7.7 GB, so the
-  fleet heap is sized off-box. This ADR fixes the collector, not the production heap.
+  capacity-planning input that depends on the working-set size: 10^9 keys do not fit in
+  7.7 GB, so a fleet running at that scale needs its heap sized on larger hardware than the
+  reference box used here. This ADR fixes the collector, not the production heap.
 
 ## Consequences
 
-- All subsequent performance measurement phases run under `-XX:+UseZGC`; each result doc states the collector.
+- All subsequent performance measurements run under `-XX:+UseZGC`; each result doc states the collector.
 - The serving JVM launch flags add `-XX:+UseZGC`. No `-XX:+ZGenerational` (removed in JDK 25;
   generational is the default).
-- The fleet-scale absolute GC behavior (NUMA, large heaps, 10^9 working set) is ENV-BLOCKED;
-  this ADR is a **comparative** decision proven on the reference box, and that scope is
+- The fleet-scale absolute GC behavior (NUMA, large heaps, 10^9 working set) was not measured
+  here; this ADR is a **comparative** decision proven on the reference box, and that scope is
   declared.
 
 ## Alternatives considered

@@ -270,7 +270,8 @@ final class OidcAuthenticatorTest {
         RSAKey keyB = OidcTestSupport.rsaKey("kB");
         OidcTestSupport.CountingJWKSetSource source =
                 new OidcTestSupport.CountingJWKSetSource(OidcTestSupport.publicJwks(keyA));
-        // Short TTL so the retired key ages out (the finding's overlap-friendly eviction).
+        // Short TTL so the retired key ages out of the cache: eviction follows the TTL, not the
+        // rotation event, so an overlapping old key stays valid until it actually expires.
         OidcAuthenticator auth = authenticatorFor(policySource(source, 300L, 1L), true, noRoles());
 
         assertInstanceOf(AuthResult.Authenticated.class,

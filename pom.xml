@@ -39,37 +39,32 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>25</maven.compiler.release>
         <!--
-          S7 / supply-chain (E-3): reproducible-build timestamp. A FIXED
-          value (NOT a date function) so the maven-jar-plugin (pinned 3.4.2,
-          F-0056) stamps every entry's mtime deterministically and zeroes the
-          Created-By/Build-Jdk volatility. Bumped only on an intentional
-          release. Closes the documented reproducibility gap where the root
-          pom set no project.build.outputTimestamp.
+          Reproducible-build timestamp: a FIXED value (NOT a date function) so
+          maven-jar-plugin stamps every entry's mtime deterministically and zeroes
+          the Created-By/Build-Jdk volatility. Bump only on an intentional release.
         -->
         <project.build.outputTimestamp>2026-06-14T00:00:00Z</project.build.outputTimestamp>
-        <!-- S7 / supply-chain (E-1): OWASP dependency-check version, used by
-             the -Pcve-scan profile below. Pinned for reproducibility. -->
+        <!-- OWASP dependency-check version, used by the -Pcve-scan profile below.
+             Pinned for reproducibility. -->
         <dependency-check.version>12.1.0</dependency-check.version>
         <agrona.version>1.23.1</agrona.version>
         <jctools.version>4.0.5</jctools.version>
         <junit.version>5.11.4</junit.version>
         <jmh.version>1.37</jmh.version>
-        <!-- B6 / RR-011: jcstress race-testing harness (configd-jcstress module). -->
+        <!-- jcstress race-testing harness (configd-jcstress module). -->
         <jcstress.version>0.16</jcstress.version>
         <!--
-          Netty transport platform (ADR-0043 supersedes ADR-0037 wholesale): all network
-          transport standardizes on Netty 4.2, staged by verification, surface by surface
-          (M1 edge-read → M2 admin → M3 fan-out → M4 consensus). Production modules depend on
-          Netty as each surface migrates (M1 wires configd-edge-node). The configd-testkit
-          head-to-head prototype/benchmarks (docs/jdk-vs-netty/) remain test/bench scope.
-          Pinned for reproducibility. API + 3-tier selector: docs/netty-migration/netty42-api.md.
+          Netty transport platform (ADR-0043): all network transport uses Netty 4.2.
+          The configd-testkit head-to-head prototype/benchmarks (docs/jdk-vs-netty/)
+          remain test/bench scope. Pinned for reproducibility. API + 3-tier selector:
+          docs/netty-migration/netty42-api.md.
         -->
         <netty.version>4.2.15.Final</netty.version>
-        <!-- Config-as-SPI (Group B): the YAML parser for the operator-facing config file. Loaded
+        <!-- Config-as-SPI: the YAML parser for the operator-facing config file. Loaded
              SAFELY (SafeConstructor + resource-exhaustion limits); only configd-server depends on it,
              so the parser never leaks into the lower zero-heavy-dep modules. Pinned for reproducibility. -->
         <snakeyaml.version>2.4</snakeyaml.version>
-        <!-- OAuth2/OIDC resource-server (Group B): the JOSE/JWT validation library. Only the optional
+        <!-- OAuth2/OIDC resource-server: the JOSE/JWT validation library. Only the optional
              configd-authn-oidc module depends on it, so the JWT SDK never leaks into the core modules.
              Nimbus 10.x is self-contained (its BouncyCastle/Tink deps are optional and unused for the
              RS256/ES256 JDK verification path). Pinned for reproducibility. -->
@@ -149,8 +144,8 @@
                 <artifactId>netty-codec-http</artifactId>
                 <version>${netty.version}</version>
             </dependency>
-            <!-- netty-handler: IdleStateHandler (slowloris/idle reaping) now; SslHandler for the
-                 fan-out/consensus mTLS surfaces (M3/M4). -->
+            <!-- netty-handler: IdleStateHandler (slowloris/idle reaping) and SslHandler for the
+                 fan-out/consensus mTLS surfaces. -->
             <dependency>
                 <groupId>io.netty</groupId>
                 <artifactId>netty-handler</artifactId>
@@ -226,14 +221,14 @@
                     <configuration>
                         <argLine>--enable-preview</argLine>
                         <systemPropertyVariables>
-                            <!-- D-1 (S7.5): unit/integration tests boot servers with the co-located
+                            <!-- Unit/integration tests boot servers with the co-located
                                  default signing key (dataDir/signing-key.bin). The production
                                  fail-closed guard (ConfigdServer.enforceSigningKeyNotColocated) would
                                  refuse to start. Tests are a dev context, so opt out module-wide.
                                  Production runs the shaded jar WITHOUT this property and gets
                                  fail-closed; the dedicated negative test sets it false explicitly. -->
                             <configd.security.allowColocatedSigningKey>true</configd.security.allowColocatedSigningKey>
-                            <!-- B7 (Class-B): the shutdown() drain quiet-period is a production graceful-drain
+                            <!-- The shutdown() drain quiet-period is a production graceful-drain
                                  nicety (it pauses N>1 shutdown so an LB observes the readiness 503 before the
                                  listener closes). Tests are a dev context and shut servers down repeatedly, so
                                  pause 0ms module-wide to keep the suite fast; production runs without this
@@ -249,11 +244,10 @@
                     <version>3.6.0</version>
                 </plugin>
                 <!--
-                  F-0056 fix: pin maven-jar-plugin so builds are reproducible.
-                  Previously inherited at whatever version the local Maven
-                  installation resolved, which triggered a
-                  `build.plugins.plugin.version` warning and could change
-                  between runs. 3.4.2 is the latest stable compatible with
+                  Pin maven-jar-plugin so builds are reproducible. Unpinned, it
+                  inherits whatever version the local Maven installation resolves,
+                  which triggers a `build.plugins.plugin.version` warning and can
+                  change between runs. 3.4.2 is the latest stable compatible with
                   Maven 3.9 / JDK 25.
                 -->
                 <plugin>
@@ -263,9 +257,9 @@
                 </plugin>
                 <!--
                   Pin maven-clean-plugin for the same reproducibility reason as
-                  maven-jar-plugin above (F-0056). Unpinned it resolved to whatever
+                  maven-jar-plugin above. Unpinned it resolved to whatever
                   the local Maven default was, so the main `clean install` did not
-                  fetch a fixed version into the dependency cache and the OFFLINE
+                  fetch a fixed version into the dependency cache and the offline
                   gate jobs (gate-2 / phase-0 build the jcstress uber-jar with
                   `-o clean package`) could not resolve it whenever a pom change
                   invalidated the cache. 3.2.0 is the version those gates already
@@ -278,12 +272,11 @@
                     <version>3.2.0</version>
                 </plugin>
                 <!--
-                  F-0020 fix: SpotBugs static analysis plugin registered in
-                  pluginManagement so every module inherits the configuration.
-                  Bound to the `verify` phase; runs only when invoked via
-                  `./mvnw spotbugs:spotbugs` or `./mvnw verify`. We set
-                  `failOnError=false` initially so existing findings do not
-                  break the build — the goal is that the audit can be
+                  SpotBugs static analysis plugin registered in pluginManagement so
+                  every module inherits the configuration. Bound to the `verify`
+                  phase; runs only when invoked via `./mvnw spotbugs:spotbugs` or
+                  `./mvnw verify`. `failOnError=false` initially so existing findings
+                  do not break the build — the goal is that the audit can be
                   re-run mechanically.
                 -->
                 <plugin>
@@ -362,24 +355,21 @@
 
     <profiles>
         <!--
-          B3 / RR-085–RR-092: the `-Pmutation` mutation-testing + coverage
-          profile. Lives in a PROFILE (not the always-on build) so it never
-          slows the default reactor build or gate-1 (PIT is ~25 min/module on
-          2 vCPU). gate-2 step (e) activates it.
+          The `-Pmutation` mutation-testing + coverage profile. Lives in a PROFILE
+          (not the always-on build) so it never slows the default reactor build or
+          gate-1 (PIT is ~25 min/module on 2 vCPU). gate-2 step (e) activates it.
 
-          Threshold enforcement is per MODULE: the parent only supplies the
-          shared plugin configuration (mutators, threads, timeouts, JDK-25
-          preview flag, report formats). Each target module's own pom declares
-          a `mutation` profile with its `targetClasses` / `excludedClasses` /
-          `mutationThreshold` so the build FAILS under threshold
-          (charter §4.1). Modules without a `mutation` profile inherit only the
-          config and are not mutation-tested.
+          Threshold enforcement is per MODULE: the parent only supplies the shared
+          plugin configuration (mutators, threads, timeouts, JDK-25 preview flag,
+          report formats). Each target module's own pom declares a `mutation`
+          profile with its `targetClasses` / `excludedClasses` / `mutationThreshold`
+          so the build FAILS under threshold. Modules without a `mutation` profile
+          inherit only the config and are not mutation-tested.
 
-          Tooling versions are the test-forensics §5 working recipe:
-            PIT 1.25.4 + pitest-junit5-plugin 1.2.3 parse JDK-25 class files
-            (major 69); JaCoCo 0.8.14 likewise. The `@{argLine}` surefire
-            prepend lets JaCoCo's prepare-agent inject its agent while keeping
-            the inherited enable-preview flag.
+          PIT 1.25.4 + pitest-junit5-plugin 1.2.3 parse JDK-25 class files (major
+          69); JaCoCo 0.8.14 likewise. The `@{argLine}` surefire prepend lets
+          JaCoCo's prepare-agent inject its agent while keeping the inherited
+          enable-preview flag.
         -->
         <profile>
             <id>mutation</id>
@@ -471,7 +461,7 @@
         </profile>
 
         <!--
-          S7 / supply-chain (E-1): OWASP dependency-check CVE scan.
+          OWASP dependency-check CVE scan.
 
           Lives in a PROFILE so the default reactor build / gate-1 never pay
           for it: dependency-check downloads and updates the NVD data feed
@@ -486,10 +476,9 @@
           finding, not by a blanket skipTestScope filter that could mask a
           build-time supply-chain risk.
 
-          CI invocation (Seam 6 / gate-7), run from repo root (see
-          docs/session-7/supply-chain.md E-1 for the copy-paste command;
-          the leading double-dash flags are omitted here because XML
-          comments forbid a double-dash sequence):
+          CI invocation, run from repo root (see docs/session-7/supply-chain.md
+          for the copy-paste command; the leading double-dash flags are omitted
+          here because XML comments forbid a double-dash sequence):
             ./mvnw -Pcve-scan org.owasp:dependency-check-maven:aggregate
               -DfailBuildOnCVSS=7 -Dformats=HTML,JSON,SARIF
               -DnvdApiKey=$NVD_API_KEY
@@ -515,7 +504,6 @@
                                 <format>JSON</format>
                                 <format>SARIF</format>
                             </formats>
-                            <!-- Aggregate report at the reactor root. -->
                             <outputDirectory>${maven.multiModuleProjectDirectory}/target/dependency-check</outputDirectory>
                             <!-- Suppression file: empty/optional today; the
                                  path is declared so a triaged false-positive

@@ -45,20 +45,20 @@ public final class RaftNode {
     private final StateMachine stateMachine;
     private final RandomGenerator random;
 
-    // Persistent state, on all servers (Raft section 5.2). currentTerm/votedFor are now MERGED into
-    // the per-shard anchor that the log owns (raft.persistent_state is removed): the in-memory fields
-    // below are seeded from log.recoveredCurrentTerm()/recoveredVotedForId() at construction and every
-    // mutation persists through log.persistTermVote(...) BEFORE the in-memory update (persist-before-
-    // memory, a standalone anchor fsync). On the in-memory log ({@code log.anchor()==null}) they live
-    // only in memory, with no cross-restart durability.
+    // Persistent state on all servers (Raft section 5.2). currentTerm/votedFor live in the per-shard
+    // anchor that the log owns: the in-memory fields below are seeded from
+    // log.recoveredCurrentTerm()/recoveredVotedForId() at construction, and every mutation persists
+    // through log.persistTermVote(...) before the in-memory update (persist-before-memory, a standalone
+    // anchor fsync). On the in-memory log ({@code log.anchor()==null}) they live only in memory, with
+    // no cross-restart durability.
     private long currentTerm;
     private NodeId votedFor;     // null if not voted in current term
 
-    // --- Peer-quorum anchor witness (Gate 3c, R-a' closer). All state is in-memory and per this group;
-    // it is rebuilt at boot, never persisted, and touches no frozen at-rest byte. It is INERT until
-    // armAnchorWitness() binds it (the production peer wiring); un-armed - which is every bare unit test
-    // and the N=1 path - the node grants/starts votes exactly as before Gate 3c (byte-identical). See
-    // docs/design/anchor-witness-peer-quorum-2026-07-04.md. Owner-thread-confined (plain maps).
+    // Peer-quorum anchor witness. All state is in-memory and per-group: rebuilt at boot, never
+    // persisted, touches no at-rest byte. Inert until armAnchorWitness() binds it (the production
+    // peer wiring); un-armed -- every bare unit test and the N=1 path -- the node grants and starts
+    // votes byte-identically. Owner-thread-confined (plain maps).
+    // See docs/design/anchor-witness-peer-quorum-2026-07-04.md.
     private boolean witnessArmed;
     private boolean witnessStrictVote;
     /** The vote latch: while false (armed, boot gate not yet cleared) the node grants no vote and starts
@@ -73,7 +73,7 @@ public final class RaftNode {
     private final Map<NodeId, Long> peerAckOfSelf = new HashMap<>();
     /** Peers that have sent any witness message since boot (the boot-gate responder set). */
     private final Set<NodeId> witnessResponders = new HashSet<>();
-    /** Cadence-a re-announce counter; role-independent (a follower must re-spread its anchorSeq too). */
+    /** Steady-state re-announce counter; role-independent (a follower must re-spread its anchorSeq too). */
     private int witnessTicksElapsed;
     /** Strict-mode deferred voteGranted, awaiting a peer-majority ack of the announced anchorSeq. */
     private PendingWitnessGrant pendingWitnessGrant;
@@ -326,7 +326,7 @@ public final class RaftNode {
     /** A pending commit-outcome callback bound to a proposed {@code (index, term)}. */
     private record PendingCommit(long term, java.util.function.Consumer<CommitOutcome> callback) {}
 
-    /** A strict-mode vote grant deferred until a peer-majority acks the announced anchorSeq (Gate 3c). */
+    /** A strict-mode vote grant deferred until a peer-majority acks the announced anchorSeq. */
     private record PendingWitnessGrant(long term, NodeId candidate, long announcedSeq) {}
 
     // Reconfiguration state - Joint Consensus (Raft section 6).
@@ -352,7 +352,7 @@ public final class RaftNode {
     private boolean configChangePending;
 
     /**
-     * Runtime invariant checker for Raft safety properties (Rule 13).
+     * Runtime invariant checker for Raft safety properties.
      * Bridges TLA+ invariants to runtime assertions. In test mode,
      * violations throw immediately; in production, they increment metrics.
      */
@@ -394,10 +394,10 @@ public final class RaftNode {
     private DurabilityFailureHandler durabilityFailureHandler = DurabilityFailureHandler.DEFAULT;
 
     /**
-     * Fail-closed handler for a peer-quorum anchor-witness rollback (Gate 3c). Invoked on the owner
+     * Fail-closed handler for a peer-quorum anchor-witness rollback. Invoked on the owner
      * thread when the boot gate finds a peer witnessed this node at a higher {@code anchorSeq} than the
      * disk it booted from - i.e. the local anchor was rolled back and a second, conflicting vote at the
-     * same term (R-a', split-brain) is possible. The node MUST NOT enter voting; it refuses to start
+     * same term (split-brain) is possible. The node MUST NOT enter voting; it refuses to start
      * this shard. The {@linkplain #DEFAULT default} throws {@link AnchorRollbackException} (safe for
      * tests and embeddings); the production wiring installs a handler that writes an audit record and
      * halts the process. Mirrors {@link DurabilityFailureHandler}.
@@ -442,15 +442,13 @@ public final class RaftNode {
         this.anchorRollbackHandler = Objects.requireNonNull(handler, "handler");
     }
 
-    // =====================================================================================
-    // Peer-quorum anchor witness (Gate 3c). See docs/design/anchor-witness-peer-quorum-2026-07-04.md.
-    // =====================================================================================
+    // Peer-quorum anchor witness. See docs/design/anchor-witness-peer-quorum-2026-07-04.md.
 
     /**
      * Arms the peer-quorum anchor witness for this group (production peer wiring / real-cluster tests).
      * Until this is called the witness is INERT: no witness traffic is emitted, the vote path is
-     * byte-identical to pre-Gate-3c, and the boot/vote gates never fire - so every bare unit test and
-     * the N=1 path are unaffected. Once armed: at N=1 (no peers) the gate is disabled immediately (a
+     * byte-identical to the un-armed path, and the boot/vote gates never fire - so every bare unit test
+     * and the N=1 path are unaffected. Once armed: at N=1 (no peers) the gate is disabled immediately (a
      * single voter cannot split-brain); at N&gt;1 the node grants no vote until the boot gate has
      * witnessed its {@code anchorSeq} at a quorum of peers.
      *
@@ -459,7 +457,7 @@ public final class RaftNode {
      * owner thread. Not idempotent-guarded - the production wiring arms each node exactly once.
      *
      * <p>The BOOT gate is always strict: it requires a peer-MAJORITY of QUERY replies to clear (this is
-     * what closes the R-a' boot-reply race at N=3, and it only costs a node rebooting into a partition).
+     * what closes the boot-reply race at N=3, and it only costs a node rebooting into a partition).
      * Only the VOTE dimension is a mode choice:
      *
      * @param strictVote when {@code true} (full strict), a granted vote is DEFERRED until a peer-majority
@@ -467,8 +465,8 @@ public final class RaftNode {
      *                   N&gt;=5, but it DEFERS voteGranted, which reduces election availability (at N=3 a
      *                   survivor cannot elect a new leader while one peer is down). When {@code false}
      *                   (the recommended default), voteGranted is sent immediately after the announce, so
-     *                   single-fault leader failover is preserved; the strict boot gate still closes R-a'
-     *                   at N=3. Enable strict vote only where N&gt;=5 absolute closure outweighs the
+     *                   single-fault leader failover is preserved; the strict boot gate still closes the
+     *                   race at N=3. Enable strict vote only where N&gt;=5 absolute closure outweighs the
      *                   failover cost.
      * @param handler    the fail-closed rollback handler; {@code null} keeps the current one
      */
@@ -535,12 +533,12 @@ public final class RaftNode {
         if (!votingCleared) {
             // Boot gate: re-issue the QUERY each tick until a quorum answers, then evaluate. Non-blocking
             // - replies accumulate via handleMessage across ticks. Refuse-to-vote, never a brick (a
-            // partition just keeps the node latched until the quorum is reachable, W4).
+            // partition just keeps the node latched until the quorum is reachable).
             broadcastWitness(peers, true);
             evaluateBootGate(peers);
             return;
         }
-        // Steady-state re-announce (cadence-a), role-independent, at the heartbeat interval: continuously
+        // Steady-state re-announce, role-independent, at the heartbeat interval: continuously
         // re-spreads our latest anchorSeq so a peer set that witnessed a granted vote stays populated.
         if (++witnessTicksElapsed >= heartbeatTimeoutTicks) {
             witnessTicksElapsed = 0;
@@ -589,7 +587,7 @@ public final class RaftNode {
         }
         if (w > bootAnchorSeq) {
             // A peer holds evidence we existed at a higher anchorSeq than the disk we booted from: the
-            // local anchor was rolled back (R-a'). Fail closed - refuse to start (never enter voting).
+            // local anchor was rolled back. Fail closed - refuse to start (never enter voting).
             // One-shot: fire the handler once, then stay latched forever even if it returns (never clear
             // votingCleared) - a rolled-back node must not vote until an operator intervenes.
             if (!witnessRollbackDetected) {
@@ -659,7 +657,7 @@ public final class RaftNode {
 
     /**
      * Sends the granted vote under the witness contract. Un-armed: byte-identical immediate
-     * {@code voteGranted}. Armed (default, fast vote): announce-before-grant (§1.5) - the persisted vote
+     * {@code voteGranted}. Armed (default, fast vote): announce-before-grant - the persisted vote
      * already raised anchorSeq, so broadcast it to all peers BEFORE sending voteGranted, but send
      * voteGranted immediately after (so single-fault failover is preserved). Armed strict-VOTE (opt-in):
      * broadcast then DEFER {@code voteGranted} until a peer-majority acks the announce.
@@ -670,7 +668,7 @@ public final class RaftNode {
             return;
         }
         Set<NodeId> peers = clusterConfig.peersOf(config.nodeId());
-        broadcastWitness(peers, false); // announce s1 to all peers before the grant is usable
+        broadcastWitness(peers, false); // announce to all peers before the grant is usable
         if (witnessStrictVote && !peers.isEmpty()) {
             pendingWitnessGrant = new PendingWitnessGrant(currentTerm, candidate, log.anchorSeq());
         } else {
@@ -765,7 +763,7 @@ public final class RaftNode {
         int recoveredVote = log.recoveredVotedForId();
         this.currentTerm = log.recoveredCurrentTerm();
         this.votedFor = (recoveredVote == AnchorRecord.VOTED_FOR_NULL) ? null : NodeId.of(recoveredVote);
-        // Snapshot the recovered anti-rollback index as the anchor-witness boot baseline (Gate 3c). Read
+        // Snapshot the recovered anti-rollback index as the anchor-witness boot baseline. Read
         // here, on the wiring thread after RaftLog recovery, exactly like the term/vote seed above.
         this.bootAnchorSeq = log.anchorSeq();
         this.role = RaftRole.FOLLOWER;
@@ -976,7 +974,7 @@ public final class RaftNode {
             scheduleFlush();
         }
 
-        // Drive the peer-quorum anchor witness (Gate 3c): boot QUERY/gate while latched, else the
+        // Drive the peer-quorum anchor witness: boot QUERY/gate while latched, else the
         // steady re-announce cadence. Inert (early-returns) until armAnchorWitness() is called, so the
         // un-armed path adds nothing. Role-independent - a follower must re-spread its anchorSeq too.
         if (witnessArmed) {
@@ -1053,7 +1051,7 @@ public final class RaftNode {
         if (transferTarget != null) {
             return ProposeOutcome.rejected(ProposalResult.TRANSFER_IN_PROGRESS);
         }
-        // Backpressure: reject if too many uncommitted entries (Hard Rule #12)
+        // Backpressure: reject if too many uncommitted entries
         long uncommitted = log.lastIndex() - log.commitIndex();
         if (uncommitted >= config.maxPendingProposals()) {
             return ProposeOutcome.rejected(ProposalResult.OVERLOADED);
@@ -2187,19 +2185,19 @@ public final class RaftNode {
         // and (b) candidate's log is at least as up-to-date as ours (Raft section 5.4.1)
         boolean canVote = (votedFor == null || votedFor.equals(req.candidateId()));
         boolean logOk = log.isAtLeastAsUpToDate(req.lastLogTerm(), req.lastLogIndex());
-        // Anchor-witness vote latch (Gate 3c): until the boot gate has witnessed our anchorSeq at a
+        // Anchor-witness vote latch: until the boot gate has witnessed our anchorSeq at a
         // quorum, grant no vote - a disk rollback of our vote could otherwise double-vote at this term
-        // (R-a', split-brain). Inert unless the witness is armed; at N=1 the gate is cleared at arm time.
+        // (split-brain). Inert unless the witness is armed; at N=1 the gate is cleared at arm time.
         boolean witnessOk = !witnessArmed || votingCleared;
 
         if (canVote && logOk && witnessOk) {
             // Persist the vote to the anchor BEFORE the in-memory update (Raft section 5.2), a
-            // standalone fsync under the fail-closed policy. This raises anchorSeq to s1.
+            // standalone fsync under the fail-closed policy. This raises anchorSeq.
             durablyOrPanic("vote", () -> log.persistTermVote(currentTerm, req.candidateId().id()));
             votedFor = req.candidateId();
             electionTicksElapsed = 0; // reset timer on granting vote
-            // Announce-before-grant: broadcast s1 to peers before voteGranted is usable (armed path);
-            // un-armed this is the byte-identical immediate voteGranted send.
+            // Announce-before-grant: broadcast the raised anchorSeq to peers before voteGranted is
+            // usable (armed path); un-armed this is the byte-identical immediate voteGranted send.
             grantVoteWitnessed(req.candidateId());
         } else {
             transport.send(req.candidateId(),
@@ -2348,7 +2346,7 @@ public final class RaftNode {
         if (!clusterConfig.isVoter(config.nodeId())) {
             return;
         }
-        // Anchor-witness latch (Gate 3c): refuse to start an election until the boot gate has witnessed
+        // Anchor-witness latch: refuse to start an election until the boot gate has witnessed
         // our anchorSeq at a quorum. Inert unless armed; at N=1 the gate cleared at arm time.
         if (witnessArmed && !votingCleared) {
             return;
@@ -2397,7 +2395,7 @@ public final class RaftNode {
         if (!clusterConfig.isVoter(config.nodeId())) {
             return;
         }
-        // Anchor-witness latch (Gate 3c): refuse to start (or transfer-into) an election until the boot
+        // Anchor-witness latch: refuse to start (or transfer-into) an election until the boot
         // gate has witnessed our anchorSeq at a quorum. Inert unless armed; at N=1 cleared at arm time.
         if (witnessArmed && !votingCleared) {
             return;

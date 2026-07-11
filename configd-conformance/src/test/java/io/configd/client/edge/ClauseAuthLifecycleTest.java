@@ -29,15 +29,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Conformance Runner II — CLIENT-CONFORMS, binary edge auth lifecycle (§03 §4A / §5). Drives the reference
- * {@link ConfigdEdgeClient} against the scriptable {@link MockEdgeServer} (reached via this package) and asserts
- * the wire the client emits and the reaction it takes: the single pre-auth {@code AUTH} is the first routed
- * frame, a rejected credential recovers only via a bounded fresh-connection reconnect (never a hot-loop),
- * business frames are pipelined <b>behind</b> the credential (never before it), renewal is a {@code REFRESH_AUTH}
- * rather than a second {@code AUTH}, and a {@code CREDENTIAL_EXPIRED} close is a reconnect-with-a-fresh-credential
- * signal. Plaintext loopback keeps the auth/framing logic under test without a TLS handshake (transport-agnostic;
- * the §06 F9 TLS cases live in {@code EdgeTlsTest}). The bodies mirror the Gate-1 {@code EdgeConnectionAuthTest}
- * scenarios, re-expressed and clause-tagged for the frozen conformance contract.
+ * CLIENT-CONFORMS, binary edge auth lifecycle (§03 §4A / §5). Drives the reference {@link ConfigdEdgeClient}
+ * against the scriptable {@link MockEdgeServer} (reached via this package) and asserts the wire the client
+ * emits and the reaction it takes: the single pre-auth {@code AUTH} is the first routed frame, a rejected
+ * credential recovers only via a bounded fresh-connection reconnect (never a hot-loop), business frames are
+ * pipelined <b>behind</b> the credential (never before it), renewal is a {@code REFRESH_AUTH} rather than a
+ * second {@code AUTH}, and a {@code CREDENTIAL_EXPIRED} close is a reconnect-with-a-fresh-credential signal.
+ * Plaintext loopback keeps the auth/framing logic under test without a TLS handshake (transport-agnostic; the
+ * §06 F9 TLS cases live in {@code EdgeTlsTest}). The bodies mirror the {@code EdgeConnectionAuthTest} scenarios,
+ * re-expressed and clause-tagged for the frozen conformance contract.
  */
 @Timeout(30)
 class ClauseAuthLifecycleTest {
@@ -69,7 +69,7 @@ class ClauseAuthLifecycleTest {
     @Test
     @Tag("clause:AU4-4")
     void rejectedCredentialRecoversViaBoundedReconnectNeverHotLoops() throws Exception {
-        // AU4-4: a rejected AUTH closes the connection AUTH_FAIL, so a retry costs a FRESH connection — the
+        // AU4-4: a rejected AUTH closes the connection AUTH_FAIL, so a retry costs a FRESH connection -- the
         // driver MUST NOT hot-loop AUTH frames on one socket. It sends exactly one AUTH per fresh connection
         // and, because no positive frame ever confirms health, exhausts the bounded budget and gives up.
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
@@ -102,7 +102,7 @@ class ClauseAuthLifecycleTest {
     @Tag("clause:AU4-1")
     @Tag("clause:AU4-7")
     void authenticatesBeforeAnyBusinessSubscribeFrame() throws Exception {
-        // AU4-1 / AU4-7: authentication precedes ANY data/subscribe frame — the credential is the first routed
+        // AU4-1 / AU4-7: authentication precedes ANY data/subscribe frame -- the credential is the first routed
         // frame and the SUBSCRIBE follows it; no business frame ever precedes the AUTH.
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
             conn.readFrame();                                   // the AUTH
@@ -110,7 +110,7 @@ class ClauseAuthLifecycleTest {
             conn.parkUntilClosed();                             // reads the SUBSCRIBE that follows
         })) {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(tokenConfig(server.port(), tokens("t")))) {
-                client.subscribeFullStore(SubscribeOptions.defaults()); // drives connect → AUTH → SUBSCRIBE
+                client.subscribeFullStore(SubscribeOptions.defaults()); // drives connect -> AUTH -> SUBSCRIBE
                 await("the SUBSCRIBE reached the server", () -> hasSubscribe(server));
 
                 List<EdgeFrame> frames = server.received();
@@ -127,12 +127,12 @@ class ClauseAuthLifecycleTest {
     @Tag("clause:AU4-5")
     void pipelinesBusinessFrameBehindAuthWithNoAck() throws Exception {
         // AU4-5: because there is no AUTH-OK ack, the driver MAY pipeline its SUBSCRIBE immediately behind the
-        // single AUTH without a round-trip. Here the server sends NOTHING — yet the SUBSCRIBE still arrives,
+        // single AUTH without a round-trip. Here the server sends NOTHING -- yet the SUBSCRIBE still arrives,
         // proving the client does not wait on an ack it will never receive. The invariant asserted is that the
-        // credential is FIRST (a frame before it, or a second AUTH, would be the PROTOCOL_VIOLATION — not the
+        // credential is FIRST (a frame before it, or a second AUTH, would be the PROTOCOL_VIOLATION -- not the
         // pipelining), exactly as §03 AU4-5 specifies: the PROTOCOL_VIOLATION is an ordering fault (a frame
         // BEFORE the AUTH, a second AUTH, or more than 8 frames pipelined behind it), never the pipeline-behind
-        // this exercises. (The investigation flagged a wording drift here; §03 was corrected in Gate 1.)
+        // this exercises.
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
             conn.readFrame();                                   // the AUTH
             conn.parkUntilClosed();                             // reads the pipelined SUBSCRIBE; sends no ack
@@ -153,7 +153,7 @@ class ClauseAuthLifecycleTest {
     @Tag("clause:AU4-6")
     void renewsViaRefreshAuthNotASecondAuth() throws Exception {
         // AU4-6: on an already-authenticated connection the driver renews with a REFRESH_AUTH carrying a FRESH
-        // credential for the SAME identity — it does NOT re-authenticate with a second AUTH (a stray AUTH would
+        // credential for the SAME identity -- it does NOT re-authenticate with a second AUTH (a stray AUTH would
         // be a PROTOCOL_VIOLATION). Assert the renewal frame is a REFRESH_AUTH and there is still exactly ONE
         // AUTH on the connection.
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
@@ -180,7 +180,7 @@ class ClauseAuthLifecycleTest {
     @Test
     @Tag("clause:AU5-6")
     void credentialExpiredIsAReconnectWithAFreshCredential() throws Exception {
-        // AU5-6: a CREDENTIAL_EXPIRED(13) close is a re-authenticate/reconnect signal — distinct from AUTH_FAIL
+        // AU5-6: a CREDENTIAL_EXPIRED(13) close is a re-authenticate/reconnect signal -- distinct from AUTH_FAIL
         // and from a permanent 403. The driver opens a FRESH connection and presents its next (rotated)
         // credential; the second connection is healthy, so this is a recovery, not a terminal give-up.
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
@@ -205,17 +205,13 @@ class ClauseAuthLifecycleTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // helpers
-    // -----------------------------------------------------------------------
-
     private static ConfigdClientConfig tokenConfig(int port, CredentialSource source) {
         return ConfigdClientConfig.builder()
                 .endpoint("127.0.0.1", port)
                 .allowPlaintext(true)
                 .credentialSource(source)
                 // These cases exercise the auth lifecycle, not signed-chain verification, so opt out of
-                // verification explicitly — subscribe/watch requires a verification mode to be chosen.
+                // verification explicitly -- subscribe/watch requires a verification mode to be chosen.
                 .trustUnverified()
                 .retryPolicy(new RetryPolicy(Duration.ofMillis(5), Duration.ofMillis(50), 5))
                 .build();

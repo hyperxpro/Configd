@@ -150,7 +150,7 @@ class EdgeFrameCodecV2GoldenFixtureTest {
                 "encoding a WATCH_* frame explicitly at 0x01 must throw");
     }
 
-    // ---- SF-1: per-connection version pin (peekVersion + decode(byte[], version)) ----
+    // Per-connection version pin (peekVersion + decode(byte[], version)).
 
     /** {@code peekVersion} returns the stamped version (no CRC validation) and bounds-rejects a short buffer. */
     @Test

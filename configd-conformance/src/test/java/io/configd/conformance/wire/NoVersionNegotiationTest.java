@@ -28,10 +28,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * THE PERMANENT REVIEW INVARIANT (§00 OV4-2 / OV7-3 / OV7-4): Configd has <b>no version negotiation</b> — no
+ * A permanent review invariant (§00 OV4-2 / OV7-3 / OV7-4): Configd has <b>no version negotiation</b> -- no
  * hello / capabilities / downgrade exchange on either plane, unlike every reference-client analog
  * (libpq/etcd/grpc negotiate down). This suite carries explicit NEGATIVE cases proving the client NEVER
- * attempts a downgrade and <b>fails closed</b> on an unknown version/path — a guard against a future
+ * attempts a downgrade and <b>fails closed</b> on an unknown version/path -- a guard against a future
  * contributor adding a downgrade path.
  */
 @Timeout(30)
@@ -44,7 +44,7 @@ class NoVersionNegotiationTest {
     @Test
     void edgeUnknownWireVersionFailsClosedNoDowngrade() {
         // The client's inbound bounds ARE the codec (it reuses EdgeFrameCodec). An unknown version byte on a
-        // server frame is BAD_WIRE_VERSION — a fail-closed reject, NOT a downgrade to a version the client
+        // server frame is BAD_WIRE_VERSION -- a fail-closed reject, NOT a downgrade to a version the client
         // "also speaks". There is no negotiation path to fall back to.
         byte[] golden = EdgeFrameGoldenBytes.forVersion(1).values().iterator().next();
         byte[] unknownVersion = golden.clone();
@@ -56,7 +56,7 @@ class NoVersionNegotiationTest {
 
     @Test
     void edgeFirstFramePinRejectsAnyOtherAcceptedVersionNoDowngrade() {
-        // A 0x02 frame on a 0x01-pinned connection is BAD_WIRE_VERSION — the client does not "negotiate up" to
+        // A 0x02 frame on a 0x01-pinned connection is BAD_WIRE_VERSION -- the client does not "negotiate up" to
         // 0x02 because the peer sent one; the first-frame pin IS the whole negotiation (§06 F4 / OV7-4).
         byte[] watch = pick(EdgeFrameGoldenBytes.forVersion(2), "watch_create");
         CodecException ex = assertThrows(CodecException.class,
@@ -66,8 +66,8 @@ class NoVersionNegotiationTest {
 
     @Test
     void everyFrameStampsAPinnedVersionNoUnversionedPreamble() {
-        // There is no hello/capabilities frame TYPE in the protocol; every frame — including the first business
-        // frame and the auth frame — carries a version byte at offset 4 (after the 4-byte length). Prove it
+        // There is no hello/capabilities frame TYPE in the protocol; every frame -- including the first business
+        // frame and the auth frame -- carries a version byte at offset 4 (after the 4-byte length). Prove it
         // across the golden corpus: there is NO un-versioned pre-amble a driver could turn into a negotiation.
         for (int version = 1; version <= 4; version++) {
             for (Map.Entry<String, byte[]> e : EdgeFrameGoldenBytes.forVersion(version).entrySet()) {
@@ -95,16 +95,16 @@ class NoVersionNegotiationTest {
             URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
             try (ConfigdHttpClient client = ConfigdHttpClient.builder()
                     .endpoints(NodeEndpoints.of(base)).allowPlaintext(true).build()) {
-                // A GET of a key: a 404 is a DEFINITE "absent" — never a trigger to probe /v2/ or a capabilities path.
+                // A GET of a key: a 404 is a DEFINITE "absent" -- never a trigger to probe /v2/ or a capabilities path.
                 GetResult r = client.blocking().get("some/key", GetOptions.defaults());
                 assertFalse(r.found());
                 // A 404 on a WRITE is terminal, fail-closed (the router returns the 404 and the body is not
-                // "Committed: seq=<N>" ⇒ ProtocolViolation) — the client never falls back or negotiates a path.
+                // "Committed: seq=<N>" means a ProtocolViolation) -- the client never falls back or negotiates a path.
                 assertThrows(ProtocolViolationException.class,
                         () -> client.blocking().put("some/key", "v".getBytes(StandardCharsets.UTF_8),
                                 io.configd.client.http.WriteOptions.defaults()));
             }
-            // Every path the client ever requested is under the fixed /v1/ prefix — no hello/capabilities/version probe.
+            // Every path the client ever requested is under the fixed /v1/ prefix -- no hello/capabilities/version probe.
             assertFalse(requestedPaths.isEmpty());
             for (String path : requestedPaths) {
                 assertTrue(path.startsWith("/v1/config/"),

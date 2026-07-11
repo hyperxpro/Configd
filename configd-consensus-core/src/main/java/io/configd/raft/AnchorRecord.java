@@ -3,11 +3,11 @@ package io.configd.raft;
 import java.nio.ByteBuffer;
 
 /**
- * The authenticated payload carried by a {@link AnchorFile} slot: the merged Raft
- * durability anchor for one group. It subsumes the two artifacts the frozen format
- * removes - {@code raft.persistent_state} ({@code currentTerm}/{@code votedFor}) and
- * the bare {@code raft-log.snapshot-meta} ({@code snapshotIndex}/{@code snapshotTerm}) -
- * plus the durable-head high-water mark that makes anti-rollback recovery possible.
+ * The authenticated payload carried by a {@link AnchorFile} slot: the durability anchor for one
+ * group. It carries {@code currentTerm}/{@code votedFor} (formerly the standalone
+ * {@code raft.persistent_state}) and the snapshot boundary (formerly the bare
+ * {@code raft-log.snapshot-meta}), plus the durable-head high-water mark that makes anti-rollback
+ * recovery possible.
  *
  * <p>Fixed 52-byte wire payload (big-endian), wrapped in the group's
  * {@link io.configd.common.IntegrityEnvelope} under {@code ANCHOR_MAGIC}:

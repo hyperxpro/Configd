@@ -1,4 +1,4 @@
-# Gitleaks configuration — Configd v0.1
+# Gitleaks configuration for Configd.
 #
 # Default ruleset is the gitleaks built-in. We layer on:
 #   1. Allowlist for spec/test fixtures that look like keys but aren't.
@@ -8,8 +8,8 @@
 #   3. Allowlist for example/template tokens in runbooks and ADRs.
 #
 # This config is referenced by .github/workflows/ci.yml. Do not weaken
-# the allowlist without an ADR; pretend-allowlisting a real secret is a
-# §8.18 honesty-rule violation.
+# the allowlist without an ADR; pretend-allowlisting a real secret is
+# dishonest, not a passing gate.
 
 [extend]
 useDefault = true
@@ -41,7 +41,7 @@ regexes = [
     # "SECRET-armed-7f3a" is a hand-written test marker at
     # configd-edge-node/src/test/java/io/configd/edge/node/EdgeStrongReadFailClosedTest.java:50.
     # Allowlisted by EXACT VALUE (not by path) so any OTHER secret in that file is still caught, and
-    # so the history-scan finding (commit 37cf3c63) is suppressed where an inline comment cannot reach.
+    # so the history-scan finding is suppressed where an inline comment cannot reach.
     '''SECRET-armed-7f3a''',
 ]
 

@@ -66,7 +66,7 @@ class NodeKeyringTest {
         return IntegrityEnvelope.encrypting(km);
     }
 
-    // ---- boot / mint ------------------------------------------------------------------------
+    // Boot / mint.
 
     @Test
     void firstBoot_mintsRoot1() {
@@ -105,7 +105,7 @@ class NodeKeyringTest {
         }
     }
 
-    // ---- ATTACK 1: rotate-then-crash mid-write recovers (term rotation) ----------------------
+    // Attack 1: rotate-then-crash mid-write recovers (term rotation).
 
     @Test
     void termRotate_crashBeforeSync_recoversToPreRotationKeyring() {
@@ -132,7 +132,7 @@ class NodeKeyringTest {
         }
     }
 
-    // ---- ATTACK 2: old segments still verify after a (successful) rotate ---------------------
+    // Attack 2: old segments still verify after a (successful) rotate.
 
     @Test
     void termRotate_oldTermDataStillDecrypts_newWritesUseNewTerm() {
@@ -175,7 +175,7 @@ class NodeKeyringTest {
         }
     }
 
-    // ---- ATTACK 2 (HMAC posture): old HMAC segments still VERIFY after a term rotate ----------
+    // Attack 2 (HMAC posture): old HMAC segments still verify after a term rotate.
 
     @Test
     void hmacTermRotate_oldTermDataStillVerifies_newWritesUseNewTerm() {
@@ -215,7 +215,7 @@ class NodeKeyringTest {
         }
     }
 
-    // ---- ATTACK 1: signing-key rewrap-before-swap crash recovers -----------------------------
+    // Attack 1: signing-key rewrap-before-swap crash recovers.
 
     @Test
     void signingKeyRewrap_crashBeforeSync_bootsOnOldKeyStillActive() {
@@ -241,7 +241,7 @@ class NodeKeyringTest {
         }
     }
 
-    // ---- ATTACK 2: signing-key rewrap is non-destructive (old data reads under the new key) ---
+    // Attack 2: signing-key rewrap is non-destructive (old data reads under the new key).
 
     @Test
     void signingKeyRewrap_success_oldDataDecryptsUnderNewKey() {
@@ -257,7 +257,7 @@ class NodeKeyringTest {
             k.rewrapForNewSigningKey(mac(skB), kek(skB), nodeId("nodeA"));
         }
         // Reboot under the NEW signing key B: the new slot wins, roots are UNCHANGED, so the record
-        // encrypted under A's keyring still decrypts. This is the documented-data-destroying rotation
+        // encrypted under A's keyring still decrypts. This is the data-destroying signing-key rotation
         // made impossible by construction.
         try (NodeKeyring k2 = NodeKeyring.loadOrCreateOverIO(
                 new CrashModelAnchorIO(disk), mac(skB), kek(skB), nodeId("nodeA"), new SecureRandom())) {
@@ -272,7 +272,7 @@ class NodeKeyringTest {
         }
     }
 
-    // ---- ATTACK 4/5: boot fail-closed refusals ----------------------------------------------
+    // Attack 4/5: boot fail-closed refusals.
 
     @Test
     void keyringUnderAPriorSigningKey_refuses_notSilentReMint() {

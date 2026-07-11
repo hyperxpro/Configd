@@ -25,13 +25,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * The batched Gate-5 wire-behavior fix: a POST-admission decode error must close with the frame's REAL
- * {@link ErrorCode} on BOTH transports. The Netty {@code FanOutConnection.exceptionCaught} previously
- * tested {@code instanceof CodecException} on the raw cause, which misses the {@code DecoderException} in
- * which Netty wraps a decoder throw, so it closed such a frame with the catch-all {@code SERVER_SHUTDOWN}
- * instead of e.g. {@code FRAME_CORRUPT}. The JDK reader catches the {@code CodecException} directly and
- * already reported the real code; this proves both transports now agree (the fix unwraps the cause chain).
- * No correct client depends on the old catch-all close code.
+ * A POST-admission decode error must close with the frame's REAL {@link ErrorCode} on BOTH transports.
+ * The Netty {@code FanOutConnection.exceptionCaught} used to test {@code instanceof CodecException} on the
+ * raw cause, which misses the {@code DecoderException} in which Netty wraps a decoder throw, so it closed
+ * such a frame with the catch-all {@code SERVER_SHUTDOWN} instead of e.g. {@code FRAME_CORRUPT}. The JDK
+ * reader catches the {@code CodecException} directly and already reported the real code; this proves both
+ * transports agree (the fix unwraps the cause chain). No correct client depends on the old catch-all close
+ * code.
  */
 @Timeout(60)
 class EdgePostAdmissionCorruptFrameTest {

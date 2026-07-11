@@ -22,10 +22,6 @@ class AuthInterceptorTest {
         return new AuthInterceptor.AuthResult.Denied("invalid token");
     });
 
-    // -----------------------------------------------------------------------
-    // Null / blank token
-    // -----------------------------------------------------------------------
-
     @Test
     void nullTokenIsDenied() {
         var result = interceptor.authenticate(null);
@@ -50,10 +46,6 @@ class AuthInterceptorTest {
                 ((AuthInterceptor.AuthResult.Denied) result).reason());
     }
 
-    // -----------------------------------------------------------------------
-    // Valid token
-    // -----------------------------------------------------------------------
-
     @Test
     void validTokenIsAuthenticated() {
         var result = interceptor.authenticate("valid-token");
@@ -64,10 +56,6 @@ class AuthInterceptorTest {
         assertTrue(auth.roles().contains("admin"));
     }
 
-    // -----------------------------------------------------------------------
-    // Invalid token (non-blank but rejected by validator)
-    // -----------------------------------------------------------------------
-
     @Test
     void invalidTokenIsDenied() {
         var result = interceptor.authenticate("bad-token");
@@ -76,19 +64,11 @@ class AuthInterceptorTest {
                 ((AuthInterceptor.AuthResult.Denied) result).reason());
     }
 
-    // -----------------------------------------------------------------------
-    // Constructor null check
-    // -----------------------------------------------------------------------
-
     @Test
     void nullValidatorThrows() {
         assertThrows(NullPointerException.class,
                 () -> new AuthInterceptor(null));
     }
-
-    // -----------------------------------------------------------------------
-    // Sealed interface exhaustiveness
-    // -----------------------------------------------------------------------
 
     @Test
     void authResultIsSealed() {
@@ -101,10 +81,8 @@ class AuthInterceptorTest {
         assertInstanceOf(AuthInterceptor.AuthResult.Denied.class, denied);
     }
 
-    // -----------------------------------------------------------------------
-    // Authenticated defensively hardens its roles set (SF-1): a pluggable
-    // TokenValidator cannot hand the authz path a null / mutable / aliased set.
-    // -----------------------------------------------------------------------
+    // Authenticated defensively hardens its roles set: a pluggable TokenValidator cannot hand the
+    // authz path a null / mutable / aliased set.
 
     @Test
     void authenticatedRejectsNullRoles() {

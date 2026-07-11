@@ -20,15 +20,14 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Tests for the deploy-time shard-count selection ({@link ConfigdServer#resolveShardCount}) and the
- * Gate 2b fixed-at-deploy reshard guard + topology-epoch source
- * ({@link ConfigdServer#enforceTopologyDescriptor}).
+ * fixed-at-deploy reshard guard + topology-epoch source ({@link ConfigdServer#enforceTopologyDescriptor}).
  *
  * <p>These drive the REAL helpers the production boot path calls, so they discriminate: the default is
  * {@code N=1} (byte-identical to today), {@code N} is range-checked, {@code N>1} BOOTS, and {@code N} is
  * FIXED AT DEPLOY (a later boot with a different {@code N} is rejected rather than silently mis-routing
- * keys). The old plaintext {@code raft-shard-count.meta} is replaced by the authenticated, versioned
- * {@code topology-descriptor.dat}: the reshard guard and the topology epoch are now tamper-evident under
- * a key.
+ * keys). The topology descriptor ({@code topology-descriptor.dat}) is authenticated and versioned, so
+ * the reshard guard and the topology epoch are tamper-evident under a key, not a plaintext value an
+ * attacker could rewrite.
  */
 class ShardCountConfigTest {
 
@@ -64,8 +63,6 @@ class ShardCountConfigTest {
         }
     }
 
-    // ---- resolveShardCount: default + range (config only; no descriptor I/O) -----------------
-
     @Test
     void defaultIsOne() {
         assertEquals(1, ConfigdServer.resolveShardCount(),
@@ -93,8 +90,6 @@ class ShardCountConfigTest {
         assertThrows(IllegalArgumentException.class, ConfigdServer::resolveShardCount);
     }
 
-    // ---- enforceTopologyDescriptor: first-boot write + epoch --------------------------------
-
     @Test
     void firstBootWritesDescriptorAtInitialEpoch() {
         long epoch = ConfigdServer.enforceTopologyDescriptor(1, dataDir, keyedEnvelope());
@@ -112,13 +107,11 @@ class ShardCountConfigTest {
         assertEquals(1L, ConfigdServer.enforceTopologyDescriptor(3, dataDir, env));
     }
 
-    // ---- enforceTopologyDescriptor: fixed-at-deploy reshard guard ---------------------------
-
     @Test
     void nGreaterThanOneBootsAndReshardNChangeStillRefused() {
         // N>1 boots and persists the descriptor; a later boot with a DIFFERENT in-range N on the same
-        // dir is a loud reshard rejection (not silent mis-routing). Cover the boundary N=2 and the
-        // ceiling N=16, each on its own fresh dir. This is the ratified `reshardNChangeStillRefused`.
+        // dir is a loud reshard rejection (not silent mis-routing). Covers the boundary N=2 and the
+        // ceiling N=16, each on its own fresh dir.
         IntegrityEnvelope env = keyedEnvelope();
         for (int n : new int[] {2, 4, 16}) {
             Path dir = dataDir.resolve("n" + n);
@@ -153,8 +146,6 @@ class ShardCountConfigTest {
         // still succeeds at the original epoch.
         assertEquals(1L, ConfigdServer.enforceTopologyDescriptor(4, dataDir, env));
     }
-
-    // ---- enforceTopologyDescriptor: tamper-evident (the whole point of the envelope) ---------
 
     @Test
     void topologyDescriptorTamperedRefusesStart() throws Exception {

@@ -23,9 +23,6 @@ import java.util.Objects;
  */
 public final class ConfigReadService {
 
-    /**
-     * Provides access to the config store for reads.
-     */
     public interface ConfigReader {
         ReadResult get(String key);
         ReadResult get(String key, long minVersion);
@@ -80,8 +77,6 @@ public final class ConfigReadService {
     private final LeadershipConfirmer leadershipConfirmer;
 
     /**
-     * Creates a read service.
-     *
      * @param reader               the config store reader
      * @param leadershipConfirmer  leadership confirmation (may be null for stale-only reads)
      */
@@ -163,8 +158,6 @@ public final class ConfigReadService {
     }
 
     /**
-     * Reads all keys matching a prefix.
-     *
      * @param prefix the key prefix
      * @return map of matching key-value pairs
      */
@@ -173,9 +166,6 @@ public final class ConfigReadService {
         return reader.getPrefix(prefix);
     }
 
-    /**
-     * Returns the current store version.
-     */
     public long currentVersion() {
         return reader.currentVersion();
     }

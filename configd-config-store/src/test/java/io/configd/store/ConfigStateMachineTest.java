@@ -34,8 +34,6 @@ class ConfigStateMachineTest {
         return s.getBytes(StandardCharsets.UTF_8);
     }
 
-    // Apply - PUT
-
     @Nested
     class ApplyPut {
 
@@ -72,8 +70,6 @@ class ConfigStateMachineTest {
         }
     }
 
-    // Apply - DELETE
-
     @Nested
     class ApplyDelete {
 
@@ -94,8 +90,6 @@ class ConfigStateMachineTest {
             assertEquals(1, store.currentVersion());
         }
     }
-
-    // Apply - BATCH
 
     @Nested
     class ApplyBatch {
@@ -118,7 +112,6 @@ class ConfigStateMachineTest {
 
         @Test
         void batchVersionIsSingleBump() {
-            // Apply two batches, each should get one version bump
             stateMachine.apply(1, 1, CommandCodec.encodeBatch(List.of(
                     new ConfigMutation.Put("x", bytes("1")),
                     new ConfigMutation.Put("y", bytes("2"))
@@ -132,8 +125,6 @@ class ConfigStateMachineTest {
         }
     }
 
-    // Apply - NOOP
-
     @Nested
     class ApplyNoop {
 
@@ -142,7 +133,6 @@ class ConfigStateMachineTest {
             stateMachine.apply(1, 1, CommandCodec.encodePut("key", bytes("value")));
             long versionBefore = store.currentVersion();
 
-            // Empty command = noop
             stateMachine.apply(2, 1, new byte[0]);
 
             assertEquals(versionBefore, store.currentVersion());
@@ -158,10 +148,6 @@ class ConfigStateMachineTest {
             assertEquals(seqBefore, stateMachine.sequenceCounter());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Sequence counter
-    // -----------------------------------------------------------------------
 
     @Nested
     class SequenceCounter {
@@ -193,10 +179,6 @@ class ConfigStateMachineTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Snapshot and restore
-    // -----------------------------------------------------------------------
-
     @Nested
     class SnapshotAndRestore {
 
@@ -208,37 +190,31 @@ class ConfigStateMachineTest {
 
             byte[] snapshotBytes = stateMachine.snapshot();
 
-            // Create a fresh store and state machine
             VersionedConfigStore newStore = new VersionedConfigStore();
             ConfigStateMachine newSm = new ConfigStateMachine(newStore);
 
             newSm.restoreSnapshot(snapshotBytes);
 
-            // Verify all data restored
             assertArrayEquals(bytes("localhost"), newStore.get("db.host").value());
             assertArrayEquals(bytes("5432"), newStore.get("db.port").value());
             assertArrayEquals(bytes("300"), newStore.get("cache.ttl").value());
 
-            // Sequence counter should be restored
             assertEquals(3, newSm.sequenceCounter());
         }
 
         @Test
         void restoreReplacesExistingState() {
-            // Add some data to the original
             stateMachine.apply(1, 1, CommandCodec.encodePut("old", bytes("data")));
             byte[] snapshotBytes = stateMachine.snapshot();
 
-            // Create another machine with different data
             VersionedConfigStore otherStore = new VersionedConfigStore();
             ConfigStateMachine otherSm = new ConfigStateMachine(otherStore);
             otherSm.apply(1, 1, CommandCodec.encodePut("different", bytes("stuff")));
 
-            // Restore should replace entirely
             otherSm.restoreSnapshot(snapshotBytes);
 
             assertTrue(otherStore.get("old").found());
-            // The "different" key should be gone because restore replaces state
+            // Restore replaces the state wholesale, so pre-existing keys not in the snapshot are gone.
             assertFalse(otherStore.get("different").found());
         }
 
@@ -263,7 +239,6 @@ class ConfigStateMachineTest {
             ConfigStateMachine newSm = new ConfigStateMachine(newStore);
             newSm.restoreSnapshot(snapshotBytes);
 
-            // Should be able to apply new commands after restore
             newSm.apply(2, 1, CommandCodec.encodePut("b", bytes("2")));
 
             assertEquals(2, newStore.currentVersion());
@@ -271,10 +246,6 @@ class ConfigStateMachineTest {
             assertArrayEquals(bytes("2"), newStore.get("b").value());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Listener notification
-    // -----------------------------------------------------------------------
 
     @Nested
     class ListenerNotification {
@@ -364,29 +335,21 @@ class ConfigStateMachineTest {
         }
     }
 
-    // Snapshot key length overflow: keys > 65535 bytes
-
     @Nested
     class SnapshotKeyLengthOverflow {
 
         /**
-         * snapshot/restoreSnapshot must handle keys longer than 65535 bytes.
+         * snapshot/restoreSnapshot must handle keys longer than 65535 bytes: the format uses a
+         * 4-byte key-length field, not a 2-byte short, so a 70000-byte key must round-trip intact
+         * rather than having its length silently truncated.
          * <p>
-         * Before the fix, snapshot() used putShort for key length (max 65535) and
-         * restoreSnapshot() used getShort. Keys longer than 65535 bytes would have
-         * their length silently truncated, corrupting the snapshot and making it
-         * impossible to restore.
-         * <p>
-         * After the fix, both use putInt/getInt.
-         * <p>
-         * Note: CommandCodec uses shorts for key lengths in its wire format, so we
-         * cannot use apply() with a 70000-byte key. Instead, we put the long key
-         * directly into the store (as would happen via snapshot transfer from a node
-         * that already had such keys).
+         * Note: CommandCodec uses shorts for key lengths in its wire format, so we cannot use
+         * apply() with a 70000-byte key. Instead, we put the long key directly into the store
+         * (as would happen via snapshot transfer from a node that already had such keys).
          */
         @Test
         void snapshotAndRestoreWithLongKey() {
-            // Create a key that is 70000 bytes long (exceeds the old 65535 short limit)
+            // A 70000-byte key: longer than a 2-byte length field could ever represent.
             String longKey = "k".repeat(70_000);
             byte[] value = bytes("long-key-value");
 
@@ -395,28 +358,24 @@ class ConfigStateMachineTest {
             // snapshot format is the contract under test, not the command codec.
             store.put(longKey, value, 1);
 
-            // Verify the data is in the store
             ReadResult result = store.get(longKey);
             assertTrue(result.found(), "Long key should be stored");
             assertArrayEquals(value, result.value());
 
-            // Take a snapshot - before the fix, putShort would truncate the
-            // key length to (70000 & 0xFFFF) = 4464, corrupting the snapshot.
+            // Take a snapshot: a 2-byte length field would truncate 70000 to
+            // (70000 & 0xFFFF) = 4464, corrupting the snapshot.
             byte[] snapshotBytes = stateMachine.snapshot();
             assertNotNull(snapshotBytes);
 
-            // Restore the snapshot into a fresh state machine
             VersionedConfigStore newStore = new VersionedConfigStore();
             ConfigStateMachine newSm = new ConfigStateMachine(newStore);
 
-            // Before the fix: restoreSnapshot would either read the wrong number
-            // of bytes (due to truncated key length) and corrupt all subsequent
-            // fields, or throw a BufferUnderflowException.
-            // After the fix: the 70000-byte key is correctly round-tripped.
+            // A truncated key length here would read the wrong number of bytes and corrupt all
+            // subsequent fields, or throw a BufferUnderflowException; the 4-byte length field lets
+            // the 70000-byte key round-trip correctly.
             assertDoesNotThrow(() -> newSm.restoreSnapshot(snapshotBytes),
                     "restoreSnapshot must not throw for keys > 65535 bytes");
 
-            // Verify the long key was correctly restored
             ReadResult restored = newStore.get(longKey);
             assertTrue(restored.found(),
                     "70000-byte key must be found after snapshot restore");
@@ -424,8 +383,6 @@ class ConfigStateMachineTest {
                     "Value for 70000-byte key must match after snapshot restore");
         }
     }
-
-    // Snapshot restore must bound-check envelope fields
 
     @Nested
     class SnapshotBoundsCheck {
@@ -525,10 +482,6 @@ class ConfigStateMachineTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Constructor validation
-    // -----------------------------------------------------------------------
-
     @Nested
     class ConstructorValidation {
 
@@ -551,10 +504,6 @@ class ConfigStateMachineTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Signing integration
-    // -----------------------------------------------------------------------
-
     @Nested
     class SigningIntegration {
 
@@ -570,7 +519,6 @@ class ConfigStateMachineTest {
 
         @Test
         void lastSignatureNullWithoutSigner() {
-            // Default state machine (no signer) should always return null
             assertNull(stateMachine.lastSignature());
             stateMachine.apply(1, 1, CommandCodec.encodePut("key", bytes("value")));
             assertNull(stateMachine.lastSignature());
@@ -669,7 +617,6 @@ class ConfigStateMachineTest {
             byte[] sig = sm.lastSignature();
             assertNotNull(sig);
 
-            // Canonical form of a batch bound with epoch+nonce should verify.
             ConfigSigner verifier = new ConfigSigner(keyPair.getPublic());
             byte[] canonical = CommandCodec.encodeBatch(List.of(
                     new ConfigMutation.Put("a", bytes("1")),
@@ -728,7 +675,6 @@ class ConfigStateMachineTest {
 
             assertNotNull(sig1);
             assertNotNull(sig2);
-            // Different commands should produce different signatures
             assertFalse(java.util.Arrays.equals(sig1, sig2),
                     "Different commands should produce different signatures");
         }
@@ -738,37 +684,29 @@ class ConfigStateMachineTest {
             ConfigStateMachine sm = new ConfigStateMachine(
                     new VersionedConfigStore(), Clock.system(), signer);
 
-            // Before any apply, lastSignature is null
             assertNull(sm.lastSignature());
 
-            // Noop should not change lastSignature
             sm.apply(1, 1, new byte[0]);
             assertNull(sm.lastSignature());
 
-            // After a real apply, signature should exist
             sm.apply(2, 1, CommandCodec.encodePut("key", bytes("value")));
             byte[] sig = sm.lastSignature();
             assertNotNull(sig);
 
-            // Another noop should not clear the signature
             sm.apply(3, 1, new byte[0]);
             assertArrayEquals(sig, sm.lastSignature());
         }
     }
 
-    // sign-then-mutate-then-fanout ordering: a sign failure must leave the store
-    // untouched and listeners unfired.
-
     /**
-     * The apply loop was previously: mutate the store first, then call {@code signCommand}
-     * which silently swallowed any {@link java.security.GeneralSecurityException}. That
-     * allowed a partially-applied write to be committed to the store while no signature
-     * was produced - the unsigned delta was either broadcast and rejected at the edge or
-     * lost entirely while the leader believed the mutation had been published. The ordering
-     * is now sign - mutate - fanout, with a propagating exception on sign failure, making
-     * apply atomic from the outside: either everything happens (store mutation + lastSignature
-     * populated + listeners notified) or nothing does (store unchanged + IllegalStateException
-     * propagates + no listener notification).
+     * Sign-then-mutate-then-fanout ordering: a sign failure must leave the store untouched and
+     * listeners unfired. If the store were mutated before signing, a signing failure would leave a
+     * partially-applied write committed with no signature produced - the unsigned delta would then
+     * be broadcast and rejected at the edge, or lost entirely while the leader believed the mutation
+     * had been published. Signing first, with a propagating exception on failure, makes apply atomic
+     * from the outside: either everything happens (store mutation + lastSignature populated +
+     * listeners notified) or nothing does (store unchanged + IllegalStateException propagates + no
+     * listener notification).
      */
     @Nested
     class SignFailurePreservesStore {
@@ -799,13 +737,13 @@ class ConfigStateMachineTest {
 
             byte[] command = CommandCodec.encodePut("k", bytes("v"));
 
-            // (a) The IllegalStateException must propagate - silent failure was the historical bug.
+            // (a) The exception must propagate rather than being silently swallowed.
             assertThrows(IllegalStateException.class,
                     () -> sm.apply(1, 1, command),
                     "sign failure must propagate so Raft can panic / retry");
 
-            // (b) Store must NOT contain the key - the old mutate-then-sign order
-            //     would have left it partially applied.
+            // (b) Store must NOT contain the key: a mutate-then-sign order would leave it
+            //     partially applied.
             assertFalse(localStore.get("k").found(),
                     "store must be unmutated after sign failure (SEC-018)");
             assertEquals(0L, localStore.currentVersion(),
@@ -872,7 +810,7 @@ class ConfigStateMachineTest {
 
         @Test
         void successfulSignStillProducesNotificationAndMutation() throws Exception {
-            // Sanity: the reorder must not regress the happy path.
+            // Sanity: the happy path (successful sign) must still work end-to-end.
             KeyPairGenerator gen = KeyPairGenerator.getInstance("Ed25519");
             KeyPair kp = gen.generateKeyPair();
             ConfigSigner okSigner = new ConfigSigner(kp);
@@ -893,10 +831,10 @@ class ConfigStateMachineTest {
         }
     }
 
-    // TLV snapshot trailer (frozen clean break). The snapshot writer always emits the canonical
-    // magic-TLV trailer, so it is the ONLY accepted form: the legacy trailer-less and bare-8-byte-
-    // epoch forms are now REFUSED. Unknown trailing fields inside a TLV payload are still ignored
-    // so an older reader can load a newer snapshot that appended a field.
+    // The snapshot writer always emits the canonical magic-TLV trailer, so it is the ONLY accepted
+    // form: a legacy trailer-less or bare-8-byte-epoch snapshot is refused. Unknown trailing fields
+    // inside a TLV payload are still ignored so an older reader can load a newer snapshot that
+    // appended a field.
     @Nested
     class SnapshotTrailerCompatibility {
 
@@ -913,7 +851,7 @@ class ConfigStateMachineTest {
             src.apply(1, 1, CommandCodec.encodePut("k", bytes("v")));
 
             // Strip the canonical 16-byte TLV trailer and replace it with a bare 8-byte epoch -
-            // the deleted legacy form (c). The frozen reader must refuse it.
+            // a legacy form no writer produces anymore. The reader must refuse it.
             byte[] full = src.snapshot();
             byte[] entriesOnly = java.util.Arrays.copyOf(full, full.length - 16);
             ByteBuffer raw = ByteBuffer.allocate(entriesOnly.length + Long.BYTES);
@@ -983,7 +921,7 @@ class ConfigStateMachineTest {
                     "malformed trailer must throw rather than silently accept");
         }
 
-        // decodeTrailer BOUNDARY coverage. Frozen dispatch on the bytes AFTER the entries:
+        // decodeTrailer BOUNDARY coverage. Dispatch on the bytes AFTER the entries:
         //   remaining >= 8 && first4 == MAGIC      -> TLV form (the ONLY accepted form)
         //     trailerLen < 0 || trailerLen > MAX   -> reject
         //     remaining < trailerLen               -> reject (truncated)
@@ -993,7 +931,6 @@ class ConfigStateMachineTest {
         // The off-by-one mutants on those comparisons accept a corrupt trailer or reject a
         // valid one. These tests pin each boundary. The base is an EMPTY store so the trailer
         // is the only region exercised.
-        // -------------------------------------------------------------------
 
         private static final int MAX_SNAPSHOT_TRAILER_LEN = 65_536;
 
@@ -1020,8 +957,8 @@ class ConfigStateMachineTest {
 
         @Test
         void snapshotTrailerLegacyEmptyRejected() {
-            // remaining == 0 boundary: a trailer-less snapshot (legacy form a) is now REFUSED -
-            // the frozen writer always emits the canonical TLV trailer.
+            // remaining == 0 boundary: a trailer-less snapshot is refused - the writer always
+            // emits the canonical TLV trailer.
             ConfigStateMachine dst = freshMachine();
             assertThrows(IllegalArgumentException.class,
                     () -> dst.restoreSnapshot(emptyEntries()),
@@ -1040,8 +977,8 @@ class ConfigStateMachineTest {
 
         @Test
         void rawEightByteEpochAtBoundaryRejected() {
-            // remaining == Long.BYTES (8) with no magic: the bare-epoch form (legacy form c) is
-            // now REFUSED - only a magic-TLV trailer is accepted at this boundary.
+            // remaining == Long.BYTES (8) with no magic: the bare-epoch form is refused - only a
+            // magic-TLV trailer is accepted at this boundary.
             ByteBuffer t = ByteBuffer.allocate(8);
             t.putLong(123L);
             ConfigStateMachine dst = freshMachine();

@@ -29,12 +29,11 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The partition & WAN chaos matrix (control plane), executed
- * deterministically in-sim over {@link AdversarialNetwork}. Covers the architecture section 12 scenarios:
- * single-region isolation (minority/majority), leader isolation, asymmetric partition (A->B cut,
- * B->A intact), partial partition (a subset of links), and gray failure (elevated latency short of a
- * full cut). Each scenario asserts - CONTINUOUSLY, every step - the consistency-contract SAFETY
- * oracles, and measures bounded recovery after heal.
+ * The partition and WAN chaos matrix (control plane), executed deterministically in-sim over
+ * {@link AdversarialNetwork}. Covers single-region isolation (minority/majority), leader
+ * isolation, asymmetric partition (A->B cut, B->A intact), partial partition (a subset of
+ * links), and gray failure (elevated latency short of a full cut). Each scenario asserts -
+ * continuously, every step - the safety oracles below, and measures bounded recovery after heal.
  *
  * <p><b>Oracles (the linearizability-relevant safety properties, asserted deterministically):</b>
  * <ul>
@@ -47,12 +46,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li><b>minority makes no progress</b> - an isolated sub-quorum's commitIndex does not advance;
  *       <b>majority continues</b> - the quorum side elects and commits.</li>
  * </ul>
- * The full Porcupine linearizability check over a recorded history runs in the {@code configd-linz}
- * harness (env-gated on {@code PORCUPINE_BIN}, the {@code CheckerSelfTest} discipline); these
- * always-on invariants are the deterministic in-sim oracle the CI subset enforces.
+ * The full Porcupine linearizability check over a recorded history runs in the separate
+ * {@code configd-linz} harness (env-gated on {@code PORCUPINE_BIN}); these always-on invariants
+ * are the deterministic in-sim oracle this suite enforces.
  *
- * <p>Recovery times are printed as {@code PARTITION-RECOVERY:} lines feeding {@code recovery-bounds.md}.
- * fault-matrix section C.
+ * <p>Recovery times are printed as {@code PARTITION-RECOVERY:} lines.
  */
 class PartitionMatrixTest {
 
@@ -230,9 +228,7 @@ class PartitionMatrixTest {
         }
     }
 
-    // ------------------------------------------------------------------------
     // C-1: single-region isolation - majority continues, minority stalls, heal converges
-    // ------------------------------------------------------------------------
     @Test
     void singleRegionIsolation_majorityContinues_minorityStalls_healConverges() {
         long worstReElect = 0, worstConverge = 0;
@@ -303,9 +299,7 @@ class PartitionMatrixTest {
                 + " worstReElectTicks=" + worstReElect + " worstConvergeTicks=" + worstConverge);
     }
 
-    // ------------------------------------------------------------------------
     // C-2: leader isolation - old leader steps down, majority re-elects, no split-brain commit
-    // ------------------------------------------------------------------------
     @Test
     void leaderIsolation_oldLeaderStepsDown_majorityReElects_noSplitBrain() {
         long worstReElect = 0;
@@ -360,9 +354,7 @@ class PartitionMatrixTest {
                 + " worstReElectTicks=" + worstReElect);
     }
 
-    // ------------------------------------------------------------------------
     // C-3: asymmetric partition (A->B cut, B->A intact) - no split-brain, heal converges
-    // ------------------------------------------------------------------------
     @Test
     void asymmetricPartition_noSplitBrainCommit_healConverges() {
         for (long seed = 0; seed < SEEDS; seed++) {
@@ -402,9 +394,7 @@ class PartitionMatrixTest {
         System.out.println("PARTITION-RECOVERY: scenario=asymmetric-partition seeds=" + SEEDS + " (safety held throughout)");
     }
 
-    // ------------------------------------------------------------------------
     // C-4: partial partition (a subset of links cut; no clean majority/minority split)
-    // ------------------------------------------------------------------------
     @Test
     void partialPartition_safetyHolds_connectedMajorityProgresses() {
         for (long seed = 0; seed < SEEDS; seed++) {
@@ -443,12 +433,10 @@ class PartitionMatrixTest {
         System.out.println("PARTITION-RECOVERY: scenario=partial-partition seeds=" + SEEDS + " (safety held throughout)");
     }
 
-    // ------------------------------------------------------------------------
-    // C-6: clock skew - consensus SAFETY does not depend on synchronized wall clocks (charter section 6).
-    // ------------------------------------------------------------------------
+    // C-6: clock skew - consensus safety does not depend on synchronized wall clocks.
     @Test
     void clockSkew_consensusSafetyAndLivenessHoldUnderUnsynchronizedClocks() {
-        // Each node's state-machine wall clock is skewed by a DIFFERENT, large offset (+/-~hours) - 
+        // Each node's state-machine wall clock is skewed by a DIFFERENT, large offset (+/-~hours) -
         // far beyond any NTP bound. Raft is tick-driven (elections/heartbeats use logical ticks,
         // not the wall clock), so safety must be wholly independent of clock synchronization. We
         // run a full isolate+heal cycle under maximal skew and assert the same safety oracles plus
@@ -502,9 +490,7 @@ class PartitionMatrixTest {
                 + " (consensus safety+liveness independent of synchronized clocks — charter §6 proven)");
     }
 
-    // ------------------------------------------------------------------------
     // C-5: gray failure (elevated latency, no drops) - safety holds, no excessive leadership flap
-    // ------------------------------------------------------------------------
     @Test
     void grayFailure_latencySpike_safetyHolds_noExcessiveFlap() {
         for (long seed = 0; seed < SEEDS; seed++) {

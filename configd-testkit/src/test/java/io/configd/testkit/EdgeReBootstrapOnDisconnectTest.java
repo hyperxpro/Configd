@@ -12,18 +12,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * An edge driven to DISCONNECTED (the staleness-ladder
- * frontier walks the contract section 2 ladder under a real partition, on the LOGICAL clock - no
- * wall-clock sleeps) triggers the C3 re-bootstrap exactly once per entry, the resubscribe
- * carries the CURRENT cursor (never 0 - the server's TAIL/SNAPSHOT_FIRST decision picks
- * replay vs re-bootstrap; cursor 0 is the poison path's), and after the partition heals
- * the edge RECOVERS and CONVERGES back to CURRENT.
+ * An edge driven to DISCONNECTED (the staleness-ladder frontier walks the ladder under a real
+ * partition, on the logical clock - no wall-clock sleeps) triggers a re-bootstrap exactly once
+ * per entry, the resubscribe carries the CURRENT cursor (never 0 - the server's
+ * TAIL/SNAPSHOT_FIRST decision picks replay vs re-bootstrap; cursor 0 is the poison path's), and
+ * after the partition heals the edge recovers and converges back to CURRENT.
  *
- * <p>The PROCESS half (the {@code rebootstrapHook} -> {@code requestRebootstrap} wiring +
+ * <p>The process half (the {@code rebootstrapHook} to {@code requestRebootstrap} wiring, plus
  * live teardown/resubscribe) is {@code io.configd.edge.node.EdgeReBootstrapOnDisconnectTest};
- * the trigger-count metric ({@code edge_rebootstrap_triggered_total}) is C2's
- * {@code EdgeNodeMetricsTest}. Together the three close the row's "trigger -> REAL
- * re-bootstrap -> recovery" chain.
+ * the trigger-count metric ({@code edge_rebootstrap_triggered_total}) is
+ * {@code EdgeNodeMetricsTest}. Together the three close the "trigger, real re-bootstrap,
+ * recovery" chain.
  */
 class EdgeReBootstrapOnDisconnectTest {
 
@@ -44,8 +43,8 @@ class EdgeReBootstrapOnDisconnectTest {
         assertEquals(0, victim.disconnectedRebootstraps());
         sim.enableEdgeRecovery(0);
 
-        // Cut the victim off and commit writes it cannot see (so there is real catch-up
-        // work for the recovery to do - concurrent writes per charter section 4 C3).
+        // Cut the victim off and commit writes it cannot see, so there is real catch-up
+        // work for the recovery to do (concurrent writes).
         sim.partitionEdge(0);
         for (int i = 1; i <= 3; i++) {
             commit(sim, victim.subscribedCpNode(), "ct06/k" + i, "v" + i);

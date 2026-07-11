@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * B7 (Class-B): readiness is SHARD-AWARE and honors a shutdown drain flag.
+ * Readiness is SHARD-AWARE and honors a shutdown drain flag.
  * <ul>
  *   <li>A group-0-blind readiness LIES at N&gt;1: a node that lost quorum on shards 1..N-1 would still
  *       report READY. Readiness must reflect EVERY hosted group.</li>
@@ -38,8 +38,6 @@ class ReadinessDrainTest {
     Path tempDir;
 
     private static final NodeId L = NodeId.of(1); // a stand-in "known leader"
-
-    // ---- shard-aware decision (unit) ----
 
     @Test
     void singleShardWithLeaderIsReady() {
@@ -81,8 +79,6 @@ class ReadinessDrainTest {
         assertFalse(r.healthy());
         assertEquals("draining", r.name());
     }
-
-    // ---- end-to-end: a real single-node server reports ready once it self-elects ----
 
     @Test
     void singleNodeServerBecomesReadyOverHttp() throws Exception {

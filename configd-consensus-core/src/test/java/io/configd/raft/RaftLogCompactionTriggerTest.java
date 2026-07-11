@@ -14,17 +14,16 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Raft-log compaction must be REACHABLE by a
- * size/interval trigger. Before the fix the only {@code triggerSnapshot()} caller was the
- * circular {@code sendInstallSnapshot}, so a running node never compacted and its WAL grew
+ * Raft-log compaction must be reachable via a size/interval trigger, not only via the circular
+ * {@code sendInstallSnapshot} path - otherwise a running node never compacts and its WAL grows
  * for the life of the process (eventually crash-looping recovery at the 2 GiB
  * {@code FileStorage} read cap). {@link RaftNode#maybeCompact(long)} is the
- * threshold trigger the server tick loop now calls.
+ * threshold trigger the server tick loop calls.
  *
- * <p>Discriminator: a healthy applied span BELOW the threshold must NOT compact; ABOVE it
- * MUST compact (snapshotIndex advances, the retained applied span drops within the
- * threshold, the WAL prefix is truncated). Removing
- * {@code maybeCompact} to a no-op leaves the WAL unbounded - the above-threshold case fails.
+ * <p>Discriminator: a healthy applied span below the threshold must not compact; above it
+ * must compact (snapshotIndex advances, the retained applied span drops within the
+ * threshold, the WAL prefix is truncated). Turning
+ * {@code maybeCompact} into a no-op would leave the WAL unbounded - the above-threshold case would fail.
  */
 class RaftLogCompactionTriggerTest {
 
@@ -69,7 +68,7 @@ class RaftLogCompactionTriggerTest {
         assertEquals(0, node.log().snapshotIndex(), "snapshotIndex must be unchanged below the threshold");
 
         // ABOVE threshold: compaction MUST fire - snapshotIndex advances, retained span drops,
-        // the WAL prefix is truncated (this is exactly what was unreachable in the wired server).
+        // and the WAL prefix is truncated.
         long lowThreshold = 5;
         assertTrue(node.maybeCompact(lowThreshold), "must compact above the threshold");
         assertTrue(node.log().snapshotIndex() > 0, "snapshotIndex must advance after compaction");

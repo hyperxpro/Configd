@@ -21,22 +21,22 @@ import java.util.Optional;
 import java.util.function.Function;
 
 /**
- * The unary control-plane routing + retry engine (§05). It sends one logical request, following the advisory
- * {@code X-Leader-Hint} (follow-once, {@code hop < 2}, then back off — R4-3), backing off + retrying a hintless
- * {@code 503} (the REQUIRED N = 1 election loop — R4-2), honoring {@code Retry-After} on a {@code 429}, and
- * classifying {@code 504}/mutation-timeout/other-mutation-5xx as <b>indeterminate</b> (retry-to-definite; on
- * budget exhaustion it surfaces {@link IndeterminateException}, never a false definite failure — R6-3, §04
- * D4-8). Anti-SSRF (R2-2/R8): a hint is a bare numeric {@code NodeId} resolved <b>only</b> through the operator
- * {@link NodeEndpoints} map; an unresolvable hint degrades to hintless (never a wire-supplied address). The
- * credential (and, when enabled, a <b>fresh</b> replay stamp per attempt — R6-4) is (re)applied on every send,
- * including a followed hop (R8-1), always over the same TLS/mTLS (R8-3).
+ * The unary control-plane routing and retry engine. It sends one logical request, following the advisory
+ * {@code X-Leader-Hint} (follow-once, {@code hop < 2}, then back off), backing off and retrying a hintless
+ * {@code 503} (the election loop that is required even at N=1), honoring {@code Retry-After} on a {@code 429},
+ * and classifying {@code 504} / mutation-timeout / other-mutation-5xx as <b>indeterminate</b> (retry-to-definite;
+ * on budget exhaustion it surfaces {@link IndeterminateException}, never a false definite failure). Anti-SSRF: a
+ * hint is a bare numeric {@code NodeId} resolved <b>only</b> through the operator {@link NodeEndpoints} map; an
+ * unresolvable hint degrades to hintless (never a wire-supplied address). The credential (and, when enabled, a
+ * <b>fresh</b> replay stamp per attempt) is (re)applied on every send, including a followed hop, always over the
+ * same TLS/mTLS.
  *
- * <p>Synchronous/blocking by design — the {@link ConfigdHttpClient} runs it on an executor for its
+ * <p>Synchronous/blocking by design -- the {@link ConfigdHttpClient} runs it on an executor for its
  * {@code CompletableFuture} surface and calls it directly for the blocking facade.
  */
 final class LeaderRouter {
 
-    private static final int MAX_HOPS = 1; // follow a hint at most once per logical attempt (R4-3)
+    private static final int MAX_HOPS = 1; // follow a hint at most once per logical attempt
     private static final Duration MAX_RETRY_AFTER = Duration.ofSeconds(30);
 
     private final HttpClient httpClient;
@@ -59,15 +59,15 @@ final class LeaderRouter {
 
     /**
      * One request spec. {@code isMutation} governs the indeterminate/5xx and replay-401 handling;
-     * {@code configMutation} (a config PUT/DELETE, NOT the transfer route) governs the 409 branch — replayed
-     * nonce vs the transfer route's precondition-conflict (§04 D2-2a).
+     * {@code configMutation} (a config PUT/DELETE, not the transfer route) governs the 409 branch -- replayed
+     * nonce vs. the transfer route's precondition conflict.
      */
     record Request(String method, String pathAndQuery, byte[] body, boolean isMutation, boolean configMutation) {
     }
 
     /**
-     * Executes the request under the §05 retry contract; returns the raw response for a {@code 200}/{@code 404}
-     * (the caller parses it), or throws the typed §07 reaction ({@link AuthFailedException} /
+     * Executes the request under the retry contract; returns the raw response for a {@code 200}/{@code 404}
+     * (the caller parses it), or throws the typed reaction ({@link AuthFailedException} /
      * {@link ForbiddenException} / {@link BadRequestException} / {@link IndeterminateException} /
      * {@link UnavailableException}).
      */
@@ -87,8 +87,9 @@ final class LeaderRouter {
                 if (e instanceof InterruptedException) {
                     Thread.currentThread().interrupt();
                 }
-                // A transport failure (connect refusal, drop, timeout). On a MUTATION it is indeterminate (the
-                // write MAY have landed, §04 D4-8); on a read it is a re-read. Either way retry within budget.
+                // A transport failure (connection refused, dropped, or timed out). On a mutation it is
+                // indeterminate (the write may have landed); on a read it is just a re-read. Either way,
+                // retry within budget.
                 if (request.isMutation()) {
                     sawIndeterminate = true;
                 }
@@ -132,8 +133,9 @@ final class LeaderRouter {
                     hop = 0;
                 }
                 case RETRY_SAME, FRESH_STAMP -> {
-                    // Hintless 503 / transient read 5xx (RETRY_SAME): back off + rotate. 409 / replay-401
-                    // (FRESH_STAMP): retry — a fresh stamp is minted on the next send automatically.
+                    // Hintless 503 / transient read 5xx (RETRY_SAME): back off and rotate endpoints. 409 /
+                    // replay-401 (FRESH_STAMP): just retry -- a fresh stamp is minted automatically on the
+                    // next send.
                     if (attempt >= maxAttempts) {
                         throw exhausted(sawIndeterminate, lastStatus, request, null);
                     }
@@ -163,8 +165,6 @@ final class LeaderRouter {
         }
     }
 
-    // -----------------------------------------------------------------------
-
     private HttpResponse<byte[]> send(URI base, Request request) throws IOException, InterruptedException {
         HttpRequest.Builder b = HttpRequest.newBuilder(base.resolve(request.pathAndQuery()))
                 .timeout(requestTimeout);
@@ -174,7 +174,7 @@ final class LeaderRouter {
         b.method(request.method(), publisher);
         applyAuthorization(b);
         if (replaySigner != null && request.isMutation()) {
-            ReplayGuardSigner.Stamp stamp = replaySigner.stamp(); // FRESH per attempt (R6-4)
+            ReplayGuardSigner.Stamp stamp = replaySigner.stamp(); // fresh per attempt
             b.header(ReplayGuardSigner.TIMESTAMP_HEADER, stamp.timestamp());
             b.header(ReplayGuardSigner.NONCE_HEADER, stamp.nonce());
         }
@@ -196,7 +196,7 @@ final class LeaderRouter {
                 bc.wipeSecret();
             }
             case Credential.ClientCertificate ignored -> {
-                // mTLS: the identity is the TLS client certificate, presented by the SSLContext — no header.
+                // mTLS: the identity is the TLS client certificate, presented by the SSLContext -- no header needed.
             }
         }
     }
@@ -207,9 +207,9 @@ final class LeaderRouter {
             return Optional.empty();
         }
         try {
-            return endpoints.resolve(Integer.parseInt(raw.get().trim())); // anti-SSRF: map-only resolution (R2-2)
+            return endpoints.resolve(Integer.parseInt(raw.get().trim())); // anti-SSRF: resolved only through the operator map
         } catch (NumberFormatException e) {
-            return Optional.empty(); // a non-numeric hint is unusable → treat as hintless
+            return Optional.empty(); // a non-numeric hint is unusable, so treat it as hintless
         }
     }
 
@@ -223,7 +223,7 @@ final class LeaderRouter {
             Duration d = Duration.ofSeconds(Math.max(0, seconds));
             return d.compareTo(MAX_RETRY_AFTER) > 0 ? MAX_RETRY_AFTER : d;
         } catch (NumberFormatException e) {
-            return retryPolicy.backoff(1); // an HTTP-date Retry-After is unsupported in v1; fall back to backoff
+            return retryPolicy.backoff(1); // an HTTP-date Retry-After is not supported; fall back to the backoff policy
         }
     }
 

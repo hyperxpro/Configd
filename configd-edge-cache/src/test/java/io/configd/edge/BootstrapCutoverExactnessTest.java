@@ -42,8 +42,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       (a dup-channel delivery) is idempotent over effect: same bytes, same cursor,
  *       cutover still exact afterwards.</li>
  * </ul>
- * The INV-M1 monitor is wired in test mode, so any monotonicity regression on the read
- * store fails these tests with an {@link AssertionError} from inside the seam.
+ * The monotonic-read monitor is wired in test mode, so any monotonicity regression on the
+ * read store fails these tests with an {@link AssertionError} from inside the seam.
  */
 class BootstrapCutoverExactnessTest {
 
@@ -82,7 +82,7 @@ class BootstrapCutoverExactnessTest {
         clock = new TestClock();
         sink = new RecordingSink();
         MetricsRegistry metrics = new MetricsRegistry();
-        // testMode=true -> an INV-M1 monotonic_read violation throws (fails the test).
+        // testMode=true -> a monotonic_read violation throws (fails the test).
         core = new EdgeClientCore(clock, new InvariantMonitor(metrics, true),
                 metrics.counter(StalenessTracker.IMPLAUSIBLE_METRIC),
                 StrongReadKeyClass.DEFAULT, sink,
@@ -160,7 +160,7 @@ class BootstrapCutoverExactnessTest {
         bootstrap();
         // The cutover-cursor off-by-one HIGH: the first tail delta arrives as S+2 (seq
         // S+1's effect would be silently lost if this applied). It must be refused as a
-        // GAP and the C3 heal directive queued at the REAL cursor S.
+        // GAP and the heal directive queued at the REAL cursor S.
         core.onFrame(new EdgeFrame.Notify(List.of(notif(S + 2, "k7", "v7"))));
         assertEquals(S, core.cursor(), "the gapped delta must NOT apply");
         assertEquals(1, core.gapsDetected());

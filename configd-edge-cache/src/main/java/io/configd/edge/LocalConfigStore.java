@@ -47,7 +47,7 @@ public final class LocalConfigStore {
     private volatile ConfigSnapshot currentSnapshot;
 
     /**
-     * Optional invariant monitor for INV-M1 ({@code monotonic_read}). When
+     * Optional invariant monitor for the monotonic-read guarantee. When
      * non-null, {@link #get(String, VersionCursor)} reports a violation
      * whenever the current snapshot's version falls below the client's cursor.
      */
@@ -66,7 +66,7 @@ public final class LocalConfigStore {
     /**
      * Creates a store with an {@link InvariantMonitor} wired in. Cursor-bound
      * reads that cannot satisfy monotonic-read (cursor ahead of local version)
-     * will report INV-M1 through the monitor.
+     * report the violation through the monitor.
      */
     public LocalConfigStore(ConfigSnapshot initialSnapshot, Clock clock,
                             InvariantMonitor invariantMonitor) {
@@ -99,10 +99,6 @@ public final class LocalConfigStore {
     public LocalConfigStore() {
         this(ConfigSnapshot.EMPTY, Clock.system());
     }
-
-    // -----------------------------------------------------------------------
-    // Reader methods - any thread, zero allocation on miss
-    // -----------------------------------------------------------------------
 
     /**
      * Reads the current value for a config key.
@@ -141,7 +137,7 @@ public final class LocalConfigStore {
         Objects.requireNonNull(cursor, "cursor must not be null");
         ConfigSnapshot snap = currentSnapshot;
         if (snap.version() < cursor.version()) {
-            // Store is behind the client -- monotonic-read violation (INV-M1).
+            // Store is behind the client -- a monotonic-read violation.
             // Route through InvariantMonitor when wired so that
             // configd.invariant.violation.monotonic_read increments.
             if (invariantMonitor != null) {
@@ -207,10 +203,6 @@ public final class LocalConfigStore {
     public ConfigSnapshot snapshot() {
         return currentSnapshot;
     }
-
-    // -----------------------------------------------------------------------
-    // Writer methods - single DeltaApplier thread only
-    // -----------------------------------------------------------------------
 
     /**
      * Applies a delta (set of mutations) to the current snapshot, producing

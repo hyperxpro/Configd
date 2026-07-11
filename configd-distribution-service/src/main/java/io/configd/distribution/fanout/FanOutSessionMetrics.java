@@ -83,10 +83,8 @@ public interface FanOutSessionMetrics {
      */
     default void onSubscribeMode(boolean snapshotFirst, long horizonDistance) { }
 
-    // ------------------------------------------------------------------
     // Slow-consumer policy series (SlowConsumerGovernor). All default no-ops
     // so existing sinks (NOOP, the sim) are unaffected.
-    // ------------------------------------------------------------------
 
     /**
      * HEALTHY-to-SLOW: the queue stayed at/above the warn threshold for
@@ -132,10 +130,8 @@ public interface FanOutSessionMetrics {
     default void onConsumerStates(int healthy, int slow, int catchup,
                                   int quarantined, int unhealthy) { }
 
-    // ------------------------------------------------------------------
-    // Server-side prefix-filtering series (ADR-0045). All default no-ops
+    // Server-side prefix-filtering series. All default no-ops
     // so existing sinks (NOOP, the sim) are unaffected.
-    // ------------------------------------------------------------------
 
     /**
      * {@code n} whole signed deltas were dropped by the server-side prefix filter (egress

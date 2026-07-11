@@ -30,7 +30,8 @@ class EncryptionAtRestWiringTest {
     private static final int SCOPE = 0;               // gid 0 (N=1); same on wrap+read here
     private static final String SECRET = "wiring-secret-value-42";
 
-    /** A signing key OUTSIDE the data dir, so the D-1 co-location guard passes. */
+    /** A signing key outside the data dir (a co-located key would defeat the at-rest integrity
+     *  guarantee it backs). */
     private static SigningKeyStore keyStore(Path root) throws Exception {
         return SigningKeyStore.loadOrCreate(root.resolve("secrets").resolve("signing-key.bin"));
     }

@@ -23,14 +23,14 @@ import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Adversarial byte-level fuzz suite for {@link CommandCodec#decode} - the WH-01/WH-02 total-codec
- * property under the machine.
+ * Adversarial byte-level fuzz suite for {@link CommandCodec#decode} - proves the decoder is a
+ * total function under attacker-controlled bytes.
  *
  * <p>A committed Raft log command is the deepest attacker-controlled byte path in the system: once a
  * cert-valid-but-Byzantine leader gets a frame committed, EVERY replica re-decodes it on apply
  * <em>and</em> on WAL replay. A single un-total decode (a leaked {@link BufferUnderflowException} on
  * an over-declared inner length) is therefore not a one-shot crash but a durable, cluster-wide
- * crash-loop (WH-01). This suite proves the decoder is total.
+ * crash-loop.
  *
  * <p>Complements - does NOT duplicate - {@link CommandCodecPropertyTest}, which proves the
  * round-trip and a handful of hand-aimed rejects. This suite adds the security <b>resource oracle</b>
@@ -40,8 +40,8 @@ import static org.junit.jupiter.api.Assertions.fail;
  * return a well-formed {@link CommandCodec.DecodedCommand} OR throw exactly
  * {@link CommandCodec.MalformedCommandException}. It must NEVER throw:
  * <ul>
- *   <li>{@link BufferUnderflowException} - the exact escape WH-01 warns about (an unguarded
- *       {@code ByteBuffer} read on a truncated / over-declared length),</li>
+ *   <li>{@link BufferUnderflowException} - an unguarded {@code ByteBuffer} read on a truncated /
+ *       over-declared length,</li>
  *   <li>a bare {@link IllegalArgumentException} that is NOT a {@code MalformedCommandException}
  *       (e.g. a {@code ConfigMutation} constructor firing on a value the decoder should have rejected
  *       upstream) - the codec must own its rejection type so the apply path can catch it precisely,</li>
@@ -52,8 +52,8 @@ import static org.junit.jupiter.api.Assertions.fail;
  *
  * <p><b>Tries budget.</b> 3000 tries on the arbitrary-byte oracle, 800 on the mutation properties -
  * decode is microseconds, so the class is sub-second on a 2-vCPU box. Each {@code @Property} pins a
- * fixed {@code seed}; the {@code @Property(tries = 1)} hardcoded cases are the permanent crash/
- * regression corpus seeded from the Gate-1 attack matrix.
+ * fixed {@code seed}; the {@code @Property(tries = 1)} hardcoded cases are a permanent regression
+ * corpus of hostile byte shapes.
  */
 class CommandCodecFuzzTest {
 
@@ -64,10 +64,6 @@ class CommandCodecFuzzTest {
     private static final byte TYPE_BATCH = 0x03;
     private static final int MAX_VALUE_SIZE = 1_048_576;
     private static final int MAX_BATCH_COUNT = 10_000;
-
-    // -----------------------------------------------------------------------
-    // 1. Arbitrary bytes - the core total-codec oracle.
-    // -----------------------------------------------------------------------
 
     @Property(tries = 3000, seed = "424242")
     void arbitraryBytesAreDecodedOrMalformedNeverUnderflow(@ForAll("adversarialSized") byte[] data) {
@@ -82,7 +78,7 @@ class CommandCodecFuzzTest {
     /**
      * Payloads whose FIRST byte is a valid type discriminant (PUT/DELETE/BATCH) but whose tail is
      * arbitrary - this steers the fuzzer past the type switch into the length-field decoders where the
-     * WH-02 underflow risk actually lives, instead of bouncing off the unknown-type guard.
+     * underflow risk actually lives, instead of bouncing off the unknown-type guard.
      */
     @Property(tries = 2000, seed = "5150")
     void validTypeByteWithArbitraryTailIsTotal(
@@ -93,10 +89,6 @@ class CommandCodecFuzzTest {
         System.arraycopy(tail, 0, data, 1, tail.length);
         assertOracleHolds(data);
     }
-
-    // -----------------------------------------------------------------------
-    // 2. Structured mutation of a VALID command.
-    // -----------------------------------------------------------------------
 
     /**
      * Encode a valid PUT/DELETE/BATCH, overwrite a random 4-byte window with a hostile int (negative,
@@ -152,11 +144,6 @@ class CommandCodecFuzzTest {
         assertOracleHolds(buf.array());
     }
 
-    // -----------------------------------------------------------------------
-    // 3. Bounded allocation: a tiny frame declaring a huge length/count is
-    //    rejected BEFORE the allocation (32 attacker bytes must not OOM).
-    // -----------------------------------------------------------------------
-
     @Property(tries = 1, seed = "1005")
     void tinyPutWithHugeValueLenRejectedPreAllocation() {
         byte[] key = "k".getBytes(StandardCharsets.UTF_8);
@@ -186,9 +173,7 @@ class CommandCodecFuzzTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // 4. Permanent regression corpus - Gate-1 attack-matrix hostile shapes.
-    // -----------------------------------------------------------------------
+    // Permanent regression corpus: hostile byte shapes pinned as fixed test cases.
 
     /** The empty payload is the noop sentinel - a stable, distinguished accept. */
     @Property(tries = 1, seed = "2000")
@@ -260,10 +245,6 @@ class CommandCodecFuzzTest {
                 () -> CommandCodec.decode(buf.array()));
     }
 
-    // -----------------------------------------------------------------------
-    // Oracle + helpers.
-    // -----------------------------------------------------------------------
-
     private static void assertOracleHolds(byte[] data) {
         assertTimeoutPreemptively(DECODE_BUDGET, () -> {
             try {
@@ -289,10 +270,6 @@ class CommandCodecFuzzTest {
         String hex = HexFormat.of().formatHex(data, 0, Math.min(data.length, 48));
         return "len=" + data.length + " hex=" + hex + (data.length > 48 ? "..." : "");
     }
-
-    // -----------------------------------------------------------------------
-    // Arbitraries.
-    // -----------------------------------------------------------------------
 
     @Provide
     Arbitrary<Byte> commandType() {

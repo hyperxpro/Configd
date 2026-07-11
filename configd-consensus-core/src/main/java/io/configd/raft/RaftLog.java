@@ -116,7 +116,7 @@ public final class RaftLog {
      * (populated only when {@link #chained}). Needed so {@link #rewriteWal()} reproduces each record's
      * exact bytes on a truncation/compaction rewrite, and so a truncation can recompute the head. A
      * surviving entry keeps the {@code prevHash} it was written with even after its predecessor is
-     * compacted away (that boundary is bound by the Gate 3 snapshot anchor, not re-verified here).
+     * compacted away (that boundary is bound by the snapshot anchor, not re-verified here).
      */
     private final ArrayList<byte[]> chainPrevHashes;
 
@@ -139,10 +139,10 @@ public final class RaftLog {
     private final SnapshotState recoveredSnapshot;
 
     /**
-     * The merged per-shard durability anchor (dual-slot {@code raft-anchor}). Non-null exactly when
+     * The per-shard durability anchor (dual-slot {@code raft-anchor}). Non-null exactly when
      * this log is durable ({@code storage != null}); {@code null} in the in-memory mode. It carries
-     * {@code currentTerm}/{@code votedFor} (subsuming the removed {@code raft.persistent_state}),
-     * {@code snapshotIndex}/{@code snapshotTerm} (subsuming the removed bare {@code snapshot-meta}),
+     * {@code currentTerm}/{@code votedFor} (formerly {@code raft.persistent_state}),
+     * {@code snapshotIndex}/{@code snapshotTerm} (formerly the bare {@code snapshot-meta}),
      * and the {@code lastDurableIndex} high-water mark recovery reconciles the WAL against. Every WAL
      * durability barrier ({@link #syncWal()}) raises it after the WAL fsync (INV-ANCHOR-ACK); conflict
      * truncation lowers it before the WAL rewrite (INV-ANCHOR-LOWER); compaction advances its snapshot
@@ -237,11 +237,11 @@ public final class RaftLog {
         this.chainHead = GENESIS_PREV_HASH.clone();
         this.chainPrevHashes = new ArrayList<>();
 
-        // Open the merged per-shard anchor beside the WAL. It replaces the removed
-        // raft.persistent_state (currentTerm/votedFor) and raft-log.snapshot-meta
-        // (snapshotIndex/snapshotTerm) and carries the durable-head high-water mark. A real
-        // FileStorage backs it with a dedicated dual-slot file in the WAL directory; every other
-        // backing carries the same image as one self-durable value so a crash model still captures it.
+        // Open the per-shard anchor beside the WAL. It carries currentTerm/votedFor (formerly
+        // raft.persistent_state) and snapshotIndex/snapshotTerm (formerly raft-log.snapshot-meta),
+        // plus the durable-head high-water mark. A real FileStorage backs it with a dedicated
+        // dual-slot file in the WAL directory; every other backing carries the same image as one
+        // self-durable value so a crash model still captures it.
         this.anchor = AnchorFile.openOverIO(anchorIOFor(storage), gid, integrity);
 
         // Clean up any leftover temp WAL from an incomplete rewrite
@@ -276,9 +276,9 @@ public final class RaftLog {
         }
 
         // Anchor recovery: presence gate (FRESH vs REFUSE), snapshot boundary from the authenticated
-        // anchor (the bare snapshot-meta is removed), the Step-2.5 term-witness gate, and the head
-        // reconciliation (W==A accept / W>A accept-forward / W<A REFUSE) plus the WAL-head-term
-        // check. This sets snapshotIndex/snapshotTerm and may rewrite the anchor forward.
+        // anchor, the §2.5 term-witness gate, and the head reconciliation (W==A accept / W>A
+        // accept-forward / W<A REFUSE) plus the WAL-head-term check. This sets
+        // snapshotIndex/snapshotTerm and may rewrite the anchor forward.
         recoverWithAnchor();
 
         // Recover the durable snapshot bytes (state-machine state at the snapshot
@@ -426,9 +426,8 @@ public final class RaftLog {
     }
 
     /**
-     * The current term recovered from the merged anchor (0 for a fresh node / the in-memory mode).
-     * The owning {@link RaftNode} seeds its in-memory {@code currentTerm} from this, replacing the
-     * removed {@code DurableRaftState.currentTerm()}.
+     * The current term recovered from the anchor (0 for a fresh node / the in-memory mode). The
+     * owning {@link RaftNode} seeds its in-memory {@code currentTerm} from this.
      */
     long recoveredCurrentTerm() {
         return anchor == null ? 0L : anchor.current().currentTerm();
@@ -436,16 +435,14 @@ public final class RaftLog {
 
     /**
      * The candidate this node voted for in {@link #recoveredCurrentTerm()}, or {@code -1} for none
-     * (or the in-memory mode). The owning {@link RaftNode} seeds its {@code votedFor} from this,
-     * replacing the removed {@code DurableRaftState.votedFor()}.
+     * (or the in-memory mode). The owning {@link RaftNode} seeds its {@code votedFor} from this.
      */
     int recoveredVotedForId() {
         return anchor == null ? AnchorRecord.VOTED_FOR_NULL : anchor.current().votedFor();
     }
 
     /**
-     * Persist-before-memory term/vote write through the merged anchor (replaces
-     * {@code DurableRaftState.setTerm}/{@code vote}/{@code setTermAndVote}). This is a STANDALONE
+     * Persist-before-memory term/vote write through the anchor. This is a STANDALONE
      * durable barrier - it MUST NOT be folded into the flush-cycle head write, or the Step-2.5
      * invariant {@code anchor.currentTerm >= lastWALTerm} breaks and recovery false-positives. The
      * durable head and snapshot boundary are unchanged; only currentTerm/votedFor advance. On the
@@ -499,7 +496,7 @@ public final class RaftLog {
 
     /**
      * Whether this shard's {@code raft-anchor} file existed at open (false ⇒ the shard booted FRESH -
-     * no anchor file - which, once the node-anchor proves the node was already initialized, is the R-f
+     * no anchor file - which, once the node-anchor proves the node was already initialized, is the
      * wipe signature the node-anchor cross-check REFUSEs). {@code false} in the in-memory mode.
      */
     public boolean anchorExistedAtOpen() {
@@ -680,7 +677,7 @@ public final class RaftLog {
             // recovery, so the surviving prefix keeps its original prevHashes and the head re-points to
             // the new last record's hash; if truncated to empty the head resets to GENESIS (a re-append
             // then starts a fresh link, whose first record is either true genesis (index 1, verified) or
-            // a post-compaction boundary (index > 1, bound by the Gate 3 anchor, not re-verified)).
+            // a post-compaction boundary (index > 1, bound by the anchor, not re-verified)).
             chainPrevHashes.subList(Math.min(offset, chainPrevHashes.size()), chainPrevHashes.size()).clear();
             chainHead = headHashOfTail();
         }
@@ -791,7 +788,7 @@ public final class RaftLog {
             if (chained) {
                 // Drop the compacted PREFIX's prevHashes, keeping the survivors' original prevHashes
                 // (a survivor still binds its now-compacted predecessor - that boundary is bound by
-                // the Gate 3 snapshot anchor, not re-verified). chainHead (the TAIL's hash) is
+                // the snapshot anchor, not re-verified). chainHead (the TAIL's hash) is
                 // unchanged: compaction removes a prefix, never the head, so appends keep chaining.
                 chainPrevHashes.subList(0, Math.min(offset + 1, chainPrevHashes.size())).clear();
             }
@@ -1077,7 +1074,7 @@ public final class RaftLog {
      *   <li>r_0 at index 1 (true genesis, no compaction): its {@code prevHash} MUST be GENESIS
      *       (all-zero) - a fabricated head is refused;</li>
      *   <li>r_0 at index &gt; 1 (a compacted prefix): its {@code prevHash} refers to a record we no
-     *       longer hold, so it is NOT verified here - the Gate 3 snapshot anchor binds that boundary;</li>
+     *       longer hold, so it is NOT verified here - the snapshot anchor binds that boundary;</li>
      *   <li>each r_k (k &ge; 1): its {@code prevHash} MUST equal SHA-256 of r_{k-1}'s serialized
      *       payload - a mismatch is an interior splice / content rollback and is REFUSED.</li>
      * </ul>
@@ -1097,7 +1094,7 @@ public final class RaftLog {
                     throw new IntegrityException("WAL chain: genesis record at index 1 for gid " + gid
                             + " has a non-GENESIS prevHash (fabricated chain head refused)");
                 }
-                // index > 1: the predecessor is compacted; the Gate 3 anchor binds this boundary.
+                // index > 1: the predecessor is compacted; the anchor binds this boundary.
             } else if (!Arrays.equals(prevHash, runningHash)) {
                 throw new IntegrityException("WAL chain break at index " + entries.get(k).index()
                         + " for gid " + gid + ": prevHash does not match the predecessor's record hash "

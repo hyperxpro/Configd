@@ -102,7 +102,7 @@ Dependencies: `configd-common`, `configd-config-store`, `configd-distribution-se
 The multi-Raft driver and the static-N sharding seam.
 
 - `MultiRaftDriver` -- routes ticks, messages, and proposals to per-group `RaftNode`s
-- `ShardMap` / `StaticShardMap` -- routing (`shardFor(scope, key)`), membership, and topology epoch (v1 static-N epoch is `1`)
+- `ShardMap` / `StaticShardMap` -- routing (`shardFor(scope, key)`), membership, and topology epoch (the static-N epoch is `1`)
 - `OwnerExecutorPool` -- the per-group owner-executor pool (see the threading contract)
 - `FlowController` -- admission / in-flight bounding
 - `ReplicationPipeline`, `SnapshotTransfer`
@@ -120,7 +120,7 @@ The fan-out data plane: committed deltas out to subscribed edges.
 - `CommitNotification` / `CommitNotificationSource` / `ReplaySource` -- the commit-notification boundary
   and catch-up replay
 - the edge wire types (`EdgeFrame` / `EdgeFrameCodec` / `EdgeSnapshotCodec` / `FrameType` / `ErrorCode` /
-  `WatchCursor`) now live in **`configd-wire`** (below); the fan-out service consumes them
+  `WatchCursor`) live in **`configd-wire`** (below); the fan-out service consumes them
 - `WatchService` / `SubscriptionManager` / `FanOutSessionCore` -- watches, prefix subscriptions, and the
   per-shard aggregating coordinator that serves multi-shard (N>1) watches
 - `FanOutConfig` / `FanOutMetrics`
@@ -135,7 +135,7 @@ without the server. This is the byte-authority the driver-protocol RFC validates
 
 - `EdgeFrameCodec` / `EdgeFrame` / `EdgeSnapshotCodec` / `FrameType` / `ErrorCode` -- the edge wire envelope,
   the `0x01`-`0x14` frame payloads (incl. the `0x13`/`0x14` auth frames), and the 13-code taxonomy
-- `WatchCursor` -- the per-shard `(gid, S)` cursor vector (`INITIAL_TOPOLOGY_EPOCH = 1`, the v1 static-N epoch)
+- `WatchCursor` -- the per-shard `(gid, S)` cursor vector (`INITIAL_TOPOLOGY_EPOCH = 1`, the static-N epoch)
 - `CommandCodec` / `ConfigMutation` / `ConfigDelta` / `ConfigSnapshot` / `VersionedValue` / `HamtMap` --
   shared store value types
 - `CommitNotification` -- the commit-notification record

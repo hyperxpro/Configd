@@ -100,7 +100,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Conformance Runner II — SERVER-OBEYS (and, where the clause binds the driver's reaction to a hostile control
+ * Conformance Runner II -- SERVER-OBEYS (and, where the clause binds the driver's reaction to a hostile control
  * plane, CLIENT-CONFORMS) for the §03 authentication lifecycle. Drives the reference clients against a live
  * {@link HttpApiServer} + {@link AdminApiHandler} and a live {@link FanOutServer} + {@code EdgeAuthGateHandler},
  * plus a small scriptable HTTP double for the fail-closed cases the real server does not naturally emit (an
@@ -152,16 +152,12 @@ class ServerObeysAuthTest {
         cleanups.clear();
     }
 
-    // -----------------------------------------------------------------------
-    // HTTP control plane — the 401/403 split and the authn/authz seam
-    // -----------------------------------------------------------------------
-
     @Test
     @Tag("clause:AU5-1")
     @Tag("clause:AU6-2")
     void badCredentialIs401AuthenticatedButUnauthorizedIs403() throws Exception {
         // AU5-1: a missing/invalid credential is 401 (authentication); an authenticated principal that lacks the
-        // capability is 403 (authorization). AU6-2: a valid credential proves only WHO the caller is — the same
+        // capability is 403 (authorization). AU6-2: a valid credential proves only WHO the caller is -- the same
         // principal is still 403 on a key it may not touch, so authentication is not authorization.
         VersionedConfigStore store = new VersionedConfigStore();
         store.put("app/name", "configd".getBytes(UTF_8), 5L);
@@ -175,7 +171,7 @@ class ServerObeysAuthTest {
         }
         try (ConfigdHttpClient writer = httpClient(base, "writer-tok")) {
             // Authentication SUCCEEDS (else this would be a 401): the reserved-prefix read needs ADMIN, so the
-            // authenticated writer is a 403 — authn ≠ authz.
+            // authenticated writer is a 403 -- authentication is not authorization.
             assertThrows(ForbiddenException.class, () -> writer.blocking().get("_acl/roles/x", GetOptions.defaults()),
                     "authenticated but not authorized ⇒ 403 (ForbiddenException), never 401");
         }
@@ -184,9 +180,9 @@ class ServerObeysAuthTest {
     @Test
     @Tag("clause:AU4-2")
     void bearerIsPresentedPerRequestNotPersistedServerSide() throws Exception {
-        // AU4-2: an HTTP bearer is a PER-REQUEST credential — the server keeps no session, and the driver
+        // AU4-2: an HTTP bearer is a PER-REQUEST credential -- the server keeps no session, and the driver
         // re-presents it on every request. Proven two ways: (1) one client doing two writes authenticates twice
-        // (the token is on both requests — a client that assumed server-side persistence and dropped the header
+        // (the token is on both requests -- a client that assumed server-side persistence and dropped the header
         // on the 2nd would 401); (2) a credential-less client is 401 regardless of the earlier authenticated
         // request (no ambient session).
         List<String> tokensSeen = new CopyOnWriteArrayList<>();
@@ -220,11 +216,9 @@ class ServerObeysAuthTest {
     void driverPresentsAgainstAuthDisabledYet401StillMeansAuthRequired() throws Exception {
         // AU4-3: a driver stays ready to authenticate even against an auth-DISABLED deployment (it presents its
         // credential; the server ignores it and the op still works), and it MUST treat a 401 from an
-        // auth-ENABLED deployment as "authentication is required here" — it never infers "auth is off".
+        // auth-ENABLED deployment as "authentication is required here" -- it never infers "auth is off".
         URI open = startHttp(null, new AclService(), null, new VersionedConfigStore()); // auth disabled
         try (ConfigdHttpClient credentialed = httpClient(open, "some-token")) {
-            // The credential is presented and simply ignored; the write succeeds — the driver is not confused by
-            // an auth-off deployment.
             credentialed.blocking().put("app/x", "v".getBytes(UTF_8), WriteOptions.defaults());
         }
 
@@ -241,8 +235,8 @@ class ServerObeysAuthTest {
     void authenticatorUnavailableIs503RetryableWhileBadCredentialIs401Reauth() throws Exception {
         // AU5-2: a configured authenticator that is UNAVAILABLE fails CLOSED to a retryable 503 (never a silent
         // downgrade to anonymous, never a 401); a genuinely bad credential is a 401 (re-authenticate). The
-        // driver must distinguish the two: 503 ⇒ retryable (UnavailableException after the bounded budget),
-        // 401 ⇒ reauth (AuthFailedException, not retried). Driven through the external AuthenticatorChain path,
+        // driver must distinguish the two: 503 means retryable (UnavailableException after the bounded budget),
+        // 401 means reauth (AuthFailedException, not retried). Driven through the external AuthenticatorChain path,
         // whose AuthResult.Unavailable the handler maps to 503 (the in-core AuthInterceptor cannot express it).
         AuthenticatorChain chain = chainByToken(token -> switch (token) {
             case "idp-outage" -> new AuthResult.Unavailable("JWKS unreachable");
@@ -252,9 +246,9 @@ class ServerObeysAuthTest {
 
         try (ConfigdHttpClient outage = httpClient(base, "idp-outage")) {
             // Every attempt is 503; the client retries within the bounded budget then surfaces a RETRYABLE
-            // Unavailable — it never collapses a transient authenticator outage into a permanent auth failure.
-            // 503-unavailable surfaces as the RETRYABLE UnavailableException — a sibling of, never a subtype
-            // of, AuthFailedException — so the thrown type itself is the "not a reauth signal" proof, and the
+            // Unavailable -- it never collapses a transient authenticator outage into a permanent auth failure.
+            // 503-unavailable surfaces as the RETRYABLE UnavailableException -- a sibling of, never a subtype
+            // of, AuthFailedException -- so the thrown type itself is the "not a reauth signal" proof, and the
             // bad-credential block below proves the converse (an invalid credential IS AuthFailedException).
             assertThrows(UnavailableException.class,
                     () -> outage.blocking().put("app/x", "v".getBytes(UTF_8), WriteOptions.defaults()),
@@ -272,7 +266,7 @@ class ServerObeysAuthTest {
     void forbiddenIsTerminalAndUnauthenticatedDoesNotHotLoop() throws Exception {
         // AU5-4: a 403 is permanently forbidden for this principal (do not retry unchanged); a 401 is
         // (re)authenticate (do not hot-loop the same credential). Asserted against a scripted control plane by
-        // the request COUNT: exactly one request in each case — no blind retry.
+        // the request COUNT: exactly one request in each case -- no blind retry.
         try (ScriptedHttp s = new ScriptedHttp()) {
             s.enqueue(403, Map.of(), "denied");
             try (ConfigdHttpClient c = httpClient(s.baseUri(), "tok")) {
@@ -316,7 +310,7 @@ class ServerObeysAuthTest {
     @Test
     @Tag("clause:AU7-1")
     void anUnknownAuthChallengeFailsClosed() throws Exception {
-        // AU7-1: a driver MUST fail closed on a WWW-Authenticate challenge scheme it does not recognize — it
+        // AU7-1: a driver MUST fail closed on a WWW-Authenticate challenge scheme it does not recognize -- it
         // MUST NOT downgrade to a weaker scheme, attempt an unknown handshake, or proceed unauthenticated. The
         // client treats the unknown-challenge 401 as a plain reauth failure and makes exactly ONE request (no
         // follow-up Negotiate/Digest leg, no anonymous retry).
@@ -333,10 +327,10 @@ class ServerObeysAuthTest {
     @Test
     @Tag("clause:AU7-3")
     void driverIgnoresAServerIssuedSessionAndRePresentsItsOwnCredential() throws Exception {
-        // AU7-3 (with AU2-3): a Configd-issued auth session/token is a NAMED FORWARD EXTENSION — not v1. A driver
-        // MUST NOT adopt a server-offered session/cookie it could replay; it re-presents its OWN credential on
-        // the next request. Here the first 200 hands back a Set-Cookie + an X-Configd-Session; the second request
-        // must still carry the ORIGINAL bearer and no adopted session.
+        // AU7-3 (with AU2-3): a Configd-issued auth session/token would be a NAMED FORWARD EXTENSION the protocol
+        // does not define today. A driver MUST NOT adopt a server-offered session/cookie it could replay; it
+        // re-presents its OWN credential on the next request. Here the first 200 hands back a Set-Cookie + an
+        // X-Configd-Session; the second request must still carry the ORIGINAL bearer and no adopted session.
         try (ScriptedHttp s = new ScriptedHttp()) {
             s.enqueue(200, Map.of("Content-Type", "application/octet-stream", "X-Config-Version", "1",
                     "Set-Cookie", "sid=server-issued", "X-Configd-Session", "srv-token-xyz"), "v1");
@@ -351,10 +345,6 @@ class ServerObeysAuthTest {
             assertFalse(second.containsKey("Cookie"), "the driver did not adopt the server-issued session cookie");
         }
     }
-
-    // -----------------------------------------------------------------------
-    // The stable driver contract across authenticators, and one principal per credential
-    // -----------------------------------------------------------------------
 
     @Test
     @Tag("clause:AU7-2")
@@ -381,7 +371,7 @@ class ServerObeysAuthTest {
     void oneCredentialIsOnePrincipalOnBothPlanes() throws Exception {
         // AU6-1: the same credential presented on the HTTP and edge planes resolves to the SAME principal. The
         // HTTP AuthInterceptor records the principal it derives; the edge authorizer records the principal the
-        // chain derived (the authorizer's principal argument). The two are asserted equal — one credential, one
+        // chain derived (the authorizer's principal argument). The two are asserted equal -- one credential, one
         // identity, both planes.
         AtomicReference<String> httpPrincipal = new AtomicReference<>();
         AuthInterceptor auth = new AuthInterceptor(token -> {
@@ -422,25 +412,21 @@ class ServerObeysAuthTest {
                 "the same credential is the SAME principal on both planes");
     }
 
-    // -----------------------------------------------------------------------
-    // The edge invariant: authentication precedes authorization precedes any data frame
-    // -----------------------------------------------------------------------
-
     @Test
     @Tag("clause:AU8-1..8-4")
     void edgeAuthnPrecedesAuthzPrecedesDataWithZeroDataOnAnyTerminal() throws Exception {
-        // AU8-1: the 401/403 split holds on the edge — a bad credential is a 401-class terminal (AUTH_FAIL ⇒
+        // AU8-1: the 401/403 split holds on the edge -- a bad credential is a 401-class terminal (AUTH_FAIL maps to
         // AuthFailedException), an authenticated-but-unauthorized subscription is a 403-class terminal
-        // (NOT_AUTHORIZED ⇒ ForbiddenException). AU8-2: authentication (the credential) precedes authorization
+        // (NOT_AUTHORIZED maps to ForbiddenException). AU8-2: authentication (the credential) precedes authorization
         // (the subscription check) precedes any data frame, and the terminal close carries ZERO preceding data.
         // AU8-3/AU8-4 are exercised structurally: the principal the chain derives is the one the authorizer
         // evaluates, and the edge credential rides the AUTH frame (transport mapping). A denying authorizer +
         // a chain that accepts only "good" separates the two failures on one server.
-        WatchAuthorizer denyAll = (p, r, t) -> false; // authorizeSubscribe defaults to false ⇒ denies too
+        WatchAuthorizer denyAll = (p, r, t) -> false; // authorizeSubscribe defaults to false, so it denies too
         try (EdgeHarness edge = new EdgeHarness(bearerChain("good", "p"), denyAll)) {
             edge.publish(0, 1, "app/secret", "leak-me-not");
 
-            // (a) bad credential ⇒ authentication fails FIRST (before any authorization or data): a 401-class
+            // (a) bad credential: authentication fails FIRST (before any authorization or data): a 401-class
             // terminal, and the view never saw a byte.
             EdgeProbe badAuth = subscribe(edge.port, "bad", 2);
             try (ConfigdEdgeClient client = badAuth.client) {
@@ -451,7 +437,7 @@ class ServerObeysAuthTest {
                 assertTrue(badAuth.sub.view().get("app/secret").isEmpty(), "no data frame preceded the terminal");
             }
 
-            // (b) valid credential, unauthorized subscription ⇒ authentication SUCCEEDS, then authorization
+            // (b) valid credential, unauthorized subscription: authentication SUCCEEDS, then authorization
             // denies: a 403-class terminal, again with zero data.
             EdgeProbe denied = subscribe(edge.port, "good", 2);
             try (ConfigdEdgeClient client = denied.client) {
@@ -466,7 +452,7 @@ class ServerObeysAuthTest {
     @Tag("clause:F6A-5")
     void anOverCapCredentialIsRejectedBeforeVerificationWithZeroData() throws Exception {
         // F6A-5 (§06): the edge enforces credential caps and refuses an OVER-CAP credential BEFORE the
-        // (possibly expensive) verification runs — a 401-class AUTH_FAIL with zero data frames. Configured with
+        // (possibly expensive) verification runs -- a 401-class AUTH_FAIL with zero data frames. Configured with
         // a low token cap (32 B) and a comfortably higher pre-auth frame ceiling, a ~300 B token clears the
         // frame decoder but exceeds the token cap, so the gate closes AUTH_FAIL ("credential exceeds the
         // permitted size") without ever authenticating or streaming.
@@ -489,7 +475,7 @@ class ServerObeysAuthTest {
     @Tag("clause:F9-3")
     void mtlsCertDnIsAuthoritativeOverAnAdvisoryEdgeId() throws Exception {
         // F9-3 (§06): under mTLS the authoritative identity is the VERIFIED client-cert Subject DN; a
-        // self-asserted edgeId in the SUBSCRIBE frame is advisory and MUST NOT be trusted — the server overrides
+        // self-asserted edgeId in the SUBSCRIBE frame is advisory and MUST NOT be trusted -- the server overrides
         // it with the cert identity. The client here presents a cert with DN "CN=edge-client,..." AND asserts a
         // spoofed edgeId "CN=spoofed-admin,..."; the principal the server hands the authorizer must be the cert
         // DN, never the spoofed edgeId.
@@ -531,10 +517,6 @@ class ServerObeysAuthTest {
         assertFalse(edgePrincipal.get().contains("spoofed-admin"),
                 "the self-asserted advisory edgeId was NOT trusted — the cert DN overrode it");
     }
-
-    // -----------------------------------------------------------------------
-    // helpers — HTTP
-    // -----------------------------------------------------------------------
 
     private URI startHttp(AuthInterceptor auth, AclService acl, AuthenticatorChain chain,
                           VersionedConfigStore store) throws IOException {
@@ -628,7 +610,7 @@ class ServerObeysAuthTest {
         };
     }
 
-    /** A foreign authenticator that declines every bearer token (NOT_THIS_AUTHENTICATOR ⇒ chain continues). */
+    /** A foreign authenticator that declines every bearer token (NOT_THIS_AUTHENTICATOR, so the chain continues). */
     private static Authenticator declining(String type) {
         return new Authenticator() {
             @Override
@@ -647,10 +629,6 @@ class ServerObeysAuthTest {
             }
         };
     }
-
-    // -----------------------------------------------------------------------
-    // helpers — edge
-    // -----------------------------------------------------------------------
 
     private static AuthenticatorChain bearerChain(String token, String principal) {
         return AuthenticatorChain.build(List.of("bearer"), mapConfig(Map.of(
@@ -774,7 +752,7 @@ class ServerObeysAuthTest {
                 30_000, d.maxSnapshotTotalBytes(), d.maxSnapshotChunks());
     }
 
-    // ---- mTLS cert material (generated lazily; only the F9-3 case needs it) ----
+    // mTLS cert material, generated lazily -- only the F9-3 case needs it.
 
     private void generateCerts() throws Exception {
         serverKeystore = certDir.resolve("server-ks.p12");
@@ -821,10 +799,6 @@ class ServerObeysAuthTest {
             throw new IllegalStateException("keytool failed: " + command[1] + "\n" + out);
         }
     }
-
-    // -----------------------------------------------------------------------
-    // helpers — scripted HTTP double (for the client-fails-closed cases)
-    // -----------------------------------------------------------------------
 
     /** A minimal FIFO-scripted loopback HTTP server that records each request's headers, for client assertions. */
     private static final class ScriptedHttp implements AutoCloseable {
@@ -884,10 +858,6 @@ class ServerObeysAuthTest {
             server.stop(0);
         }
     }
-
-    // -----------------------------------------------------------------------
-    // helpers — shared
-    // -----------------------------------------------------------------------
 
     private static ConfigSource mapConfig(Map<String, String> m) {
         return new ConfigSource() {

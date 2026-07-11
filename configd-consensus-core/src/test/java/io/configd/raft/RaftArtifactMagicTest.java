@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 /**
- * Pins the frozen-v1 magic registry: every value is distinct and non-zero (reserved-value
+ * Pins the frozen magic registry: every value is distinct and non-zero (reserved-value
  * discipline - a zero-filled/torn leading word is never a valid artifact, and no two artifacts
  * may share a magic), and the WAL container magic stays in lockstep with its authoritative
  * definition in {@code configd-common}.

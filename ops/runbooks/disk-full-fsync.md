@@ -9,8 +9,9 @@ the disk-layer branch those three point at.
 A Configd voter's durability contract is **durable-before-commit**: the WAL
 append must `fsync` before the entry counts toward quorum. A full or lying
 disk therefore either slows commits (fsync latency) or refuses appends
-(ENOSPC). The S4 storage-fault work proved the failure **surfaces and never
-silently advances the log** — but the operator still has to free the disk.
+(ENOSPC). The storage-fault test suite proves the failure **surfaces and
+never silently advances the log** — but the operator still has to free the
+disk.
 
 ## Symptom
 
@@ -50,7 +51,7 @@ silently advances the log** — but the operator still has to free the disk.
 
 1. **ENOSPC, single voter, quorum intact:** the cluster still commits on
    the surviving majority (the full voter's appends are rejected, not
-   silently lost — S4 contract). Free its disk:
+   silently lost — that is the durability contract at work). Free its disk:
    - Expand the volume (preferred — no data risk):
      ```sh
      kubectl -n configd patch pvc data-<pod> -p \
@@ -109,7 +110,7 @@ once space returns" assertion = the cluster re-accepts the test write after
 
 ## Related
 
-- S4 storage-fault workstream — ENOSPC + fsync-lie correctness.
+- Storage-fault test suite — ENOSPC + fsync-lie correctness.
 - [snapshot-install.md](snapshot-install.md) — drain/re-add path for a
   wiped voter.
 - [control-plane-down.md](control-plane-down.md) — when a full leader stalls

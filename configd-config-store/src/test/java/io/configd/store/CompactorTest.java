@@ -24,10 +24,6 @@ class CompactorTest {
         return new ConfigSnapshot(data, version, version * 1000);
     }
 
-    // -----------------------------------------------------------------------
-    // Constructor validation
-    // -----------------------------------------------------------------------
-
     @Nested
     class ConstructorValidation {
 
@@ -55,10 +51,6 @@ class CompactorTest {
             assertThrows(IllegalArgumentException.class, () -> new Compactor(-1));
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Adding and retrieving snapshots
-    // -----------------------------------------------------------------------
 
     @Nested
     class AddAndRetrieve {
@@ -115,10 +107,6 @@ class CompactorTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Oldest and newest retained versions
-    // -----------------------------------------------------------------------
-
     @Nested
     class OldestAndNewest {
 
@@ -154,10 +142,6 @@ class CompactorTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Compaction
-    // -----------------------------------------------------------------------
-
     @Nested
     class Compaction {
 
@@ -178,11 +162,9 @@ class CompactorTest {
             assertEquals(2, removed);
             assertEquals(3, compactor.snapshotCount());
 
-            // Oldest two should be gone
             assertTrue(compactor.getSnapshot(1).isEmpty());
             assertTrue(compactor.getSnapshot(2).isEmpty());
 
-            // Recent three should remain
             assertTrue(compactor.getSnapshot(3).isPresent());
             assertTrue(compactor.getSnapshot(4).isPresent());
             assertTrue(compactor.getSnapshot(5).isPresent());
@@ -271,10 +253,6 @@ class CompactorTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Integration: add, compact, add more
-    // -----------------------------------------------------------------------
-
     @Nested
     class IntegrationScenario {
 
@@ -282,7 +260,6 @@ class CompactorTest {
         void continuousAddAndCompact() {
             Compactor compactor = new Compactor(3);
 
-            // Simulate ongoing operation
             for (int i = 1; i <= 10; i++) {
                 compactor.addSnapshot(buildSnapshot(i));
                 compactor.compact();
@@ -297,7 +274,6 @@ class CompactorTest {
         void deltaComputationFromRetainedSnapshot() {
             Compactor compactor = new Compactor(3);
 
-            // Build store and take snapshots
             VersionedConfigStore store = new VersionedConfigStore();
             store.put("a", bytes("1"), 1);
             ConfigSnapshot snap1 = store.snapshot();
@@ -311,7 +287,6 @@ class CompactorTest {
             ConfigSnapshot snap3 = store.snapshot();
             compactor.addSnapshot(snap3);
 
-            // Compute delta from retained snapshot
             ConfigSnapshot base = compactor.getSnapshot(1).orElseThrow();
             ConfigDelta delta = DeltaComputer.compute(base, snap3);
 

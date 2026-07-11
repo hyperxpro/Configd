@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * Adversarial byte-level fuzz suite for {@link EdgeSnapshotCodec} - the snapshot body codec on the
  * edge / distribution plane.
  *
- * <p>The threat is a malicious or compromised distribution server (WH-13/WH-15) streaming a hostile
+ * <p>The threat is a malicious or compromised distribution server streaming a hostile
  * snapshot body / chunk sequence at an edge node. Two decode surfaces take attacker-controlled bytes:
  * {@link EdgeSnapshotCodec#deserialize} (the body → {@link ConfigSnapshot}) and
  * {@link EdgeSnapshotCodec#reassemble} (ordered chunks → body). This suite is the first machine-driven
@@ -57,9 +57,7 @@ class EdgeSnapshotCodecFuzzTest {
     private static final Duration DECODE_BUDGET = Duration.ofSeconds(2);
     private static final int MAX_FIELD = EdgeSnapshotCodec.MAX_ENTRY_FIELD_BYTES; // 1 MiB
 
-    // -----------------------------------------------------------------------
     // 1. deserialize: arbitrary body bytes.
-    // -----------------------------------------------------------------------
 
     @Property(tries = 3000, seed = "424242")
     void arbitraryBodyBytesYieldSnapshotOrIllegalArgument(@ForAll("adversarialSized") byte[] body) {
@@ -71,9 +69,7 @@ class EdgeSnapshotCodecFuzzTest {
         assertDeserializeOracle(body);
     }
 
-    // -----------------------------------------------------------------------
     // 2. deserialize: structured mutation of a VALID body.
-    // -----------------------------------------------------------------------
 
     /**
      * Overwrite a random 4-byte window of a valid body with a hostile int (negative, oversize field
@@ -113,9 +109,7 @@ class EdgeSnapshotCodecFuzzTest {
         assertDeserializeOracle(body);
     }
 
-    // -----------------------------------------------------------------------
     // 3. Round-trip fidelity (valid snapshots).
-    // -----------------------------------------------------------------------
 
     @Property(tries = 300, seed = "1004")
     void serializeThenDeserializePreservesContent(@ForAll("snapshots") ConfigSnapshot snap) {
@@ -137,9 +131,7 @@ class EdgeSnapshotCodecFuzzTest {
         assertArrayEquals(body, EdgeSnapshotCodec.reassemble(chunks));
     }
 
-    // -----------------------------------------------------------------------
     // 4. chunk() / reassemble() hostile inputs.
-    // -----------------------------------------------------------------------
 
     /** An out-of-range chunkBytes (0, negative, above the 1 MiB cap) is a clean IllegalArgument. */
     @Property(tries = 1, seed = "2001")
@@ -172,9 +164,7 @@ class EdgeSnapshotCodecFuzzTest {
         });
     }
 
-    // -----------------------------------------------------------------------
     // 5. Permanent regression corpus.
-    // -----------------------------------------------------------------------
 
     /** A body shorter than the 12-byte (seq+count) header is a clean reject, never underflow. */
     @Property(tries = 1, seed = "3001")
@@ -226,9 +216,7 @@ class EdgeSnapshotCodecFuzzTest {
                 IllegalArgumentException.class, () -> EdgeSnapshotCodec.deserialize(b.array())));
     }
 
-    // -----------------------------------------------------------------------
     // Oracle + helpers.
-    // -----------------------------------------------------------------------
 
     private static void assertDeserializeOracle(byte[] body) {
         assertTimeoutPreemptively(DECODE_BUDGET, () -> {
@@ -263,9 +251,7 @@ class EdgeSnapshotCodecFuzzTest {
         return out;
     }
 
-    // -----------------------------------------------------------------------
     // Arbitraries.
-    // -----------------------------------------------------------------------
 
     @Provide
     Arbitrary<byte[]> adversarialSized() {

@@ -52,7 +52,6 @@ public class HamtReadBenchmark {
             map = map.put(key, value);
         }
 
-        // Pre-roll 64K random indices to avoid ThreadLocalRandom in the benchmark
         randomIndices = new int[65536];
         ThreadLocalRandom rng = ThreadLocalRandom.current();
         for (int i = 0; i < randomIndices.length; i++) {

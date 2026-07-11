@@ -151,9 +151,9 @@ class RepeatQuarantineUnhealthyTest {
 
     @Test
     void trackedIdentityMapIsBoundedAndNeverEvictsADistressedIdentity() {
-        // Hard rule 4: the per-identity map is bounded; only HEALTHY identities are
-        // evicted (forgetting a quarantine would be a policy escape) - and a distressed
-        // record at the access-order head must not dam up eviction of healthy ones.
+        // The per-identity map is bounded; only HEALTHY identities are evicted (forgetting a
+        // quarantine would be a policy escape) - and a distressed record at the access-order head
+        // must not dam up eviction of healthy ones.
         RecordingPolicyProbe probe = new RecordingPolicyProbe();
         SlowConsumerPolicyConfig tiny = new SlowConsumerPolicyConfig(
                 10_000L, 3, 10, 60_000L, 60_000L, 3, HOUR, HOUR, 2);

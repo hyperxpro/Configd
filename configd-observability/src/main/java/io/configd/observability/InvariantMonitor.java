@@ -97,14 +97,10 @@ public final class InvariantMonitor {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Data-plane invariant helpers (INV-M1, INV-S1)
-    //
-    // These bridge the two data-plane invariants from consistency-contract.md
-    // section 8 into InvariantMonitor so that a structural violation in the
-    // edge read path or StalenessTracker increments
-    // configd.invariant.violation.* and triggers alerting.
-    // -----------------------------------------------------------------------
+    // Data-plane invariant helpers. These bridge the two data-plane invariants from
+    // consistency-contract.md section 8 into InvariantMonitor, so a structural violation in the
+    // edge read path or StalenessTracker increments configd.invariant.violation.* and triggers
+    // alerting.
 
     /**
      * Invariant name (INV-M1): a monotonic-read session must never observe
@@ -224,18 +220,11 @@ public final class InvariantMonitor {
                         e -> e.getValue().sum()));
     }
 
-    // -----------------------------------------------------------------------
-    // Internal
-    // -----------------------------------------------------------------------
-
     private void recordViolation(String invariantName) {
         violationCounts.computeIfAbsent(invariantName, k -> new LongAdder()).increment();
         metrics.counter(METRIC_PREFIX + invariantName).increment();
     }
 
-    /**
-     * Registration record for a named invariant.
-     */
     private record InvariantRegistration(BooleanSupplier check, String description) {
         InvariantRegistration {
             Objects.requireNonNull(check, "check must not be null");

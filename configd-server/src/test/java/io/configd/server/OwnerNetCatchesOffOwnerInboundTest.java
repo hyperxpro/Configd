@@ -34,14 +34,14 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * "Test the tester" under the new pool wiring.
+ * "Test the tester" for the owner-executor pool wiring.
  *
  * <p>{@link RaftInboundMarshallingTest} proves the inbound seam marshals; {@link
  * RaftNodeConcurrencyStressTest} proves the {@code assertOwnerThread()} tripwire catches an off-owner
- * touch in isolation. This test closes the gap the threading contract demands before the single-writer rule is
- * deleted: the net must still CATCH a missed marshalling hop AFTER consensus is routed through the
- * owner executor and {@code bindOwnerThread()} activates the guard in PRODUCTION mode (metric, not
- * throw). "A guard that stopped firing after the refactor is worse than no guard."
+ * touch in isolation. This test closes the gap: the net must still CATCH a missed marshalling hop
+ * when consensus is routed through the owner executor and {@code bindOwnerThread()} activates the
+ * guard in PRODUCTION mode (metric, not throw). A guard that stops firing after a refactor is worse
+ * than no guard.
  *
  * <p>Wiring mirrors {@link ConfigdServer}: a real {@link InvariantMonitor} in PRODUCTION mode
  * ({@code testMode=false}) is the {@code RaftNode.InvariantChecker}, so a tripwire fire increments
@@ -53,13 +53,12 @@ import org.junit.jupiter.api.io.TempDir;
  *
  * <ul>
  *   <li><b>{@link #correctlyMarshalledInboundDoesNotTripTheNet()}</b> - with the hop intact, routing
- *       lands on the owner thread -> the guard stays silent -> counter 0. The clean-path half (matches
- *       verification D's "violation counter is 0 on a clean run").</li>
- *   <li><b>{@link #offOwnerInboundTripsTheNetUnderTheNewWiring()}</b> - THE SCRATCH-BREAK SHAPE: the
- *       routing is invoked off-owner (the missed hop), so {@code handleMessage} touches the {@code
- *       RaftNode} on a foreign thread and the tripwire fires -> counter &gt;= 1. This is the same red
- *       a scratch edit removing {@code raftExecutor.execute(...)} in {@code raftInboundHandler}
- *       produces, captured here deterministically.</li>
+ *       lands on the owner thread -> the guard stays silent -> counter 0 (the clean-path half).</li>
+ *   <li><b>{@link #offOwnerInboundTripsTheNetUnderTheNewWiring()}</b> - the routing is invoked
+ *       off-owner (the missed hop), so {@code handleMessage} touches the {@code RaftNode} on a
+ *       foreign thread and the tripwire fires -> counter &gt;= 1. This is the same red a scratch
+ *       edit removing {@code raftExecutor.execute(...)} in {@code raftInboundHandler} produces,
+ *       captured here deterministically.</li>
  * </ul>
  */
 class OwnerNetCatchesOffOwnerInboundTest {
@@ -97,8 +96,9 @@ class OwnerNetCatchesOffOwnerInboundTest {
     /**
      * Builds a single-node leader whose owner is bound to {@code owner} and whose checker is the
      * PRODUCTION-mode {@link InvariantMonitor} (records the violation metric, does not throw) - the
-     * wired-server discipline. Binds the owner as the FIRST task on the owner executor (H-6), then
-     * self-elects on it (single-node), all on-owner so the bind/elect path is clean.
+     * wired-server discipline. Binds the owner as the FIRST task on the owner executor (the bind
+     * must land before anything else touches the node), then self-elects on it (single-node), all
+     * on-owner so the bind/elect path is clean.
      */
     private static RaftNode buildBoundLeader(MetricsRegistry registry,
                                              ScheduledExecutorService owner) throws Exception {
@@ -110,7 +110,7 @@ class OwnerNetCatchesOffOwnerInboundTest {
                 new NoopStateMachine(), new java.util.Random(42),
                 io.configd.common.Storage.inMemory(), checker);
         owner.submit(() -> {
-            node.bindOwnerThread();                    // H-6: bind first, on the owner executor
+            node.bindOwnerThread();                    // bind first, on the owner executor
             for (int i = 0; i < 400; i++) node.tick();  // self-elect, the proven single-node idiom
         }).get(5, TimeUnit.SECONDS);
         assertEquals(RaftRole.LEADER, node.role(), "single-node cluster should self-elect to LEADER");
@@ -185,9 +185,9 @@ class OwnerNetCatchesOffOwnerInboundTest {
     }
 
     /**
-     * Verification D (clean run): a fully-wired {@link ConfigdServer} - owner bound on owner[0], the
-     * consensus tick on owner[0], the H-3 scrape + a linearizable read exercising the read double-hop
-     * onto the owner - must produce ZERO off-owner violations. The net is ACTIVE in production
+     * A fully-wired {@link ConfigdServer} - owner bound on owner[0], the consensus tick on owner[0],
+     * a metrics scrape + a linearizable read exercising the read double-hop onto the owner - must
+     * produce ZERO off-owner violations. The net is ACTIVE in production
      * (prod-mode {@code InvariantMonitor}), so a latent missed hop at any wired call site would leave
      * the {@code invariant_violation_raft_owner_thread_total} counter present/non-zero in the live
      * {@code /metrics} exposition. This is the full-boot regression guard complementing the seam-level
@@ -204,7 +204,7 @@ class OwnerNetCatchesOffOwnerInboundTest {
         });
         ConfigdServer server = ConfigdServer.start(config);
         try {
-            // Let the owner bind + several consensus ticks + the H-3 scrape run on owner[0].
+            // Let the owner bind + several consensus ticks + a metrics scrape run on owner[0].
             Thread.sleep(300);
             // Exercise the linearizable-read double-hop onto the owner (a no-quorum node returns 503,
             // but the readIndex()/completeRead() still run ON the owner - a missed hop would trip).
@@ -229,7 +229,7 @@ class OwnerNetCatchesOffOwnerInboundTest {
     }
 
     private static int apiPort(ConfigdServer server) {
-        // The admin server is now Netty; use the public bound-port accessor rather than
+        // The admin server is Netty-based; use the public bound-port accessor rather than
         // reflecting into a transport-specific internal field.
         return server.apiPort();
     }

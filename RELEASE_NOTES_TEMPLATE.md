@@ -24,17 +24,17 @@ One paragraph. Who needs this release, why, what's the headline.
 
 ## Wire-Compatibility
 
-§8.10 hard rule: a wire-format change requires a deprecation cycle of
-at least two releases. Mark every checkbox that applies. Unchecked
-boxes block the release.
+A wire-format change requires a deprecation cycle of at least two
+releases. Mark every checkbox that applies. Unchecked boxes block the
+release.
 
 - [ ] Wire-version byte unchanged OR documented with golden-bytes test diff
 - [ ] No new mandatory frame field; any new field is opt-in via reserved bytes
 - [ ] All `MessageType` enum values preserve their existing on-wire byte codes
 - [ ] `configd-transport/src/test/resources/wire-fixtures/v<N>/*.bin`
       fixtures regenerated and committed (see `wire-compat` CI job)
-- [ ] If wire-version was bumped, deprecation note added to `CHANGELOG.md`
-      naming the release in which the previous version is removed (≥ N+2)
+- [ ] If wire-version was bumped, these notes name the release in which the
+      previous version is removed (at least two releases later)
 
 ## Snapshot/WAL Compatibility
 
@@ -62,8 +62,8 @@ segments written by the previous release.
 
 ## Performance
 
-- Reference any updated `docs/perf-baseline.md` rows.
-- Note any throughput / latency regression-or-improvement.
+- Reference any updated measurement rows under `docs/measurement/`.
+- Note any throughput or latency regression or improvement.
 
 ## Operational changes
 

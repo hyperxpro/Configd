@@ -33,10 +33,9 @@ import java.util.Set;
  * {@link #filterForStorage(ConfigDelta)}. Staleness is measured against the covered
  * frontier: {@link #applyDelta(ConfigDelta, long)} feeds the leader commit timestamp and
  * {@link #recordHeartbeatFrontier(long, long, long)} feeds the heartbeat frontier. There
- * is deliberately NO local-clock fallback: the legacy one-arg
- * {@code applyDelta(ConfigDelta)} was DELETED because it silently reinstated the
- * idle-time-proxy staleness; every caller states which clock stamps the frontier, and
- * a negative commit timestamp is rejected loudly.
+ * is deliberately no local-clock fallback: every caller states which clock stamps the
+ * frontier explicitly, since defaulting to the local clock would silently reinstate
+ * idle-time-proxy staleness. A negative commit timestamp is rejected loudly.
  *
  * @see LocalConfigStore
  * @see StalenessTracker
@@ -66,7 +65,7 @@ public final class EdgeConfigClient {
      * key class.
      *
      * @param clock              the wall clock (non-null)
-     * @param invariantMonitor   optional INV-S1 staleness-bound monitor (may be null)
+     * @param invariantMonitor   optional staleness-bound invariant monitor (may be null)
      * @param implausibleCounter optional implausible-frontier counter (may be null)
      * @param strongReadKeyClass the strong-read key class (always-store keys; non-null)
      */
@@ -81,10 +80,6 @@ public final class EdgeConfigClient {
         this.subscriptions = new PrefixSubscription();
         this.storageFilter = new PrefixStorageFilter(subscriptions, strongReadKeyClass);
     }
-
-    // -----------------------------------------------------------------------
-    // Read path - any thread, lock-free
-    // -----------------------------------------------------------------------
 
     /**
      * Reads the current value for a config key.
@@ -121,10 +116,6 @@ public final class EdgeConfigClient {
         return store.currentVersion();
     }
 
-    // -----------------------------------------------------------------------
-    // Staleness - any thread (volatile reads)
-    // -----------------------------------------------------------------------
-
     /**
      * Returns the current staleness state of this edge node relative to
      * the control plane (covered-frontier measure).
@@ -160,24 +151,19 @@ public final class EdgeConfigClient {
         return stalenessTracker.recordFrontier(heartbeatLatestSeq, cursor, serverNowMillis);
     }
 
-    /** The underlying staleness tracker (frontier, implausibility counter, INV-S1). */
+    /** The underlying staleness tracker (frontier, implausibility counter, staleness bound). */
     StalenessTracker stalenessTracker() {
         return stalenessTracker;
     }
-
-    // -----------------------------------------------------------------------
-    // Write path - single DeltaApplier thread only
-    // -----------------------------------------------------------------------
 
     /**
      * Applies a delta to the local config store and advances the covered frontier to
      * {@code commitTimestampMillis} (the leader's commit clock).
      * <p>
-     * The one-arg {@code applyDelta(ConfigDelta)} overload - which silently fell back
-     * to the LOCAL clock as the frontier, recreating the idle-time-proxy staleness - is
-     * DELETED. Every caller must state which clock stamps the frontier; tests that
-     * previously relied on the fallback pass their fixture clock's
-     * {@code currentTimeMillis()} explicitly (byte-identical behavior, one meaning).
+     * Every caller must state which clock stamps the frontier explicitly - there is no
+     * overload that defaults to the local clock, since that would silently recreate
+     * idle-time-proxy staleness. Tests pass their fixture clock's {@code currentTimeMillis()}
+     * explicitly for byte-identical, single-meaning behavior.
      * <p>
      * Storage filter: the delta is filtered to the subscribed slice (plus strong-read
      * keys) before apply via {@link #filterForStorage(ConfigDelta)}; the chain version
@@ -196,7 +182,7 @@ public final class EdgeConfigClient {
     }
 
     /**
-     * Filtered-mode apply (ADR-0045): applies the storage-filtered delta but bridges the
+     * Filtered-mode apply: applies the storage-filtered delta but bridges the
      * intentional version jump. Under server-side filtering the delivered version chain is
      * non-contiguous - non-matching deltas were dropped server-side and bumped the global
      * version - so this edge's store steps straight from its current version to
@@ -258,10 +244,6 @@ public final class EdgeConfigClient {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Subscriptions - thread-safe via copy-on-write
-    // -----------------------------------------------------------------------
-
     /**
      * Subscribes to a key prefix. The distribution service streams the full signed chain
      * regardless; this prefix scopes the edge-side <b>storage</b> filter.
@@ -303,10 +285,6 @@ public final class EdgeConfigClient {
         Objects.requireNonNull(key, "key must not be null");
         return subscriptions.isEmpty() || subscriptions.matches(key);
     }
-
-    // -----------------------------------------------------------------------
-    // Metrics
-    // -----------------------------------------------------------------------
 
     /**
      * Returns a point-in-time metrics snapshot for this edge node.

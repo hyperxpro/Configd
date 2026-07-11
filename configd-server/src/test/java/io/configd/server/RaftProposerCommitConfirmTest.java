@@ -149,8 +149,8 @@ class RaftProposerCommitConfirmTest {
      * The load-bearing "200 only on commit" property: a leader that APPENDS but
      * cannot COMMIT (its followers are severed, so quorum never forms) must NOT be
      * acknowledged as Committed - the proposer blocks past the local append and
-     * returns Indeterminate at the deadline. This kills the mutant that acks on
-     * local append (the pre-fix defect): under that mutant this returns Committed.
+     * returns Indeterminate at the deadline. An implementation that (incorrectly)
+     * acknowledges on local append instead of on commit would return Committed here.
      */
     @Test
     void appendedButUncommittedIsNotAckedAsCommitted() throws Exception {

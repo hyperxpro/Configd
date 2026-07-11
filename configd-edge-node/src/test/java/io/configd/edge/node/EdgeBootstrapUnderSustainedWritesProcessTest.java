@@ -61,9 +61,9 @@ import static org.junit.jupiter.api.Assertions.fail;
  *       hundreds of chunks through an 8-frame bounded queue, so the snapshot transfer is
  *       genuinely PACED against transport backpressure over a real socket while the storm
  *       commits into the window. Hard non-vacuity: at least one write commits between edge
- *       start and cutover completion. This leg verifies the backpressure fix in
- *       {@code FanOutSessionCore.performSnapshotTransfer} — pre-fix, the burst emission tore
- *       the transfer on the first full-queue chunk and the bootstrap could never complete
+ *       start and cutover completion. This leg guards the backpressure discipline in
+ *       {@code FanOutSessionCore.performSnapshotTransfer}: without it, burst emission tears
+ *       the transfer on the first full-queue chunk and the bootstrap can never complete
  *       ({@code BootstrapSnapshotBackpressureTest} pins the core-level red/green).</li>
  * </ul>
  *

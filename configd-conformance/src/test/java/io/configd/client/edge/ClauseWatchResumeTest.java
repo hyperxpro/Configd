@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * {@code WATCH_CREATED} live-signal + per-shard mode vector, the per-{@code (watch_id, gid)} inline catch-up
  * snapshot (others keep streaming), the {@code WATCH_CREATE} flag bits, the {@code GAP_UNRECOVERABLE}
  * re-bootstrap (has_oldest=0, fresh non-reused watch_id), and the {@code WATCH_CREATE}-vs-{@code SUBSCRIBE}
- * distinction. Bodies re-express the already-green Gate-3 scenarios with genuine per-clause assertions.
+ * distinction.
  */
 @Timeout(30)
 class ClauseWatchResumeTest {
@@ -50,8 +50,8 @@ class ClauseWatchResumeTest {
                 Watch watch = client.watch(WatchTarget.key("/k"), WatchOptions.defaults());
                 List<WatchEvent> got = collect(watch);
                 watch.awaitCreated(Duration.ofSeconds(10));
-                // The WATCH_* frames exist ONLY on edge wire 0x02 (W1-2). The client pinned 0x02 for this
-                // connection (design-A, first-frame-pinned) and ACCEPTS the server's 0x02-stamped frames — the
+                // The WATCH_* frames exist only on edge wire 0x02 (W1-2). The client pinned 0x02 for this
+                // connection (design-A, first-frame-pinned) and accepts the server's 0x02-stamped frames -- the
                 // successful end-to-end exchange is the proof the per-connection 0x02 negotiation is live
                 // (W1-3 / W5-11). A 0x01-pinned reader would fail closed on these frames.
                 await("0x02 server watch frame accepted and delivered", () -> got.size() == 1);
@@ -73,7 +73,7 @@ class ClauseWatchResumeTest {
                 Watch watch = client.watch(WatchTarget.key("/k"),
                         WatchOptions.defaults().resume(WatchCursor.of(0, 7)));
                 watch.awaitCreated(Duration.ofSeconds(10));
-                // Resume is just a WATCH_CREATE carrying the saved cursor vector — there is no separate resume
+                // Resume is just a WATCH_CREATE carrying the saved cursor vector -- there is no separate resume
                 // frame (W2-6 / W5-4). The re-sent vector reproduces the client's held (0,7) position.
                 await("the WATCH_CREATE carried the resume vector (0,7)", () -> {
                     EdgeFrame.WatchCreate c = firstWatchCreate(server);
@@ -98,12 +98,12 @@ class ClauseWatchResumeTest {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(trustedConfig(server.port()))) {
                 Watch watch = client.watch(WatchTarget.prefix("/"), WatchOptions.defaults());
                 collect(watch);
-                // awaitCreated completes ONLY on WATCH_CREATED — the "authorized and live" signal (W5-5).
+                // awaitCreated completes only on WATCH_CREATED -- the "authorized and live" signal (W5-5).
                 watch.awaitCreated(Duration.ofSeconds(10));
                 // The per-shard mode vector was consumed: the client recorded BOTH covered shards' components.
                 await("both covered shards recorded from the CREATED mode vector",
                         () -> componentS(watch.cursor(), 0) >= 0L && componentS(watch.cursor(), 1) >= 0L);
-                assertInstanceOf(EdgeFrame.WatchCreate.class, firstWatchCreate(server)); // CREATE (0x0A) → CREATED (0x0C)
+                assertInstanceOf(EdgeFrame.WatchCreate.class, firstWatchCreate(server)); // CREATE (0x0A) leads to CREATED (0x0C)
             }
         }
     }
@@ -115,7 +115,7 @@ class ClauseWatchResumeTest {
     void perShardInlineCatchUpTaggedByWatchIdGidWhileOtherShardKeepsStreaming() throws Exception {
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
             long wid = ((EdgeFrame.WatchCreate) conn.readFrame()).watchId();
-            // shard 0 is behind ⇒ SNAPSHOT_FIRST (a catch-up substream follows); shard 1 tails from the start.
+            // shard 0 is behind, so it gets SNAPSHOT_FIRST (a catch-up substream follows); shard 1 tails from the start.
             w(conn, new EdgeFrame.WatchCreated(wid, List.of(
                     new EdgeFrame.ShardMode(0, 3, EdgeFrame.Mode.SNAPSHOT_FIRST),
                     new EdgeFrame.ShardMode(1, 0, EdgeFrame.Mode.TAIL))));
@@ -124,7 +124,7 @@ class ClauseWatchResumeTest {
             w(conn, snap.get(0));                       // WATCH_SNAPSHOT_BEGIN (gid 0)
             w(conn, event(wid, 1, 1, "c", "3"));        // shard 1 KEEPS STREAMING during shard 0's resync (W6-3)
             for (int i = 1; i < snap.size(); i++) {
-                w(conn, snap.get(i));                   // CHUNK…END — cutover only after END (W5-10)
+                w(conn, snap.get(i));                   // CHUNK...END -- cutover only after END (W5-10)
             }
             w(conn, event(wid, 0, 4, "d", "4"));        // shard 0 tails after the snapshot cutover
             conn.parkUntilClosed();
@@ -135,7 +135,7 @@ class ClauseWatchResumeTest {
                 List<WatchEvent> got = collect(watch);
                 watch.awaitCreated(Duration.ofSeconds(10));
                 // The (watch_id, gid=0) substream hydrated shard 0 (2 entries) then it tailed to S=4; shard 1's
-                // event was delivered independently — only the lagging shard snapshotted, the other kept streaming.
+                // event was delivered independently -- only the lagging shard snapshotted, the other kept streaming.
                 await("snapshot entries + both shards' tail delivered", () -> countChanges(got) >= 4);
                 await("shard 0 cursor set to the snapshot then tailed to (0,4)", () -> componentS(watch.cursor(), 0) == 4L);
                 await("shard 1 kept streaming to (1,1)", () -> componentS(watch.cursor(), 1) == 1L);
@@ -148,7 +148,7 @@ class ClauseWatchResumeTest {
     @Tag("clause:W5-4a")
     void watchCreateFlagsByteEncodesTheThreeRequestBits() throws Exception {
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            conn.readFrame(); // record the WATCH_CREATE; no reply needed — we inspect the outbound flags byte
+            conn.readFrame(); // record the WATCH_CREATE; no reply needed -- we inspect the outbound flags byte
             conn.parkUntilClosed();
         })) {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(trustedConfig(server.port()))) {
@@ -161,7 +161,7 @@ class ClauseWatchResumeTest {
                 assertFalse(c.prevValue(), "bit1 unset");
             }
         }
-        // The flag bits map exactly onto the WATCH_CREATE flags byte the driver emits — flagBits() IS that byte
+        // The flag bits map exactly onto the WATCH_CREATE flags byte the driver emits -- flagBits() is that byte
         // (WatchSession builds the frame flags from target.flagBits()); this is the W5-4a bit0/bit1/bit2 contract.
         assertEquals(0, WatchTarget.key("/k").flagBits());
         assertEquals(EdgeFrame.WATCH_FLAG_FULL_CHAIN_VERIFY,
@@ -183,8 +183,8 @@ class ClauseWatchResumeTest {
             long wid = ((EdgeFrame.WatchCreate) conn.readFrame()).watchId();
             w(conn, new EdgeFrame.WatchCreated(wid, List.of(new EdgeFrame.ShardMode(0, 0, EdgeFrame.Mode.TAIL))));
             if (conn.index == 1) {
-                // v1 deferral (W5-9a): the server sends GAP_UNRECOVERABLE with oldest == null, i.e. has_oldest = 0
-                // — NOT a per-shard oldest vector. The driver MUST recover WITHOUT depending on a server oldest.
+                // The server sends GAP_UNRECOVERABLE with oldest == null, i.e. has_oldest = 0 -- not a per-shard
+                // oldest vector (W5-9a). The driver must recover without depending on a server oldest.
                 w(conn, new EdgeFrame.WatchCanceled(wid, ErrorCode.GAP_UNRECOVERABLE, null, "cursor too old"));
             } else {
                 conn.parkUntilClosed();
@@ -200,7 +200,7 @@ class ClauseWatchResumeTest {
                     EdgeFrame.WatchCreate second = secondWatchCreate(server);
                     return second != null && second.cursor().isFromNow() && second.withInitialSnapshot();
                 });
-                // A fresh watch_id is minted per (re)create — NEVER reused across the reconnect (W2-8).
+                // A fresh watch_id is minted per (re)create -- never reused across the reconnect (W2-8).
                 assertTrue(firstWatchCreate(server).watchId() != secondWatchCreate(server).watchId(),
                         "the re-created watch MUST use a fresh watch_id, never the burned one");
             }
@@ -231,8 +231,6 @@ class ClauseWatchResumeTest {
             }
         }
     }
-
-    // -----------------------------------------------------------------------
 
     private static EdgeFrame event(long watchId, int gid, long s, String key, String value) {
         return new EdgeFrame.WatchEvent(watchId, gid, s, 100L,

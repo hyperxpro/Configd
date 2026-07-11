@@ -1,12 +1,12 @@
-# ADR-0036: Amendment to ADR-0034 section 5 - eviction must advance `tail` before the in-place overwrite (RR-096)
+# ADR-0036: Amendment to ADR-0034 section 5 - eviction must advance `tail` before the in-place overwrite
 
-- **Status:** Accepted (second-agent verification recorded in the finding register)
+- **Status:** Accepted (independently verified).
 - **Date:** 2026-06-11
-- **Amends:** ADR-0034 (commit-notification boundary). ADR-0034 is immutable per pipeline rule 7; this ADR records the correction. Everything else in ADR-0034 stands.
+- **Amends:** ADR-0034 (commit-notification boundary). ADR-0034 is treated as immutable; this ADR records the correction as a standalone amendment. Everything else in ADR-0034 stands.
 
 ## Context
 
-ADR-0034 section 5 specified the RR-066 verify-after-read protocol for `FanOutBuffer.readSince`
+ADR-0034 section 5 specified the verify-after-read protocol for `FanOutBuffer.readSince`
 and argued its soundness from the appender's publish order
 `ring.set -> head++ -> tail = head - capacity`. Clause 2 of that argument -
 
@@ -14,7 +14,7 @@ and argued its soundness from the appender's publish order
 > matching `tail` advance"
 
 - treated the overwrite-before-tail-advance order as benign (a transient GAP source).
-It is not benign. The first-ever CI run of the session branches (run 27364178571,
+It is not benign. The first CI run on this branch (run 27364178571,
 4-vCPU runner) failed `FanOutBufferRaceTest.concurrentReaderNeverSeesDuplicateOrSkippedSeqAndEventuallySeesAll`
 in two independent jobs: a non-GAP run contained `158890` followed by `158870`.
 
@@ -90,6 +90,6 @@ Consequences of the new order:
   `ExactlyFullWrap` forbidden state 9 observed in 14 JVM configurations.
 - Post-fix: same jcstress invocation clean (2/2 results, 0 forbidden);
   `FanOutBufferRaceTest` 8/8 stress-loop runs green; full
-  `configd-distribution-service` suite (156) green; CI re-run green (register row).
+  `configd-distribution-service` suite (156) green; CI re-run green.
 - The CI gate adds the FanOutBuffer eviction jcstress variants in `quick` mode (the prior
   `sanity` smoke demonstrably cannot catch this class).

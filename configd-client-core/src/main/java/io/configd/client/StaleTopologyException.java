@@ -9,11 +9,11 @@ import io.configd.distribution.wire.ErrorCode;
  * per-watch ({@code WATCH_CANCELED}) for a watch, connection-fatal ({@code ERROR_CLOSE}) for a legacy
  * {@code SUBSCRIBE}.
  *
- * <p><b>§07 reaction:</b> <b>drop the cursor entirely and fully re-hydrate from scratch</b> — <b>do not</b>
+ * <p><b>Reaction:</b> <b>drop the cursor entirely and fully re-hydrate from scratch</b> — <b>do not</b>
  * re-send the stale cursor, and do not merely resume from an earlier {@code S} (that is the
- * {@link GapUnrecoverableException} reaction). This is a <b>v2-only</b> code: at v1 static-N (one deploy-time
- * epoch = {@code 1}) it never fires. Defined here in Gate 1 for a complete classifier; the resume path that
- * raises it is Gate 2/3.
+ * {@link GapUnrecoverableException} reaction). The deployed topology is static — the shard count is fixed at
+ * deploy time and the epoch never advances — so this exception never actually fires today; it exists so the
+ * classifier is complete once a topology can change at runtime.
  */
 public final class StaleTopologyException extends ConfigdException {
 

@@ -48,7 +48,6 @@ class SimulatedNetworkTest {
         @Test
         void messageNotDeliveredBeforeItsTime() {
             network.send(NODE_0, NODE_1, "hello", 1000L);
-            // With latency=5, deliver at 1005. Try at 1004.
             int count = network.deliverDue(1004L);
             assertEquals(0, count);
             assertTrue(delivered.isEmpty());
@@ -64,10 +63,9 @@ class SimulatedNetworkTest {
 
         @Test
         void multipleMessagesDeliveredInOrder() {
-            // Send messages at different times, all with 5ms latency
-            network.send(NODE_0, NODE_1, "first", 1000L);   // delivers at 1005
-            network.send(NODE_0, NODE_1, "second", 1002L);  // delivers at 1007
-            network.send(NODE_0, NODE_1, "third", 1001L);   // delivers at 1006
+            network.send(NODE_0, NODE_1, "first", 1000L);
+            network.send(NODE_0, NODE_1, "second", 1002L);
+            network.send(NODE_0, NODE_1, "third", 1001L);
 
             int count = network.deliverDue(1010L);
             assertEquals(3, count);
@@ -78,9 +76,8 @@ class SimulatedNetworkTest {
         @Test
         void noDeliveryWithoutHandler() {
             SimulatedNetwork net = new SimulatedNetwork(42L, 5, 5);
-            // No handler set
             net.send(NODE_0, NODE_1, "msg", 1000L);
-            // deliverDue should still remove and count the message
+            // deliverDue removes and counts the message even without a handler.
             int count = net.deliverDue(1005L);
             assertEquals(1, count);
             assertEquals(0, net.pendingCount());
@@ -131,14 +128,13 @@ class SimulatedNetworkTest {
         void nextDeliveryTimeReturnsCorrectTime() {
             assertEquals(Long.MAX_VALUE, network.nextDeliveryTime());
             network.send(NODE_0, NODE_1, "msg", 1000L);
-            // With fixed latency=5, delivery at 1005
             assertEquals(1005L, network.nextDeliveryTime());
         }
 
         @Test
         void nextDeliveryTimeReturnsEarliestTime() {
-            network.send(NODE_0, NODE_1, "later", 1010L);   // delivers at 1015
-            network.send(NODE_0, NODE_1, "earlier", 1000L);  // delivers at 1005
+            network.send(NODE_0, NODE_1, "later", 1010L);
+            network.send(NODE_0, NODE_1, "earlier", 1000L);
             assertEquals(1005L, network.nextDeliveryTime());
         }
 
@@ -175,11 +171,9 @@ class SimulatedNetworkTest {
         void partitionIsUnidirectional() {
             network.addPartition(NODE_0, NODE_1);
 
-            // A->B is blocked
             network.send(NODE_0, NODE_1, "blocked", 1000L);
             assertEquals(0, network.pendingCount());
 
-            // B->A is still open
             network.send(NODE_1, NODE_0, "allowed", 1000L);
             assertEquals(1, network.pendingCount());
             network.deliverDue(1005L);
@@ -237,11 +231,9 @@ class SimulatedNetworkTest {
 
         @Test
         void partitionAddedAfterSendBlocksDelivery() {
-            // Send message first (gets enqueued)
             network.send(NODE_0, NODE_1, "enqueued", 1000L);
             assertEquals(1, network.pendingCount());
 
-            // Add partition before delivery
             network.addPartition(NODE_0, NODE_1);
 
             // deliverDue checks partition at delivery time

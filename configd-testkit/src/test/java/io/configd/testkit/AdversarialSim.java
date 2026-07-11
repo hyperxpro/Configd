@@ -13,7 +13,7 @@ import java.util.random.RandomGenerator;
 import java.util.random.RandomGeneratorFactory;
 
 /**
- * Adversarial deterministic simulation (adversarial-sim-design section 2 - section 4): a real
+ * Adversarial deterministic simulation: a real
  * Raft cluster driven through an {@link AdversarialNetwork} under a seed-derived
  * {@link AdversarialSchedule} of faults (reorder, drop, duplication, delay spikes,
  * partitions, clock skew, crash-restart) interleaved with a randomized client
@@ -44,11 +44,10 @@ final class AdversarialSim implements ClusterView {
     private final List<ConfigStateMachine> stateMachines = new ArrayList<>();
     private final List<CrashStorageHandle> storages = new ArrayList<>();
     /**
-     * Per-node skewed clock (C-1 review fix). Retained so a composing harness can read the
+     * Per-node skewed clock. Retained so a composing harness can read the
      * PUBLISHING node's clock for its commit timestamp - matching production, where the
-     * leader's (skewed) clock stamps the commit on the apply thread. Previously the clock
-     * was a constructor local that was dropped after wiring the state machine, so the only
-     * timestamp surface a composer could reach was the global unskewed {@link #currentTime()}.
+     * leader's (skewed) clock stamps the commit on the apply thread; without it, the only
+     * timestamp surface a composer could reach is the global unskewed {@link #currentTime()}.
      */
     private final List<SkewedClock> skewedClocks = new ArrayList<>();
     private final SimInvariants invariants;
@@ -131,13 +130,11 @@ final class AdversarialSim implements ClusterView {
         return activity;
     }
 
-    // -----------------------------------------------------------------------
-    // Additive, read-only accessors for composition (EdgeFanOutSim, section V1).
+    // Additive, read-only accessors for composition (EdgeFanOutSim).
     // No behavior change: these expose existing per-node objects so the edge
     // harness can wire the production fan-out listener + read the CP clock.
     // Existing tests (digests, gate sweep) are unaffected - nothing here is
     // called on the CP-only path.
-    // -----------------------------------------------------------------------
 
     /** The {@link ConfigStateMachine} for CP node {@code i} (additive accessor). */
     ConfigStateMachine stateMachine(int i) {
@@ -145,8 +142,8 @@ final class AdversarialSim implements ClusterView {
     }
 
     /**
-     * The per-node {@link SkewedClock} for CP node {@code i} (additive accessor; C-1 review
-     * fix). A composing harness reads this node's {@code currentTimeMillis()} as the commit
+     * The per-node {@link SkewedClock} for CP node {@code i} (additive accessor). A
+     * composing harness reads this node's {@code currentTimeMillis()} as the commit
      * timestamp when that node publishes - mirroring production's "leader's skewed clock on
      * the apply thread", so the +/-50 ms skew error term the contract names as the only
      * residual error is actually present on the fan-out stream.
@@ -293,10 +290,10 @@ final class AdversarialSim implements ClusterView {
         }
         storage.armCrashAfterWrites(afterWrites);
         // The crash fires inside the node's next storage write; restart wiring is
-        // performed lazily by checking didCrash() after the tick batch in run().
-        // For this round we record the arm; full restart-rebuild is exercised by
-        // the dedicated crash-recovery test against CrashStorage in consensus-core
-        // scope (see AdversarialSimTest / the test-jar seam).
+        // performed lazily by checking didCrash() after the tick batch in run(). Here
+        // we only record the arm; full restart-rebuild is exercised by the dedicated
+        // crash-recovery test against CrashStorage in consensus-core scope (see
+        // AdversarialSimTest and the test-jar seam).
         if (storage.didCrash()) {
             activity.recordCrash();
         }

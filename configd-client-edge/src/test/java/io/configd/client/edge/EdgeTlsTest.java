@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * The §06 F9 TLS contract over a real {@code SSLSocket}: mTLS authenticates at the handshake (no {@code AUTH}
+ * The TLS contract over a real {@code SSLSocket}: mTLS authenticates at the handshake (no {@code AUTH}
  * frame), the server endpoint is verified ({@code HTTPS} SAN — a mismatch fails closed), and the client never
  * hangs on nor interprets pre-handshake bytes (the libpq CVE lesson). These are the few tests that pay for
  * real TLS; the auth/framing logic is covered over plaintext elsewhere.
@@ -57,7 +57,7 @@ class EdgeTlsTest {
     @Test
     void serverEndpointIdentityMismatchFailsClosed() throws Exception {
         // The server presents a cert whose SAN is "wronghost", but the client connects to "localhost": the
-        // HTTPS endpoint check must reject it even though the cert chains to a trusted anchor (F9-4).
+        // HTTPS endpoint check must reject it even though the cert chains to a trusted anchor.
         try (MockEdgeServer server = MockEdgeServer.startTls(
                 certs.serverContext(true), false, false, MockEdgeServer.Conn::parkUntilClosed)) {
             ConfigdClientConfig config = ConfigdClientConfig.builder()

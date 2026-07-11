@@ -86,9 +86,9 @@ class NextIndexWalkBackTest {
         long top = leaderLog.lastIndex();
         assertTrue(top >= 6, "leader has a multi-entry log to walk back over (was " + top + ")");
 
-        // Trigger a heartbeat: tick until the leader emits an AppendEntries (the
-        // heartbeat interval is several ticks; the in-sync follower's matchIndex
-        // means it carries prevLogIndex = lastIndex-1 with an empty batch).
+        // Tick until the leader emits a heartbeat AppendEntries. The follower is fully in sync,
+        // so its nextIndex is lastIndex+1 and the heartbeat carries prevLogIndex = lastIndex
+        // (an empty batch).
         AppendEntriesRequest first = null;
         for (int i = 0; i < 50 && first == null; i++) {
             leaderTx.clear();

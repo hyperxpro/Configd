@@ -42,10 +42,6 @@ class StalenessSkewTripwireTest {
         tracker = new StalenessTracker(clock, null, implausible);
     }
 
-    // -----------------------------------------------------------------------
-    // Future-frontier (negative staleness)
-    // -----------------------------------------------------------------------
-
     @Test
     void withinSkewAllowanceFutureFrontierClampsWithoutCounting() {
         // 50ms ahead: exactly at the allowance - tolerated as clock skew, clamped, NOT counted.
@@ -75,10 +71,6 @@ class StalenessSkewTripwireTest {
         assertEquals(1L, implausible.get());
     }
 
-    // -----------------------------------------------------------------------
-    // Frontier regression (backwards jump)
-    // -----------------------------------------------------------------------
-
     @Test
     void backwardsFrontierViaUpdateCountsAndHolds() {
         tracker.recordUpdate(2, clock.timeMs);       // frontier = now (staleness 0)
@@ -101,10 +93,6 @@ class StalenessSkewTripwireTest {
         assertEquals(1L, implausible.get());
     }
 
-    // -----------------------------------------------------------------------
-    // No counter wired: still clamps, just does not count
-    // -----------------------------------------------------------------------
-
     @Test
     void noCounterStillClampsImplausibleSamples() {
         StalenessTracker noCounter = new StalenessTracker(clock);
@@ -112,10 +100,6 @@ class StalenessSkewTripwireTest {
         assertEquals(0, noCounter.stalenessMs(), "still clamped even without a counter");
         assertEquals(0L, noCounter.implausibleCount());
     }
-
-    // -----------------------------------------------------------------------
-    // A plausible (non-skewed) frontier never trips the tripwire
-    // -----------------------------------------------------------------------
 
     @Test
     void plausibleLaggingFrontierNeverCounts() {

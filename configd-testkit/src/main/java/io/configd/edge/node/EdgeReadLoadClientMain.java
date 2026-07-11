@@ -16,22 +16,22 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Edge-read HTTP head-to-head (surface 2) - the <b>out-of-JVM load client</b>. Lives in a
- * separate process from {@link EdgeReadAllocServerMain} so NONE of this client's allocation
+ * Edge-read HTTP head-to-head - the <b>out-of-JVM load client</b>. Lives in a
+ * separate process from {@link EdgeReadAllocServerMain} so none of this client's allocation
  * (the JDK {@code HttpClient}, request/response objects) can contaminate the server-side
- * allocation measurement - the exact apples-to-apples fix the JVM-wide {@code -prof gc}
+ * allocation measurement - the apples-to-apples fix the JVM-wide {@code -prof gc}
  * approach lacked.
  *
  * <p>The client owns the <b>throughput + tail-latency</b> axis: it times every request with a
  * per-thread {@link Histogram} (HdrHistogram), then reports requests/sec and p50/p99/p999.
- * (Absolute latency on this 2-vCPU box is not production-grade; it is a RELATIVE JDK-vs-Netty
- * comparison on the same box, same workload - the delta is what matters.)
+ * Absolute latency on this 2-vCPU box is not production-grade; this is a relative JDK-vs-Netty
+ * comparison on the same box, same workload - the delta is what matters.
  *
  * <p>Protocol: connect the control socket -> warm up (establishes the keep-alive connection pool,
  * outside the window) -> {@code START n} -> drive <i>n</i> keep-alive requests across
  * {@code concurrency} threads -> {@code STOP} -> read the server's reported B/request. Every
- * response is asserted 200 with the expected body length (charter hard-rule 5: a server that
- * doesn't actually serve the read is disqualified).
+ * response is asserted 200 with the expected body length: a server that doesn't actually serve
+ * the read is disqualified from the comparison.
  *
  * <pre>
  *   java -cp benchmarks.jar io.configd.edge.node.EdgeReadLoadClientMain \
@@ -73,7 +73,7 @@ public final class EdgeReadLoadClientMain {
                     + probe.statusCode() + " + " + probe.body().length + "B — wrong path");
         }
 
-        // ---- warmup (outside the measured window): establish keep-alive pool, settle JIT ----
+        // Warmup, outside the measured window: establishes the keep-alive pool and lets JIT settle.
         drive(client, reqs, keyCount, concurrency, warmupReqs, null);
 
         try (Socket ctl = new Socket(host, controlPort);

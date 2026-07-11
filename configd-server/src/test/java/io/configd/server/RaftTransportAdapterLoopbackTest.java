@@ -19,15 +19,12 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * {@code RaftTransportAdapter} was 0/16 lines: the real network seam
- * (encode -&gt; TCP -&gt; decode -&gt; marshal -&gt; handle) was never traversed
- * end-to-end by any test. This drives ONE bounded loopback round-trip over real
- * localhost sockets: node A's adapter {@link RaftTransportAdapter#send} serializes
- * a {@link RaftMessage} to a frame and writes it on the wire; node B's
- * {@link RaftTransportAdapter#registerInboundHandler} reads the frame, decodes it
- * back to a {@code RaftMessage}, and dispatches it to the consumer. We assert the
- * message arrives byte-faithful, proving both directions of the adapter codec and
- * its TCP delegation.
+ * Drives ONE bounded loopback round-trip over real localhost sockets, exercising the real network seam
+ * end-to-end (encode -&gt; TCP -&gt; decode -&gt; marshal -&gt; handle): node A's adapter
+ * {@link RaftTransportAdapter#send} serializes a {@link RaftMessage} to a frame and writes it on the wire;
+ * node B's {@link RaftTransportAdapter#registerInboundHandler} reads the frame, decodes it back to a
+ * {@code RaftMessage}, and dispatches it to the consumer. Asserts the message arrives byte-faithful,
+ * proving both directions of the adapter codec and its TCP delegation.
  */
 @Timeout(15)
 final class RaftTransportAdapterLoopbackTest {
@@ -58,9 +55,8 @@ final class RaftTransportAdapterLoopbackTest {
         transportB = new TcpRaftTransport(nodeB, new InetSocketAddress("127.0.0.1", 0),
                 Map.of(), null, /* ctor inbound handler unused; adapter registers its own */ m -> {});
         RaftTransportAdapter adapterB = new RaftTransportAdapter(transportB, GROUP);
-        // The handler now receives the frame's groupId. Capture it to
-        // prove the groupId survives the encode -> TCP -> decode round-trip and is delivered (the basis
-        // for the N-group inbound demux).
+        // The handler receives the frame's groupId; capture it to prove the groupId survives the
+        // encode -> TCP -> decode round-trip and is delivered (the basis for the N-group inbound demux).
         adapterB.registerInboundHandler((from, groupId, message) -> {
             fromRef.set(from);
             groupRef.set(groupId);
@@ -100,9 +96,9 @@ final class RaftTransportAdapterLoopbackTest {
     }
 
     /**
-     * A Gate-3c witness frame traverses the SAME encode -&gt; TCP -&gt; decode -&gt; handler path, and the
+     * A witness frame traverses the SAME encode -&gt; TCP -&gt; decode -&gt; handler path, and the
      * decoded {@code sender} is the transport-authenticated {@code from} (node A), NOT the id the sender
-     * put in the record (here a forged 999). This is the on-wire proof of the W5 spoof-resistance the
+     * put in the record (here a forged 999). This is the on-wire proof of the spoof-resistance the
      * codec test asserts in isolation: witness identity comes from the authenticated 4-byte prefix.
      */
     @Test
