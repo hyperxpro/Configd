@@ -12,10 +12,14 @@ wiki in [`../architecture/architecture.md`](../architecture/architecture.md).
 
 - [Getting Started](Getting-Started.md) -- build from source, run the tests, run a server
 - [Architecture Overview](Architecture-Overview.md) -- control plane, data plane, topology, modules
+- [HTTP API](HTTP-API.md) -- every endpoint, parameter, header, and status code
+- [Configuration](Configuration.md) -- every CLI argument and `configd.*` property, with defaults
 - [Integration Guide](Integration-Guide.md) -- embedding the Configd libraries in a Java application
 - [Module Reference](Module-Reference.md) -- per-module purpose, key types, and dependencies
 - [Docker](Docker.md) -- building and running with Docker and Compose
 - [Testing](Testing.md) -- unit tests, deterministic simulation, linearizability, and jcstress
+- [FAQ](FAQ.md) -- common questions, answered honestly
+- [Comparison](Comparison.md) -- Configd versus etcd, Consul, ZooKeeper, Spring Cloud Config
 
 ## What it is
 

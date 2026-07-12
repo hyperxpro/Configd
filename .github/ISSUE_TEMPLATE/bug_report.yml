@@ -1,0 +1,64 @@
+name: Bug report
+description: Something behaves incorrectly, crashes, or violates a documented guarantee.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not report security vulnerabilities here.** Use GitHub's private vulnerability
+        reporting instead — see [SECURITY.md](https://github.com/hyperxpro/Configd/blob/main/SECURITY.md).
+
+        Before filing, check [known limitations](https://github.com/hyperxpro/Configd/blob/main/docs/operations/known-limitations.md):
+        Configd is deliberately explicit about what it does not do, and a documented limitation is
+        not a bug.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you observe? Include exact error messages and status codes.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What should have happened instead? If a documented guarantee was violated, link the doc.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: Minimal steps, ideally starting from a fresh checkout or the Compose topology.
+      placeholder: |
+        1. ./mvnw -T 1C verify
+        2. java --enable-preview ... io.configd.server.ConfigdServer ...
+        3. curl -X PUT ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Git tag or commit hash you built from.
+      placeholder: e.g. c100cd5
+    validations:
+      required: true
+  - type: textarea
+    id: deployment
+    attributes:
+      label: Deployment shape
+      description: The configuration that matters for diagnosis.
+      placeholder: |
+        Cluster size (N): 3
+        Shards: 1
+        Auth mode: none / basic / bearer / mtls / oidc
+        TLS: on/off   Audit: on/off   At-rest encryption: on/off
+        JDK + flags: Corretto 25, --enable-preview -XX:+UseZGC
+        OS / environment: e.g. Ubuntu 24.04, Docker Compose
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and evidence
+      description: Relevant server/edge logs, metrics, or a failing test. Redact credentials and tokens.
+      render: shell

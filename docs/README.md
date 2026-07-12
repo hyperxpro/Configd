@@ -28,6 +28,13 @@ A map of what lives here and where to go.
 - **Get started building and running** — [`wiki/Getting-Started.md`](wiki/Getting-Started.md), with a
   lighter tour in [`wiki/Architecture-Overview.md`](wiki/Architecture-Overview.md) and container notes in
   [`wiki/Docker.md`](wiki/Docker.md).
+- **Call the HTTP API** — [`wiki/HTTP-API.md`](wiki/HTTP-API.md): every endpoint, query parameter,
+  header, and status code on both services.
+- **Look up a configuration knob** — [`wiki/Configuration.md`](wiki/Configuration.md): every CLI
+  argument and `configd.*` property with its default; the
+  [operator runsheet](operations/operator-runsheet.md) stays the guide to which ones to enable.
+- **Decide whether Configd fits** — [`wiki/Comparison.md`](wiki/Comparison.md) (versus etcd, Consul,
+  ZooKeeper, Spring Cloud Config) and the [`wiki/FAQ.md`](wiki/FAQ.md).
 - **Understand how it works** — the system overview and load-bearing invariants in
   [`architecture/`](architecture/) (including the multi-shard-watch authorization invariant and the Raft
   owner-thread threading contract).

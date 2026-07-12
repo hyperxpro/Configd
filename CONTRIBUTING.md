@@ -1,6 +1,7 @@
 # Contributing to Configd
 
 The bar for correctness and operator-honesty is high. Read this in full before opening your first PR.
+By participating you agree to the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Prerequisites
 
@@ -93,6 +94,6 @@ enforces that fixture changes come with a `FrameCodec.WIRE_VERSION` bump.
 
 ## Reporting
 
-For bugs that affect data integrity, consensus safety, or authentication, report privately first: see
-the security contact in `SECURITY.md` if present, otherwise email the maintainers before opening a
-public issue.
+For bugs that affect data integrity, consensus safety, or authentication, report privately first via
+GitHub's private vulnerability reporting — see [SECURITY.md](SECURITY.md) — before opening a public
+issue.

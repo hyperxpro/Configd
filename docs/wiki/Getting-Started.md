@@ -107,6 +107,37 @@ protection. Each control is off by default and logs a loud warning when off. See
 [`../operations/operator-runsheet.md`](../operations/operator-runsheet.md) and
 [`../operations/deployer-must-know.md`](../operations/deployer-must-know.md).
 
+## Read and write config values
+
+The control-plane API is `GET|PUT|DELETE /v1/config/{key}` on the API port (8080 above). The key is a
+hierarchical path and the value is the raw request body — Configd stores opaque bytes, not a fixed
+document format.
+
+```bash
+# write a value
+curl -X PUT --data-binary 'jdbc:postgresql://db:5432/orders' \
+     http://localhost:8080/v1/config/orders/db/url
+# 200  Committed: seq=1
+
+# read it back — the value is returned as the response body
+curl -i http://localhost:8080/v1/config/orders/db/url
+# 200  jdbc:postgresql://db:5432/orders
+#      X-Config-Version: 1
+#      X-Consistency: stale
+
+# delete it
+curl -X DELETE http://localhost:8080/v1/config/orders/db/url
+```
+
+Reads are served from the local store and are marked `X-Consistency: stale` by default. Add
+`?consistency=linearizable` to force a leader-confirmed read (`X-Consistency: linearizable`); on a
+follower that cannot confirm the read this returns `503` with an `X-Leader-Hint` rather than a stale
+value. Strong-read keys (the `secure/` prefix by default) are always served linearizably or fail
+closed. When authentication is enabled, pass the credential (for example
+`-H "Authorization: Bearer $TOKEN"`); a write needs `WRITE` permission on the key and a read needs
+`READ`. The complete endpoint reference is [HTTP API](HTTP-API.md), and every CLI argument and
+`configd.*` property is in [Configuration](Configuration.md).
+
 ## Recommended JVM flags
 
 Configd is designed for Java 25 with the generational ZGC low-latency collector (ADR-0041):

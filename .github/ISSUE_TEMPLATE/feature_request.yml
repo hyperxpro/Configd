@@ -1,0 +1,36 @@
+name: Feature request
+description: Propose new functionality or a change in behavior.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check [known limitations](https://github.com/hyperxpro/Configd/blob/main/docs/operations/known-limitations.md) first — several
+        "missing" features are deliberate, recorded decisions (e.g. no global multi-region consensus,
+        ADR-0030/0031). If your proposal reverses a recorded decision, say so and address the ADR's
+        reasoning directly.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can't you do today, and in what real deployment scenario does it hurt?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What you'd like to happen. If it touches a wire/on-disk format, a consensus invariant, or operator-visible behavior, note that it will need an ADR (see CONTRIBUTING.md).
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you tried or other designs you weighed.
+  - type: checkboxes
+    id: implementation
+    attributes:
+      label: Implementation
+      options:
+        - label: I'm willing to implement this myself with maintainer guidance.
