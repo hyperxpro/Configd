@@ -27,8 +27,8 @@ term-monotonicity alone miss an index-preserving, term-monotonic interior rollba
 topology epoch and `STALE_TOPOLOGY`; the durability kernel (`raft-anchor`, the persistent-state
 merge, persist-before-ack, and the recovery gates in §2.17); the node-level `node-anchor` (topology
 cross-check, audit head, and a `shardAnchorDigest` that closes the single-shard-wipe residual,
-R-f); the peer-quorum `AnchorWitness` closing R-a' (see `docs/design/anchor-witness-peer-quorum-
-2026-07-04.md`); and the persisted dual-slot `raft-keyring` with keyTerm-versioned at-rest
+R-f); the peer-quorum `AnchorWitness` closing R-a' (see `docs/architecture/anchor-witness-peer-
+quorum.md`); and the persisted dual-slot `raft-keyring` with keyTerm-versioned at-rest
 integrity in both the HMAC and encrypting postures, plus non-destructive rotation (append-and-
 retain term rotation, rewrap-before-swap signing-key rotation, both crash-atomic; boot loads all
 retained terms rather than a hardcoded term=1).
@@ -49,7 +49,7 @@ A few places where the shipped system differs from, or narrows, the design below
  single-fault leader failover in testing. The witness is armed only where real peers exist (a
  configured multi-node cluster; `tcpTransport != null`); a single-node deployment leaves it
  inert, since it cannot split-brain. Full mechanism in
- `docs/design/anchor-witness-peer-quorum-2026-07-04.md`.
+ `docs/architecture/anchor-witness-peer-quorum.md`.
 - **Byte-identity has one narrow exception.** The encryption-off posture is byte-identical to
  before this design, except that an auth-on-but-not-encrypting node now writes the
  term-versioned HMAC envelope (keyTerm lives in the algId=1 body too, not only algId=2) rather
@@ -137,7 +137,7 @@ expensive (a rare path). Anchor ENOSPC is impossible after boot (preallocation, 
  strict boot gate (always on) closes the boot-reply race; strict vote (opt-in) closes the
  grant-to-witnessed window absolutely. The residual under the default fast-vote mode at N>=5
  needs sustained multi-peer announce packet loss to exploit. See
- `docs/design/anchor-witness-peer-quorum-2026-07-04.md`.
+ `docs/architecture/anchor-witness-peer-quorum.md`.
 - **R-b**: an adversary with the signing key. **R-c**: `VerifyKeyExporter` DER export unanchored.
  **R-d**: state fields cleartext in the HMAC-only posture. **R-e**: audit-tail truncation inside
  the last <=64-record/<=1-second un-anchored window.
@@ -171,7 +171,7 @@ expensive (a rare path). Anchor ENOSPC is impossible after boot (preallocation, 
 
 Optional hardening for (a): the `AnchorWitness` SPI (§4 A1.7) - external monotonic storage of
 anchor sequence numbers. The interface is frozen; the peer-quorum implementation is described in
-`docs/design/anchor-witness-peer-quorum-2026-07-04.md`, and an external-monotonic-store
+`docs/architecture/anchor-witness-peer-quorum.md`, and an external-monotonic-store
 implementation remains a documented, unbuilt extension point.
 
 The auth-off (keyless) posture carries **no adversarial guarantees**: envelopes are CRC-only.
@@ -1018,8 +1018,8 @@ The SPI is realized by a **peer-quorum** `AnchorWitness`
 (`PeerQuorumAnchorWitness`): a node's monotonic `anchorSeq` (and its per-term vote) is witnessed over
 the existing Raft channel by a quorum of peers, and a node REFUSES to boot or grant a vote below the
 highest value a peer quorum witnessed from it. This closes **R-a'** exactly where split-brain is
-possible (N>=3); see `docs/design/anchor-witness-peer-quorum-
-2026-07-04.md`. The **external-monotonic-store** realization (TPM/RPMB/remote KV - the closer for the
+possible (N>=3); see `docs/architecture/anchor-witness-peer-
+quorum.md`. The **external-monotonic-store** realization (TPM/RPMB/remote KV - the closer for the
 R-a *freshness* residual, a node-local within-term rollback with no live peer to witness it) is NOT
 built; it slots into this same SPI as a future extension. So: the SPI plus the peer-quorum realization
 close R-a'; the external-store realization remains a documented, unbuilt extension point, and R-a
@@ -1257,8 +1257,8 @@ contributed to a **committed-and-client-acked** entry.
   records / 1 s), so truncation confined to the last <=K records / <=1 s before a crash is undetected.
   Bounded and documented; strictly better than a fully-undetected audit chain.
 - **R-a' Within-term `votedFor` rollback (SAFETY / Election-Safety)** - **CLOSED at N>=3 by the
-  peer-quorum `AnchorWitness`** (§A1.7; `docs/design/anchor-witness-peer-quorum-
-  2026-07-04.md`). The strict-**boot** gate (default, unconditional peer-majority) closes the boot-reply
+  peer-quorum `AnchorWitness`** (§A1.7; `docs/architecture/anchor-witness-peer-
+  quorum.md`). The strict-**boot** gate (default, unconditional peer-majority) closes the boot-reply
   race at N=3; strict-**vote** (opt-in, `-Dconfigd.raft.witnessStrict=true`) closes the grant->witnessed
   window absolutely. **Residual:** at **N>=5 under the default fast-vote**, a rollback can
   still escape only under *sustained* multi-peer announce packet loss (a single drop is defeated by the
@@ -2846,7 +2846,7 @@ Two calls mattered most at freeze time, because a frozen format admits no do-ove
   (replaying an older same-term anchor slot) is an Election-Safety hazard, not mere staleness: it
   can cause a double vote and cluster divergence, and the term-witness gate does not catch it
   (§0). The decision was to close it now by building the peer-quorum `AnchorWitness` (§A1.7,
-  `docs/design/anchor-witness-peer-quorum-2026-07-04.md`) rather than merely documenting it.
+  `docs/architecture/anchor-witness-peer-quorum.md`) rather than merely documenting it.
 - **Add the node-anchor's per-shard liveness binding now, or accept R-f as documented?** The
   node-anchor's payload cannot grow again after the freeze, so a single-shard wipe-to-FRESH (silent
   data loss on N=1 or a degraded quorum) could only ever be closed at this moment. The decision was

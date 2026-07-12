@@ -205,7 +205,7 @@ if ignored) - what to do.**
 - **What IS rolling-safe vs all-at-once (the format-compatibility contract).** This "upgrade together" rule
   is specific to a **Raft frame-format (`WIRE_VERSION`) change** and to the pre-chunking->chunking transition
   above. Per the whole-system upgrade contract
-  ([`../design/group-b/07-upgrade-capability-as-built.md`](../design/group-b/07-upgrade-capability-as-built.md)),
+  ([`../architecture/upgrade-capability.md`](../architecture/upgrade-capability.md)),
   the **edge/client plane** (first-frame version pin), the
   **at-rest keyring/encryption** formats, and the **`_acl/format` policy** version are all **rolling-safe**
   (every format is version-discriminated and fails closed on an unknown version -- never a silent misparse).

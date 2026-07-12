@@ -11,7 +11,7 @@ package io.configd.raft;
  * <p>Because casting a vote is an {@code anchorSeq}-raising anchor write, a within-term
  * {@code votedFor} rollback is an {@code anchorSeq} rollback — so witnessing {@code anchorSeq}
  * monotonicity witnesses the vote, and this scalar SPI needs no {@code votedFor} dimension. See
- * {@code docs/design/anchor-witness-peer-quorum-2026-07-04.md}.
+ * {@code docs/architecture/anchor-witness-peer-quorum.md}.
  *
  * <p>The provider today is {@link PeerQuorumAnchorWitness}: the substrate is the peers' in-memory
  * witness tables, re-established by continuous re-announce. The interface is deliberately provider-

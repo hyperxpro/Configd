@@ -1,6 +1,6 @@
 # Peer-Quorum `AnchorWitness`: closing R-a'
 
-Addendum to `docs/design/frozen-format-v1-2026-07-03.md`. The peer-quorum `AnchorWitness`
+Addendum to `docs/architecture/frozen-format-v1.md`. The peer-quorum `AnchorWitness`
 (`PeerQuorumAnchorWitness`, the `RaftNode` witness state, wire types
 `RAFT_WITNESS`/`RAFT_WITNESS_REPLY`, and `ConfigdServer` arming when real peers exist) is part of
 the frozen wire from the start. Its strict dimension splits into an always-on **boot** gate
@@ -13,8 +13,8 @@ grant->witnessed residual is documented in the frozen-format doc's threat-model 
 document is design prose; the shipped code is authoritative where they differ.
 
 This realizes the frozen `AnchorWitness` SPI (frozen-format §A1.7,
-`frozen-format-v1-2026-07-03.md:881-886`) as a peer-quorum witness that closes the R-a'
-Election-Safety residual (`frozen-format-v1-2026-07-03.md:107-113`, matrix row 4b line 1052). Every
+`frozen-format-v1.md:881-886`) as a peer-quorum witness that closes the R-a'
+Election-Safety residual (`frozen-format-v1.md:107-113`, matrix row 4b line 1052). Every
 load-bearing claim below is grounded in a file:line.
 
 ---
@@ -24,9 +24,9 @@ load-bearing claim below is grounded in a file:line.
 **Sound and buildable** as an R-a' closer for the threat model (adversary = filesystem write
 access to one node's data directory, **no key material**, and - per the frozen threat model - **not
 able to orchestrate peer crashes**, which are non-adversarial faults;
-`frozen-format-v1-2026-07-03.md:127-142`). It requires **no change to any frozen at-rest byte
+`frozen-format-v1.md:127-142`). It requires **no change to any frozen at-rest byte
 layout**: the witnessed quantity is the anchor's already-frozen strictly-monotone `anchorSeq`
-(`frozen-format-v1-2026-07-03.md:265`, `724-725`), the mechanism is a runtime cross-node protocol on
+(`frozen-format-v1.md:265`, `724-725`), the mechanism is a runtime cross-node protocol on
 the existing raft channel, and the boot/vote gates are logic in `RaftNode`. The frozen §A1.7 SPI
 signature is realized **unmodified** (see §5 for why the vote dimension needs no new SPI field).
 
@@ -56,11 +56,11 @@ No frozen-format change is required.
 
 The witnessed quantity is the per-scope **`anchorSeq`** - the strictly-monotone anti-rollback index
 that the frozen write protocol bumps on **every** anchor write, picking the lower-seq slot and
-writing `anchorSeq = maxValid+1` (`frozen-format-v1-2026-07-03.md:274-275`, `738-739`).
+writing `anchorSeq = maxValid+1` (`frozen-format-v1.md:274-275`, `738-739`).
 
 The crux that makes the vote dimension free: **because the vote is merged into the anchor
 (frozen-format §A1.1), casting a vote IS an anchor write.** `currentTerm`/`votedFor` are merged into `ANCHOR_PAYLOAD`
-(`frozen-format-v1-2026-07-03.md:264-272`), so the three code paths that persist a vote today -
+(`frozen-format-v1.md:264-272`), so the three code paths that persist a vote today -
 `DurableRaftState.vote` (`DurableRaftState.java:122-132`, reached from `handleRequestVote`,
 `RaftNode.java:1725`), `setTermAndVote` at `startElection` (`RaftNode.java:1915`), and the term step
 in `becomeFollower` (`RaftNode.java:1829`) - each become an anchor write that raises `anchorSeq`.
@@ -70,7 +70,7 @@ Therefore:
 > vote's write raised `anchorSeq` to some `s1`; replaying the pre-vote slot image restores a strictly
 > lower `s0 < s1`. Witnessing `anchorSeq` monotonicity therefore witnesses the vote.
 
-This is why the frozen SPI's scalar `long anchorSeq` (`frozen-format-v1-2026-07-03.md:883`) is
+This is why the frozen SPI's scalar `long anchorSeq` (`frozen-format-v1.md:883`) is
 sufficient and needs no `votedFor` extension. The announce additionally carries `currentTerm` for a
 diagnostic term cross-check and for the operator-visible refuse reason; `votedFor` is carried
 diagnostic-only (never load-bearing for the gate).
@@ -88,7 +88,7 @@ vote - informational for R-a).
 Per node, per scope, all **in-memory** (rebuilt at boot; never a new on-disk format):
 
 - `bootAnchorSeq` - the `anchorSeq` loaded from the highest-valid anchor slot at boot
-  (`frozen-format-v1-2026-07-03.md:276-277`). Captured once at load; the rollback comparison is
+  (`frozen-format-v1.md:276-277`). Captured once at load; the rollback comparison is
   against this booted-from value.
 - `witnessOfPeer[P]` - the highest `anchorSeq` this node has seen peer `P` announce (what *we*
   witness about `P`). Monotone-raise only.
@@ -104,14 +104,14 @@ Per node, per scope, all **in-memory** (rebuilt at boot; never a new on-disk for
 Two new `MessageType` codes on the raft wire (`MessageType.java` currently maxes at `0x11`;
 `BY_CODE` sizing at `MessageType.java` grows to admit `0x12`/`0x13`). Additive: **no existing frame
 layout, no existing payload, and NOT the dormant `epoch` field are touched** - so all existing raft
-golden fixtures stay byte-identical (`frozen-format-v1-2026-07-03.md:425-428` keeps the raft wire at
+golden fixtures stay byte-identical (`frozen-format-v1.md:425-428` keeps the raft wire at
 `ver=0x02` with `epoch` MBZ; we do not use `epoch`). The messages ride the same `FrameCodec` frame
 (`FrameCodec.java:154-177`), the same `RaftWireProtocol` 4-byte authenticated sender-id prefix
 (`RaftWireProtocol.java:43-44,100-111`), and the same mTLS peer authentication the raft transport
 already enforces (`TcpRaftTransport.java:542-543`, `setNeedClientAuth(true)`). The witness therefore
 inherits: an adversary without a valid peer cert cannot inject or suppress witness traffic, and
 cannot impersonate a peer to feed a false floor. (In the keyless/plaintext posture there are no
-adversarial guarantees anywhere - `frozen-format-v1-2026-07-03.md:147-148` - and the witness is
+adversarial guarantees anywhere - `frozen-format-v1.md:147-148` - and the witness is
 likewise advisory there.)
 
 ```
@@ -128,7 +128,7 @@ RAFT_WITNESS_REPLY  (0x13)   peer->sender   - identical body; a WITNESS with QUE
 
 Encoding lives in `RaftMessageCodec` alongside the existing vote/append codecs
 (`RaftMessageCodec.java:176-214`), payloads carrier-versioned by the frame exactly like every other
-raft message (`frozen-format-v1-2026-07-03.md:428`). Fixed 29-byte body; the decoder bounds it with
+raft message (`frozen-format-v1.md:428`). Fixed 29-byte body; the decoder bounds it with
 the same `checkRemaining` discipline as the rest of the codec (`RaftMessageCodec.java:108-114`). These
 are added to the `RaftMessage` sealed permit-list (`RaftMessage.java:14-16`) and the `handleMessage`
 switch (`RaftNode.java:591-603`).
@@ -155,7 +155,7 @@ run.
 At boot, per shard:
 
 1. Load `bootAnchorSeq = s` from the highest-valid anchor slot (existing recovery read,
-   `frozen-format-v1-2026-07-03.md:276-277`). Set `votingCleared = false`.
+   `frozen-format-v1.md:276-277`). Set `votingCleared = false`.
 2. If `peersOf(self)` is empty (N=1, `ClusterConfig.peersOf`, `ClusterConfig.java:145-151`): set
    `votingCleared = true` and skip - N=1 cannot split-brain (§3). Otherwise:
 3. Broadcast `RAFT_WITNESS(QUERY)` to all peers. Collect `RAFT_WITNESS_REPLY`s (driven by the normal
@@ -166,7 +166,7 @@ At boot, per shard:
    disk we booted from - the disk was rolled back. Halt this shard (fail-closed), emit a diagnostic +
    an audit record `{action=anchor.rollback.detected, gid, bootAnchorSeq=s, witnessedSeq=W,
    reportingPeer=P}`, and escalate to the operator. This is the exact frozen semantics
-   `storedSeq < lastSeen => REFUSE` (`frozen-format-v1-2026-07-03.md:884-885`) with `storedSeq = s`,
+   `storedSeq < lastSeen => REFUSE` (`frozen-format-v1.md:884-885`) with `storedSeq = s`,
    `lastSeen = W`.
 6. **If a quorum responded and `W <= s` => set `votingCleared = true`.** Quorum = `ClusterConfig.isQuorum`
    over the responders including self (`ClusterConfig.java:117-123`). The node may now vote/elect.
@@ -178,7 +178,7 @@ At boot, per shard:
 Timeout/quorum knobs follow the existing `-D` convention
 (`RaftWireProtocol.java:65-88`; e.g. `configd.raft.witnessBootQuorumTimeoutMs`, default a few election
 timeouts). No new file, no `data-directory`-read control (which the frozen doc forbids for exactly
-this reason, `frozen-format-v1-2026-07-03.md:475-477`).
+this reason, `frozen-format-v1.md:475-477`).
 
 ### 1.5 The vote gate (the latch + the announce-before-grant ordering)
 
@@ -226,7 +226,7 @@ Setup: N >= 3, node `V` a voter, adversary owns `V`'s data dir, no keys, cannot 
    `{currentTerm=T, votedFor=null, anchorSeq=s0}`, `s0 < s1` (this image really existed: `V` had it
    right after `becomeFollower(T)` set `votedFor=null`, `RaftNode.java:1831`, before granting). Term is
    unchanged, so Step-2.5's term-witness gate is silent by construction
-   (`frozen-format-v1-2026-07-03.md:461-467`, `1052`) - this is exactly row 4b.
+   (`frozen-format-v1.md:461-467`, `1052`) - this is exactly row 4b.
 3. `V` reboots with `bootAnchorSeq = s0`. Boot gate: broadcast QUERY, collect a quorum of replies,
    `W = max reported seenOfYou`.
 4. **Closure.** `V`'s vote at (1) became usable only because `voteGranted` was sent, which - by the
@@ -250,7 +250,7 @@ in steady state `Wit` is the whole reachable peer set. The gate can only **miss*
 post-reboot QUERY, *every* peer that held `s1` is simultaneously unreachable or has itself
 crash-restarted (losing in-memory `witnessOfPeer[V]`) - and the responding quorum `R` therefore
 contains none of them. Under the threat model the adversary **cannot cause** those peer
-crashes (non-adversarial faults, `frozen-format-v1-2026-07-03.md:139-142`); it can only *wait and
+crashes (non-adversarial faults, `frozen-format-v1.md:139-142`); it can only *wait and
 hope* for a coincidence it cannot induce. So default mode **closes R-a' against the adversary**; the
 residual is a pure coincidental-crash window, the same non-adversarial class R-a itself already lives
 in. The §1.5 announce-before-grant ordering removes the one window the adversary *could* have exploited
@@ -260,10 +260,10 @@ never sent to the candidate, hence never usable.
 ### 2.4 Why the on-disk vote can't be forged instead of rolled back
 
 Rollback (replay of an older valid slot) is the only in-scope move: the anchor slots are
-MAC/tag-authenticated envelopes (`frozen-format-v1-2026-07-03.md:261`, algId 1/2), so an adversary
+MAC/tag-authenticated envelopes (`frozen-format-v1.md:261`, algId 1/2), so an adversary
 without keys cannot fabricate a *new* `{votedFor=null, anchorSeq=s1}` image - any in-place edit breaks
 the MAC and fails the slot (`DurableRaftState.java:167-189` load path throws on tamper; frozen
-`frozen-format-v1-2026-07-03.md:276-277`). The adversary is confined to restoring genuinely-earlier
+`frozen-format-v1.md:276-277`). The adversary is confined to restoring genuinely-earlier
 images, which necessarily carry `anchorSeq < s1`. That is precisely what the witness detects.
 
 ---
@@ -271,9 +271,9 @@ images, which necessarily carry `anchorSeq < s1`. That is precisely what the wit
 ## §3 False-positive / liveness analysis (first-class)
 
 A gate that bricks a healthy node on a legal crash or a legal Raft transition fails as surely as one
-that misses the attack (`frozen-format-v1-2026-07-03.md:141-142`). The gate direction is
+that misses the attack (`frozen-format-v1.md:141-142`). The gate direction is
 **`W > s => REFUSE` only** - refuse strictly when a peer witnessed *higher than local*. Mirrors the
-frozen false-positive discipline (rows 18-22, `frozen-format-v1-2026-07-03.md:1070-1081`).
+frozen false-positive discipline (rows 18-22, `frozen-format-v1.md:1070-1081`).
 
 | # | Case | Behavior | Why correct |
 |---|---|---|---|
@@ -282,8 +282,8 @@ frozen false-positive discipline (rows 18-22, `frozen-format-v1-2026-07-03.md:10
 | W3 | **Real rollback** (local rolled back to `s0`; a peer saw `s1 > s0`) | **REFUSE** | The intended detection (§2.2). |
 | W4 | **Partition from quorum at boot** | **REFUSE TO VOTE, retry; no brick** | `votingCleared` stays false until a quorum is reachable (§1.4 step 7). Identical availability to a partitioned Raft minority - it cannot win an election either way. Clears automatically on heal. |
 | W5 | **A single lying/buggy peer** reports a bogus high `seenOfYou` | Boot gate would REFUSE (fail-closed, safe direction). A single peer cannot force a *false PASS* (PASS needs a quorum and no `W>s`). | Fail-closed asymmetry: a spurious high report only ever causes a (safe) refuse-and-escalate, never a missed rollback. Under mTLS a non-peer cannot report at all (`TcpRaftTransport.java:542-543`). |
-| W6 | **Torn anchor write on crash** (non-attack) | **PASS** - the torn slot fails CRC/MAC, the intact lower-seq slot wins; `bootAnchorSeq` = that intact seq; peers saw <= it | Dual-slot recovery (`frozen-format-v1-2026-07-03.md:274-277`, matrix row 18) picks a valid slot; no phantom rollback. |
-| W7 | **Legit conflict truncation / compaction** | **PASS** - these lower `lastDurableIndex`/advance `snapshotIndex` but only ever *raise* `anchorSeq` (every anchor write bumps it) | `anchorSeq` is monotone across all writes (`frozen-format-v1-2026-07-03.md:274-275`); witnessing is on `anchorSeq`, never on the index/term fields, so a legal Raft rewrite never trips the witness. Independent of frozen rows 19-20. |
+| W6 | **Torn anchor write on crash** (non-attack) | **PASS** - the torn slot fails CRC/MAC, the intact lower-seq slot wins; `bootAnchorSeq` = that intact seq; peers saw <= it | Dual-slot recovery (`frozen-format-v1.md:274-277`, matrix row 18) picks a valid slot; no phantom rollback. |
+| W7 | **Legit conflict truncation / compaction** | **PASS** - these lower `lastDurableIndex`/advance `snapshotIndex` but only ever *raise* `anchorSeq` (every anchor write bumps it) | `anchorSeq` is monotone across all writes (`frozen-format-v1.md:274-275`); witnessing is on `anchorSeq`, never on the index/term fields, so a legal Raft rewrite never trips the witness. Independent of frozen rows 19-20. |
 | W8 | **Slow first election after boot** | Election delayed until `votingCleared` (one boot QUERY round-trip) | Bounded extra latency on the first post-boot election only; steady state unaffected. Acceptable - elections are rare. |
 
 ### 3.1 Mode trade (the one operator decision - split into boot vs vote)
@@ -337,7 +337,7 @@ memory. Regression: `AnchorWitnessPeerQuorumTest.catchUpDuringBoot_healthyNode_n
 - **N = 1.** No peers => no witness possible; the gate is disabled (`votingCleared = true` immediately,
   §1.4 step 2). This is correct, not a gap: a single voter **cannot** split-brain (there is no second
   quorum to form), so R-a''s *harm* is void at N=1. The freshness residual **R-a** (stale reads / lost
-  recent writes from a within-term rollback, `frozen-format-v1-2026-07-03.md:103-106`) **remains** at
+  recent writes from a within-term rollback, `frozen-format-v1.md:103-106`) **remains** at
   N=1 and is closable only by an external-store witness through the same SPI (§5). Documented, not
   overclaimed.
 - **N = 2.** One peer; `isQuorum` requires both nodes (`ClusterConfig.java:164`, `majorityOf(2)=2`), so
@@ -353,22 +353,22 @@ memory. Regression: `AnchorWitnessPeerQuorumTest.catchUpDuringBoot_healthyNode_n
 The witness is **layered on the already-frozen anchor**; it mutates **no** frozen at-rest byte layout.
 
 1. **At-rest formats: untouched.** The witnessed quantity is the existing `ANCHOR_PAYLOAD.anchorSeq`
-   (`frozen-format-v1-2026-07-03.md:265,724-725`) and `NODE_ANCHOR_PAYLOAD.nodeAnchorSeq`
-   (`frozen-format-v1-2026-07-03.md:285`) - read-only. No field is added to any envelope, anchor,
+   (`frozen-format-v1.md:265,724-725`) and `NODE_ANCHOR_PAYLOAD.nodeAnchorSeq`
+   (`frozen-format-v1.md:285`) - read-only. No field is added to any envelope, anchor,
    node-anchor, keyring, WAL, snapshot, or topology record. The IntegrityEnvelope v3
-   (`frozen-format-v1-2026-07-03.md:182-231`) is unchanged.
+   (`frozen-format-v1.md:182-231`) is unchanged.
 2. **No new persistent file.** The witness keeps *only in-memory* state (§1.2), rebuilt at boot by
    querying peers. There is therefore no new on-disk artifact needing a version story, and no
    `data-directory`-read control that could become the adversary's silent defeat switch (the failure
-   mode the frozen doc explicitly guards against, `frozen-format-v1-2026-07-03.md:475-477`).
+   mode the frozen doc explicitly guards against, `frozen-format-v1.md:475-477`).
 3. **Wire: additive, within the existing raft wire version.** Two new `MessageType` codes
    (`0x12/0x13`) on the raft frame; the frame layout `[len][ver=0x02][type][gid][term][epoch][payload]
    [CRC]` is unchanged, and the **dormant `epoch` field is NOT used** - it stays MBZ / reject-if-nonzero
-   as the freeze specifies (`frozen-format-v1-2026-07-03.md:425-428`, `FrameCodec.java:32-35,168,309`).
+   as the freeze specifies (`frozen-format-v1.md:425-428`, `FrameCodec.java:32-35,168,309`).
    Because the cluster runs a single strict wire version (no rolling-version skew;
    `FrameCodec.java:54-67` is a strict tripwire, not a negotiation), adding a message type introduces
    no mixed-version hazard. Existing raft golden fixtures are for existing types and stay byte-identical
-   (`frozen-format-v1-2026-07-03.md:396` "raft-wire goldens untouched"); the new types get their own new
+   (`frozen-format-v1.md:396` "raft-wire goldens untouched"); the new types get their own new
    goldens. This lands **before** the tag, so the frozen wire includes the witness from day one - it is
    not a post-freeze mutation.
 4. **Consequence.** Had closing R-a' demanded a new anchor field or a new persistent witness store, that
@@ -380,7 +380,7 @@ The witness is **layered on the already-frozen anchor**; it mutates **no** froze
 
 ## §5 SPI mapping + external-store seam
 
-The frozen SPI (`frozen-format-v1-2026-07-03.md:881-886`):
+The frozen SPI (`frozen-format-v1.md:881-886`):
 
 ```java
 interface AnchorWitness { void record(int scopeId, long anchorSeq); long lastSeen(int scopeId); }
@@ -389,17 +389,17 @@ interface AnchorWitness { void record(int scopeId, long anchorSeq); long lastSee
 Realized by the peer-quorum provider **unmodified**:
 
 - **`record(scopeId, anchorSeq)`** - invoked by the anchor writer after each fsync
-  (`frozen-format-v1-2026-07-03.md:884` "the anchor writer calls `record` after each fsync"). The
+  (`frozen-format-v1.md:884` "the anchor writer calls `record` after each fsync"). The
   peer-quorum impl maps this to *"broadcast `RAFT_WITNESS(anchorSeq)` for this scope's group"* (and, in
   strict mode, defer the dependent `voteGranted` until a peer-majority ack). Fire-and-forget; the
   "record" durability substrate is the peers' in-memory `witnessOfPeer` tables, re-established by
   continuous re-announce.
-- **`lastSeen(scopeId)`** - invoked by boot (`frozen-format-v1-2026-07-03.md:884` "boot calls
+- **`lastSeen(scopeId)`** - invoked by boot (`frozen-format-v1.md:884` "boot calls
   `lastSeen`; a `storedSeq < lastSeen => REFUSE`"). The peer-quorum impl maps this to *"issue
   `RAFT_WITNESS(QUERY)`, collect a quorum of replies, return `W = max reported seenOfYou`."* The boot
   gate's `W > bootAnchorSeq => REFUSE` (§1.4) is exactly `storedSeq < lastSeen => REFUSE`.
 - **`scopeId`** - `gid` for per-shard anchors, `NODE_SCOPE` for the node-anchor
-  (`frozen-format-v1-2026-07-03.md:211-214`). The witness is per-scope; the boot QUERY covers every
+  (`frozen-format-v1.md:211-214`). The witness is per-scope; the boot QUERY covers every
   local group.
 
 The vote dimension needs **no SPI extension**: casting a vote is an `anchorSeq`-raising anchor write
@@ -408,7 +408,7 @@ freeze-alignment result - the frozen interface is realized as-is, with no extens
 
 **External-store seam (closes R-a, incl. at N=1).** The same SPI admits a second provider -
 TPM/RPMB NV-counter or a cloud monotonic counter - as the frozen threat model names for residual
-(a)/R-a (`frozen-format-v1-2026-07-03.md:136-137,144-146,881-886`). Such a provider persists
+(a)/R-a (`frozen-format-v1.md:136-137,144-146,881-886`). Such a provider persists
 `anchorSeq` to external monotonic storage on `record` and returns it on `lastSeen`, closing
 anchor-rollback *including on a single node* (which peers cannot witness, §3.2). The two providers
 are interchangeable behind `AnchorWitness`; a deployment may run both (refuse if *either* reports
@@ -432,12 +432,12 @@ drives a second vote), not by analysis - the project standard.
 | Dispatch | `RaftNode.java:591-603` (`handleMessage`) | route the two types to witness handlers (owner thread) |
 | Witness state | `RaftNode.java` fields near `votedFor` (`:52`) | in-memory `witnessOfPeer`, `peerAckOfSelf`, `bootAnchorSeq`, `votingCleared` (per-group) |
 | Announce | `RaftNode.java:1502` (`tickHeartbeat`) + grant branch `:1724-1729` | heartbeat-cadence broadcast; announce-before-`voteGranted` ordering |
-| Boot gate | `RaftNode.java:365-369` (constructor) + a boot-verify step in the group bring-up (`ConfigdServer.buildRaftGroup`, cited `frozen-format-v1-2026-07-03.md:701`) | capture `bootAnchorSeq`, run the QUERY/quorum/REFUSE gate, drive the latch |
+| Boot gate | `RaftNode.java:365-369` (constructor) + a boot-verify step in the group bring-up (`ConfigdServer.buildRaftGroup`, cited `frozen-format-v1.md:701`) | capture `bootAnchorSeq`, run the QUERY/quorum/REFUSE gate, drive the latch |
 | Vote latch | `handleRequestVote` `:1721-1733`, `startElection` `:1909-1915`, `startPreVote` `:1867-1876` | gate grant/start on `votingCleared` |
 | SPI wiring | new `PeerQuorumAnchorWitness implements AnchorWitness` | `record`->broadcast, `lastSeen`->QUERY-quorum; wired where the anchor writer lives |
 
 Config: `-D` knobs only (`RaftWireProtocol.java:65-88` convention) - boot-quorum timeout, strict-mode
-toggle. No data-dir-read control (`frozen-format-v1-2026-07-03.md:475-477`).
+toggle. No data-dir-read control (`frozen-format-v1.md:475-477`).
 
 ### 6.2 Real-attack test list (each PERFORMS the attack)
 
@@ -475,7 +475,7 @@ toggle. No data-dir-read control (`frozen-format-v1-2026-07-03.md:475-477`).
 
 ## Appendix - grounding index (files read for this design)
 
-`frozen-format-v1-2026-07-03.md`: §0 (decisions and residuals), the threat model (§1), the envelope
+`frozen-format-v1.md`: §0 (decisions and residuals), the threat model (§1), the envelope
 and anchor byte layouts (§2.2, §2.4-2.5), the recovery gates and step 2.5 (§2.17), the
 `AnchorWitness` SPI (§A1.7), the completeness matrix rows 4b/14/15/18-22 (§4.3), and residuals R-a/R-a'
 (§0, §4.4). `RaftNode.java` dispatch `:591-603`, vote path

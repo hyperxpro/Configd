@@ -34,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * performs a genuine on-disk anchor rollback (restoring a captured earlier durable image) and reboots,
  * asserting the boot gate refuses so the victim can never cast a second, conflicting vote at the same
  * term. The other cases assert the gate does not brick a healthy node on a legal crash or a legal Raft
- * transition. See {@code docs/design/anchor-witness-peer-quorum-2026-07-04.md} section 6.2.
+ * transition. See {@code docs/architecture/anchor-witness-peer-quorum.md} section 6.2.
  */
 class AnchorWitnessPeerQuorumTest {
 

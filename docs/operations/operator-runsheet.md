@@ -113,7 +113,8 @@ the simplest mode (a single `root` identity); the chain also supports:
 **Verify:** exercise the mode(s) your deployment configures with a positive and a negative probe (a valid
 credential -> `200`; a missing/invalid one -> `401`; an unauthorized-but-authenticated principal -> `403`). For
 OIDC, additionally confirm a token from the **wrong issuer/audience** is rejected. See
-[`../design/group-b/`](../design/group-b/) for the full auth surface design.
+[`../architecture/node-join-gate.md`](../architecture/node-join-gate.md) and
+[`../architecture/upgrade-capability.md`](../architecture/upgrade-capability.md) for the full auth surface design.
 
 ## Gate 2 - mTLS ON (Raft peer + edge fan-out)
 

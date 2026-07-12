@@ -40,7 +40,7 @@ A map of what lives here and where to go.
   owner-thread threading contract).
 - **Understand a decision** — the architecture decision records in [`adr/`](adr/).
 - **Read the design internals** — [`design/`](design/): the at-rest and wire format spec
-  (`frozen-format-v1-2026-07-03.md`), the peer-quorum anchor witness, the node-join and upgrade contracts
+  (`frozen-format-v1.md`), the peer-quorum anchor witness, the node-join and upgrade contracts
   as built, the reference-client architecture, and the wire-frame threat model.
 
 ## Evidence and history

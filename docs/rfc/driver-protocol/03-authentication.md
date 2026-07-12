@@ -146,7 +146,7 @@ against a per-node allow-list (`configd.raft.peerIdentity.allowedNodes`). Token-
 node-claim, a Basic node account) are **dormant, fail-closed forward extensions** — unreachable by construction
 today because no interior frame carries a token (a client credential can therefore **never** confer interior
 standing). **None of this is a driver concern**; the authoritative spec is
-`docs/design/group-b/04-node-join-gate-as-built.md`.
+`docs/architecture/node-join-gate.md`.
 
 ---
 

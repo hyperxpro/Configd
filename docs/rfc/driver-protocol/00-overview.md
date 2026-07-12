@@ -215,7 +215,7 @@ contract has three rules a conforming SDK relies on:
    older driver that fails closed on the unknown `0x04` / code-13 keeps working.
 
 The **whole-system** format contract — including the **internal** Raft (node↔node) and at-rest formats a driver
-never sees — is `docs/design/group-b/07-upgrade-capability-as-built.md` (contract clauses C0–C9). The
+never sees — is `docs/architecture/upgrade-capability.md` (contract clauses C0–C9). The
 **driver-facing** part is rules 1–3 above, plus §06 F4 / F6A / F11 / §13 and §07.
 
 ---

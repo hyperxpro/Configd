@@ -6,7 +6,7 @@ import io.configd.common.NodeId;
  * Peer-quorum anchor-witness gossip. A node announces its per-group {@code anchorSeq} to a peer
  * so that a within-term {@code votedFor} rollback — which lowers {@code anchorSeq} — is witnessed
  * across the cluster. See the design addendum
- * {@code docs/design/anchor-witness-peer-quorum-2026-07-04.md} and {@link AnchorWitness}.
+ * {@code docs/architecture/anchor-witness-peer-quorum.md} and {@link AnchorWitness}.
  *
  * <p>The 29-byte on-wire body is {@code [selfAnchorSeq:8][selfTerm:8][selfVotedFor:4][seenOfYouSeq:8]
  * [flags:1]} (see {@code RaftMessageCodec.encodeWitness}). The {@code sender} is NOT on the wire: like

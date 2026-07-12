@@ -10,8 +10,8 @@
   the HMAC, the CRC32C corruption layer stays. Roots are custodied by a persisted dual-slot **keyring**
   (`NodeKeyring`, non-destructive rotation) with a pluggable KMS SPI (`local` HKDF-from-signing-key, or an
   external Vault Transit provider). This ADR's integrity construction is the seam; the encryption posture and
-  keyring/upgrade contract are recorded in `docs/design/frozen-format-v1-2026-07-03.md` and
-  `docs/design/group-b/07-upgrade-capability-as-built.md`.
+  keyring/upgrade contract are recorded in `docs/architecture/frozen-format-v1.md` and
+  `docs/architecture/upgrade-capability.md`.
 
 ## Problem
 
