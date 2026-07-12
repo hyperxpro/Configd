@@ -169,7 +169,7 @@ Key features of the k8s deployment:
 | Control plane availability | 99.999% | 30d |
 | Edge read availability | 99.9999% | 30d |
 
-Throughput is a capacity figure, not an SLO. Measured: a single Raft group commits about 800 writes/s, a single box plateaus near 1100 writes/s, and a 3-machine cluster reached about 1600 writes/s (near-linear 2.45x); no literal sustained 10,000/s has been run - the 10,000/s figure is a sharded, multi-machine aggregate target, not a single-cluster baseline (see the [measurement archive](../archive/measurement/)).
+Throughput is a capacity figure, not an SLO. Measured: a single Raft group commits about 800 writes/s, a single box plateaus near 1100 writes/s, and a 3-machine cluster reached about 1600 writes/s (near-linear 2.45x); no literal sustained 10,000/s has been run - the 10,000/s figure is a sharded, multi-machine aggregate target, not a single-cluster baseline (see the measurement archive in git history: `docs/archive/measurement/`).
 
 ### Burn-Rate Alerts
 

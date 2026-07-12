@@ -29,5 +29,6 @@ they are. A default-insecure configuration behaving insecurely is expected behav
 vulnerability — see the [operator runsheet](docs/operations/operator-runsheet.md),
 [deployer-must-know](docs/operations/deployer-must-know.md), and
 [known limitations](docs/operations/known-limitations.md) for what the deployment boundary is
-responsible for. Reports of the server failing to enforce a control that *is* enabled, or of a way to
+responsible for. The trust domains and adversary model are documented in the
+[threat model](docs/architecture/threat-model.md). Reports of the server failing to enforce a control that *is* enabled, or of a way to
 bypass one, are in scope and very welcome.

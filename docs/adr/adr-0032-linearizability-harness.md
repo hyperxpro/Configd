@@ -25,7 +25,7 @@ in the test suite.
 > nemesis set now includes `SIGSTOP`/`SIGCONT` pauses, `iptables -m statistic` packet loss, multi-node
 > quorum-breaking partitions, `libfaketime` clock skew, and overlapping fault combinations (a new
 > adversarial schedule), run on N=3 and N=5 across at-rest-encryption / auth / clock-skew / multi-shard
-> postures - every recorded history came back linearizable, with results pinned under
+> postures - every recorded history came back linearizable, with results pinned in git history under
 > `docs/measurement/e1-faulted-linz-2026-07-10/`. The standing CI job (`gates/gate-2.sh` linzgate,
 > `GATE2_FAULTED=1`) now runs the real adversarial matrix (`configd-linz/scripts/run-matrix.sh`) rather
 > than the smoke. Both discrimination seeds needed re-authoring against the evolved code (the

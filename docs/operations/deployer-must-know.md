@@ -220,8 +220,8 @@ if ignored) - what to do.**
   should still monitor the distribution (the balancer is built and end-to-end tested, not yet load-measured at
   scale).
 - **Why it matters.** The proven **2.45x across 3 machines** (near-linear,
-  656->1075->1607 w/s;
-  [`../archive/measurement/ec2-horizontal-2026-07-01/02-scaling-curve.md`](../archive/measurement/ec2-horizontal-2026-07-01/02-scaling-curve.md))
+  656->1075->1607 w/s; git history:
+  `docs/archive/measurement/ec2-horizontal-2026-07-01/02-scaling-curve.md`)
   **requires** exactly one leader per box. That measurement was captured under **manual** placement, before
   the balancer landed -- so treat the balancer as the mechanism that *maintains* the placement the 2.45x needs,
   not as itself proven at that throughput. The drift the balancer corrects:
@@ -237,7 +237,7 @@ if ignored) - what to do.**
   - **Fresh simultaneous boot rarely lands 1-1-1 (~1 in 20):** whichever node is
     ready a beat sooner "sweeps" and wins **all** its groups, biasing to
     `3-0-0`/`2-1-0`
-    ([`../archive/measurement/ec2-horizontal-2026-07-01/05-leadership-placement.md`](../archive/measurement/ec2-horizontal-2026-07-01/05-leadership-placement.md)).
+    (git history: `docs/archive/measurement/ec2-horizontal-2026-07-01/05-leadership-placement.md`).
     The auto-balancer then sheds the sweep back toward balance over the next few cycles.
   - After a failover, leaders can **drift/pile onto one node**, collapsing
     aggregate throughput back toward the **single-box plateau (~1100 w/s)** -- or,
@@ -253,8 +253,8 @@ if ignored) - what to do.**
     throughput does not increase -- the server logs a startup warning when this
     mismatch is detected. The shard count is capped at 16; in practice, roughly ten
     to eleven busy leaders saturate a 16-vCPU box before CPU becomes the bottleneck
-    (see the archived horizontal measurement,
-    [`../archive/measurement/ec2-horizontal-2026-07-01/`](../archive/measurement/ec2-horizontal-2026-07-01/)).
+    (see the archived horizontal measurement in git history,
+    `docs/archive/measurement/ec2-horizontal-2026-07-01/`).
   - **Edge endpoint at N>1 -- `allowPartialShardView` meaning NARROWED.** With `--edge-port`
     at N>1 the server now **boots** and serves **multi-shard client-facing WATCH** across all
     shards. The legacy whole-store `SUBSCRIBE` feed stays **primary-shard-only** at N>1, so it

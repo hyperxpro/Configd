@@ -74,9 +74,10 @@ who is not the author, and at least one reviewer from the on-call rotation
 histogram bucket schedules in `configd-observability/ConfigdMetrics.java` — the buckets are part of the
 SLO surface.
 
-Performance numbers in the docs must be backed by an artifact under `perf/results/` or a measurement run
-under `docs/measurement/`, or carry an explicit "modeled, not measured" note pointing at the model. Do
-not promote a modeled number to "measured" without committing the benchmark or load-test artifact. Any
+Performance numbers in the docs must be backed by a real measurement run — attach the raw artifact to
+the PR or pin it in a commit referenced from the doc (raw dumps are not kept in the working tree) — or
+carry an explicit "modeled, not measured" note pointing at the model. Do
+not promote a modeled number to "measured" without a benchmark or load-test artifact. Any
 wire-format change requires a deprecation cycle of at least two releases; the CI `wire-compat` job
 enforces that fixture changes come with a `FrameCodec.WIRE_VERSION` bump.
 

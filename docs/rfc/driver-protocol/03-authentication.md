@@ -7,8 +7,8 @@ connection lifecycle authentication happens, the **401-vs-403** boundary with au
 language (Rust / Go / Python / Java) authenticates **identically**, regardless of which server-side
 authenticator the deployment runs.
 
-Design rationale is in [`../../archive/design/auth-spi/`](../../archive/design/auth-spi/) (`built-reality.md`,
-`authenticator-spi.md`, `authn-authz-boundary.md`). This section is **normative**; the design docs explain
+Design rationale is recorded in git history under `docs/archive/design/auth-spi/`
+(`built-reality.md`, `authenticator-spi.md`, `authn-authz-boundary.md`; removed from the tree). This section is **normative**; the design docs explain
 *why*. It **composes with**:
 
 - [`01-paths-and-access.md`](01-paths-and-access.md) — the **authorization** model (capabilities, the 403
@@ -35,7 +35,7 @@ The keywords **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**, **S
 
 This section specifies how a driver **presents a credential** and how the server reports the **outcome of
 authentication**. It does **not** specify *which* authenticators a server runs (that is a server-side,
-pluggable deployment choice — [`../../archive/design/auth-spi/authenticator-spi.md`](../../archive/design/auth-spi/authenticator-spi.md)),
+pluggable deployment choice — `docs/archive/design/auth-spi/authenticator-spi.md`),
 nor the **authorization** decision (capabilities, policies, the watch-authz contract — all §1). The
 load-bearing property of this section is **AU2-1**: the driver's contract is **stable regardless of the
 server's authenticator.**
@@ -96,7 +96,7 @@ deployment configures and **MUST NOT** hard-code an assumption about which the s
 
 **AU3-1 (control-plane HTTP API — bearer).** On the control-plane admin HTTP surface, a driver **MUST** present
 a bearer token in the **`Authorization: Bearer <token>`** request header (RFC 6750). The server extracts it
-exactly there ([`built-reality.md`](../../archive/design/auth-spi/built-reality.md) §1.1). A driver **MUST NOT** place
+exactly there (`built-reality.md` §1.1). A driver **MUST NOT** place
 the token in a URL query parameter or log it (AU5-3).
 
 **AU3-2 (binary edge protocol — mTLS at handshake).** On the binary edge (fan-out / watch) protocol, one v1
@@ -105,7 +105,7 @@ verified certificate identity is **authoritative**. In the **mTLS-only posture**
 certificate (`setNeedClientAuth(true)`); when **token/basic auth is also configured** the edge **relaxes to
 `setWantClientAuth(true)`** so a **certificate-less** client can connect and authenticate with an `AUTH` frame
 (AU3-3) — a **presented** certificate is still verified and remains the authoritative identity
-([`built-reality.md`](../../archive/design/auth-spi/built-reality.md) §1.2). Any identity field the driver also
+(`built-reality.md` §1.2). Any identity field the driver also
 places in a frame (e.g. an `edgeId`) is **advisory** and the server **MUST** override it with the certificate
 identity over mTLS. A driver **MUST NOT** rely on a self-asserted identity frame being trusted.
 
@@ -163,7 +163,7 @@ or snapshot frame is exchanged:
   precede the first data byte.
 - **Bearer (HTTP API):** each unary request carries the `Authorization` header; authentication is evaluated
   **before** the operation (`AdminApiHandler.checkAuth` runs first,
-  [`built-reality.md`](../../archive/design/auth-spi/built-reality.md) §2.2).
+  `built-reality.md` §2.2).
 
 **AU4-2 (per-connection vs per-request).** mTLS identity is established **once per connection** (the handshake)
 and is stable for the connection's life. A bearer token on the HTTP API is presented **per request**. A driver
@@ -171,7 +171,7 @@ and is stable for the connection's life. A bearer token on the HTTP API is prese
 
 **AU4-3 (auth-disabled deployments).** A server **MAY** run with authentication **disabled** (a deployment
 choice that prints a loud server-side warning —
-[`built-reality.md`](../../archive/design/auth-spi/built-reality.md) §1.1). A driver **MUST** still be prepared to
+`built-reality.md` §1.1). A driver **MUST** still be prepared to
 present a credential and **MUST** treat a `401` (AU5) as "authentication is required here" even if a prior
 connection to a different deployment did not require one. A driver **MUST NOT** infer "auth is off" and stop
 presenting a credential.
@@ -238,7 +238,7 @@ this section **extends** it with an authentication-specific **"authenticator una
 **AU5-2 (fail-closed — no silent downgrade).** If a server's configured authenticator is **unavailable** (e.g.
 an OIDC issuer/JWKS is unreachable), the server **MUST** reject the request (a `401`- or `503`-class outcome)
 and **MUST NOT** silently fall through to a weaker authenticator or to anonymous access
-([`authenticator-spi.md`](../../archive/design/auth-spi/authenticator-spi.md) §5, RA-1). A driver **SHOULD** treat a
+(`authenticator-spi.md` §5, RA-1). A driver **SHOULD** treat a
 `503`-class auth outcome as **retryable** (the issuer may recover) and a `401` as **(re)authenticate**. This
 retryable signal exists **only on the HTTP plane**: the **edge** streaming taxonomy is frozen at 13 codes, so an
 `AuthResult.Unavailable` there is surfaced as **`AUTH_FAIL`** (§07 E4-2) and the driver recovers a transient
@@ -246,7 +246,7 @@ outage through a **bounded reconnect-with-backoff** rather than a distinct retry
 
 **AU5-3 (never echo the credential).** A `401` response **MUST NOT** echo the presented credential, and a
 driver **MUST NOT** log a credential. The server does not
-([`built-reality.md`](../../archive/design/auth-spi/built-reality.md) §3); a conforming driver matches it.
+(`built-reality.md` §3); a conforming driver matches it.
 
 **AU5-4 (driver reaction — normative).** A driver **MUST** treat **401** as "(re)authenticate — the credential
 is missing/invalid for this server" and **403** as "**permanently forbidden** for this principal — do not
@@ -285,7 +285,7 @@ windows/leeway are **server policy defaults**, informative here; the driver-visi
 
 **AU6-1 (one principal, both planes).** The identity the server derives from the driver's credential — the
 **principal** — is the **same** on the control-plane and edge planes
-([`authn-authz-boundary.md`](../../archive/design/auth-spi/authn-authz-boundary.md), RA-5). A driver authenticating the
+(`authn-authz-boundary.md`, RA-5). A driver authenticating the
 **same** credential on both surfaces is the **same** principal to the authorization engine. A driver **MUST
 NOT** expect a credential to confer different identity on the two planes.
 
@@ -295,7 +295,7 @@ evaluated separately (§1 §5–§6) and MAY still yield `403`. A driver **MUST*
 about the credential; a `403` is about the principal's capabilities.
 
 **AU6-3 (the driver does not see roles/policies).** The server maps the driver's external identity to
-**Configd roles internally** ([`authn-authz-boundary.md`](../../archive/design/auth-spi/authn-authz-boundary.md) §2); a
+**Configd roles internally** (`authn-authz-boundary.md` §2); a
 driver **MUST NOT** assume it can read, set, or influence its roles by anything other than presenting its
 credential. A driver MAY shape requests to its expected capabilities (e.g. not attempt a `full_chain_verify`
 watch without root scope — §1 [A6-3](01-paths-and-access.md#6-the-watch-authorization-contract-normative)) to
@@ -322,7 +322,7 @@ driver **MUST** fail closed if it has not negotiated them rather than assuming t
 session/token** (AU2-3); a **multi-leg mutual-challenge** mechanism beyond the single-shot present-a-credential
 model — **Kerberos/SPNEGO, SCRAM/SASL, RADIUS, WebAuthn, SAML redirect** (these need a back-and-forth the v1
 contract does not define;
-[`../../archive/design/auth-spi/authenticator-spi.md`](../../archive/design/auth-spi/authenticator-spi.md) §3, §10);
+`docs/archive/design/auth-spi/authenticator-spi.md` §3, §10);
 and a **token-bearing interior (node-join) auth frame** (AU3-5 — the cluster interior is mTLS-only today, and a
 token node marker is dormant/fail-closed). New `Principal` attributes/claims the server may attach are
 **additive** — a driver **MUST** ignore attributes it does not recognize (it does not consume them anyway,
@@ -349,7 +349,7 @@ handshake/identity is unacceptable and a terminal `403`-class close if the subsc
 **AU8-3 (the principal is the one §1 authorizes).** The principal this section establishes (AU6-1) is exactly
 the principal §1's evaluation rule (§1 [A5-4](01-paths-and-access.md#53-evaluation-normative--identical-across-drivers-and-server))
 and the watch-authz contract (§1 §6) operate on. The pluggable authenticator does not change §1's evaluation —
-it only supplies the principal ([`authn-authz-boundary.md`](../../archive/design/auth-spi/authn-authz-boundary.md) §3,
+it only supplies the principal (`authn-authz-boundary.md` §3,
 INV-WATCH-READ preserved).
 
 **AU8-4 (scope/transport mapping).** Per §1 [§8](01-paths-and-access.md#8-compatibility-notes): the

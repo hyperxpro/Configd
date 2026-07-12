@@ -353,8 +353,8 @@ the override).
   fault modes (leader-kill under load, WAL-replay restart, wipe + InstallSnapshot), and recovery RTO
   of **4.2 s** (WAL) / **5.9 s** (snapshot). This was on a single-box, three-co-located-node topology;
   cross-machine failover adds network RTT to the gap, but the correctness (no loss, bounded election)
-  is topology-independent. Evidence:
-  [`../archive/measurement/ec2-2026-06-30/`](../archive/measurement/ec2-2026-06-30/).
+  is topology-independent. Evidence (git history):
+  `docs/archive/measurement/ec2-2026-06-30/`.
 - **Full-region loss** requires manual standby cutover (fence-before-promote, fail-closed standby);
   sub-second automatic region failover is deferred (ADR-0031, ADR-0024).
 
@@ -375,8 +375,8 @@ the override).
 ## Measured envelope
 
 All numbers are measured on real hardware across two docs-only EC2 runs against a `main`-identical
-server; the full verdict is
-[`../archive/readiness/v1-go-no-go-2026-07-01.md`](../archive/readiness/v1-go-no-go-2026-07-01.md).
+server; the full verdict is pinned in git history at
+`docs/archive/readiness/v1-go-no-go-2026-07-01.md`.
 
 - **Single-group write knee:** about **800 w/s**, bound by leadership-churn dynamics (not fsync, CPU,
   or disk -- about 20% CPU / 16% NVMe at the knee). Under overdrive, admission control sheds to hold
@@ -421,4 +421,5 @@ Stated scope, not gaps. The full list is in
 - Operate a cluster: [`../operations/`](../operations/) (runsheet, deployer-must-know,
   known-limitations, consistency contract, burn-in contract, runbooks)
 - Driver protocol: [`../rfc/driver-protocol/`](../rfc/driver-protocol/)
-- Evidence and history: [`../archive/`](../archive/)
+- Evidence and history: the measurement runs and the design/decision archive were removed
+  from the tree and live in git history (`docs/archive/`, `docs/measurement/`)

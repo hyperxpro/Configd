@@ -199,7 +199,7 @@ than a number every deployment runs at.
   (carried into [adr-throughput-target](adr-throughput-target.md)).
 - **N~16 rests on a co-location-confounded ~800/s knee.** N is a deploy-time constant, re-derivable once
   a dedicated-host re-measure exists; that re-measure has not been done as a clean, isolated single-host
-  test (a related cross-machine measurement exists - see
+  test (a related cross-machine measurement exists - see git history:
   `docs/archive/measurement/ec2-horizontal-2026-07-01/` - but it changes the network topology at the same
   time, so it does not cleanly isolate the co-location effect). Do not treat 16 as validated throughput
   headroom; treat it as the current hard ceiling.
@@ -240,4 +240,4 @@ this arc), ADR-0030 (centralized root; operational-simplicity axis),
 [adr-multiraft-partitioning](adr-multiraft-partitioning.md) (hash),
 [adr-throughput-target](adr-throughput-target.md) (N derivation),
 `docs/architecture/raft-threading-contract.md` (the owner-executor model as built), the measured ceiling
-(see `docs/measurement/` and `docs/archive/measurement/`).
+(see git history: `docs/measurement/` and `docs/archive/measurement/`).

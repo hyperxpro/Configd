@@ -184,14 +184,11 @@ Until then, the deployment runs **under this contract**.
   monitor-leadership-distribution, cross-identity policy alignment, no-silent-public-bind, write-admission
   default, shard-aware readiness, key-material core-dump/swap controls). The chunked-snapshot and leadership
   items feed directly into sections 2C and 3 of this contract.
-- **Measurement docs (the grounding):**
-  - `docs/archive/measurement/ec2-2026-06-30/04-soak.md` - the leak/OOM/GC/FD/heap/commit-p99 baselines.
-  - `docs/archive/measurement/ec2-2026-06-30/01-nxknee.md` - the ~800 w/s churn knee + election-churn baseline.
-  - `docs/archive/measurement/ec2-2026-06-30/02-dr-drills.md` - durability, 372 ms failover, 0-loss, RTO.
-  - `docs/archive/measurement/ec2-horizontal-2026-07-01/02-scaling-curve.md` + `04-verdict.md` - the 2.45x
-    curve, per-node CPU, leadership requirement.
-  - `docs/archive/measurement/ec2-horizontal-2026-07-01/05-leadership-placement.md` - the leadership-balancing
-    operability gap.
+- **Measurement docs (the grounding; removed from the tree, retrievable from git history):**
+  `docs/archive/measurement/ec2-2026-06-30/` (leak/OOM/GC/FD/heap/commit-p99 soak baselines, the
+  ~800 w/s churn knee, the 372 ms 0-loss DR drills) and
+  `docs/archive/measurement/ec2-horizontal-2026-07-01/` (the 2.45x scaling curve, per-node CPU,
+  and the leadership-balancing operability gap).
 - **Alert rules this contract heightens:** `ops/alerts/configd-slo-alerts.yaml` (+ the
   fires/stays-quiet proof `ops/alerts/configd-slo-alerts.test.yaml`).
 - **Runbook responses:** `ops/runbooks/` (`release.md`, `resource-leak.md`, `raft-saturation.md`,

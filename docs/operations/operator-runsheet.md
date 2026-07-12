@@ -1,9 +1,8 @@
 # Operator Runsheet (secure-by-config release gates)
 
-> DR and soak evidence lives in [`../archive/measurement/`](../archive/measurement/) - the two paid EC2
-> runs, [`ec2-2026-06-30/`](../archive/measurement/ec2-2026-06-30/) (single-box durability plus a 6 h
-> soak) and [`ec2-horizontal-2026-07-01/`](../archive/measurement/ec2-horizontal-2026-07-01/)
-> (multi-machine horizontal scale). The first-30-days operating posture is the
+> DR and soak evidence (two paid EC2 runs: single-box durability plus a 6 h soak, and
+> multi-machine horizontal scale) is pinned in git history under
+> `docs/archive/measurement/`. The first-30-days operating posture is the
 > [burn-in contract](burn-in-contract.md).
 
 **Audience:** the release engineer / SRE who signs off that a cluster is
@@ -137,8 +136,8 @@ OIDC, additionally confirm a token from the **wrong issuer/audience** is rejecte
     `--edge-port` is set, `Edge port    : <port> (mTLS)` (`ConfigdServer.java:1017-1018`).
   - **Behavioral (peer/edge require a client cert):** a dial **without** a trusted
     client cert fails the TLS handshake; a dial **with** the P12 client cert
-    succeeds. See the worked cross-box example in
-    [`../archive/measurement/ec2-horizontal-2026-07-01/03-mtls-bringup.md`](../archive/measurement/ec2-horizontal-2026-07-01/03-mtls-bringup.md)
+    succeeds. See the worked cross-box example in git history at
+    `docs/archive/measurement/ec2-horizontal-2026-07-01/03-mtls-bringup.md`
     (`curl` over mTLS with a P12 client cert -> `200`; startup shows `TLS : enabled`).
   - **Behavioral (API port is HTTPS):** `https://` works, plaintext `http://` to
     the API port fails.
@@ -150,7 +149,7 @@ OIDC, additionally confirm a token from the **wrong issuer/audience** is rejecte
   therefore needs, on **every** node: (1) `/etc/hosts` mapping `cp1/cp2/cp3` -> the
   private IPs; (2) `--peer-addresses 1=cp1:9291,2=cp2:9291,3=cp3:9291` (dial **by
   the SAN name**, never by raw IP); (3) the TLS triple. Full worked example:
-  [`03-mtls-bringup.md`](../archive/measurement/ec2-horizontal-2026-07-01/03-mtls-bringup.md).
+  `03-mtls-bringup.md` (git history).
 - **Failure mode if left OFF:** plaintext Raft consensus and plaintext edge
   fan-out on the wire - any on-path attacker reads/forges config traffic and edge
   deltas. With TLS off, the edge port serves **plaintext** (`Edge port : <port>
@@ -367,11 +366,11 @@ admission).
 ## Cross-references
 
 - [`deployer-must-know.md`](deployer-must-know.md) -- companion list of deployment conditions.
-- [`../archive/measurement/ec2-horizontal-2026-07-01/03-mtls-bringup.md`](../archive/measurement/ec2-horizontal-2026-07-01/03-mtls-bringup.md)
+- `docs/archive/measurement/ec2-horizontal-2026-07-01/03-mtls-bringup.md` (git history)
   -- the worked cross-box mTLS bring-up.
 - [`burn-in-contract.md`](burn-in-contract.md) -- the first-30-days burn-in
   posture (heightened alerting thresholds, rollback triggers, on-call, exit criteria).
 - [`known-limitations.md`](known-limitations.md) -- the snapshot-cap / encoder-drop
   operator signals and the deployment security model.
-- [`../archive/measurement/ec2-2026-06-30/02-dr-drills.md`](../archive/measurement/ec2-2026-06-30/02-dr-drills.md)
-  and [`04-soak.md`](../archive/measurement/ec2-2026-06-30/04-soak.md) -- DR and 6 h soak evidence.
+- `docs/archive/measurement/ec2-2026-06-30/02-dr-drills.md`
+  and `04-soak.md` (git history) -- DR and 6 h soak evidence.

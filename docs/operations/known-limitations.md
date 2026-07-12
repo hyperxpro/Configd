@@ -71,7 +71,7 @@ tighter belt before a multi-shard deployment relies on envelope-level cross-grou
 values: sustained throughput knee 1210 -> 1180 w/s (-2.5%), commit latency p50 7.65 -> 7.77 ms (+1.5%),
 p99 14.6 -> 36.4 ms (+150%). The cost is tail-weighted (per-record AES-GCM plus ciphertext allocation
 roughly doubles p99). This is a single loopback node, so it measures the local encrypt-on-write cost
-only (no cross-node replication fsync in the path) - a floor. See
+only (no cross-node replication fsync in the path) - a floor. See git history:
 `docs/measurement/ec2-drive-to-green-2026-07-02/gate7-final/`.
 
 ## Watches: ordering, topology, and the security model
@@ -191,7 +191,7 @@ byte-identical to a non-sharded build.
 
 **Measured throughput.** The single-group write knee is about 800 writes/s (m6i.4xlarge; bound by
 leadership churn, not CPU or disk). Aggregate throughput across shards scales near-linearly: about
-2.45x on 3 machines (656 -> 1075 -> 1607 committed w/s;
+2.45x on 3 machines (656 -> 1075 -> 1607 committed w/s; git history:
 `docs/archive/measurement/ec2-horizontal-2026-07-01/02-scaling-curve.md`). No literal sustained 10,000
 writes/s has been run - the single-cluster max measured is 1607 w/s, and 10k/s remains a
 sharded-aggregate target (about 535 w/s per leader-machine, cross-machine, implying roughly 17-19
@@ -245,7 +245,7 @@ it, because there is nothing to check it against.
 ## What's measured, and what isn't
 
 **Soak.** The clean-code soak ran a flat 6 hours (file descriptors flat at 350, RSS spread 2.6%, heap
-floor stable, GC overhead 0.92%, zero rejected writes;
+floor stable, GC overhead 0.92%, zero rejected writes; git history:
 `docs/archive/measurement/ec2-2026-06-30/04-soak.md`). A prior attempt at 24 hours ran out of box
 capacity at 3.45 hours - not a Configd leak. No full 24-hour or 72-hour soak has completed yet; the
 first-30-days posture is the [burn-in contract](burn-in-contract.md).
@@ -264,8 +264,8 @@ checker. This matrix found a real bug on pre-fix code: a phantom-absent lineariz
 committed-and-acknowledged key) served by a fresh leader whose ReadIndex omitted the current-term no-op
 gate required by Raft section 6.4. It's fixed (`RaftNode.readIndex()` now gates on
 `noopCommittedInCurrentTerm`; regression test `ReadIndexNoOpBeforeServeTest`), and the full matrix
-re-ran with every history linearizable on the fixed code. Results are pinned under
-`docs/measurement/e1-faulted-linz-2026-07-10/`. Asymmetric or partial (bridge, non-transitive)
+re-ran with every history linearizable on the fixed code. Results are pinned in git
+history under `docs/measurement/e1-faulted-linz-2026-07-10/`. Asymmetric or partial (bridge, non-transitive)
 partitions still need per-pair, source-addressed network cuts, which a single-host loopback substrate
 can't produce - that's a follow-up; the same safety edge is already stressed by the pause, isolation,
 and quorum-breaking combinations above. A soak beyond 72 hours (endurance) is a separate, still-pending
@@ -277,8 +277,8 @@ release-SHA re-run met the contract bound with large margin: at 4 edges / 500 w/
 and p9999 117 ms; at 1 edge / 100 w/s / 30 min, p99 was 13 ms, p9999 212 ms, max 232 ms (the bound is
 p99 < 500 ms, p9999 < 2 s - met with 10-38x margin). A deeper-tail measurement at high multi-edge density
 wants dedicated edge hardware, since single-box co-location occasionally starves an edge JVM; the
-clean per-edge steady-state distribution above is representative and the bound is met. See
-`docs/measurement/ec2-drive-to-green-2026-07-02/gate7-final/`.
+clean per-edge steady-state distribution above is representative and the bound is met. See git
+history: `docs/measurement/ec2-drive-to-green-2026-07-02/gate7-final/`.
 
 **Residuals.** No literal sustained 10,000 writes/s or 100,000-write burst has ever run (single-cluster
 max measured is 1607 w/s). No cross-region or WAN measurement exists - Configd is single-region by

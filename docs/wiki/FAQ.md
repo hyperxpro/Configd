@@ -82,8 +82,8 @@ Measured, not modeled: the single-group write knee is about 800 writes/s (bound 
 not CPU or disk), and aggregate throughput scales near-linearly with shards across machines (about
 2.45× on 3 machines, 656 → 1607 committed w/s). Reads do not hit the cluster at all — they are
 in-process at the edge. Numbers and test setups:
-[known limitations §3](../operations/known-limitations.md#sharding-and-leadership) and
-[`docs/measurement/`](../measurement/).
+[known limitations §3](../operations/known-limitations.md#sharding-and-leadership); the raw
+measurement runs are pinned in git history under `docs/measurement/`.
 
 ## Why Java 25?
 

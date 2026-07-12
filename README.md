@@ -81,7 +81,7 @@ The rest are in [known limitations](docs/operations/known-limitations.md).
 | Deploy or operate a cluster | [`docs/operations/`](docs/operations/) and the runbooks in [`ops/runbooks/`](ops/runbooks/) |
 | Know the honest edges | [Known limitations](docs/operations/known-limitations.md) |
 | Understand a design decision | [`docs/adr/`](docs/adr/) |
-| See the measurement evidence | [`docs/measurement/`](docs/measurement/) and [`docs/archive/`](docs/archive/) |
+| See the measured numbers | The measured envelope in [`docs/architecture/architecture.md`](docs/architecture/architecture.md) (raw runs are pinned in git history) |
 
 A fuller map is in [`docs/README.md`](docs/README.md).
 
@@ -93,7 +93,8 @@ operator-honesty is high, and the build runs the full reactor on every change.
 ## Security
 
 To report a vulnerability, use GitHub's private vulnerability reporting rather than a public issue; see
-[SECURITY.md](SECURITY.md).
+[SECURITY.md](SECURITY.md). The trust and adversary model is documented in
+[`docs/architecture/threat-model.md`](docs/architecture/threat-model.md).
 
 ## License
 
