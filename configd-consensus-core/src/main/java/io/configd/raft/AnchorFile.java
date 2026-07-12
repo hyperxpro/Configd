@@ -19,7 +19,7 @@ import static io.configd.raft.RaftArtifactMagic.ANCHOR_MAGIC;
  * high-water mark ({@code lastDurableIndex}) that lets recovery detect a committed-and-acked entry
  * vanishing (the {@code W < A} refuse).
  *
- * <p><b>File layout (frozen §2.4).</b>
+ * <p><b>File layout (frozen).</b>
  * <pre>
  *   [ container header @ 0, 8 B ]  [ANCHOR_MAGIC:4][fileVersion:u8=1][flags:u8=0][reserved:u16=0]
  *   Slot 0 @ offset 8 ; Slot 1 @ offset 520.   File size = 8 + 2*512 = 1032 B (preallocated).

@@ -1,7 +1,7 @@
 package io.configd.raft;
 
 /**
- * The frozen anti-rollback witness SPI (frozen-format v1 §A1.7). A witness records the strictly
+ * The frozen anti-rollback witness SPI ({@code docs/architecture/frozen-format-v1.md}). A witness records the strictly
  * monotone per-scope {@code anchorSeq} to some substrate that survives a rollback of the local data
  * directory, and reports the highest {@code anchorSeq} that substrate has seen for a scope. Boot
  * compares the locally-recovered {@code anchorSeq} against {@link #lastSeen(int)}: a

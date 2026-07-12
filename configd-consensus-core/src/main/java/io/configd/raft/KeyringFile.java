@@ -14,7 +14,7 @@ import static io.configd.raft.RaftArtifactMagic.KEYRING_MAGIC;
 
 /**
  * The node-level {@code raft-keyring}: a dual-slot, crash-atomic file holding the term-versioned
- * wrapped roots (frozen-format §2.6). It sits in {@code dataDir} beside the node-anchor and topology
+ * wrapped roots (layout frozen in {@code docs/architecture/frozen-format-v1.md}). It sits in {@code dataDir} beside the node-anchor and topology
  * descriptor, one per node, and its body rides an outer HMAC {@link IntegrityEnvelope} under
  * {@code K_keyringMac} (scopeId = {@link IntegrityEnvelope#NODE_SCOPE}).
  *
@@ -31,7 +31,7 @@ import static io.configd.raft.RaftArtifactMagic.KEYRING_MAGIC;
  *   envelopedKeyring = K_keyringMac.wrap(KEYRING_MAGIC, NODE_SCOPE, KEYRING_BODY)  (always algId=1 HMAC)
  * </pre>
  *
- * <p><b>Write protocol (crash-atomic).</b> Identical to §2.4: overwrite the slot holding the LOWER
+ * <p><b>Write protocol (crash-atomic).</b> Identical to the anchor's: overwrite the slot holding the LOWER
  * valid {@code keyringSeq} with the caller's already-bumped {@code keyringSeq}, then {@code fdatasync}.
  * Only one slot is mutated per update, so a torn write damages only the stale slot and the live slot
  * survives. Recovery parses both slots and takes the highest valid {@code keyringSeq}. This is what

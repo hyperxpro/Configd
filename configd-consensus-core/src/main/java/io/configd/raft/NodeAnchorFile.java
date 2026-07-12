@@ -19,7 +19,7 @@ import static io.configd.raft.RaftArtifactMagic.NODE_ANCHOR_MAGIC;
  * the topology descriptor and keyring, one per node, and authenticates under {@code scopeId =}
  * {@link IntegrityEnvelope#NODE_SCOPE} (never a per-shard {@code gid}).
  *
- * <p><b>Same §2.4 mechanics as the per-shard {@link AnchorFile}.</b> It reuses the proven dual-slot
+ * <p><b>Same frozen dual-slot mechanics as the per-shard {@link AnchorFile}.</b> It reuses the proven dual-slot
  * transport ({@link AnchorIO} / {@link FileAnchorIO}) and the frozen slot geometry (this file shares
  * {@code AnchorFile}'s package-private geometry constants so the two can never drift): an 8-byte
  * unauthenticated container header then two 512-byte slots, file size 1032 B, fully preallocated.
@@ -35,7 +35,7 @@ import static io.configd.raft.RaftArtifactMagic.NODE_ANCHOR_MAGIC;
  *   envelopedNodeAnchorRecord = integrity.wrap(NODE_ANCHOR_MAGIC, NODE_SCOPE, NodeAnchorRecord.encodePayload())
  * </pre>
  *
- * <p><b>Write protocol.</b> Identical to §2.4: overwrite the slot holding the LOWER valid
+ * <p><b>Write protocol.</b> Identical to the per-shard anchor's: overwrite the slot holding the LOWER valid
  * {@code nodeAnchorSeq} with {@code seq = maxValid + 1}, then {@code fdatasync}. Only one slot is ever
  * mutated per update, so a torn write damages only the stale slot and the live slot survives one seq
  * behind. Recovery parses both slots and takes the highest valid {@code nodeAnchorSeq}.

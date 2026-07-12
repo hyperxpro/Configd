@@ -276,7 +276,7 @@ public final class RaftLog {
         }
 
         // Anchor recovery: presence gate (FRESH vs REFUSE), snapshot boundary from the authenticated
-        // anchor, the §2.5 term-witness gate, and the head reconciliation (W==A accept / W>A
+        // anchor, the term-witness gate, and the head reconciliation (W==A accept / W>A
         // accept-forward / W<A REFUSE) plus the WAL-head-term check. This sets
         // snapshotIndex/snapshotTerm and may rewrite the anchor forward.
         recoverWithAnchor();
@@ -470,7 +470,7 @@ public final class RaftLog {
     /**
      * The durable-head high-water mark this shard's {@code raft-anchor} records ({@code 0} for a
      * fresh node / the in-memory mode). This is the value the node-anchor's {@code shardAnchorDigest}
-     * fingerprints (§2.5 / A1.6): a shard wiped to FRESH resets it to 0, changing the digest.
+     * fingerprints: a shard wiped to FRESH resets it to 0, changing the digest.
      *
      * <p>Read at boot (single-threaded, after recovery, before the owner thread is bound) or on this
      * group's owner thread (via {@code RaftNode.log()}). It is a plain read of the anchor's in-memory
@@ -870,7 +870,7 @@ public final class RaftLog {
     }
 
     /**
-     * Runs the anchor-backed recovery gates (design §2.17 / §4 A1.4 / §6 §2), after the WAL
+     * Runs the anchor-backed recovery gates, after the WAL
      * structural checks (contiguity / term-monotonicity / hash chain) have already run:
      * <ol>
      *   <li><b>Presence.</b> No anchor + empty shard dir ⇒ FRESH (lay down the bootstrap anchor);
@@ -1040,7 +1040,7 @@ public final class RaftLog {
      * trailing frame). A complete-but-tampered frame fails the envelope's MAC/CRC32C/version/scope
      * check and throws {@link IntegrityException} - recovery refuses rather than replaying forged
      * committed state (torn-vs-tamper rule). Every WAL record MUST be enveloped: the legacy
-     * raw-record fallback is DELETED (design §0.5/§2.8); {@code unwrapOrNull} returns {@code null}
+     * raw-record fallback is DELETED; {@code unwrapOrNull} returns {@code null}
      * only for a present-but-non-enveloped complete frame, which is refused fail-closed here.
      */
     private LogEntry deserializeEntry(byte[] raw) {

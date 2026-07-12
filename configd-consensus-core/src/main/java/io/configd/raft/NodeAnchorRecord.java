@@ -13,9 +13,9 @@ import java.util.TreeMap;
  *
  * <ul>
  *   <li>the topology descriptor's {@code (topologyEpoch, shardCount)} - a bound copy that catches a
- *       topology-descriptor rollback (swap for an older legitimately-MAC'd one; §2.5 / A1.6);</li>
+ *       topology-descriptor rollback (swap for an older legitimately-MAC'd one);</li>
  *   <li>the security audit chain head {@code (auditRecordCount, auditHeadHash)} - anchored on a
- *       periodic cadence so a chain truncated below the anchored head is DETECTED (§A1.6);</li>
+ *       periodic cadence so a chain truncated below the anchored head is DETECTED;</li>
  *   <li>the {@code shardAnchorDigest} - SHA-256 over the sorted {@code (gid, lastDurableIndex)} pairs
  *       of every per-shard {@code raft-anchor}: a shard wiped to index 0 changes the digest, so a
  *       boot cross-check catches it.</li>

@@ -105,7 +105,7 @@ final class NodeAnchorService {
                     new NodeAnchorRecord(1L, topologyEpoch, shardCount, auditCount, auditHead, digestNow);
             nodeAnchor.bootstrap(mint);
             System.out.println("  Node anchor  : minted (epoch=" + topologyEpoch + ", N=" + shardCount
-                    + ", audit=" + auditCount + ", shardDigest bound) [frozen-format §2.5]");
+                    + ", audit=" + auditCount + ", shardDigest bound)");
             return nodeAnchor;
         }
         if (!nodeAnchor.hasValidRecord()) {
@@ -171,7 +171,7 @@ final class NodeAnchorService {
         byte[] fwdAuditHead = (auditLog != null) ? auditHead : na.auditHeadHash();
         nodeAnchor.write(na.withAuditAndDigest(fwdAuditCount, fwdAuditHead, digestNow));
         System.out.println("  Node anchor  : verified + re-anchored forward (epoch=" + topologyEpoch
-                + ", N=" + shardCount + ") [frozen-format §2.5]");
+                + ", N=" + shardCount + ")");
         return nodeAnchor;
     }
 

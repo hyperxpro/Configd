@@ -18,7 +18,7 @@ import java.util.Objects;
 
 /**
  * The public node-keyring facade: load / mint / unseal / rotate the persisted, versioned
- * {@code raft-keyring} (frozen-format §2.6 / §A2). It exists only in the at-rest ENCRYPTION posture
+ * {@code raft-keyring} (layout frozen in {@code docs/architecture/frozen-format-v1.md}). It exists only in the at-rest ENCRYPTION posture
  * (the GCM path); the keyring holds the independent random per-term roots that decouple encryption
  * from the signing key, so rotating either the term or the signing key is non-destructive by
  * construction.

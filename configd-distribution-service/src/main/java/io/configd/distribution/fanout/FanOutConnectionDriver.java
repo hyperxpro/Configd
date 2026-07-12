@@ -906,7 +906,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
     }
 
     /**
-     * The target-driven covered shard set (never cursor-inferred, §2.1). Validates it is a non-empty
+     * The target-driven covered shard set (never cursor-inferred). Validates it is a non-empty
      * ascending subset of the connection's shard set (a boot/wiring invariant - the server's resolver
      * returns {@code shardFor}/{@code shardIds()} over the same {@code allGids}).
      */

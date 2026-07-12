@@ -1404,7 +1404,7 @@ public final class ConfigdServer {
         nodeAnchorExecutor.scheduleAtFixedRate(
                 nodeAnchorRefresh, nodeAnchorPollMs, nodeAnchorPollMs, TimeUnit.MILLISECONDS);
         System.out.println("  Node anchor  : periodic refresh every " + nodeAnchorIntervalMs + "ms or "
-                + nodeAnchorKRecords + " audit records (off the ack path) [frozen-format §A1.6; R-e window]");
+                + nodeAnchorKRecords + " audit records (off the ack path)");
 
         final int[] tickCount = {0};
         // Tracks the highest term observed locally so the elections counter advances by the positive
