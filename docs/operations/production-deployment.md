@@ -38,7 +38,7 @@ java --enable-preview \
 | `--node-id` | Yes | - | Unique integer node ID for this node |
 | `--data-dir` | Yes | - | Path for WAL, snapshots, and state |
 | `--peer-addresses` | Yes | - | Map of node ID to host:port for all cluster members, e.g. `0=host0:9090,1=host1:9090,2=host2:9090` |
-| `--bind-address` | No | `0.0.0.0` | Raft transport bind address |
+| `--bind-address` | No | **`127.0.0.1`** | Raft transport bind address; default is **loopback**, and a non-loopback bind while auth is OFF is refused unless `-Dconfigd.security.allowInsecurePublicBind=true` is set |
 | `--bind-port` | No | `9090` | Raft transport (inter-node) port |
 | `--api-port` | No | `8080` | Control-plane / admin API and health port |
 | `--edge-port` | No | - | Edge fan-out port; enables the edge plane when set |
@@ -48,8 +48,6 @@ java --enable-preview \
 | `--auth-token` | No | - | Bearer token required for write and admin API calls |
 | `--signing-key-file` | No | `<data-dir>/signing-key.bin` | Cluster signing key; must live outside `--data-dir` or the server fails closed (see [adr-0044](../adr/adr-0044-signing-key-management.md)) |
 | `--strong-read-prefixes` | No | `secure/` | Key prefixes served as fail-closed linearizable reads |
-| `--bind-address` | No | **`127.0.0.1`** | Default is **loopback**; a non-loopback bind while auth is OFF is refused (see `--allow-insecure-public-bind`) |
-| `--allow-insecure-public-bind` | No | (unset) | Explicit acknowledgement to bind a non-loopback interface with auth OFF (loudly warned); footgun-fix, not "auth required" |
 
 **Key system properties (`-D...`)** - not CLI flags:
 
@@ -58,6 +56,7 @@ java --enable-preview \
 | `configd.raft.shardCount` | `1` | Number of Raft shard groups (N); N=1 is byte-identical to non-sharded |
 | `configd.raft.autobalance.enabled` | `true` | Decentralized leadership auto-balance loop (N>1); 30s cadence with 25% jitter and a 60s cooldown by default, also tunable under `configd.raft.autobalance.*` (`dryRun`, `intervalMs`, `jitterPct`, `cooldownMs`) |
 | `configd.write.maxInflightProposals` | ON (conservative) | Write-admission bound (429 + Retry-After when exceeded); `0` disables |
+| `configd.security.allowInsecurePublicBind` | `false` | Explicit acknowledgement to bind a non-loopback interface with auth OFF (loudly warned); footgun-fix, not "auth required". There is no CLI flag for this |
 | `configd.replay.enabled` | `false` | Opt-in replay guard (`X-Configd-Timestamp` + `X-Configd-Nonce`) |
 | `configd.raft.encryption.enabled` | `false` | Opt-in at-rest AES-256-GCM (`algId=2`); one-way door |
 | `configd.raft.encryption.kms.provider` | `local` | KMS provider (`local` HKDF-from-signing-key, or `vault-transit`) |

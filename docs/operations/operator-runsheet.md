@@ -40,7 +40,7 @@ the banner.
 | 4 | **Replay protection ON** | `-Dconfigd.replay.enabled=true` (sysprop, **not** a CLI flag) | `Replay guard : ON (window 300000ms, nonce cap 1000000)` . replayed nonce -> **409**, stale/missing -> **401** | **OFF** |
 | 5 | **Signing key NOT co-located** | `--signing-key-file <path outside --data-dir>` | Node **boots** (no `SecurityException`); a co-located key **refuses to start** by default | Fail-closed **ON** |
 | 6 | **Strong reads** | `--strong-read-prefixes secure/,...` (or accept the default) | `Strong reads : [secure/] (fail-closed linearizable, ADR-0030 INV-1)` | **ON** for `secure/` (safe default) |
-| 7 | **No silent public bind** | *(default loopback; `--allow-insecure-public-bind` to opt out)* | non-loopback bind + auth OFF + no override -> **refuses to start** | **ON** (fail-closed footgun-fix) |
+| 7 | **No silent public bind** | *(default loopback; `-Dconfigd.security.allowInsecurePublicBind=true` to opt out)* | non-loopback bind + auth OFF + no override -> **refuses to start** | **ON** (fail-closed footgun-fix) |
 | 8 | **Write admission** | *(tune `-Dconfigd.write.maxInflightProposals=N`)* | sustained flood -> **429 + Retry-After** | **ON** (conservative default) |
 | 9 | **Shard-aware readiness + drain** | *(none)* | lost-quorum shard -> `/health/ready` **NOT-ready**; SIGTERM -> draining first | **ON** (correctness) |
 | -- | **Rate limiting** | *(none -- unconditionally ON)* | `Write rate   : 10000/s (burst 10000)` . sustained flood -> **429** | **ON** (the one control on-by-default) |
@@ -78,7 +78,7 @@ the banner.
   **Every** `PUT`/`DELETE`/admin call and `/metrics` scrape is open to anyone who
   can reach the port. Config can be silently rewritten by any client. **Note:** with auth OFF the default
   bind is **loopback** (`127.0.0.1`); binding a non-loopback interface with auth OFF is **refused** unless
-  `--allow-insecure-public-bind` is set (Gate 7 below).
+  `-Dconfigd.security.allowInsecurePublicBind=true` is set (Gate 7 below).
 
 ## Gate 1b - Authentication modes (No-Auth / Basic / OIDC-Bearer / mTLS)
 
@@ -271,14 +271,14 @@ OIDC, additionally confirm a token from the **wrong issuer/audience** is rejecte
 ## Gate 7 - No silent unauthenticated public bind (default loopback)
 
 - **What to set:** nothing, if you run with auth ON (Gate 1) - bind whatever interface you need. The default
-  bind is **loopback (`127.0.0.1`)**. To bind a **non-loopback** interface with **auth OFF**, you must pass
-  `--allow-insecure-public-bind` (sysprop `configd.security.allowInsecurePublicBind=true`), which logs a loud
-  warning and continues. This is a **footgun-fix, not "auth required by default"** - a deliberate no-auth
-  public deployment stays possible via the flag.
+  bind is **loopback (`127.0.0.1`)**. To bind a **non-loopback** interface with **auth OFF**, you must set
+  the system property `-Dconfigd.security.allowInsecurePublicBind=true` (there is no CLI flag for this),
+  which logs a loud warning and continues. This is a **footgun-fix, not "auth required by default"** - a
+  deliberate no-auth public deployment stays possible via the override.
 - **How to VERIFY:** a non-loopback bind with auth OFF and no override **refuses to start**; with the override
   it starts and prints the insecure-public-bind warning. An auth-ON public bind needs no override.
 - **Failure mode if mis-set:** setting the override in production with auth OFF exposes an unauthenticated
-  store publicly - segregate the port at the network boundary and only use the flag knowingly.
+  store publicly - segregate the port at the network boundary and only use the override knowingly.
 
 ## Gate 8 - Write-admission control (ON by default)
 

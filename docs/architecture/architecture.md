@@ -298,8 +298,9 @@ enables it (each emits a loud startup warning when off). Enabling auth + TLS + a
 production is a documented release gate ([`../operations/operator-runsheet.md`](../operations/operator-runsheet.md),
 [`../operations/deployer-must-know.md`](../operations/deployer-must-know.md)). **The default bind is
 loopback (`127.0.0.1`)**, and binding a non-loopback interface while auth is OFF is **refused** unless the
-operator sets `--allow-insecure-public-bind` (a footgun-fix against silent unauthenticated public exposure --
-not "auth required by default"; a deliberate no-auth public deployment stays possible via the flag).
+operator sets `-Dconfigd.security.allowInsecurePublicBind=true` (a footgun-fix against silent unauthenticated
+public exposure -- not "auth required by default"; a deliberate no-auth public deployment stays possible via
+the override).
 
 - **Transport (mTLS per surface, but the surfaces differ).** The edge fan-out surface uses **mTLS
   with certificate-DN identity**. The Raft/admin control-plane API port is **HTTPS with a bearer

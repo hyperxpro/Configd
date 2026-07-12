@@ -297,8 +297,8 @@ if ignored) - what to do.**
 
 - **Requirement.** The default bind address is now **loopback (`127.0.0.1`)**, not `0.0.0.0`. If you bind a
   **non-loopback** interface while **auth is OFF**, the server **refuses to start** unless you explicitly
-  acknowledge the risk with `--allow-insecure-public-bind` (sysprop
-  `configd.security.allowInsecurePublicBind=true`), which then logs a loud warning and continues.
+  acknowledge the risk with the system property `-Dconfigd.security.allowInsecurePublicBind=true`
+  (there is no CLI flag for this), which then logs a loud warning and continues.
 - **Why it matters.** This closes the Redis/etcd "default-open" footgun class: an unauthenticated store bound
   to a public interface silently accepts writes/admin from anyone who can reach the port. This is a
   **footgun-fix, NOT "auth required by default"** -- Configd remains **secure-by-config**: a deliberate no-auth,
@@ -306,8 +306,8 @@ if ignored) - what to do.**
   encryption remain a workload choice.)
 - **What to do.** For production, set `--auth-token` (or another authenticator) **and** bind the intended
   interface -- auth-on public binds need no override. For a deliberate no-auth public deployment (e.g. a
-  private network segment you trust), pass `--allow-insecure-public-bind` **knowingly** and segregate the port
-  at the network boundary. Leave the flag unset otherwise.
+  private network segment you trust), set `-Dconfigd.security.allowInsecurePublicBind=true` **knowingly** and
+  segregate the port at the network boundary. Leave it unset otherwise.
 
 ## 8. Write-admission control is ON by default
 
@@ -359,7 +359,7 @@ if ignored) - what to do.**
 | 4 | Upgrade all nodes together | Multi-chunk snapshot to an old node = silent state corruption; total snapshot bounded by heap/reassembly cap | No -- deploy-ordering is on you |
 | 5 | Monitor leadership distribution (auto-balancer maintains 1-per-box) | Full sweep the balancer has not yet corrected collapses aggregate to single-box plateau | Partly -- auto-balancer ON by default at N>1; manual transfer route also available |
 | 6 | Keep cert-DN and bearer/OIDC policies consistent | A person read-restricted by token can watch via cert identity | No -- operator must align both policies |
-| 7 | No silent unauthenticated PUBLIC bind (default loopback) | Auth-OFF public bind refuses to start unless `--allow-insecure-public-bind` | Yes -- fail-closed at boot (footgun-fix, not "auth required") |
+| 7 | No silent unauthenticated PUBLIC bind (default loopback) | Auth-OFF public bind refuses to start unless `-Dconfigd.security.allowInsecurePublicBind=true` | Yes -- fail-closed at boot (footgun-fix, not "auth required") |
 | 8 | Write-admission control is ON by default | Write floods bounded with 429 instead of unbounded leader memory | Yes -- `configd.write.maxInflightProposals` on by default |
 | 9 | Readiness is shard-aware + drains on SIGTERM | Group-0-blind readiness lies at N>1; hard close drops in-flight | Yes -- correctness fix |
 | 10 | Protect key material from core dumps/swap | Core dump / swapped page persists raw key bytes | No -- deploy-level (`ulimit -c 0`, swap off) |
