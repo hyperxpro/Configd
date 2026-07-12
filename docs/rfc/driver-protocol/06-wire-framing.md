@@ -22,8 +22,8 @@ the canonical origin of the framing **discipline** — a version byte, a CRC32C-
 type validation, and fail-closed forward-compat — but its *concrete* diagram predates the reserved-epoch
 hardening: the **Raft** frame as implemented is `HEADER_SIZE = 26`, 16 MiB, with Group-Id/Term **and an
 8-byte reserved `epoch` MBZ slot** (§13 here specifies it byte-for-byte against `FrameCodec.java`). The **edge** layout
-(`HEADER_SIZE = 6`, 2 MiB, no group/term) is `EdgeFrameCodec`'s own (the edge codec attributes it to the
-ADR-0037 transport decision). **Take the edge byte layout from F2-1 here and the Raft byte layout from §13
+(`HEADER_SIZE = 6`, 2 MiB, no group/term) is `EdgeFrameCodec`'s own (it predates the ADR-0043 Netty
+migration and is unchanged by it). **Take the edge byte layout from F2-1 here and the Raft byte layout from §13
 here, not from ADR-0029's Raft diagram**; ADR-0028 is the snapshot body. Where this section and a prior RFC (or
 ADR) claim disagree, **the code wins**. This section is **normative**; it **composes with**:
 

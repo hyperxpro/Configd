@@ -67,7 +67,7 @@ moment the cluster shards.** This is the single most important rule in this sect
 **new frame types and one new error code** on the **existing** edge wire format (the `EdgeFrameCodec`
 length-prefixed, CRC32C-checked, version-byte framing — the wire-format-v1 discipline of
 [`adr-0029-wire-format-v1.md`](../../adr/adr-0029-wire-format-v1.md); the concrete edge byte layout is
-[`06-wire-framing.md`](06-wire-framing.md) §F2, the `EdgeFrameCodec` edge transport per ADR-0037). Adding them
+[`06-wire-framing.md`](06-wire-framing.md) §F2, the `EdgeFrameCodec` edge transport). Adding them
 is a wire-format change and **MUST** bump the edge wire version from `0x01` to **`0x02`** (§5.9). The version
 is **pinned by the first frame** of the connection — there is **no** negotiation handshake
 ([`00-overview.md`](00-overview.md) §4, [`06-wire-framing.md`](06-wire-framing.md) §F4; §1

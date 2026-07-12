@@ -52,7 +52,8 @@ Accepted (2026-06-27). Was proposed (under review) at authoring (2026-06-06).
 
 Supersedes the *write-topology* portion of `adr-0015-multi-region-topology.md`
 (the global 5-voter cross-region Raft group + regional groups + closed-timestamp
-follower-read design). Reconciles with - and does not contradict -
+follower-read design; the superseded ADR was removed from the tree - see git history
+for the full text this ADR argues against). Reconciles with - and does not contradict -
 `adr-0023-multi-raft-sharding-deferred.md` and `adr-0024-cross-dc-bridge-deferred.md`,
 which already concede the system is single-Raft / single-DC and that "WAN-stretched Raft
 violates the SLO" (`adr-0024-cross-dc-bridge-deferred.md:23-25`). Aligned with the

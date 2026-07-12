@@ -3,10 +3,10 @@
 - **Status:** Accepted (operator architectural decision). Staged by verification - each surface
   migrates and re-proves its security controls behind its own CI-green gate.
 - **Date:** 2026-06-23
-- **Supersedes:** [ADR-0037](adr-0037-edge-transport-jdk-stack.md) (edge transport reuses the JDK
-  stack, no Netty) - **wholesale**, on the grounds recorded below. Also retires the *intent* of
-  [ADR-0010](adr-0010-netty-grpc-transport.md) ("Netty + gRPC + Spring", long-documented
-  fiction) - note this ADR adopts **idiomatic Netty 4.2 only**: no gRPC, no Spring, no
+- **Supersedes:** ADR-0037 (edge transport reuses the JDK stack, no Netty; removed - see git
+  history) - **wholesale**, on the grounds recorded below. Also retires the *intent* of
+  ADR-0010 ("Netty + gRPC + Spring", long-documented fiction; removed - see git
+  history) - note this ADR adopts **idiomatic Netty 4.2 only**: no gRPC, no Spring, no
   resurrection of ADR-0010's stack.
 - **Evidence:** a head-to-head benchmark that built both stacks and raced them directly,
   independently reproduced.

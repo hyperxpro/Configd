@@ -1358,7 +1358,7 @@ public final class ConfigdServer {
                 fanOutServer.start();
                 bootTeardown.push(startedFanOut::close);
                 System.out.println("  Edge port    : " + fanOutServer.localPort()
-                        + (tlsManager != null ? " (mTLS)" : " (PLAINTEXT)") + " [C1 fan-out, ADR-0037]");
+                        + (tlsManager != null ? " (mTLS)" : " (PLAINTEXT)"));
                 if (shardCount > 1) {
                     System.out.println("  Edge plane   : N>1 multi-shard WATCH supported; legacy whole-store"
                             + " SUBSCRIBE is primary-shard-only"

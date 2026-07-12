@@ -6,7 +6,7 @@ By participating you agree to the [code of conduct](CODE_OF_CONDUCT.md).
 ## Prerequisites
 
 - **JDK 25 (Amazon Corretto recommended).** The reactor pins `maven.compiler.release=25` and runs with
-  `--enable-preview`. See ADR-0022 for the runtime decision (supersedes ADR-0009).
+  `--enable-preview`. See ADR-0022 for the runtime decision.
 - **Maven wrapper:** use the bundled `./mvnw` — do not install Maven globally. The wrapper's
   `distributionSha256Sum` (in `.mvn/wrapper/maven-wrapper.properties`) is the supply-chain pin; never
   override it.
