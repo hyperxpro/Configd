@@ -1,4 +1,0 @@
-N	conc	sustained_rate	committed	non200	retargets	elections	cpu_busy_pct	nvme_util_pct	leader_dist
-4	128	1100	18693	564	21	2	30	9	n1=3,n2=1,n3=0
-4	256	992	16857	670	6	3	22	19	n1=0,n2=0,n3=4
-4	512	733	12460	24288	64	35	17	27	n1=1,n2=3,n3=0
