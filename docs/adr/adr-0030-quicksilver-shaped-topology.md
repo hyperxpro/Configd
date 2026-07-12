@@ -19,11 +19,11 @@ Accepted (2026-06-27). Was proposed (under review) at authoring (2026-06-06).
 >   The default is a single Raft group (N=1, byte-identical to a non-sharded build); an operator turns on
 >   multiple shards for horizontal scale. Aggregate throughput across shards has since been measured and
 >   scales near-linearly across machines (about 2.45x on 3 machines) -
->   see `docs/archive/measurement/ec2-horizontal-2026-07-01/02-scaling-curve.md`.
+>   see git history: `docs/archive/measurement/ec2-horizontal-2026-07-01/02-scaling-curve.md`.
 > - **The async fan-out is now wired (the edge data plane).** The Rejected Alternative 7 / Consequences
 >   residual describing the fan-out as unwired is closed for wiring (`FanOutServer`, the
 >   commit-notification stream, and the edge plane are all built and gated). End-to-end
->   propagation/staleness has since been measured at the scale run to date (see
+>   propagation/staleness has since been measured at the scale run to date (see git history:
 >   `docs/measurement/ec2-drive-to-green-2026-07-02/gate7-final/`); the higher scales this ADR modeled
 >   remain untested - that portion of the residual stands.
 > - **The thread-unsafe `RaftNode`/`ConfigStateMachine` integration race (Rejected Alternative 6 / Risks)
@@ -52,7 +52,8 @@ Accepted (2026-06-27). Was proposed (under review) at authoring (2026-06-06).
 
 Supersedes the *write-topology* portion of `adr-0015-multi-region-topology.md`
 (the global 5-voter cross-region Raft group + regional groups + closed-timestamp
-follower-read design). Reconciles with - and does not contradict -
+follower-read design; the superseded ADR was removed from the tree - see git history
+for the full text this ADR argues against). Reconciles with - and does not contradict -
 `adr-0023-multi-raft-sharding-deferred.md` and `adr-0024-cross-dc-bridge-deferred.md`,
 which already concede the system is single-Raft / single-DC and that "WAN-stretched Raft
 violates the SLO" (`adr-0024-cross-dc-bridge-deferred.md:23-25`). Aligned with the

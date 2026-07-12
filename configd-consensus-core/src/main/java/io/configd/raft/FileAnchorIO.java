@@ -10,9 +10,9 @@ import java.nio.file.StandardOpenOption;
 
 /**
  * The production {@link AnchorIO}: a real {@code raft-anchor} file, written with
- * fixed-offset {@code pwrite} + {@code fdatasync} (the frozen §2.4 protocol). The file lives
+ * fixed-offset {@code pwrite} + {@code fdatasync} (the frozen write protocol). The file lives
  * in the SAME directory as the group's WAL - required so the anchor and the WAL it references
- * share one device / failure domain (§6 §4.4).
+ * share one device / failure domain.
  *
  * <p>{@link #createPreallocated} lays the whole 1032-byte image down at once and
  * {@code force(true)}s it (data) plus a directory fsync (the file's existence), so every later
@@ -40,7 +40,7 @@ final class FileAnchorIO implements AnchorIO {
     /**
      * A slotted anchor file named {@code fileName} in {@code dir}. Same fixed-offset {@code pwrite} +
      * {@code fdatasync} transport as the per-shard anchor; the node-anchor reuses it with a distinct
-     * name ({@code node-anchor}) in {@code dataDir}, so the proven §2.4 mechanics live in one place.
+     * name ({@code node-anchor}) in {@code dataDir}, so the proven dual-slot mechanics live in one place.
      */
     FileAnchorIO(Path dir, String fileName) {
         this.dir = dir;

@@ -56,8 +56,8 @@ via headers and a staleness state machine how far behind you might be.
 - You want a **security-critical key class**: `secure/` keys are never served stale — linearizable or
   fail-closed — for revocations, kill-switches, and legal gates.
 - You value **measured claims over adjectives**: failover, staleness bounds, throughput knees, and a
-  faulted-linearizability matrix are published with their test setups in
-  [`docs/measurement/`](../measurement/), and what is *not* measured is listed in
+  faulted-linearizability matrix are published with their test setups (raw runs pinned in git
+  history under `docs/measurement/`), and what is *not* measured is listed in
   [known limitations](../operations/known-limitations.md).
 - You are on the **JVM**, or content with plain HTTP plus the documented wire protocol.
 

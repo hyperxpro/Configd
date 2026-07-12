@@ -14,5 +14,5 @@
 - [ ] If a latency/throughput/availability target number changed: an independent sign-off is recorded
       in this description.
 - [ ] No metric is referenced from prose without being registered in `ConfigdMetrics`.
-- [ ] Any performance number added to docs is backed by an artifact under `perf/results/` or
-      `docs/measurement/`, or carries an explicit "modeled, not measured" note.
+- [ ] Any performance number added to docs is backed by a measurement artifact attached to the PR or
+      pinned in a referenced commit, or carries an explicit "modeled, not measured" note.

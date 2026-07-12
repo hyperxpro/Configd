@@ -58,7 +58,7 @@ public final class RaftNode {
     // persisted, touches no at-rest byte. Inert until armAnchorWitness() binds it (the production
     // peer wiring); un-armed -- every bare unit test and the N=1 path -- the node grants and starts
     // votes byte-identically. Owner-thread-confined (plain maps).
-    // See docs/design/anchor-witness-peer-quorum-2026-07-04.md.
+    // See docs/architecture/anchor-witness-peer-quorum.md.
     private boolean witnessArmed;
     private boolean witnessStrictVote;
     /** The vote latch: while false (armed, boot gate not yet cleared) the node grants no vote and starts
@@ -442,7 +442,7 @@ public final class RaftNode {
         this.anchorRollbackHandler = Objects.requireNonNull(handler, "handler");
     }
 
-    // Peer-quorum anchor witness. See docs/design/anchor-witness-peer-quorum-2026-07-04.md.
+    // Peer-quorum anchor witness. See docs/architecture/anchor-witness-peer-quorum.md.
 
     /**
      * Arms the peer-quorum anchor witness for this group (production peer wiring / real-cluster tests).

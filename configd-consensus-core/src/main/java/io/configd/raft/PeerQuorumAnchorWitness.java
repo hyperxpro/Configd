@@ -10,7 +10,7 @@ import java.util.function.IntFunction;
  * over the per-group {@link RaftNode}s, which own the actual protocol (the witness wire, tables, boot
  * gate, and vote latch). This class is the thin scope-dispatch façade the anchor-writer/boot seam holds;
  * the {@code scopeToNode} resolver maps a {@code scopeId} to its owning node (the driver's
- * {@code getGroup}). See {@code docs/design/anchor-witness-peer-quorum-2026-07-04.md} §5.
+ * {@code getGroup}). See {@code docs/architecture/anchor-witness-peer-quorum.md}.
  *
  * <p><b>As-built note.</b> The rollback-detection protocol is driven by each node's own tick/vote
  * machinery (heartbeat-cadence re-announce + after-vote announce + boot QUERY), because a witness
@@ -58,7 +58,7 @@ public final class PeerQuorumAnchorWitness implements AnchorWitness {
 
     private RaftNode resolve(int scopeId) {
         if (scopeId == IntegrityEnvelope.NODE_SCOPE) {
-            return null; // node anchor: freshness-only, no vote (§5) - closed by the external-store provider
+            return null; // node anchor: freshness-only, no vote - closed by the external-store provider
         }
         return scopeToNode.apply(scopeId);
     }

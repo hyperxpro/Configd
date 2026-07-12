@@ -1,6 +1,0 @@
-soak harness
-  jar=/mnt/nvme/Configd/configd-server/target/configd-server-0.1.0-SNAPSHOT.jar
-  gc=-XX:+UseZGC heap=-Xmx2g -Xms2g rate=400/s seed=42 sample=30s
-  requested_duration_sec=86400
-  start_utc=2026-06-20T22:16:04Z
-  label=SOAK (real-duration leak/drift run)

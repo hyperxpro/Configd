@@ -8,7 +8,7 @@ Accepted. Supersedes the earlier warn-only signing-key mitigation (the server us
 > optional **external KMS** custody path - the per-node keyring-custody secret can be sealed in a versioned
 > `raft-kms-root` carrier (`KmsSealedRootStore`) via the Vault Transit provider, moving the root of trust
 > off-host so at-rest confidentiality no longer fate-shares with a co-located signing key. The co-location
-> fail-closed rule below is unchanged. See `docs/design/group-b/07-upgrade-capability-as-built.md` §2 and
+> fail-closed rule below is unchanged. See `docs/architecture/upgrade-capability.md` §2 and
 > `docs/operations/deployer-must-know.md` §1.
 
 This ADR changes where the signing key lives and how a co-located key is handled. It does not change the cryptographic primitives; the HMAC/audit-log key constructions are still flagged for specialist cryptographic review before a high-assurance production deployment.

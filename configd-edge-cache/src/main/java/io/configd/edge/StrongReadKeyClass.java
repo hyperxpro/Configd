@@ -20,7 +20,7 @@ import java.util.Set;
  * here are <b>plaintext</b> in memory (integrity-checked via HMAC) and never written to
  * edge-local disk. Do not store secret material (passwords, tokens, keys) under
  * {@code secure/} or any key; use a dedicated secret manager. See
- * {@code docs/known-limitations.md}.
+ * {@code docs/operations/known-limitations.md}.
  *
  * <h2>Why this class exists - one source of truth for the prefix</h2>
  * Both the edge ({@link EdgeConfigClient}'s storage filter, which must ALWAYS store

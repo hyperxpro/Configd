@@ -7,12 +7,13 @@ This section specifies the **address model** (scope + path), the **path syntax a
 enough that a driver in **any** language (Rust / Go / Python / Java) implements path handling and
 authorization **identically**.
 
-Design rationale and prior art are in [`../../archive/design/namespace-model/`](../../archive/design/namespace-model/)
-(`prior-art.md`, `path-model.md`, `access-control.md`). Where this RFC says MUST/SHOULD/MAY, the design
+Design rationale and prior art are recorded in git history under
+`docs/archive/design/namespace-model/` (`prior-art.md`, `path-model.md`, `access-control.md`;
+removed from the tree). Where this RFC says MUST/SHOULD/MAY, the design
 docs explain *why*. This section is **normative**; the design docs are explanatory.
 
 This section is designed to **compose with the watch section** that follows (`02-watches.md`, derived from
-[`../../archive/research/watches/recommendation.md`](../../archive/research/watches/recommendation.md)); the integration
+`docs/archive/research/watches/recommendation.md`); the integration
 points are flagged in [§9](#9-forward-compatibility-and-composition-with-the-watch-section).
 
 ---
@@ -231,7 +232,7 @@ authorized(C)  ⟺  C ∈ allow  AND  C ∉ deny
 
 > This is the Vault model. It is **BUILT** in the server's `AclService` (Wiring Increment 2, `ee27250`),
 > superseding the former longest-match-only evaluation; see
-> [`../../archive/design/namespace-model/access-control.md`](../../archive/design/namespace-model/access-control.md) §4.2.
+> `docs/archive/design/namespace-model/access-control.md` §4.2.
 > Drivers implement A5-4 verbatim; the server enforces the identical rule.
 
 ---

@@ -12,7 +12,7 @@ import java.io.Closeable;
  * <p>Two backends:
  * <ul>
  *   <li>{@link FileAnchorIO} - the production path: a real {@code raft-anchor} file in the
- *       WAL's directory, fixed-offset {@code pwrite} + {@code fdatasync} (the frozen §2.4
+ *       WAL's directory, fixed-offset {@code pwrite} + {@code fdatasync} (the frozen
  *       write protocol). Steady-state writes never allocate (the file is preallocated at
  *       creation), so anchor-ENOSPC is impossible after boot.</li>
  *   <li>{@link StorageAnchorIO} - the durability-test path: the same 1032-byte image carried

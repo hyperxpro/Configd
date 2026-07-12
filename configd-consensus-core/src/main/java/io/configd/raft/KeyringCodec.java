@@ -19,7 +19,8 @@ import java.util.Objects;
 import static io.configd.raft.RaftArtifactMagic.KEYRING_MAGIC;
 
 /**
- * The {@code raft-keyring} body codec + rotation primitives (frozen-format §2.6 / §A2).
+ * The {@code raft-keyring} body codec + rotation primitives (layout frozen in
+ * {@code docs/architecture/frozen-format-v1.md}).
  *
  * <p>Roots are INDEPENDENT random 32-byte secrets (NOT {@code HKDF(signing key)}), wrapped per-term
  * and retained forever; rotation APPENDS a term and never re-encrypts old data. The whole body rides

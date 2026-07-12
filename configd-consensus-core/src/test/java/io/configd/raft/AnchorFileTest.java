@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Unit tests for the dual-slot {@link AnchorFile} writer + codec (the frozen §2.4 mechanism): the
+ * Unit tests for the dual-slot {@link AnchorFile} writer + codec (the frozen anchor mechanism): the
  * one-time preallocation, the write-the-stale-slot protocol, highest-valid-{@code anchorSeq} read,
  * torn/tampered-slot fallback, both-slots-invalid vs FRESH, and the unauthenticated container-header
  * guard. The recovery gates that sit ON TOP of this (W&lt;A / W&gt;A / Step-2.5 / snapshot-join) are in

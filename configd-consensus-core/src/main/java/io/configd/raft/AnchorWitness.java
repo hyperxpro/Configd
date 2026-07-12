@@ -1,7 +1,7 @@
 package io.configd.raft;
 
 /**
- * The frozen anti-rollback witness SPI (frozen-format v1 §A1.7). A witness records the strictly
+ * The frozen anti-rollback witness SPI ({@code docs/architecture/frozen-format-v1.md}). A witness records the strictly
  * monotone per-scope {@code anchorSeq} to some substrate that survives a rollback of the local data
  * directory, and reports the highest {@code anchorSeq} that substrate has seen for a scope. Boot
  * compares the locally-recovered {@code anchorSeq} against {@link #lastSeen(int)}: a
@@ -11,7 +11,7 @@ package io.configd.raft;
  * <p>Because casting a vote is an {@code anchorSeq}-raising anchor write, a within-term
  * {@code votedFor} rollback is an {@code anchorSeq} rollback — so witnessing {@code anchorSeq}
  * monotonicity witnesses the vote, and this scalar SPI needs no {@code votedFor} dimension. See
- * {@code docs/design/anchor-witness-peer-quorum-2026-07-04.md}.
+ * {@code docs/architecture/anchor-witness-peer-quorum.md}.
  *
  * <p>The provider today is {@link PeerQuorumAnchorWitness}: the substrate is the peers' in-memory
  * witness tables, re-established by continuous re-announce. The interface is deliberately provider-

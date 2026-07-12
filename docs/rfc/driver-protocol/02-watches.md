@@ -9,9 +9,9 @@ model, and the **transport**. It is written so a driver in **any** language (Rus
 implements watches **identically** — most critically, **vector-native and per-key-ordered from the first
 draft**.
 
-This section **formalizes** the watch research in
-[`../../archive/research/watches/`](../../archive/research/watches/) (`recommendation.md`,
-`configd-analysis.md`). Where this RFC says MUST/SHOULD/MAY, the research explains *why*. This
+This section **formalizes** the watch research recorded in git history under
+`docs/archive/research/watches/` (`recommendation.md`, `configd-analysis.md`; removed from
+the tree). Where this RFC says MUST/SHOULD/MAY, the research explains *why*. This
 section is **normative**; the research is explanatory.
 
 It **composes with**:
@@ -59,7 +59,7 @@ N = 1** (a one-element vector). A scalar-cursor or global-order assumption is **
 *(Rationale: a single shard happens to have a total order, so a driver written against N = 1 that assumes a
 scalar cursor and global order will compile, pass its tests, and then **silently corrupt its view the
 moment the cluster shards.** This is the single most important rule in this section;
-`../../archive/research/watches/recommendation.md` §12.)*
+`docs/archive/research/watches/recommendation.md` §12.)*
 
 ### 1.3 Versioning and the wire-version bump
 
@@ -67,7 +67,7 @@ moment the cluster shards.** This is the single most important rule in this sect
 **new frame types and one new error code** on the **existing** edge wire format (the `EdgeFrameCodec`
 length-prefixed, CRC32C-checked, version-byte framing — the wire-format-v1 discipline of
 [`adr-0029-wire-format-v1.md`](../../adr/adr-0029-wire-format-v1.md); the concrete edge byte layout is
-[`06-wire-framing.md`](06-wire-framing.md) §F2, the `EdgeFrameCodec` edge transport per ADR-0037). Adding them
+[`06-wire-framing.md`](06-wire-framing.md) §F2, the `EdgeFrameCodec` edge transport). Adding them
 is a wire-format change and **MUST** bump the edge wire version from `0x01` to **`0x02`** (§5.9). The version
 is **pinned by the first frame** of the connection — there is **no** negotiation handshake
 ([`00-overview.md`](00-overview.md) §4, [`06-wire-framing.md`](06-wire-framing.md) §F4; §1
@@ -134,7 +134,7 @@ assume one-shot semantics. *(Rationale: ZooKeeper's one-shot watch "cannot relia
 because of the re-registration gap. ZooKeeper 3.6+ added PERSISTENT / PERSISTENT_RECURSIVE watches that
 remove the re-registration burden but still deliver a **signal-then-reread**, not a resumable event log
 (`prior-art.md` §3). Configd's differentiator is therefore **resumability** — a replayable, cursor-keyed
-history (W2-6) — not merely persistence; `../../archive/research/watches/recommendation.md` §1.)*
+history (W2-6) — not merely persistence; `docs/archive/research/watches/recommendation.md` §1.)*
 
 **W2-6 (resumable with no-miss-in-window).** A watch **MUST** be **resumable** from its cursor vector
 (§3) with a **no-missed-events** guarantee while each component stays within that shard's retained history
@@ -144,7 +144,7 @@ window (W6-3 governs the fallen-behind case). Resumption is by **re-sending the 
 **W2-7 (streaming, not long-poll).** A watch **MUST** be delivered over the **streaming** mTLS edge session
 (§8), server-pushed. A driver **MUST NOT** implement a watch as a polling re-read. *(Rationale: the edge
 plane is already a streaming session; long-poll is a redundant transport that cannot express snapshot
-catch-up and whose index can reset; `../../archive/research/watches/configd-analysis.md` §9,
+catch-up and whose index can reset; `docs/archive/research/watches/configd-analysis.md` §9,
 `prior-art.md` §2. A long-poll/HTTP compatibility gateway is a named v2 extension, W10-7, not the canonical
 watch.)*
 
@@ -938,7 +938,7 @@ connection, every frame `(gid, S)`-tagged, coalesced `WATCH_CREATED` / `WATCH_PR
 per-shard demuxed resume (mixed TAIL / SNAPSHOT_FIRST). The v1 capability is this aggregating endpoint over
 the node's N **local** buffers — every node hosts replicas of all N Raft groups, so the scatter-gather is
 in-process and leadership-independent
-([`configd-analysis.md`](../../archive/research/watches/configd-analysis.md) §4). What remains **v2** is
+(`configd-analysis.md` §4). What remains **v2** is
 only the **disjoint sharded-edge topology** (edges serving shard subsets, the driver merging substreams
 client-side, W4-5 bullet 2) — the **same** wire, only more transport connections. At N = 1 the aggregating
 endpoint is a one-element cursor vector (a single shard even has a total order, so the cross-shard caveats

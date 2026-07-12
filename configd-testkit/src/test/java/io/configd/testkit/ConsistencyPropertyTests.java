@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Property tests verifying the consistency contract invariants defined in
- * {@code docs/consistency-contract.md}.
+ * {@code docs/operations/consistency-contract.md}.
  * <p>
  * Each nested class corresponds to a formal invariant (INV-V1, INV-V2, etc.)
  * and exercises the real Raft consensus, config store, and edge cache

@@ -53,7 +53,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@link #strictMode_voteDeferredUntilPeerMajorityAcks}); it is not the default because deferring
  * voteGranted breaks single-fault leader failover.
  *
- * <p>See {@code docs/design/anchor-witness-peer-quorum-2026-07-04.md}.
+ * <p>See {@code docs/architecture/anchor-witness-peer-quorum.md}.
  */
 class AnchorWitnessRedteamTest {
 

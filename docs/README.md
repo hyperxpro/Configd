@@ -38,26 +38,19 @@ A map of what lives here and where to go.
 - **Understand how it works** — the system overview and load-bearing invariants in
   [`architecture/`](architecture/) (including the multi-shard-watch authorization invariant and the Raft
   owner-thread threading contract).
+- **Read the format internals** — also under [`architecture/`](architecture/): the at-rest/on-disk
+  format spec ([`frozen-format-v1.md`](architecture/frozen-format-v1.md)), the peer-quorum anchor
+  witness, and the node-join and upgrade contracts as built.
+- **Understand the threat model** — [`architecture/threat-model.md`](architecture/threat-model.md):
+  the trust domains and adversary model behind the at-rest and audit-log integrity decisions.
 - **Understand a decision** — the architecture decision records in [`adr/`](adr/).
-- **Read the design internals** — [`design/`](design/): the at-rest and wire format spec
-  (`frozen-format-v1-2026-07-03.md`), the peer-quorum anchor witness, the node-join and upgrade contracts
-  as built, the reference-client architecture, and the wire-frame threat model.
 
 ## Evidence and history
 
-- [`measurement/`](measurement/) — the release-commit measurements: the Jepsen-grade faulted
-  linearizability run that found and fixed a real ReadIndex bug, and the edge-staleness and
-  encryption-overhead numbers.
-- [`archive/`](archive/) preserves the proof and decision trail behind the shipped state, kept out of the
-  way but not deleted:
-  - `archive/measurement/` — the two paid EC2 runs (single-box durability, DR, and the 6-hour soak; and
-    the horizontal-scaling curve).
-  - `archive/investigation/` — the pre-build investigations with measured evidence.
-  - `archive/design/` and `archive/research/` — the design and research decision records behind now-shipped
-    work (at-rest encryption, the KMS and auth SPIs, the namespace and path model).
-  - `archive/readiness/` — the go/no-go review and the audited readiness register.
-  - `archive/security/threat-model.md` — the trust and adversary model behind the at-rest and audit-log
-    integrity decisions.
+Measured claims in these docs (failover, staleness bounds, throughput knees, the faulted
+linearizability matrix) state their numbers inline. The raw measurement runs and the
+design/research decision trail behind them were removed from the working tree and are pinned in
+git history (`docs/measurement/`, `docs/archive/`).
 
 ## What Configd is
 
