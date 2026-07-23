@@ -1,8 +1,10 @@
 # Configd threat model -- security and supply chain
 
 > Signed off 2026-06-14: the §5 honest fence is correct and complete (neither over-claiming coverage
-> nor hiding an in-scope gap -- the three found-but-deferred gaps F-S7-FUZZ-1/TLS-1/TLS-2 are surfaced,
-> not buried).
+> nor hiding an in-scope gap). The three gaps this model originally found and surfaced --
+> inbound read deadline (was F-S7-FUZZ-1), self-signed-leaf expiry/revocation (was F-S7-TLS-1), and
+> the unauthenticated edge `/metrics` scrape (was F-S7-TLS-2) -- are now closed in code; see the §6
+> ledger rows for the negative tests that pin each.
 > **Prime directive:** every control in this model is verified only by a passing negative test that
 > proves the attack fails -- never by reading its configuration.
 > This document scopes *what* is verified and draws the honest fence (§2.5) around what is not.
@@ -122,12 +124,12 @@ written and currently red (pre-fix) or not yet written.
 | B-DISK | Forged `DurableRaftState` (valid-looking `votedFor`) → refused | `DurableRaftStateIntegrityTest#forgedVotedForIsRefused`, `#forgedTermIsRefused` | **VERIFIED** |
 | B-INSTALL | Forged install-snapshot from peer → refused | `SnapshotIntegrityTest#forgedInstalledSnapshotIsRefusedOnRecovery` | **VERIFIED** |
 | B-WIRE | plaintext / no-cert / wrong-CA / wrong-SAN → refused (both planes) | `RaftTransportMtlsAttackTest`, `FanOutServerMtlsAttackTest`, `EdgeTransportSanMismatchTest`, existing `FanOutServerMtlsTest`/`EdgeTransportMtlsTest`/`find0051` | **VERIFIED** |
-| B-WIRE | expired client cert → refused | `RaftTransportMtlsAttackTest#expiredClientCertificateIsRejected`, `FanOutServerMtlsAttackTest#expiredClientCertificateIsRejected` | **VERIFIED (CA-signed model)** -- ⚠ F-S7-TLS-1: the production *self-signed-leaf-as-anchor* model does NOT enforce expiry (RFC 5280 §6.1); → S7.5 manifest |
+| B-WIRE | expired / revoked client cert → refused | `RaftTransportMtlsAttackTest#expiredClientCertificateIsRejected`, `FanOutServerMtlsAttackTest#expiredClientCertificateIsRejected`, `EdgeCertExpiryTest#{jdk,netty}EnforcedCertNotAfterClosesCredentialExpired`, `EdgeCrlRevocationTest#{jdk,netty}StrictRevokedCertRejected` | **VERIFIED** -- the self-signed-leaf-as-anchor gap is closed: admission arms a session-level `notAfter` deadline (`NettyFanOutServer.armCertExpiry`) that closes the connection when the leaf expires mid-session, and a CRL revocation posture (`RevocationChecker`/`CrlFileRevocationChecker`) refuses a revoked leaf at admission |
 | B-WIRE | TLS<1.3 / weak cipher downgrade → refused | `RaftTransportMtlsAttackTest#tlsV12OnlyClientIsRejected...`, `FanOutServerMtlsAttackTest#tlsV12OnlyClientIsRejected...` | **VERIFIED** |
-| B-WIRE | edge `/metrics` plaintext/no-auth exposure | _(finding)_ | ⚠ F-S7-TLS-2 -- documented finding + segmentation recommendation; → S7.5 manifest |
+| B-WIRE | edge `/metrics` unauthenticated scrape → refused | `AbstractEdgeReadServerContract#metricsScrapeTokenGatesUnauthenticatedScrape` (both transports via `EdgeHttpServerTest`/`NettyEdgeHttpServerTest`), `#metricsOpenWhenNoScrapeTokenConfigured` | **VERIFIED** -- `/metrics` is Bearer-gated on a configured scrape token (`configd.edge.metricsScrapeToken`); an unauthenticated scrape is refused |
 | B-RESOURCE | malformed / oversized / truncated / length-lie → bounded reject, no crash/OOM/hang/unbounded-alloc | `FrameCodecFuzzTest`, `EdgeFrameCodecFuzzTest` (23 props, resource oracle); read-loop bounded-alloc proven | **VERIFIED** |
 | B-RESOURCE | ceiling enforced (not just documented) | fuzz tests assert layered caps (config-value 1 MiB / Raft frame 16 MiB) reject-before-alloc | **VERIFIED** -- ⚠ F-S7-FUZZ-2: the "1 MB" framing is actually layered caps; tracked as a follow-up decision |
-| B-RESOURCE | slowloris / connection-flood → bounded resources | `InboundReadDeadlineFuzzTest` (mechanism pinned) | ⚠ **F-S7-FUZZ-1 (HIGH)** -- no inbound read deadline ⇒ FD exhaustion; fix + e2e red/green → S7.5 (D-5) |
+| B-RESOURCE | slowloris / connection-flood → bounded resources | `InboundReadDeadlineFuzzTest` (mechanism pinned), `EdgeFirstFrameDeadlineTest#{jdk,netty}StalledPeerIsReaped` | **VERIFIED** -- every inbound plane bounds an idle connection: the fan-out plane arms a first-frame deadline (`NettyFanOutServer`, `FanOutServer.firstFrameDeadlineMs`) and the HTTP API / edge planes reap idle connections via `IdleStateHandler` (`NettyHttpApiServer`, `NettyEdgeHttpServer`), so a stalled peer cannot hold a file descriptor open indefinitely |
 | B-API | unauthenticated mutating call → 401 | `ConfigHandlerAuthTest` (PUT/DELETE no-token/bad-token/malformed → 401) | **VERIFIED** |
 | B-API | read-scoped credential attempts write → 403 (no HTTP membership endpoint -- Raft/CLI layer) | `ConfigHandlerAuthTest` (reader→PUT/DELETE→403, cross-prefix→403) | **VERIFIED** |
 | B-API | replayed authenticated mutating request → rejected | `ConfigHandlerReplayTest` (verbatim replay→409), `ReplayGuardTest` | **VERIFIED** -- passive-replay only; content-signing → S8 |
