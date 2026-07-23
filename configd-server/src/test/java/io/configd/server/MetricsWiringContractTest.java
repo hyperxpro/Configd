@@ -263,6 +263,48 @@ class MetricsWiringContractTest {
     }
 
     @Test
+    void restoreConformanceMetricsRenderAppliedIndexAndStateHash() {
+        // The restore-conformance check reads two series off /metrics: the applied-index gauge
+        // (published from the tick thread) and the state-machine-hash info gauge (over the primary
+        // group's snapshot payload). Prove both are wired the way ConfigdServer wires them and that the
+        // hash line equals the digest the check compares against the snapshot file.
+        MetricsRegistry registry = new MetricsRegistry();
+        ConfigdMetrics metrics = new ConfigdMetrics(registry, () -> 0L);
+        AtomicLong lastApplied = new AtomicLong(0);
+        metrics.bindRaftLastAppliedGauge(lastApplied::get);
+
+        VersionedConfigStore store = new VersionedConfigStore();
+        ConfigStateMachine sm = new ConfigStateMachine(store, Clock.system(), null, null,
+                new ServerStateMachineMetrics(metrics));
+        metrics.bindStateMachineHashGauge(sm::stateMachineHashHex);
+
+        // First scrape: applied index at its published 0, hash present over the empty store.
+        assertEquals(0.0, seriesValue(scrape(registry), "configd_raft_last_applied_index"));
+
+        sm.apply(1, 1, io.configd.store.CommandCodec.encodePut("k", "v".getBytes(StandardCharsets.UTF_8)));
+        lastApplied.set(7); // the tick thread publishes the raft log index
+
+        String scrape = scrape(registry);
+        assertEquals(7.0, seriesValue(scrape, "configd_raft_last_applied_index"),
+                "the applied-index gauge must reflect the tick-published value");
+
+        Matcher hashLine = Pattern.compile("(?m)^configd_state_machine_hash\\{hash=\"([0-9a-f]{64})\"\\} 1$")
+                .matcher(scrape);
+        assertTrue(hashLine.find(), "the state-machine-hash info gauge must render as a 64-hex label:\n" + scrape);
+        // The rendered digest must be the same value the shell check computes over snapshot()[12:].
+        byte[] payload = java.util.Arrays.copyOfRange(sm.snapshot(), 12, sm.snapshot().length);
+        String expected;
+        try {
+            expected = java.util.HexFormat.of()
+                    .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(payload));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        assertEquals(expected, hashLine.group(1),
+                "the exposed hash must equal sha256(snapshot()[12:])");
+    }
+
+    @Test
     void gaugesAndElectionsCounterAreNotHardwiredToZero() {
         // Proves the raft_pending_apply_entries gauge reads its supplier (NOT the old () -> 0L), and
         // the elections counter + subscription gauge render real values.

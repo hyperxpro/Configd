@@ -453,8 +453,14 @@ public final class ConfigdServer {
         //   - raft_elections is incremented on the tick thread by positive currentTerm() deltas.
         java.util.concurrent.atomic.AtomicLong pendingApplyEntries =
                 new java.util.concurrent.atomic.AtomicLong(0L);
+        // The last-applied Raft index is likewise published from the tick thread (a plain long touched
+        // only there) so the scrape sees a coherent value. Backs configd_raft_last_applied_index, which
+        // the restore-conformance check reads to confirm a restored node replayed the log to the snapshot.
+        java.util.concurrent.atomic.AtomicLong lastAppliedIndex =
+                new java.util.concurrent.atomic.AtomicLong(0L);
         ConfigdMetrics configdMetrics =
                 new ConfigdMetrics(metricsRegistry, pendingApplyEntries::get);
+        configdMetrics.bindRaftLastAppliedGauge(lastAppliedIndex::get);
 
         // The per-group ConfigStateMachine is built in buildRaftGroup, fed THIS configdMetrics
         // via ServerStateMachineMetrics and the shared smInvariantChecker.
@@ -757,6 +763,10 @@ public final class ConfigdServer {
         }
         ConfigStateMachine stateMachine = primaryGroup.stateMachine();
         VersionedConfigStore configStore = primaryGroup.configStore();
+        // Bind the state-machine digest info gauge to the primary group now that its state machine is
+        // resolved. The digest is over the primary group's snapshot payload - the state a restore
+        // bootstraps and the restore-conformance check compares against.
+        configdMetrics.bindStateMachineHashGauge(stateMachine::stateMachineHashHex);
         // gid -> RaftGroupRuntime for the sharded read path (per-shard configStore + scatter-gather
         // getPrefix). Built once, immutable thereafter, captured by the read closures. At N=1 it holds
         // the single primary entry.
@@ -1442,6 +1452,7 @@ public final class ConfigdServer {
                         if (tickNode != null) {
                             io.configd.raft.RaftMetrics view = tickNode.monitorView();
                             pendingApplyEntries.set(Math.max(0L, view.commitIndex() - view.lastApplied()));
+                            lastAppliedIndex.set(view.lastApplied());
                             long term = view.currentTerm();
                             if (term > lastSeenTerm[0]) {
                                 configdMetrics.raftElections().increment(term - lastSeenTerm[0]);

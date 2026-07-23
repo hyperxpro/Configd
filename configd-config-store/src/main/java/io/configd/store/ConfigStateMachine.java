@@ -6,8 +6,11 @@ import io.configd.raft.StateMachine;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -80,8 +83,24 @@ public final class ConfigStateMachine implements StateMachine {
     /**
      * Monotonic epoch counter assigned to each signed delta. Starts at 0 (no delta yet) and
      * increments before each sign call so every successful signature carries a unique epoch.
+     * <p>
+     * {@code volatile} because it is written on the apply/owner thread but also read off-owner by
+     * {@link #stateMachineHashHex()} (the {@code configd_state_machine_hash} scrape path), which folds
+     * it into the hashed snapshot trailer; the volatile read gives that off-owner scrape visibility.
      */
-    private long signingEpoch;
+    private volatile long signingEpoch;
+
+    /**
+     * Memoized state-machine hash, keyed by the exact store snapshot + signing epoch it was computed
+     * over. {@link VersionedConfigStore#snapshot()} returns the same immutable {@link ConfigSnapshot}
+     * instance between writes, so a reference-identity hit means the hashed state is unchanged and the
+     * cached digest is still current - keeping {@link #stateMachineHashHex()} allocation-free on an idle
+     * node (the restore-conformance case) and at most once-per-write under load. {@code volatile}: the
+     * scrape thread publishes and reads it.
+     */
+    private volatile HashCache hashCache;
+
+    private record HashCache(ConfigSnapshot snap, long epoch, String hex) {}
 
     /**
      * 8-byte random nonce bound into the last signed payload, or null if no signed delta has
@@ -404,6 +423,74 @@ public final class ConfigStateMachine implements StateMachine {
 
         metrics.onSnapshotTaken(size);
         return buf.array();
+    }
+
+    /**
+     * Returns a lowercase-hex SHA-256 digest of the snapshot <em>payload region</em> - the bytes
+     * {@link #snapshot()} emits after its 12-byte {@code [8B sequence][4B entry count]} header. By
+     * construction this equals {@code sha256(snapshot()[12:])}, which is exactly the value the
+     * restore-conformance check ({@code ops/scripts/restore-conformance-check.sh}) computes over the
+     * snapshot file's payload - so an operator can compare a restored node's live state against the
+     * snapshot it was bootstrapped from by reading the {@code configd_state_machine_hash} metric.
+     * <p>
+     * The payload layout is reproduced byte-for-byte from {@link #snapshot()} (the per-entry
+     * {@code [4B keyLen][key][4B valLen][value]} records in {@link HamtMap#forEach} order, then the
+     * canonical TLV trailer carrying {@code signingEpoch}). This method and {@link #snapshot()} MUST
+     * stay in lockstep; {@code StateMachineSnapshotHashTest} pins the equivalence so a format change to
+     * one that is not mirrored in the other fails the build rather than silently drifting the digest.
+     * <p>
+     * Unlike {@link #snapshot()} this has no side effects (no {@code onSnapshotTaken}) and is safe to
+     * call off the owner thread: the store snapshot is an immutable, atomically-published view and
+     * {@code signingEpoch} is read {@code volatile}. Under concurrent writes the epoch may momentarily
+     * pair with a one-write-newer store snapshot; the digest is therefore a best-effort point-in-time
+     * value, and exact on a quiescent node (the restore-verification case).
+     */
+    public String stateMachineHashHex() {
+        ConfigSnapshot snap = store.snapshot();
+        long epoch = signingEpoch;
+        HashCache cache = hashCache;
+        if (cache != null && cache.snap() == snap && cache.epoch() == epoch) {
+            return cache.hex();
+        }
+
+        List<byte[]> keys = new ArrayList<>();
+        List<byte[]> values = new ArrayList<>();
+        snap.data().forEach((key, vv) -> {
+            keys.add(key.getBytes(StandardCharsets.UTF_8));
+            values.add(vv.valueUnsafe());
+        });
+
+        // trailer = [4B magic][4B trailerPayloadLen=8][8B signingEpoch]; entries precede it.
+        int size = 4 + 4 + 8;
+        for (int i = 0; i < keys.size(); i++) {
+            size += 4 + keys.get(i).length + 4 + values.get(i).length;
+        }
+        ByteBuffer buf = ByteBuffer.allocate(size);
+        for (int i = 0; i < keys.size(); i++) {
+            byte[] keyBytes = keys.get(i);
+            byte[] valueBytes = values.get(i);
+            buf.putInt(keyBytes.length);
+            buf.put(keyBytes);
+            buf.putInt(valueBytes.length);
+            buf.put(valueBytes);
+        }
+        buf.putInt(SNAPSHOT_TRAILER_MAGIC);
+        buf.putInt(8); // trailerPayloadLen (signingEpoch only) - mirrors snapshot()
+        buf.putLong(epoch);
+
+        String hex = sha256Hex(buf.array());
+        hashCache = new HashCache(snap, epoch, hex);
+        return hex;
+    }
+
+    private static String sha256Hex(byte[] data) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(data));
+        } catch (NoSuchAlgorithmException e) {
+            // SHA-256 is a mandatory JCA algorithm on every conformant JVM; its absence is a broken
+            // runtime, not a recoverable condition.
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
     }
 
     /**
