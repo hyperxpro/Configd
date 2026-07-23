@@ -253,7 +253,7 @@ class AclConfigPolicyLoaderTest {
         acl.grant("", "root", java.util.EnumSet.allOf(AclService.Permission.class)); // static break-glass
         VersionedConfigStore store = new VersionedConfigStore();
         MetricsRegistry reg = new MetricsRegistry();
-        put(store, "_acl/roles/evil", "deny READ,LIST,WRITE,WATCH,ADMIN ");  // empty prefix, so it matches all
+        put(store, "_acl/roles/evil", "deny READ,WRITE,WATCH,ADMIN ");  // empty prefix, so it matches all
         put(store, "_acl/bindings/root", "evil");
         loader(acl, store, reg).rebuild();
 
