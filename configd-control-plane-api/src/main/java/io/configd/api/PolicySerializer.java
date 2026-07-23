@@ -50,8 +50,10 @@ import java.util.Set;
  * String#isBlank() blank} line or a line whose first non-whitespace character is {@code '#'} is ignored.
  * <ul>
  *   <li><b>Role line:</b> {@code <effect> <caps> <prefix>} - {@code effect} in {{@code allow},{@code deny}}
- *       (lowercase, exact); {@code caps} = comma-separated {@link AclService.Permission} names (exact, no
- *       spaces, non-empty); {@code prefix} = the VERBATIM remainder after the space following {@code caps}
+ *       (lowercase, exact); {@code caps} = comma-separated grantable {@link AclService.Permission} names
+ *       (exact, no spaces, non-empty) - the four grantable capabilities {@code READ}/{@code WRITE}/{@code
+ *       WATCH}/{@code ADMIN}; the reserved {@code LIST} value is rejected on either effect (see below);
+ *       {@code prefix} = the VERBATIM remainder after the space following {@code caps}
  *       (so a literal flat-key prefix may contain spaces; it may also be empty, which matches every key).
  *       Each line becomes one {@link PolicyRule} (allow-set xor deny-set populated). The role is
  *       {@code Role(roleName, [Policy(roleName, <its rules>)])}.</li>
@@ -73,6 +75,11 @@ import java.util.Set;
  * This codec is PURE: it has no knowledge of reserved names (the loader applies reservation as a separate
  * validation pass), of the store, or of metrics - so it is unit-testable in isolation. It performs literal
  * {@code key.startsWith(prefix)} matching only; glob / segment-aware matching is deferred.
+ * <p>
+ * <b>Reserved {@code LIST}.</b> {@code LIST} is a reserved, non-grantable capability: a role line whose
+ * {@code caps} contain {@code LIST} - on {@code allow} or {@code deny} - is rejected with {@link
+ * PolicyParseException}, because there is deliberately no list/enumerate operation to gate. The value is
+ * retained in {@link AclService.Permission} only for frozen-ordinal stability. See {@link AclService.Permission}.
  */
 public final class PolicySerializer {
 
@@ -224,13 +231,25 @@ public final class PolicySerializer {
                         "empty capability token in role '" + roleName + "' rule '" + line
                                 + "' (no blank/trailing comma)");
             }
+            AclService.Permission cap;
             try {
-                caps.add(AclService.Permission.valueOf(capName));
+                cap = AclService.Permission.valueOf(capName);
             } catch (IllegalArgumentException e) {
                 throw new PolicyParseException(
                         "unknown capability '" + capName + "' in role '" + roleName + "' rule '" + line
-                                + "' (expected one of READ,LIST,WRITE,WATCH,ADMIN)");
+                                + "' (expected one of READ,WRITE,WATCH,ADMIN)");
             }
+            // LIST is a reserved, non-grantable capability: there is deliberately no list/enumerate
+            // operation for it to gate, so a policy may neither allow nor deny it. The enum value survives
+            // only to keep the frozen ordinal stable (see AclService.Permission). Rejecting the token here -
+            // the single parse chokepoint shared by write-time validateAclWrite and the reload path - keeps
+            // both paths identical, so LIST is uniformly non-grantable and can never split write vs reload.
+            if (cap == AclService.Permission.LIST) {
+                throw new PolicyParseException(
+                        "capability 'LIST' is reserved and not grantable (no list/enumerate operation exists"
+                                + " to gate) in role '" + roleName + "' rule '" + line + "'");
+            }
+            caps.add(cap);
         }
         return caps;
     }

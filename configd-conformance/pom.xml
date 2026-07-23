@@ -92,4 +92,47 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+              Failsafe runs the fuller live edge sweep (EncryptedFilteredSignedEdgeSweepIT) as part of the
+              integration-test/verify phase so it gets a standing signal on every build instead of only in
+              ad-hoc manual sessions. The sweep is self-contained: it boots a single ConfigdServer in-process
+              over loopback with ephemeral ports (empty peer list, so the node self-elects), so it needs no
+              Docker and no external cluster and runs on the ordinary GitHub-hosted runner as part of
+              `mvn install`. The include list
+              is pinned to just this one IT on purpose: the other *IT classes in this module boot a real
+              multi-node cluster (RealClusterFailoverIT) and are left out of the always-on path so a PR is not
+              newly gated on a heavier failover run. verify (not just integration-test) is bound so an IT
+              failure actually fails the build.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>3.5.2</version>
+                <configuration>
+                    <argLine>--enable-preview</argLine>
+                    <includes>
+                        <include>**/EncryptedFilteredSignedEdgeSweepIT.java</include>
+                    </includes>
+                    <systemPropertyVariables>
+                        <!-- Mirror the surefire posture so an IT that boots a server behaves the same as the
+                             unit tests: the sweep keeps its signing key outside the data dir, but the shorter
+                             shutdown drain keeps the suite fast. -->
+                        <configd.security.allowColocatedSigningKey>true</configd.security.allowColocatedSigningKey>
+                        <configd.shutdown.drainQuietMs>0</configd.shutdown.drainQuietMs>
+                    </systemPropertyVariables>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

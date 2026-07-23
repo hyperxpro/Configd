@@ -7,8 +7,9 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Per-key-prefix ACL enforcement.
- * Controls which principals may {@code READ}, {@code LIST}, {@code WRITE}, {@code WATCH}, or
- * {@code ADMIN}ister config under specific key prefixes (see {@link Permission}).
+ * Controls which principals may {@code READ}, {@code WRITE}, {@code WATCH}, or {@code ADMIN}ister
+ * config under specific key prefixes (see {@link Permission}). ({@code LIST} is a reserved,
+ * non-grantable value - see {@link Permission}.)
  * <p>
  * <b>Evaluation model.</b> Authorization is the union of all matching ancestor grants, with
  * absolute deny-precedence and default-deny - the Vault model:
@@ -28,9 +29,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * One refinement: writing the effective set {@code eff = allow - deny}, {@link #isAllowed}
  * decides {@code C in eff} for every capability {@code C} except {@code WATCH}, for which it
  * returns the floored decision {@code WATCH in eff AND READ in eff} - a watch is a streaming
- * read and must never expose what a read could not. {@code LIST} is independent of {@code READ},
- * and {@code ADMIN} is not a super-capability; both fall out of plain per-capability membership
- * with no extra logic.
+ * read and must never expose what a read could not. {@code ADMIN} is not a super-capability; it
+ * falls out of plain per-capability membership with no extra logic. {@code LIST} is <b>reserved
+ * and not grantable via policy</b>: the {@link PolicySerializer} config path rejects a {@code LIST}
+ * capability token, so no operator-authored policy introduces it (see {@link Permission}).
  * <p>
  * <b>Role layer.</b> Beyond a principal's own per-prefix grants, authorization also unions the
  * grants of the principal's roles. A {@link Role} bundles {@link Policy policies}, each a set of
@@ -70,8 +72,10 @@ public final class AclService {
      * Config-operation capabilities:
      * <ul>
      *   <li>{@code READ}  - read the value at a concrete path ({@code get}).</li>
-     *   <li>{@code LIST}  - enumerate the children/descendants of a path ({@code list}); a distinct
-     *       privilege because knowing a key <i>exists</i> can be sensitive even without its value.</li>
+     *   <li>{@code LIST}  - <b>RESERVED, not grantable via policy.</b> {@link PolicySerializer} rejects a
+     *       {@code LIST} capability token, so no policy grants or denies it and nothing in the request path
+     *       enforces it - there is deliberately no list/enumerate operation to gate. Retained only for
+     *       frozen-ordinal stability.</li>
      *   <li>{@code WRITE} - put or delete at a concrete path.</li>
      *   <li>{@code WATCH} - subscribe to a change stream on a path/subtree.</li>
      *   <li>{@code ADMIN} - manage policies/roles for a subtree; reach the reserved {@code _acl/},
@@ -83,9 +87,13 @@ public final class AclService {
      * <p>
      * <b>Capability relationships.</b>
      * <ul>
-     *   <li><b>{@code LIST} is independent of {@code READ}</b>: neither implies the other.
-     *       Holding {@code READ} never confers {@code LIST}, nor vice-versa. This falls out of evaluating
-     *       each capability by exact membership in the effective set - <b>no special code</b>.</li>
+     *   <li><b>{@code LIST} is RESERVED and not grantable via policy</b>: {@link PolicySerializer} rejects a
+     *       {@code LIST} capability token, so no operator-authored {@code _acl/} policy can grant or deny it
+     *       and nothing in the request path enforces it (there is deliberately no list/enumerate operation to
+     *       gate). The evaluation engine still treats the value as ordinary per-capability membership, so the
+     *       low-level {@link #grant}/{@link #deny} primitives could technically carry it - but no policy path
+     *       introduces it. It is retained only to keep this enum's frozen ordinal stable, not as a working
+     *       capability.</li>
      *   <li><b>{@code WATCH} requires {@code READ}</b>: a watch is a streaming read, so it must
      *       <b>never expose what a read could not</b>. {@code WATCH} is its own grantable
      *       capability but is <b>ineffective without {@code READ}</b> over the same target -
@@ -98,10 +106,27 @@ public final class AclService {
      *       descendant.</li>
      * </ul>
      * {@code ADMIN} is deliberately <b>not</b> a super-capability: an {@code ADMIN}-only principal is
-     * authorized for {@code ADMIN} alone, not for {@code READ}/{@code LIST}/{@code WRITE}/{@code WATCH}
+     * authorized for {@code ADMIN} alone, not for {@code READ}/{@code WRITE}/{@code WATCH}
      * (no "{@code ADMIN} implies others" relationship is defined).
      */
-    public enum Permission { READ, LIST, WRITE, WATCH, ADMIN }
+    public enum Permission {
+        /** Read the value at a concrete path ({@code get}). */
+        READ,
+        /**
+         * <b>RESERVED - not grantable via policy.</b> The policy parser ({@link PolicySerializer}) rejects a
+         * {@code LIST} capability token, so no operator-authored {@code _acl/} policy may grant or deny it,
+         * and nothing in the request path enforces it - there is deliberately no list/enumerate operation to
+         * gate. The value is retained solely to keep this enum's frozen ordinal stable (removing it would
+         * renumber {@code WRITE}/{@code WATCH}/{@code ADMIN} and break the frozen format).
+         */
+        LIST,
+        /** Put or delete at a concrete path. */
+        WRITE,
+        /** Subscribe to a change stream on a path/subtree. */
+        WATCH,
+        /** Manage policies/roles for a subtree; reach the reserved {@code _acl/}, {@code _system/} subtrees. */
+        ADMIN
+    }
 
     /**
      * One principal's effective rule at one prefix: the capabilities {@code ALLOW}ed and the

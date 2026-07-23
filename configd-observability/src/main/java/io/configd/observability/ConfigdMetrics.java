@@ -45,6 +45,22 @@ public final class ConfigdMetrics {
     public static final String NAME_EDGE_READ_SECONDS = "configd.edge.read.seconds";
     public static final String NAME_PROPAGATION_DELAY_SECONDS = "configd.propagation.delay.seconds";
     public static final String NAME_RAFT_PENDING_APPLY = "configd.raft.pending.apply.entries";
+    /**
+     * The highest Raft log index this node has applied to its state machine (gauge). Paired with
+     * {@link #NAME_STATE_MACHINE_HASH} to let the restore-conformance check verify a restored node has
+     * replayed the log at least as far as the snapshot it was bootstrapped from and reached the matching
+     * state. Published from the tick thread (a plain long touched only there needs an off-owner snapshot).
+     */
+    public static final String NAME_RAFT_LAST_APPLIED_INDEX = "configd.raft.last.applied.index";
+    /**
+     * The state-machine digest (info gauge), rendered {@code configd_state_machine_hash{hash="<hex>"} 1}.
+     * The {@code <hex>} is a SHA-256 over the snapshot payload region ({@code ConfigStateMachine
+     * .stateMachineHashHex()}), equal to the hash the restore-conformance check computes over the
+     * snapshot file - so a restored node's live state can be byte-compared against its bootstrap snapshot.
+     */
+    public static final String NAME_STATE_MACHINE_HASH = "configd.state.machine.hash";
+    /** Label the {@link #NAME_STATE_MACHINE_HASH} info gauge carries its hex digest in. */
+    public static final String STATE_MACHINE_HASH_LABEL = "hash";
     public static final String NAME_SNAPSHOT_INSTALL_FAILED = "configd.snapshot.install.failed";
     public static final String NAME_SNAPSHOT_REBUILD = "configd.snapshot.rebuild";
     /**
@@ -247,6 +263,26 @@ public final class ConfigdMetrics {
     public void bindRaftPendingApplyGauge(LongSupplier supplier) {
         Objects.requireNonNull(supplier, "supplier must not be null");
         registry.gauge(NAME_RAFT_PENDING_APPLY, supplier);
+    }
+
+    /**
+     * Late-binds the {@link #NAME_RAFT_LAST_APPLIED_INDEX} gauge. As with the pending-apply gauge the
+     * supplier reads a value published from the tick thread (a plain {@code long} touched only there), so
+     * the scrape thread sees a coherent snapshot rather than a torn field.
+     */
+    public void bindRaftLastAppliedGauge(LongSupplier supplier) {
+        Objects.requireNonNull(supplier, "supplier must not be null");
+        registry.gauge(NAME_RAFT_LAST_APPLIED_INDEX, supplier);
+    }
+
+    /**
+     * Late-binds the {@link #NAME_STATE_MACHINE_HASH} info gauge to the state machine's digest supplier
+     * ({@code ConfigStateMachine::stateMachineHashHex}). The supplier is scrape-safe (immutable store
+     * snapshot + volatile epoch) and memoized, so an idle scrape is allocation-free.
+     */
+    public void bindStateMachineHashGauge(java.util.function.Supplier<String> hexSupplier) {
+        Objects.requireNonNull(hexSupplier, "hexSupplier must not be null");
+        registry.infoGauge(NAME_STATE_MACHINE_HASH, STATE_MACHINE_HASH_LABEL, hexSupplier);
     }
 
     /** Late-binds the subscribed-prefix capacity gauge. The supplier is a sampled snapshot

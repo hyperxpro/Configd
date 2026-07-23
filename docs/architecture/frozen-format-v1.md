@@ -2909,3 +2909,17 @@ dispositioned below.
 The topology contradiction (RT-1) is fixed and re-verified; every MINOR/INFO finding is folded into
 the normative text as a frozen invariant. The five hard-attacked axes came back clean - the kernel
 is sound.
+
+---
+
+## Reserved ACL capability: `LIST`
+
+The `_acl/` policy grammar (the operator-facing text grammar above) grants the four capabilities
+`READ`, `WRITE`, `WATCH`, `ADMIN`. `LIST` is a **reserved, non-grantable** capability ordinal: the
+policy parser (`PolicySerializer` - the single source of truth for both the write-time
+`validateAclWrite` gate and the reload path) rejects any role line whose capability list contains a
+`LIST` token, on either an `allow` or a `deny` effect. There is deliberately no list/enumerate wire for
+it to gate. The `LIST` value is retained in `AclService.Permission` only to keep the enum's ordinal
+stable - removing it would renumber `WRITE`/`WATCH`/`ADMIN`. A future list capability, if ever built,
+would ride the frozen-grammar interlock like any other new keyword: an old reader already fail-closes
+on an unrecognized capability token.

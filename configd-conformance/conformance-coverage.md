@@ -8,10 +8,11 @@
 - **Covered** (a `@Tag("clause:…")` conformance case asserts it): 196
 - **Skipped** (explicit, reasoned): 48
   - SKIP:guidance: 2
-  - SKIP:model: 34
-  - SKIP:not-in-v1: 5
+  - SKIP:model: 33
+  - SKIP:not-in-v1: 4
   - SKIP:not-testable-v1: 4
   - SKIP:operator: 3
+  - SKIP:reserved: 2
 
 ## Per-clause breakdown
 
@@ -44,10 +45,10 @@
 | A3-1..A3-3 | both | C | LIVE | COVERED — clientRejectsIllegalPathsBeforeTheWire() |
 | A3-4 | both | C | LIVE | COVERED — ServerObeysPathAliasingTest, clientRejectsNonCanonicalPathsBeforeTheWire(), serverIndependentlyEnforcesKeyCanonicalityDefenseInDepth(), serverNeverAliasesTraversalOrEmptySegmentSpellingsToASensitiveKey() |
 | A3-5 | both | C | LIVE | COVERED — clientRejectsAnOversizePathBeforeTheWire() |
-| A3-6 | both | C | NO | SKIP:not-in-v1 (no (ACL/list/watch-target grammar; v1 has no list wire)) |
+| A3-6 | both | C | NO | SKIP:reserved (LIST is a reserved, non-grantable capability - no list wire by design and the policy parser rejects any grant of it) |
 | A4-1 | both | C | NO | SKIP:not-testable-v1 (no (server-side)) |
 | A4-2 | both | C | LIVE | COVERED — watchOrderingIsPerShardOnlyNeverAssumedCrossShard() |
-| A4-3..A4-6 | HTTP | C | NO | SKIP:model (no (no list wire in v1 — D9-1)) |
+| A4-3..A4-6 | HTTP | C | NO | SKIP:reserved (LIST is a reserved, non-grantable capability - no list wire by design and the policy parser rejects any grant of it) |
 | A4-7 | HTTP | C | LIVE | COVERED — deleteAddressesExactlyOneConcreteKeyWithNoRecursiveSurface() |
 | A5-1 | both | C | NO | SKIP:model (no (authz model)) |
 | A5-2 | both | C | LIVE | COVERED — watchRequiresBothReadAndWatchNotEitherAlone() |

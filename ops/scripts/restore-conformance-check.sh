@@ -34,8 +34,6 @@
 # Exit codes:
 #   0  PASS
 #   1  FAIL
-#
-# Endpoint gaps are tracked inline below as TODO comments.
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
@@ -170,17 +168,14 @@ fi
 # -----------------------------------------------------------------------------
 # Check 2 — applied index matches snapshot lastIncludedIndex.
 #
-# Today the HTTP API server (configd-server/.../HttpApiServer.java) does not
-# expose a Raft status endpoint. The runbook refers to /raft/status which
-# does not exist. Until a real admin surface lands we fall back to the
-# Prometheus exposition on /metrics and parse the applied-index gauge.
-# If neither the gauge nor the endpoint exists, we report FAIL with a
-# pointer to the gap rather than silently passing.
+# The applied index is read from the Prometheus exposition on /metrics
+# (the configd_raft_last_applied_index gauge). A restored node must have
+# replayed the log at least as far as the snapshot's sequence counter.
 # -----------------------------------------------------------------------------
 log "check 2: post-restore applied index"
 METRICS_CODE="$(fetch_status /metrics || true)"
 if [ "$METRICS_CODE" != "200" ]; then
-  emit_fail "cannot read /metrics (HTTP $METRICS_CODE) — TODO PA-XXXX: admin status endpoint missing"
+  emit_fail "cannot read /metrics (HTTP $METRICS_CODE)"
 fi
 
 METRICS_TEXT="$(fetch /metrics || true)"
@@ -188,11 +183,7 @@ APPLIED_INDEX="$(printf '%s\n' "$METRICS_TEXT" \
   | awk '/^configd_raft_last_applied_index([{ ]|$)/ {print $2; exit}')"
 
 if [ -z "$APPLIED_INDEX" ]; then
-  # TODO: ConfigdServer / MetricsRegistry does not currently emit
-  # configd_raft_last_applied_index. Until that gauge ships, the conformance
-  # check cannot verify the post-restore commit index. Document the gap
-  # rather than inventing an endpoint.
-  emit_fail "metric configd_raft_last_applied_index not exposed — TODO PA-XXXX: applied-index gauge missing in MetricsRegistry"
+  emit_fail "metric configd_raft_last_applied_index not present on /metrics"
 fi
 
 # Strip a possible trailing decimal (Prom counters/gauges may print "1.0").
@@ -210,19 +201,17 @@ log "applied index $APPLIED_INDEX_INT >= snapshot lastIncludedIndex $SNAPSHOT_LA
 # -----------------------------------------------------------------------------
 # Check 3 — state-machine hash matches snapshot.
 #
-# As above, no /admin/state-hash endpoint exists today. We look for an
-# optional configd_state_machine_hash metric (a label-encoded hex digest);
-# if absent we report a documented gap rather than silently passing.
+# The live node exposes its state digest as the configd_state_machine_hash info
+# gauge (a label-encoded SHA-256 over the snapshot payload region, computed by
+# ConfigStateMachine.stateMachineHashHex); we byte-compare it against the hash
+# computed above over the snapshot file's payload.
 # -----------------------------------------------------------------------------
 log "check 3: post-restore state-machine hash"
 LIVE_HASH="$(printf '%s\n' "$METRICS_TEXT" \
   | awk -F'"' '/^configd_state_machine_hash\{/ {print $2; exit}')"
 
 if [ -z "$LIVE_HASH" ]; then
-  # TODO: state-machine hash is not exposed by HttpApiServer or by
-  # MetricsRegistry. Until it is, the conformance check cannot byte-compare
-  # the live state against the snapshot.
-  emit_fail "metric configd_state_machine_hash not exposed — TODO PA-XXXX: state-hash surface missing"
+  emit_fail "metric configd_state_machine_hash not present on /metrics"
 fi
 
 if [ "$LIVE_HASH" != "$SNAPSHOT_PAYLOAD_HASH" ]; then

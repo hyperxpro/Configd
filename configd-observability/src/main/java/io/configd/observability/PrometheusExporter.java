@@ -158,6 +158,37 @@ public final class PrometheusExporter {
             }
         });
 
+        // Info gauges: a string value carried in a label, rendered as `name{label="value"} 1`
+        // (the Prometheus convention for exporting a string, e.g. a state digest). One line per
+        // registration - only the current value, so a changing value does not accrete series.
+        for (MetricsRegistry.InfoSample info : registry.infoGaugeSamples()) {
+            String promName = sanitizeName(info.name());
+            sb.append("# TYPE ").append(promName).append(" gauge\n");
+            sb.append(promName).append('{').append(info.labelName()).append("=\"")
+                    .append(escapeLabelValue(info.value())).append("\"} 1\n");
+        }
+
+        return sb.toString();
+    }
+
+    /**
+     * Escapes a Prometheus label value per the text exposition format: backslash, double-quote, and
+     * newline are backslash-escaped. A null value renders as empty.
+     */
+    private static String escapeLabelValue(String value) {
+        if (value == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder(value.length());
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            switch (c) {
+                case '\\' -> sb.append("\\\\");
+                case '"' -> sb.append("\\\"");
+                case '\n' -> sb.append("\\n");
+                default -> sb.append(c);
+            }
+        }
         return sb.toString();
     }
 

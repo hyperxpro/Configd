@@ -41,6 +41,7 @@ public final class MetricsRegistry {
     private final ConcurrentHashMap<String, DefaultCounter> counters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, GaugeRegistration> gauges = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, DefaultHistogram> histograms = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, InfoGaugeRegistration> infoGauges = new ConcurrentHashMap<>();
 
     /**
      * A monotonically increasing counter.
@@ -89,6 +90,49 @@ public final class MetricsRegistry {
         }
         Objects.requireNonNull(supplier, "supplier must not be null");
         gauges.put(name, new GaugeRegistration(supplier));
+    }
+
+    /**
+     * Registers an <em>info gauge</em> - a metric whose payload is a single string carried in a label,
+     * rendered by {@link PrometheusExporter} as {@code name{labelName="value"} 1} (the Prometheus
+     * convention for exporting a string value, e.g. a build sha or a state digest). The supplier is
+     * called at scrape time; only the CURRENT value is ever emitted (the registration is keyed by
+     * {@code name} and replaced on re-registration), so a value that changes over time yields one series,
+     * not a new series per distinct value - no label cardinality growth.
+     *
+     * @param name          the metric name (non-null, non-blank)
+     * @param labelName     the label the string value is carried in (non-null, non-blank)
+     * @param valueSupplier supplies the current string value at scrape time (non-null); must be
+     *                      thread-safe and should not block
+     */
+    public void infoGauge(String name, String labelName, java.util.function.Supplier<String> valueSupplier) {
+        Objects.requireNonNull(name, "name must not be null");
+        if (name.isBlank()) {
+            throw new IllegalArgumentException("name must not be blank");
+        }
+        Objects.requireNonNull(labelName, "labelName must not be null");
+        if (labelName.isBlank()) {
+            throw new IllegalArgumentException("labelName must not be blank");
+        }
+        Objects.requireNonNull(valueSupplier, "valueSupplier must not be null");
+        infoGauges.put(name, new InfoGaugeRegistration(labelName, valueSupplier));
+    }
+
+    /**
+     * One info-gauge sample: the metric name, its label key, and the current string value. Returned by
+     * {@link #infoGaugeSamples()} for the exporter to render.
+     */
+    public record InfoSample(String name, String labelName, String value) {}
+
+    /**
+     * Reads the current value of every registered info gauge (calls each supplier once). Used by
+     * {@link PrometheusExporter}; separate from {@link #snapshot()} because an info gauge's payload is a
+     * string, not the {@code long} that {@link MetricValue} carries.
+     */
+    public java.util.List<InfoSample> infoGaugeSamples() {
+        var out = new java.util.ArrayList<InfoSample>(infoGauges.size());
+        infoGauges.forEach((name, reg) -> out.add(new InfoSample(name, reg.labelName(), reg.supplier().get())));
+        return out;
     }
 
     /**
@@ -231,6 +275,13 @@ public final class MetricsRegistry {
 
     private record GaugeRegistration(LongSupplier supplier) {
         GaugeRegistration {
+            Objects.requireNonNull(supplier, "supplier must not be null");
+        }
+    }
+
+    private record InfoGaugeRegistration(String labelName, java.util.function.Supplier<String> supplier) {
+        InfoGaugeRegistration {
+            Objects.requireNonNull(labelName, "labelName must not be null");
             Objects.requireNonNull(supplier, "supplier must not be null");
         }
     }
