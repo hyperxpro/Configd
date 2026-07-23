@@ -9,7 +9,6 @@ import java.util.Map;
 import java.util.Set;
 
 import static io.configd.api.AclService.Permission.ADMIN;
-import static io.configd.api.AclService.Permission.LIST;
 import static io.configd.api.AclService.Permission.READ;
 import static io.configd.api.AclService.Permission.WATCH;
 import static io.configd.api.AclService.Permission.WRITE;
@@ -51,10 +50,10 @@ class PolicySerializerTest {
 
     @Test
     void singleAllowRule() {
-        ConfigPolicy p = PolicySerializer.parse(subtree("_acl/roles/reader", "allow READ,LIST app."));
+        ConfigPolicy p = PolicySerializer.parse(subtree("_acl/roles/reader", "allow READ,WRITE app."));
         PolicyRule r = onlyRule(p, "reader");
         assertEquals("app.", r.prefix());
-        assertEquals(Set.of(READ, LIST), r.allow());
+        assertEquals(Set.of(READ, WRITE), r.allow());
         assertEquals(Set.of(), r.deny());
     }
 
@@ -95,9 +94,30 @@ class PolicySerializerTest {
     }
 
     @Test
-    void allFiveCapabilitiesParse() {
-        ConfigPolicy p = PolicySerializer.parse(subtree("_acl/roles/r", "allow READ,LIST,WRITE,WATCH,ADMIN x."));
-        assertEquals(Set.of(READ, LIST, WRITE, WATCH, ADMIN), onlyRule(p, "r").allow());
+    void allGrantableCapabilitiesParse() {
+        ConfigPolicy p = PolicySerializer.parse(subtree("_acl/roles/r", "allow READ,WRITE,WATCH,ADMIN x."));
+        assertEquals(Set.of(READ, WRITE, WATCH, ADMIN), onlyRule(p, "r").allow());
+    }
+
+    @Test
+    void listCapabilityIsReservedAndRejectedOnAllowAndDeny() {
+        // LIST is a reserved, non-grantable capability: no list/enumerate operation exists to gate, so the
+        // parser (the single source of truth for both write-time validation and the reload path) rejects it
+        // on either effect. The grantable four still parse.
+        PolicyParseException onAllow = assertThrows(PolicyParseException.class,
+                () -> PolicySerializer.parse(subtree("_acl/roles/r", "allow READ,LIST app.")));
+        assertTrue(onAllow.getMessage().contains("LIST") && onAllow.getMessage().contains("reserved"),
+                "message must name LIST and say it is reserved: " + onAllow.getMessage());
+
+        assertThrows(PolicyParseException.class,
+                () -> PolicySerializer.parse(subtree("_acl/roles/r", "deny LIST app.")));
+        assertThrows(PolicyParseException.class,   // LIST anywhere in the list is rejected
+                () -> PolicySerializer.parse(subtree("_acl/roles/r", "allow READ,WRITE,WATCH,ADMIN,LIST app.")));
+
+        // The four grantable capabilities are unaffected.
+        assertEquals(Set.of(READ, WRITE, WATCH, ADMIN),
+                onlyRule(PolicySerializer.parse(subtree("_acl/roles/r", "allow READ,WRITE,WATCH,ADMIN app.")), "r")
+                        .allow());
     }
 
     @Test
