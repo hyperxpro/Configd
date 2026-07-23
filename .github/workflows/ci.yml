@@ -62,7 +62,10 @@ jobs:
         if: always()
         with:
           name: test-reports
-          path: '**/target/surefire-reports/*.xml'
+          # failsafe-reports too: the conformance edge sweep runs under failsafe.
+          path: |
+            **/target/surefire-reports/*.xml
+            **/target/failsafe-reports/*.xml
           retention-days: 7
 
   tlc-model-check:
@@ -405,6 +408,51 @@ jobs:
           name: linearizability-under-fault-logs
           path: ${{ runner.temp }}/linz-fault-logs
           retention-days: 14
+
+  container-integration:
+    # Real-Vault / real-Keycloak container integration tests. These boot actual
+    # HashiCorp Vault and Keycloak containers via Testcontainers, so they are
+    # guarded on -Dconfigd.it.containers=true and skip themselves in the normal
+    # reactor (no gate or per-PR job sets that property). This job is the only
+    # place that sets it, so it is where they get a standing signal. Named
+    # explicitly with -Dtest because they are *IT classes surefire does not pick
+    # up by name pattern; failIfNoSpecifiedTests=false lets the same selector run
+    # across the three modules without failing where a given IT is absent.
+    #
+    # ubuntu-latest runners ship a working Docker daemon, which Testcontainers
+    # uses to pull and run the images. Scheduled/manual only and excluded from
+    # ci-success, so a slow image pull or registry hiccup can never block a PR.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.3.1
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4.8.0
+        with:
+          java-version: '25'
+          distribution: 'corretto'
+          cache: maven
+
+      - name: Build everything (skip tests; the IT step runs the container tests)
+        run: mvn install -DskipTests --no-transfer-progress
+
+      - name: Run real-Vault + real-Keycloak container integration tests
+        run: |
+          mvn test --no-transfer-progress \
+            -pl configd-kms-vault,configd-authn-oidc,configd-server \
+            -Dtest='VaultTransitKmsIT,KeycloakOidcIT,EncryptedClusterVaultKmsIT' \
+            -Dconfigd.it.containers=true \
+            -Dsurefire.failIfNoSpecifiedTests=false
+        timeout-minutes: 45
+
+      - name: Upload container-integration logs
+        uses: actions/upload-artifact@v4.6.2
+        if: always()
+        with:
+          name: container-integration-logs
+          path: '**/target/surefire-reports/*.xml'
+          retention-days: 7
 
   ci-success:
     # Required-check seal: depends on every PR-gating job and fails unless all
