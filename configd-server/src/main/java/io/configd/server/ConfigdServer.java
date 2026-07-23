@@ -396,13 +396,18 @@ public final class ConfigdServer {
         // at-rest key but DOMAIN-SEPARATED by a distinct HKDF info string so the two derived keys are
         // independent.
         javax.crypto.SecretKey auditLogKey;
+        // Captured from the envelope build below: the online keyring-rotation capability that backs the
+        // ADMIN-gated POST /v1/admin/keyring/rotate endpoint. Non-null in this signing-key deployment (the
+        // at-rest keyring is always built); a null rotator would simply leave that endpoint unrouted.
+        final KeyringRotator[] rotatorHolder = { null };
         try {
             Path keyFile = config.signingKeyFile() != null
                     ? config.signingKeyFile()
                     : dataDir.resolve("signing-key.bin");
             SigningKeyStore keyStore = SigningKeyStore.loadOrCreate(keyFile);
             configSigner = new ConfigSigner(keyStore.keyPair());
-            raftIntegrity = deriveRaftIntegrityEnvelope(keyStore, keyFile, dataDir, cfg);
+            raftIntegrity = deriveRaftIntegrityEnvelope(keyStore, keyFile, dataDir, cfg,
+                    r -> rotatorHolder[0] = r);
             auditLogKey = deriveAuditLogKey(keyStore);
         } catch (SecurityException se) {
             // Fail-closed: surface the co-location refusal with its clear, actionable
@@ -1201,6 +1206,12 @@ public final class ConfigdServer {
         // through the built AdminService guard. Gives operators a remedy for post-failover leadership drift
         // (otherwise the sharded aggregate collapses toward the single-group plateau with no lever).
         DriverLeadershipAdmin leadershipAdmin = new DriverLeadershipAdmin(driver);
+        // The ADMIN-gated Raft cluster endpoints (GET /v1/admin/raft/status, POST /v1/admin/raft/add-server).
+        // Backed by the same driver: owner-confined voter reads and joint-consensus add-server proposals.
+        DriverRaftClusterAdmin raftClusterAdmin = new DriverRaftClusterAdmin(driver);
+        // The online keyring term-rotation trigger (POST /v1/admin/keyring/rotate), captured from the at-rest
+        // envelope build above. Wired only when present (the at-rest keyring posture); otherwise unrouted.
+        KeyringRotator keyringRotator = rotatorHolder[0];
 
         // Decentralized leadership auto-balance loop (one per node). It sheds - never pulls - at most one
         // led group per cadence to an under-loaded peer, so post-failover leader drift no longer collapses
@@ -1251,7 +1262,7 @@ public final class ConfigdServer {
                         io.configd.raft.RaftNode owner = driver.getGroup(shardMap.shardFor(scope, key));
                         return owner != null ? owner.leaderId() : null;
                     },
-                    auditLog, replayGuard, leadershipAdmin, authChain);
+                    auditLog, replayGuard, leadershipAdmin, authChain, raftClusterAdmin, keyringRotator);
             httpApiServer.start();
         } catch (Exception e) {
             throw new RuntimeException("Failed to start HTTP API server on port " + config.apiPort(), e);
@@ -1630,8 +1641,30 @@ public final class ConfigdServer {
         return deriveRaftIntegrityEnvelope(keyStore, keyFile, dataDir, ConfigSource.system());
     }
 
+    /** As the three-argument overload (ambient config), plus a {@link KeyringRotator} sink. */
+    static io.configd.common.IntegrityEnvelope deriveRaftIntegrityEnvelope(
+            SigningKeyStore keyStore, Path keyFile, Path dataDir,
+            java.util.function.Consumer<KeyringRotator> rotatorSink) {
+        return deriveRaftIntegrityEnvelope(keyStore, keyFile, dataDir, ConfigSource.system(), rotatorSink);
+    }
+
     static io.configd.common.IntegrityEnvelope deriveRaftIntegrityEnvelope(
             SigningKeyStore keyStore, Path keyFile, Path dataDir, ConfigSource cfg) {
+        // No rotator sink: existing callers (and every test) get byte-identical behaviour; the rotation
+        // capability is only captured by the start() path that wires the admin endpoint.
+        return deriveRaftIntegrityEnvelope(keyStore, keyFile, dataDir, cfg, rotator -> { });
+    }
+
+    /**
+     * As the four-argument overload, plus a {@code rotatorSink} that receives the {@link KeyringRotator}
+     * capability derived alongside the envelope (data-dir, the derived keyring mac/wrap keys, node key id,
+     * key reference) so the online keyring-rotation endpoint can re-open the keyring at runtime. The sink is
+     * invoked only in the at-rest keyring posture (always, in the signing-key deployment this boots); it has
+     * NO effect on the envelope bytes or on any behaviour when the endpoint is unused.
+     */
+    static io.configd.common.IntegrityEnvelope deriveRaftIntegrityEnvelope(
+            SigningKeyStore keyStore, Path keyFile, Path dataDir, ConfigSource cfg,
+            java.util.function.Consumer<KeyringRotator> rotatorSink) {
         // FAIL-CLOSED: refuse to derive the at-rest integrity key from a signing key co-located
         // inside the data dir it protects, BEFORE doing any crypto. Default = refuse to start; the
         // dev/test/single-node opt-out (system property OR env var, the latter for CI / docker-compose
@@ -1651,7 +1684,7 @@ public final class ConfigdServer {
             // OFF -> term-versioned HMAC (Layer B). Both derive their at-rest keys from the keyring's
             // independent per-term roots (not the signing key directly), so a term OR signing-key
             // rotation is non-destructive. Keyless is a no-signing-key posture that never reaches here.
-            return buildTermVersionedEnvelope(ikm, salt, keyId, dataDir, cfg);
+            return buildTermVersionedEnvelope(ikm, salt, keyId, dataDir, cfg, rotatorSink);
         } finally {
             // Zeroize the transient signing-key material now that the keyring's K_keyringMac/KEK
             // (SecretKeySpec, which clones) hold their own copies. Best-effort (JDK-8160206): the raw
@@ -1720,7 +1753,8 @@ public final class ConfigdServer {
      * @return a term-versioned {@link IntegrityEnvelope} (HMAC when encryption off, GCM when on)
      */
     private static io.configd.common.IntegrityEnvelope buildTermVersionedEnvelope(
-            byte[] ikm, byte[] salt, java.util.UUID keyId, Path dataDir, ConfigSource cfg) {
+            byte[] ikm, byte[] salt, java.util.UUID keyId, Path dataDir, ConfigSource cfg,
+            java.util.function.Consumer<KeyringRotator> rotatorSink) {
         boolean encrypt = encryptionAtRestEnabled(cfg);
         // anyLayerTrue reproduces the original "system-property OR env-alias" semantics for the flag.
         boolean requireEncrypted = cfg.anyLayerTrue("configd.raft.encryption.requireEncrypted");
@@ -1777,6 +1811,11 @@ public final class ConfigdServer {
             // and break GCM. Do not split the counter without splitting the segmentId/DEK.
             SegmentKeyManager keyManager =
                     SegmentKeyManager.overTerms(roots, keyring.activeTerm(), nodeKeyId);
+            // Hand the online-rotation capability to the sink (custody-agnostic: the derived K_keyringMac /
+            // KEK_wrap plus the data-dir, node key id, and key reference are all a runtime rotation needs to
+            // re-open the persisted keyring). Side-effect only - the envelope bytes below are unchanged, and
+            // when the sink is the default no-op this method is byte-identical to before.
+            rotatorSink.accept(new KeyringRotator(dataDir, keyringMac, kek, nodeKeyId, keyId.toString()));
             if (encrypt) {
                 LOG.log(Level.INFO,
                         "At-rest encryption ENABLED (AES-256-GCM, keyring terms={0}, activeTerm={1},"

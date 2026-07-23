@@ -202,7 +202,7 @@ public final class NettyHttpApiServer {
         // callers that don't specify one. ConfigdServer uses the bindAddress overload below.
         this(null, port, sslContext, healthService, prometheusExporter, configStore, writeService,
                 readService, authInterceptor, aclService, strongReadPolicy, leaderHintSupplier,
-                auditLog, replayGuard, leadershipAdmin, chain);
+                auditLog, replayGuard, leadershipAdmin, chain, null, null);
     }
 
     /**
@@ -227,12 +227,40 @@ public final class NettyHttpApiServer {
                               ReplayGuard replayGuard,
                               AdminApiHandler.LeadershipAdmin leadershipAdmin,
                               AuthenticatorChain chain) {
+        this(bindAddress, port, sslContext, healthService, prometheusExporter, configStore, writeService,
+                readService, authInterceptor, aclService, strongReadPolicy, leaderHintSupplier,
+                auditLog, replayGuard, leadershipAdmin, chain, null, null);
+    }
+
+    /**
+     * As the bindAddress constructor, plus the {@link AdminApiHandler.RaftClusterAdmin} and
+     * {@link AdminApiHandler.KeyringRotationAdmin} seams that back the ADMIN-gated Raft cluster endpoints
+     * (status / add-server) and the keyring-rotation trigger. A {@code null} seam leaves its route unrouted.
+     */
+    public NettyHttpApiServer(String bindAddress,
+                              int port,
+                              SSLContext sslContext,
+                              HealthService healthService,
+                              PrometheusExporter prometheusExporter,
+                              VersionedConfigStore configStore,
+                              ConfigWriteService writeService,
+                              ConfigReadService readService,
+                              AuthInterceptor authInterceptor,
+                              AclService aclService,
+                              StrongReadPolicy strongReadPolicy,
+                              BiFunction<ConfigScope, String, NodeId> leaderHintSupplier,
+                              AuditLog auditLog,
+                              ReplayGuard replayGuard,
+                              AdminApiHandler.LeadershipAdmin leadershipAdmin,
+                              AuthenticatorChain chain,
+                              AdminApiHandler.RaftClusterAdmin raftClusterAdmin,
+                              AdminApiHandler.KeyringRotationAdmin keyringRotator) {
         this.bindAddress = bindAddress;
         this.port = port;
         this.sslContext = sslContext;
         this.handler = new AdminApiHandler(healthService, prometheusExporter, configStore, writeService,
                 readService, authInterceptor, aclService, strongReadPolicy, leaderHintSupplier,
-                auditLog, replayGuard, leadershipAdmin, chain);
+                auditLog, replayGuard, leadershipAdmin, chain, raftClusterAdmin, keyringRotator);
         this.requestClientCert = chain != null && chain.providerTypes().contains("mtls");
         this.workerThreads = Integer.getInteger("configd.server.netty.workerThreads",
                 Math.max(2, Runtime.getRuntime().availableProcessors()));

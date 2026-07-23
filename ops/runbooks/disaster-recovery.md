@@ -184,19 +184,20 @@ kubectl delete -n "$EXPECTED_CLUSTER" pvc -l app=configd
 # Bring up a single-voter cluster, then add voters one at a time
 kubectl apply -f deploy/kubernetes/configd-bootstrap.yaml
 # ... wait for leader election ...
-# Add voter 1 via the Raft admin HTTP API. The control-plane REST
-# surface lives on the API port (default 8080) of any current voter.
-# <!-- TODO: admin endpoint missing — HttpApiServer does not
-# yet expose POST /admin/raft/add-server. Until it lands, the operator
-# must restart the StatefulSet replica with the new --peers list and
-# rely on Raft joint-consensus to pick up the change at boot. -->
+# Add voter 1 via the ADMIN-gated Raft admin HTTP API. The control-plane
+# REST surface lives on the API port (default 8080) of any current
+# voter; the request MUST go to the group leader (a non-leader answers
+# 503 with an X-Leader-Hint). `node` is the integer NodeId of the joiner
+# (not a hostname), `group` is the Raft group id (default 0 at N=1). The
+# call is asynchronous: 200 means the joint-consensus change was
+# proposed — confirm the new voter via GET /v1/admin/raft/status.
 curl -fsS -X POST \
   -H "Authorization: Bearer ${CONFIGD_AUTH_TOKEN}" \
-  "http://configd-0.configd.svc:8080/admin/raft/add-server?peer=configd-1"
-# ... wait for catch-up ...
+  "http://configd-0.configd.svc:8080/v1/admin/raft/add-server?group=0&node=1"
+# ... wait for catch-up (poll GET /v1/admin/raft/status until node 1 is a voter) ...
 curl -fsS -X POST \
   -H "Authorization: Bearer ${CONFIGD_AUTH_TOKEN}" \
-  "http://configd-0.configd.svc:8080/admin/raft/add-server?peer=configd-2"
+  "http://configd-0.configd.svc:8080/v1/admin/raft/add-server?group=0&node=2"
 ```
 
 Do this **only** with incident commander sign-off and only when the

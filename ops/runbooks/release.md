@@ -270,16 +270,27 @@ least 10 consecutive minutes:
 
 - All 3 pods report ready: `kubectl -n configd get pods -l app=configd`
   shows `READY 1/1` for every replica.
-- Commit-index parity: every pod's served `X-Config-Version` header on
-  a probe-key GET is identical (no follower more than one heartbeat
-  behind). The header is set by `HttpApiServer.handleGet` from
-  `ReadResult.version()` — see `configd-server/.../HttpApiServer.java`.
-  <!-- TODO: admin endpoint missing — `/admin/raft/status` is
-  not exposed on HttpApiServer; once it ships, swap the probe-key
-  approach for a direct `commit_index` read. -->
+- Commit-index parity: every pod's `commitIndex` for a group is within
+  one heartbeat of its leader. Read it from the ADMIN-gated status
+  endpoint, which reports each hosted Raft group's role, leader, term,
+  commit index, applied index, and voter set:
   ```sh
-  # Probe a stable key — operators typically maintain a small
-  # /v1/config/__release_probe__ value updated by CI on every release.
+  # ADMIN token required (the endpoint is refused when auth is off).
+  for pod in configd-0 configd-1 configd-2; do
+    echo "== ${pod} =="
+    kubectl -n configd exec ${pod} -- \
+      curl -sf -H "Authorization: Bearer ${CONFIGD_AUTH_TOKEN}" \
+      "http://localhost:8080/v1/admin/raft/status"
+  done
+  # Each row carries {"groupId":..,"role":..,"leaderId":..,
+  # "commitIndex":..}; compare commitIndex per group across pods.
+  ```
+  As a token-free fallback, the served `X-Config-Version` header on a
+  probe-key GET also tracks the applied version (set by the admin API
+  from `ReadResult.version()`):
+  ```sh
+  # Operators typically maintain a small /v1/config/__release_probe__
+  # value updated by CI on every release.
   for pod in configd-0 configd-1 configd-2; do
     kubectl -n configd exec ${pod} -- \
       curl -sf -D - "http://localhost:8080/v1/config/__release_probe__" \

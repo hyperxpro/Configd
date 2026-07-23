@@ -178,6 +178,34 @@ public final class HttpApiServer {
                          ReplayGuard replayGuard,
                          AdminApiHandler.LeadershipAdmin leadershipAdmin,
                          AuthenticatorChain chain) throws IOException {
+        this(bindAddress, port, sslContext, healthService, prometheusExporter, configStore, writeService,
+                readService, authInterceptor, aclService, strongReadPolicy, leaderHintSupplier,
+                auditLog, replayGuard, leadershipAdmin, chain, null, null);
+    }
+
+    /**
+     * As the bindAddress constructor, plus the {@link AdminApiHandler.RaftClusterAdmin} and
+     * {@link AdminApiHandler.KeyringRotationAdmin} seams (Raft status / add-server and keyring rotation).
+     * Kept in parity with {@code NettyHttpApiServer} so the documented one-line adapter revert stays valid.
+     */
+    public HttpApiServer(String bindAddress,
+                         int port,
+                         SSLContext sslContext,
+                         HealthService healthService,
+                         PrometheusExporter prometheusExporter,
+                         VersionedConfigStore configStore,
+                         ConfigWriteService writeService,
+                         ConfigReadService readService,
+                         AuthInterceptor authInterceptor,
+                         AclService aclService,
+                         StrongReadPolicy strongReadPolicy,
+                         BiFunction<ConfigScope, String, NodeId> leaderHintSupplier,
+                         AuditLog auditLog,
+                         ReplayGuard replayGuard,
+                         AdminApiHandler.LeadershipAdmin leadershipAdmin,
+                         AuthenticatorChain chain,
+                         AdminApiHandler.RaftClusterAdmin raftClusterAdmin,
+                         AdminApiHandler.KeyringRotationAdmin keyringRotator) throws IOException {
         InetSocketAddress bindAddr = bindAddress == null
                 ? new InetSocketAddress(port)                 // wildcard (all interfaces)
                 : new InetSocketAddress(bindAddress, port);
@@ -204,7 +232,8 @@ public final class HttpApiServer {
 
         AdminApiHandler handler = new AdminApiHandler(healthService, prometheusExporter, configStore,
                 writeService, readService, authInterceptor, aclService, strongReadPolicy,
-                leaderHintSupplier, auditLog, replayGuard, leadershipAdmin, chain);
+                leaderHintSupplier, auditLog, replayGuard, leadershipAdmin, chain, raftClusterAdmin,
+                keyringRotator);
 
         // A single root context: the shared handler does its own exact-match routing,
         // so a suffix variant of a fixed endpoint cannot be served by a prefix-matched context.

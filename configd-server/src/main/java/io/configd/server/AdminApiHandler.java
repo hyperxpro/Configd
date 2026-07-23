@@ -22,9 +22,11 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.BiFunction;
 
 /**
@@ -74,6 +76,11 @@ public final class AdminApiHandler {
     private final ReplayGuard replayGuard;             // nullable: replay protection off
     // nullable: when null the leadership-transfer route falls through to 404 (unrouted).
     private final LeadershipAdmin leadershipAdmin;
+    // nullable: when null the /v1/admin/raft/ status + add-server routes fall through to 404 (unrouted).
+    private final RaftClusterAdmin raftClusterAdmin;
+    // nullable: when null the /v1/admin/keyring/rotate route falls through to 404 (unrouted, e.g. a
+    // keyless / no-at-rest-keyring posture where there is nothing to rotate).
+    private final KeyringRotationAdmin keyringRotator;
 
     public AdminApiHandler(HealthService healthService,
                            PrometheusExporter prometheusExporter,
@@ -119,6 +126,26 @@ public final class AdminApiHandler {
                            ReplayGuard replayGuard,
                            LeadershipAdmin leadershipAdmin,
                            AuthenticatorChain chain) {
+        this(healthService, prometheusExporter, configStore, writeService, readService, authInterceptor,
+                aclService, strongReadPolicy, leaderHintSupplier, auditLog, replayGuard, leadershipAdmin,
+                chain, null, null);
+    }
+
+    public AdminApiHandler(HealthService healthService,
+                           PrometheusExporter prometheusExporter,
+                           VersionedConfigStore configStore,
+                           ConfigWriteService writeService,
+                           ConfigReadService readService,
+                           AuthInterceptor authInterceptor,
+                           AclService aclService,
+                           StrongReadPolicy strongReadPolicy,
+                           BiFunction<ConfigScope, String, NodeId> leaderHintSupplier,
+                           AuditLog auditLog,
+                           ReplayGuard replayGuard,
+                           LeadershipAdmin leadershipAdmin,
+                           AuthenticatorChain chain,
+                           RaftClusterAdmin raftClusterAdmin,
+                           KeyringRotationAdmin keyringRotator) {
         this.healthService = healthService;
         this.prometheusExporter = prometheusExporter;
         this.configStore = configStore;
@@ -132,6 +159,8 @@ public final class AdminApiHandler {
         this.auditLog = auditLog;
         this.replayGuard = replayGuard;
         this.leadershipAdmin = leadershipAdmin;
+        this.raftClusterAdmin = raftClusterAdmin;
+        this.keyringRotator = keyringRotator;
     }
 
     /**
@@ -201,6 +230,70 @@ public final class AdminApiHandler {
         }
     }
 
+    /**
+     * The mechanism seam for the ADMIN-gated Raft cluster endpoints (status + add-server). Same split of
+     * responsibilities as {@link LeadershipAdmin}: the decision core owns routing, the ADMIN gate, replay,
+     * audit, and the response mapping; this seam owns the {@code RaftNode} mechanism, including the
+     * owner-thread-confined reads (a group's voter set) and the joint-consensus membership proposal. The
+     * production implementation ({@code DriverRaftClusterAdmin}) is backed by the multi-Raft driver; tests
+     * supply a fake. A {@code null} seam leaves the {@code /v1/admin/raft/} namespace unrouted (404).
+     */
+    public interface RaftClusterAdmin {
+        /** Whether the group is registered on this node (an unknown group is a 400 request). */
+        boolean hasGroup(int groupId);
+
+        /**
+         * The status of every Raft group this node hosts, resolved with owner-confined reads for the voter
+         * set and off-owner-safe reads for role/leader/term/commit/applied. Throws {@link RaftAdminTimeout}
+         * (mapped to 503) if a group owner does not confirm its read within the bounded wait.
+         */
+        List<GroupStatus> status();
+
+        /**
+         * Proposes adding {@code target} as a voter of {@code groupId} via joint consensus (Raft
+         * reconfiguration), driven through the built {@link AdminService} guard. Resolves the current voter
+         * set owner-confined; a target that is already a voter is a precondition
+         * {@link AdminService.AdminResult.Failure} (mapped to 409). Throws {@link RaftAdminTimeout} (503) if
+         * the owner thread does not confirm within the bounded wait.
+         */
+        AdminService.AdminResult addServer(int groupId, NodeId target);
+    }
+
+    /**
+     * One Raft group's status for {@code GET /v1/admin/raft/status}. {@code role} is the string form of the
+     * node's role for this group; {@code leaderId} is null when no leader is known; {@code voters} is the
+     * committed voter set (owner-confined read).
+     */
+    public record GroupStatus(int groupId, String role, NodeId leaderId, long currentTerm,
+                              long commitIndex, long lastApplied, Set<NodeId> voters) {
+        public GroupStatus {
+            voters = voters == null ? Set.of() : Set.copyOf(voters);
+        }
+    }
+
+    /**
+     * A group owner did not confirm an owner-confined admin read/propose within the bounded wait. Surfaced
+     * as 503 (unknown-but-retryable), never a 500 or an indefinite block on the HTTP thread.
+     */
+    public static final class RaftAdminTimeout extends RuntimeException {
+        public RaftAdminTimeout(String operation, long awaitMillis) {
+            super(operation + " was not confirmed within " + awaitMillis + "ms");
+        }
+    }
+
+    /**
+     * The mechanism seam for the ADMIN-gated keyring term-rotation trigger. The decision core owns the
+     * ADMIN gate, replay, and audit; this seam performs the durable, non-destructive term rotation (open
+     * the persisted keyring, append a fresh per-term root, advance the active term, persist, close) and
+     * returns the new active term. Implementations MUST serialize concurrent rotations. A rotation failure
+     * throws (mapped to a fail-closed 503, audited) - never a silent success. A {@code null} rotator leaves
+     * {@code /v1/admin/keyring/rotate} unrouted (404).
+     */
+    public interface KeyringRotationAdmin {
+        /** Performs one durable, non-destructive term rotation and returns the new active term. */
+        int rotate();
+    }
+
     /** Routes a request to the owning endpoint and returns the decided response. */
     public AdminResponse handle(AdminRequest req) throws IOException {
         String path = req.uri().getPath();
@@ -220,6 +313,15 @@ public final class AdminApiHandler {
         // leaves the admin-groups namespace unrouted (falls through to 404 below).
         if (leadershipAdmin != null && path != null && path.startsWith(ADMIN_GROUPS_PREFIX)) {
             return transferLeadership(req, path);
+        }
+        // The Raft cluster admin endpoints (status + add-server) are only routed when the seam is wired.
+        if (raftClusterAdmin != null && path != null && path.startsWith(ADMIN_RAFT_PREFIX)) {
+            return raftAdmin(req, path);
+        }
+        // The keyring term-rotation trigger is only routed when a rotator is wired (the at-rest keyring
+        // posture); a null rotator leaves it unrouted (falls through to 404).
+        if (keyringRotator != null && KEYRING_ROTATE_PATH.equals(path)) {
+            return keyringRotate(req);
         }
         return json(404, "Not Found");
     }
@@ -495,6 +597,10 @@ public final class AdminApiHandler {
 
     private static final String ADMIN_GROUPS_PREFIX = "/v1/admin/groups/";
     private static final String TRANSFER_LEADERSHIP_SUFFIX = "/transfer-leadership";
+    private static final String ADMIN_RAFT_PREFIX = "/v1/admin/raft/";
+    private static final String RAFT_STATUS_PATH = "/v1/admin/raft/status";
+    private static final String RAFT_ADD_SERVER_PATH = "/v1/admin/raft/add-server";
+    private static final String KEYRING_ROTATE_PATH = "/v1/admin/keyring/rotate";
 
     /**
      * {@code POST /v1/admin/groups/{groupId}/transfer-leadership?target=<nodeId>} - an operator-initiated,
@@ -618,15 +724,225 @@ public final class AdminApiHandler {
         };
     }
 
+    /** Routes the {@code /v1/admin/raft/} sub-resources; an unknown sub-path is 404. */
+    private AdminResponse raftAdmin(AdminRequest req, String path) {
+        if (RAFT_STATUS_PATH.equals(path)) {
+            return raftStatus(req);
+        }
+        if (RAFT_ADD_SERVER_PATH.equals(path)) {
+            return raftAddServer(req);
+        }
+        return json(404, "Not Found"); // an unknown sub-resource under the admin-raft namespace
+    }
+
+    /**
+     * {@code GET /v1/admin/raft/status} - an ADMIN-gated read of every Raft group this node hosts: role,
+     * leader, term, commit/apply indices, and the voter set. The voter set is resolved via owner-confined
+     * reads (never off-owner), so a wedged/overloaded owner surfaces as 503 (retryable) rather than a torn
+     * value or an indefinite block. The gate is the strict fail-closed ADMIN posture (denied when auth is
+     * off): the cluster topology this exposes is control-plane state, not public.
+     */
+    private AdminResponse raftStatus(AdminRequest req) {
+        if (!"GET".equals(req.method())) {
+            return json(405, "Method Not Allowed");
+        }
+        String resourceKey = SYSTEM_PREFIX + "raft/status";
+        AuthCheck authCheck = checkAdmin(req, resourceKey);
+        if (authCheck.decision() != AuthDecision.OK) {
+            audit(authCheck.principal(), "RAFT_STATUS", resourceKey,
+                    "denied: " + authCheck.decision() + " (" + authCheck.reason() + ")");
+            return authDenial(authCheck);
+        }
+        try {
+            List<GroupStatus> groups = raftClusterAdmin.status();
+            return new AdminResponse(200, jsonHeaders(), bytes(formatRaftStatus(groups)));
+        } catch (RaftAdminTimeout timeout) {
+            audit(authCheck.principal(), "RAFT_STATUS", resourceKey, "timeout");
+            return json(503, "Raft status could not be resolved within the deadline (a group owner is"
+                    + " wedged or overloaded); safe to retry");
+        }
+    }
+
+    /**
+     * {@code POST /v1/admin/raft/add-server?group={groupId}&node={nodeId}} - an operator-initiated,
+     * ADMIN-gated, replay-guarded request to add {@code nodeId} as a voter of {@code groupId} through Raft
+     * joint-consensus reconfiguration. The effect is asynchronous: a 200 means the config change was
+     * PROPOSED, not that the new voter has committed - confirm via {@code GET /v1/admin/raft/status}.
+     *
+     * <p>{@code group} and {@code node} are the caller's own query input, so a malformed value is a 400
+     * decided BEFORE the ADMIN gate (leaking no server state); {@code group} defaults to 0 when absent,
+     * {@code node} is required. Group EXISTENCE is checked only AFTER the gate so an unauthorized caller
+     * cannot probe which groups exist.
+     */
+    private AdminResponse raftAddServer(AdminRequest req) {
+        if (!"POST".equals(req.method())) {
+            return json(405, "Method Not Allowed");
+        }
+        String query = req.uri().getQuery();
+        String groupRaw = queryParam(query, "group");
+        int groupId = 0; // absent group defaults to group 0 (the sole group at N=1)
+        if (groupRaw != null && !groupRaw.isBlank()) {
+            try {
+                groupId = Integer.parseInt(groupRaw.trim());
+            } catch (NumberFormatException e) {
+                return json(400, "Invalid group '" + groupRaw + "' (expected an integer)");
+            }
+        }
+        String nodeRaw = queryParam(query, "node");
+        if (nodeRaw == null || nodeRaw.isBlank()) {
+            return json(400, "Missing required query parameter 'node' (the node id to add as a voter)");
+        }
+        final NodeId target;
+        try {
+            target = NodeId.of(Integer.parseInt(nodeRaw.trim()));
+        } catch (NumberFormatException e) {
+            return json(400, "Invalid node id '" + nodeRaw + "' (expected an integer)");
+        }
+
+        // The ADMIN gate: the same strict fail-closed posture as the leadership transfer (refused when auth
+        // is off), authorized against the group's reserved control resource.
+        String resourceKey = SYSTEM_PREFIX + "raft/groups/" + groupId + "/membership";
+        AuthCheck authCheck = checkAdmin(req, resourceKey);
+        if (authCheck.decision() != AuthDecision.OK) {
+            audit(authCheck.principal(), "RAFT_ADD_SERVER", resourceKey,
+                    "denied: " + authCheck.decision() + " (" + authCheck.reason() + ")");
+            return authDenial(authCheck);
+        }
+
+        // Group existence is decided AFTER the ADMIN gate (an unauthorized caller must not learn which
+        // groups exist).
+        if (!raftClusterAdmin.hasGroup(groupId)) {
+            audit(authCheck.principal(), "RAFT_ADD_SERVER", resourceKey, "rejected: unknown group " + groupId);
+            return json(400, "Unknown group " + groupId);
+        }
+
+        // Replay protection: adding a voter is a mutating privileged control op, so a captured
+        // (valid-bearer) request must not be replayable to force repeated reconfiguration.
+        AdminResponse replay = replayRejected(req, authCheck.principal(), "RAFT_ADD_SERVER", resourceKey);
+        if (replay != null) {
+            return replay;
+        }
+
+        try {
+            AdminService.AdminResult result = raftClusterAdmin.addServer(groupId, target);
+            return addServerResult(authCheck.principal(), resourceKey, groupId, target, result);
+        } catch (RaftAdminTimeout timeout) {
+            audit(authCheck.principal(), "RAFT_ADD_SERVER", resourceKey, "timeout");
+            return json(503, "Add-server for node " + target + " to group " + groupId
+                    + " could not be confirmed within the deadline; unknown outcome, safe to retry");
+        }
+    }
+
+    /**
+     * Maps an {@link AdminService.AdminResult} for add-server to HTTP: {@code Success} -> 200 (the config
+     * change was proposed, asynchronous); {@code NotLeader} -> 503 + {@code X-Leader-Hint} (retry the group
+     * leader); {@code Failure} -> 409 (a precondition failed - already a voter / a config change is pending
+     * / no-op not yet committed in this term).
+     */
+    private AdminResponse addServerResult(String actor, String resourceKey, int groupId, NodeId target,
+                                          AdminService.AdminResult result) {
+        return switch (result) {
+            case AdminService.AdminResult.Success ignored -> {
+                audit(actor, "RAFT_ADD_SERVER", resourceKey, "initiated: node=" + target);
+                yield json(200, "Add-server for node " + target + " to group " + groupId
+                        + " initiated (asynchronous; the membership change is proposed - confirm via"
+                        + " GET /v1/admin/raft/status)");
+            }
+            case AdminService.AdminResult.NotLeader nl -> {
+                audit(actor, "RAFT_ADD_SERVER", resourceKey, "not-leader");
+                Map<String, String> h = jsonHeaders();
+                if (nl.leaderId() != null) {
+                    h.put("X-Leader-Hint", String.valueOf(nl.leaderId().id()));
+                }
+                yield new AdminResponse(503, h, bytes("Not Leader: this node does not lead group " + groupId
+                        + (nl.leaderId() != null ? " (leader=" + nl.leaderId() + ")" : "")
+                        + "; retry against the group leader"));
+            }
+            case AdminService.AdminResult.Failure f -> {
+                audit(actor, "RAFT_ADD_SERVER", resourceKey, "rejected: " + f.reason());
+                yield json(409, "Add-server rejected: " + f.reason());
+            }
+        };
+    }
+
+    /**
+     * {@code POST /v1/admin/keyring/rotate} - an ADMIN-gated, replay-guarded trigger for a durable,
+     * non-destructive at-rest keyring TERM rotation. It appends a fresh per-term root and advances the
+     * keyring's active term on disk; because the active write term is read at boot, new writes adopt the new
+     * term after the next (rolling) restart, and old-term data still decrypts (all retained roots load). The
+     * gate is the strict fail-closed ADMIN posture (refused when auth is off - a key rotation must never be
+     * issuable during an insecure bring-up). A rotation failure is surfaced fail-closed (503, audited),
+     * never a silent success; the previous keyring stays intact (the rotation is crash-atomic).
+     */
+    private AdminResponse keyringRotate(AdminRequest req) {
+        if (!"POST".equals(req.method())) {
+            return json(405, "Method Not Allowed");
+        }
+        String resourceKey = SYSTEM_PREFIX + "keyring/rotate";
+        AuthCheck authCheck = checkAdmin(req, resourceKey);
+        if (authCheck.decision() != AuthDecision.OK) {
+            audit(authCheck.principal(), "KEYRING_ROTATE", resourceKey,
+                    "denied: " + authCheck.decision() + " (" + authCheck.reason() + ")");
+            return authDenial(authCheck);
+        }
+        AdminResponse replay = replayRejected(req, authCheck.principal(), "KEYRING_ROTATE", resourceKey);
+        if (replay != null) {
+            return replay;
+        }
+        try {
+            int newActiveTerm = keyringRotator.rotate();
+            audit(authCheck.principal(), "KEYRING_ROTATE", resourceKey, "rotated: activeTerm=" + newActiveTerm);
+            return json(200, "Keyring term rotated: new activeTerm=" + newActiveTerm
+                    + " (durable, non-destructive; new writes adopt it after the next restart - a rolling"
+                    + " restart across the cluster - and old-term data still decrypts)");
+        } catch (RuntimeException e) {
+            // Fail closed and loud: a rotation IO/crypto failure must never read as a silent success. The
+            // rotation is crash-atomic, so the previous keyring is intact and a retry is safe.
+            audit(authCheck.principal(), "KEYRING_ROTATE", resourceKey, "failed: " + e.getMessage());
+            return json(503, "Keyring rotation failed: " + e.getMessage()
+                    + "; the previous keyring is intact (crash-atomic) - safe to retry");
+        }
+    }
+
+    /** Serializes the group statuses into a JSON object {@code {"groups":[...]}}. */
+    private static String formatRaftStatus(List<GroupStatus> groups) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("{\"groups\":[");
+        boolean firstGroup = true;
+        for (GroupStatus g : groups) {
+            if (!firstGroup) sb.append(',');
+            firstGroup = false;
+            sb.append("{\"groupId\":").append(g.groupId())
+                    .append(",\"role\":\"").append(escapeJson(g.role())).append('"')
+                    .append(",\"leaderId\":").append(g.leaderId() == null ? "null" : g.leaderId().id())
+                    .append(",\"currentTerm\":").append(g.currentTerm())
+                    .append(",\"commitIndex\":").append(g.commitIndex())
+                    .append(",\"lastApplied\":").append(g.lastApplied())
+                    .append(",\"voters\":[");
+            boolean firstVoter = true;
+            // Ascending node-id order so the voter set (and the whole status payload) is stable across
+            // scrapes regardless of the set's iteration order.
+            for (NodeId v : new java.util.TreeSet<>(g.voters())) {
+                if (!firstVoter) sb.append(',');
+                firstVoter = false;
+                sb.append(v.id());
+            }
+            sb.append("]}");
+        }
+        sb.append("]}");
+        return sb.toString();
+    }
+
     /**
      * The ADMIN gate for a privileged control operation. Reuses the SAME authn (Bearer) + authz
      * (ACL {@link AclService.Permission#ADMIN}) primitives as {@link #checkAuth}, but with a STRICTER
      * fail-closed posture appropriate to a control op:
      * <ul>
-     *   <li><b>Auth disabled</b> -> DENIED. A leadership transfer must never be issuable during an
-     *       insecure auth-off bring-up - identity/policy is meaningless without auth, and moving
-     *       leadership is too dangerous to leave open (mirrors the reserved-prefix WRITE refusal, which
-     *       likewise refuses a privileged mutation while auth is off).</li>
+     *   <li><b>Auth disabled</b> -> DENIED. A privileged control op (a leadership transfer, a membership
+     *       change, a key rotation) must never be issuable during an insecure auth-off bring-up -
+     *       identity/policy is meaningless without auth, and these operations are too dangerous to leave
+     *       open (mirrors the reserved-prefix WRITE refusal, which likewise refuses a privileged mutation
+     *       while auth is off).</li>
      *   <li><b>Authenticated but no ACL service</b> -> DENIED: ADMIN cannot be evaluated, so fail closed
      *       rather than fall through to allowed.</li>
      *   <li><b>Authenticated, ACL present</b> -> requires ADMIN on the group's reserved control resource.</li>
@@ -638,7 +954,7 @@ public final class AdminApiHandler {
         }
         if (authInterceptor == null) {
             return AuthCheck.forbidden("-",
-                    "Access denied: leadership transfer requires authentication, which is disabled");
+                    "Access denied: this control operation requires authentication, which is disabled");
         }
         AuthInterceptor.AuthResult authResult = authInterceptor.authenticate(bearerToken(req));
         if (authResult instanceof AuthInterceptor.AuthResult.Denied denied) {
@@ -647,17 +963,17 @@ public final class AdminApiHandler {
         if (authResult instanceof AuthInterceptor.AuthResult.Authenticated authed) {
             if (aclService == null) {
                 return AuthCheck.forbidden(authed.principal(),
-                        "Access denied: leadership transfer requires ADMIN but no ACL is configured");
+                        "Access denied: this control operation requires ADMIN but no ACL is configured");
             }
             if (!aclService.isAllowed(authed.principal(), authed.roles(), resourceKey,
                     AclService.Permission.ADMIN)) {
                 return AuthCheck.forbidden(authed.principal(),
-                        "Access denied: ADMIN required for leadership transfer");
+                        "Access denied: ADMIN required for this control operation");
             }
             return AuthCheck.ok(authed.principal());
         }
         // Defensive fail-closed for any future AuthResult variant (the sealed type is {Authenticated, Denied}).
-        return AuthCheck.forbidden("-", "Access denied: leadership transfer requires ADMIN");
+        return AuthCheck.forbidden("-", "Access denied: this control operation requires ADMIN");
     }
 
     private enum AuthDecision { OK, UNAUTHENTICATED, FORBIDDEN, UNAVAILABLE }
@@ -903,10 +1219,10 @@ public final class AdminApiHandler {
                 ((io.configd.common.auth.AuthResult.Authenticated) r).principal();
         if (aclService == null) {
             return AuthCheck.forbidden(p.id(),
-                    "Access denied: leadership transfer requires ADMIN but no ACL is configured");
+                    "Access denied: this control operation requires ADMIN but no ACL is configured");
         }
         if (!aclService.isAllowed(p.id(), p.roles(), resourceKey, AclService.Permission.ADMIN)) {
-            return AuthCheck.forbidden(p.id(), "Access denied: ADMIN required for leadership transfer");
+            return AuthCheck.forbidden(p.id(), "Access denied: ADMIN required for this control operation");
         }
         return AuthCheck.ok(p.id());
     }
