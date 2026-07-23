@@ -235,12 +235,14 @@ of buffering the whole snapshot in heap is not built. See
 [`deployer-must-know.md` section 4](deployer-must-know.md) for the upgrade-ordering requirement this
 implies.
 
-## Authorization: LIST is defined but not exposed
+## Authorization: LIST is a reserved capability
 
-The authorization model defines a `LIST` permission alongside `READ`, `WRITE`, `WATCH`, and `ADMIN`
-(`AclService.Permission`), and policy rules can grant or deny it. There is currently no list or
-enumerate endpoint over the API for it to gate, so `LIST` is inert - nothing in the request path checks
-it, because there is nothing to check it against.
+The authorization model keeps a `LIST` value in `AclService.Permission` alongside `READ`, `WRITE`,
+`WATCH`, and `ADMIN`, but `LIST` is formally reserved and not grantable. The policy parser rejects any
+`_acl/` policy that tries to grant or deny `LIST`, so an operator cannot write it into a role. There is
+deliberately no list or enumerate operation on the API for it to gate, and nothing in the request path
+enforces `LIST`. The enum value is retained only to keep the frozen wire ordinal stable; it is not an
+inert-but-grantable footgun.
 
 ## What's measured, and what isn't
 
