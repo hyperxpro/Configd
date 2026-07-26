@@ -200,20 +200,56 @@ read I M MM < <(verify_keys "$FOLL"); log "DRILL B read-back via recovered node 
 [ "$M" -eq 0 ] && [ "$MM" -eq 0 ] && log "DRILL B VERDICT: recovered, NO loss (RTO=${CONV_MS:-?}ms)" || log "DRILL B VERDICT: ***LOSS*** missing=$M mismatch=$MM"
 
 log ""
-log "===== DRILL C: NODE RECOVERY via wipe + InstallSnapshot (leader streams state) ====="
+log "===== DRILL D: InstallSnapshot catch-up (follower falls behind a compaction, rejoins from OWN dir) ====="
+# The supported "leader streams state" path: a returning follower whose nextIndex predates the
+# leader's compacted log head is caught up by InstallSnapshot. Kill a follower, drive writes while it
+# is down so the leader compacts past it, then restart it from its OWN data dir (anchor intact -> NOT
+# an anchor rollback, so the R-a' witness does not fire). No committed-write loss.
+L=$(find_leader) || fail "no leader for drill D"
+FOLL=""; for k in 1 2 3; do [ "$k" != "$L" ] && [ -n "${PID[$k]:-}" ] && { FOLL=$k; break; }; done
+log "leader=$L follower-to-lag=$FOLL"
+kill -9 "${PID[$FOLL]}"; unset 'PID[$FOLL]'
+log "killed follower $FOLL; driving writes + waiting for leader compaction to advance past it..."
+DPID=$(driver_bg 25); wait "$DPID" 2>/dev/null || true
+SNAP_BYTES=$(curl -s --max-time 3 "http://$(api $L)/metrics" 2>/dev/null | grep -E '^configd_snapshot_bytes' | awk '{print $NF}' | sort -nr | head -1)
+CI_LEAD=$(commit_index "$L"); log "leader commit_index after burst = $CI_LEAD (leader snapshot_bytes=${SNAP_BYTES:-0})"
+T0=$(now_ns); launch_node "$FOLL"
+wait_ready "$FOLL" 120 || fail "lagging follower $FOLL did not become ready (InstallSnapshot catch-up)"
+CONV_MS=""; for _t in $(seq 1 900); do ci=$(commit_index "$FOLL"); [ -n "$ci" ] && [ "${ci:-0}" -ge "${CI_LEAD:-0}" ] 2>/dev/null && { CONV_MS=$(( ($(now_ns)-T0)/1000000 )); break; }; sleep 0.1; done
+FAILN=$(curl -s --max-time 3 "http://$(api $FOLL)/metrics" 2>/dev/null | grep -E '^configd_snapshot_install_failed_total' | awk '{print $NF}' | sort -nr | head -1)
+log "InstallSnapshot catch-up: ready+converged_in=${CONV_MS:-TIMEOUT}ms (follower ci>=leader ci=$CI_LEAD; install_failed=${FAILN:-0})"
+read I M MM < <(verify_keys "$FOLL"); log "DRILL D read-back via caught-up node $FOLL: intact=$I missing=$M mismatch=$MM"
+[ "$M" -eq 0 ] && [ "$MM" -eq 0 ] && log "DRILL D VERDICT: caught up via leader stream, NO loss (RTO=${CONV_MS:-?}ms)" || log "DRILL D VERDICT: ***LOSS*** missing=$M mismatch=$MM"
+
+log ""
+log "===== DRILL C: same-id WIPE-REJOIN must be REFUSED by the R-a' anchor witness (safety) ====="
+# A single follower whose disk is wiped and restarted under the SAME node-id is a durable-state
+# rollback: surviving peers still witness its prior (higher) anchorSeq, so a within-term re-vote could
+# double-vote and split-brain. The peer-quorum anchor witness (Gate 3c R-a') fail-closes this by design
+# (ConfigdServer halt 71). This drill asserts that SAFETY refusal actually fires. The supported
+# lost-disk recovery is whole-cluster snapshot restore (ops/runbooks/restore-from-snapshot.md) or
+# membership add-server under a NEW node-id -- NOT same-id wipe-rejoin. Runs last: it permanently
+# retires this id for the rest of the run (the cluster keeps quorum at 2/3).
 L=$(find_leader) || fail "no leader for drill C"
 FOLL=""; for k in 1 2 3; do [ "$k" != "$L" ] && [ -n "${PID[$k]:-}" ] && { FOLL=$k; break; }; done
 log "leader=$L follower-to-wipe=$FOLL"
-CI_LEAD=$(commit_index "$L"); log "leader commit_index = $CI_LEAD"
-kill -9 "${PID[$FOLL]}"; unset 'PID[$FOLL]'
+kill -9 "${PID[$FOLL]}"; FPID_OLD="${PID[$FOLL]}"; unset 'PID[$FOLL]'
 rm -rf "$BASE/n$FOLL"; mkdir -p "$BASE/n$FOLL"
-log "killed + WIPED follower $FOLL data dir; restarting EMPTY (leader must InstallSnapshot)..."
-T0=$(now_ns); launch_node "$FOLL"
-wait_ready "$FOLL" 120 || fail "wiped follower $FOLL did not become ready"
-CONV_MS=""; for _t in $(seq 1 900); do ci=$(commit_index "$FOLL"); [ -n "$ci" ] && [ "${ci:-0}" -ge "${CI_LEAD:-0}" ] 2>/dev/null && { CONV_MS=$(( ($(now_ns)-T0)/1000000 )); break; }; sleep 0.1; done
-log "wipe+InstallSnapshot recovery: converged_in=${CONV_MS:-TIMEOUT}ms (empty node caught up to leader ci=$CI_LEAD)"
-read I M MM < <(verify_keys "$FOLL"); log "DRILL C read-back via rebuilt node $FOLL: intact=$I missing=$M mismatch=$MM"
-[ "$M" -eq 0 ] && [ "$MM" -eq 0 ] && log "DRILL C VERDICT: rebuilt from snapshot, NO loss (RTO=${CONV_MS:-?}ms)" || log "DRILL C VERDICT: ***LOSS*** missing=$M mismatch=$MM"
+log "killed + WIPED follower $FOLL data dir; restarting EMPTY under the SAME id (must be REFUSED)..."
+launch_node "$FOLL"; FPID_NEW="${PID[$FOLL]}"
+refused=0
+for _t in $(seq 1 60); do
+  kill -0 "$FPID_NEW" 2>/dev/null || { refused=1; break; }
+  [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 "http://$(api $FOLL)/health/ready" 2>/dev/null)" = "200" ] && { refused=0; break; }
+  sleep 1
+done
+if grep -q "anchor rollback detected" "$BASE/n$FOLL.log" 2>/dev/null && [ "$refused" = 1 ]; then
+  log "DRILL C VERDICT: PASS - same-id wipe-rejoin correctly REFUSED by R-a' (anchor rollback, halt 71)"
+else
+  grep -iE "anchor|ready|SEVERE" "$BASE/n$FOLL.log" 2>/dev/null | tail -n 4 | sed 's/^/[dr]   /' | tee -a "$RES"
+  fail "same-id wipe-rejoin was NOT refused (R-a' safety regression: node became ready or no anchor-rollback halt)"
+fi
+unset 'PID[$FOLL]'
 
 log ""
 log "=== DR drills complete @ $(date -u +%FT%TZ) ==="

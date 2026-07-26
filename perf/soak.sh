@@ -79,8 +79,21 @@ TREND="$OUT_DIR/trend.csv"
 RESULT="$OUT_DIR/result.txt"
 GCLOG_DIR="$OUT_DIR/gclogs"; mkdir -p "$GCLOG_DIR"
 
-fail() { echo "SOAK FAIL: $*" >&2; finish "FAIL"; exit 1; }
+# Early failures (e.g. cluster never ready) happen before finish()/the trend
+# state exist, so fail() just reports and exits — the EXIT trap runs cleanup.
+fail() { echo "SOAK FAIL: $*" >&2; exit 1; }
 api() { echo "127.0.0.1:$((API_BASE + $1))"; }
+# Live PID of node k, re-discovered by its unique --data-dir marker. Robust to
+# fault-injection kill+restart (companion perf/soak-faults.sh): a restarted node
+# gets a new PID, so a fixed launch-time PID would sample a dead process. Prefers
+# comm==java so a clock-skew LD_PRELOAD wrapper (if any) is never mistaken for the
+# node. Empty (=>0) for a killed, not-yet-restarted node across that fault window.
+node_pid() {
+  local p
+  for p in $(pgrep -f -- "--data-dir $BASE/n$1 " 2>/dev/null); do
+    [ "$(cat /proc/$p/comm 2>/dev/null)" = java ] && { echo "$p"; return; }
+  done
+}
 
 cleanup() {
   for pid in "${PIDS[@]:-}"; do kill -9 "$pid" 2>/dev/null; done
@@ -115,9 +128,12 @@ for k in 1 2 3; do
   PIDS+=("$!")
 done
 
-# Wait for all 3 readiness endpoints == 200 (leader elected => ready).
+# Wait for all 3 readiness endpoints == 200 (leader elected => ready). Generous
+# window: 3 co-located ZGC JVMs committing their heaps on a small box can take
+# well over a minute to all report ready.
+READY_TIMEOUT_SEC="${SOAK_READY_TIMEOUT_SEC:-180}"
 ready=0
-for i in $(seq 1 120); do
+for i in $(seq 1 $((READY_TIMEOUT_SEC * 2))); do
   ok=0
   for k in 1 2 3; do
     code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 1 "http://$(api $k)/health/ready" 2>/dev/null)
@@ -126,7 +142,7 @@ for i in $(seq 1 120); do
   [ "$ok" -eq 3 ] && { ready=1; break; }
   sleep 0.5
 done
-[ "$ready" -eq 1 ] || fail "cluster not ready within 30s"
+[ "$ready" -eq 1 ] || fail "cluster not ready within ${READY_TIMEOUT_SEC}s"
 echo "[soak] all 3 nodes ready"
 
 NODEMAP="1=http://$(api 1),2=http://$(api 2),3=http://$(api 3)"
@@ -212,7 +228,7 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   cum_t="0.000"
   declare -a rss_n=(0 0 0); declare -a fd_n=(0 0 0)
   for idx in 0 1 2; do
-    pid="${PIDS[$idx]}"
+    pid="$(node_pid $((idx + 1)))"; pid="${pid:-0}"
     r=$(proc_rss_kb "$pid"); f=$(proc_fds "$pid"); th=$(proc_threads "$pid"); hu=$(heap_used_kb "$pid")
     rss_n[$idx]=$r; fd_n[$idx]=$f
     rss_t=$((rss_t + r)); fd_t=$((fd_t + f)); thr_t=$((thr_t + th)); heap_t=$((heap_t + hu))

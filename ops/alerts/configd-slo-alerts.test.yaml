@@ -300,7 +300,7 @@ tests:
 
   # === runtime leaks =====================================================
   - interval: 1m
-    name: FD + thread + heap leak alerts fire above the S5 baselines
+    name: FD + thread + heap leak alerts fire above the measured baselines
     input_series:
       - series: 'process_open_fds{instance="cp1"}'
         values: '600x35'
@@ -316,14 +316,14 @@ tests:
         exp_alerts:
           - exp_labels: {severity: warn}
             exp_annotations:
-              summary: "Open FDs > 500 (S5 baseline ~69) — descriptor leak suspected"
+              summary: "Open FDs > 500 (72h-soak steady max 144) — descriptor leak suspected"
               runbook_url: ops/runbooks/resource-leak.md
       - eval_time: 31m
         alertname: ConfigdThreadLeak
         exp_alerts:
           - exp_labels: {severity: warn}
             exp_annotations:
-              summary: "Thread count > 400 (S5 baseline ~93) — thread leak suspected"
+              summary: "Thread count > 400 (72h-soak steady max 115) — thread leak suspected"
               runbook_url: ops/runbooks/resource-leak.md
       - eval_time: 31m
         alertname: ConfigdHeapPressure
@@ -334,7 +334,7 @@ tests:
               runbook_url: ops/runbooks/resource-leak.md
 
   - interval: 1m
-    name: runtime-leak alerts quiet at the S5 baselines
+    name: runtime-leak alerts quiet at the measured baselines
     input_series:
       - series: 'process_open_fds{instance="cp1"}'
         values: '69x35'

@@ -393,8 +393,10 @@ server; the full verdict is pinned in git history at
   transfer-on-graceful-shutdown remains a follow-up.
 - **Edge reads:** microsecond-scale in-process; about 53,600 req/s at 64 connections over the HTTP
   edge surface.
-- **Long-run stability:** a **6-hour** soak ran clean (flat file descriptors, stable heap floor, GC
-  under 1%, zero rejected). This is 6 hours, not a 24/72-hour soak.
+- **Long-run stability:** a **72-hour** fault-injected soak ran clean (`a93eae8`) — flat file
+  descriptors (max 144) and threads (max 115), flat jstat heap-used (+0.6% half-over-half), zero
+  rejected, through 11 injected faults each recovered to full health in under 60 s. Endurance beyond
+  72 h is still the burn-in posture.
 
 ## What it does not do
 

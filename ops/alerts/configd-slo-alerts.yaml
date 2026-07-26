@@ -7,9 +7,16 @@
 # never emitted, so it could never fire; it has been removed and replaced by
 # the real, served `edge_staleness_ms` gauge.
 #
-# Thresholds are proposed — derived from reference-hardware baselines (see the
-# `# PROPOSED:` comment on each rule) — and are not yet confirmed under real
-# production load.
+# Threshold status is per-rule. The 72h fault-injected soak (2026-07-23,
+# a93eae8, m6id.xlarge single-box 3-node, 100/s, 8258 post-warmup samples)
+# RATIFIED the rules it produced a real distribution for: the write-commit
+# latency budget and the three resource-leak ceilings (FD / thread / heap) —
+# see each rule's `# RATIFIED:` comment. The edge-read, edge-staleness,
+# clock-skew, ACL-load, and cross-region rules were NOT exercised by that soak
+# (no edges / no ACL / single-box) and stay `# PROPOSED:` with an honest note on
+# what would confirm them; the game-day drill (docs/measurement/2026-07-23)
+# separately validated that the staleness-ladder and availability alerts fire
+# on their injected faults.
 #
 # Labels: `cluster`/`instance` are added by the Prometheus scrape config (external
 # labels / relabel), not emitted by the app (the registry has no label support) —
@@ -24,10 +31,13 @@ groups:
   - name: configd-slo-write-commit
     interval: 30s
     rules:
-      # PROPOSED: SLO 99% of write commits < 150 ms. Measured local commit p99 =
-      # 16 ms (~9x headroom); burn-rate guards error-budget exhaustion. The
-      # cross-region budget (<150 ms, 5-voter modeled ~84 ms) is not yet
-      # confirmed under real load.
+      # RATIFIED (72h soak 2026-07-23, a93eae8): SLO 99% of write commits < 150 ms.
+      # Over 8258 post-warmup samples at 100/s the single-box commit p99 was
+      # median 4.5 ms, p99-of-window 5.4 ms, worst-window 10.8 ms (through 11
+      # injected faults) — a 14x margin under the 150 ms budget, so the budget and
+      # its burn-rate guard hold with wide headroom. STILL PROPOSED: the
+      # cross-region budget (<150 ms, 5-voter modeled ~84 ms) — not exercised on a
+      # single-box run.
       - alert: ConfigdWriteCommitFastBurn
         expr: |
           (
@@ -207,24 +217,28 @@ groups:
   - name: configd-runtime-leaks
     interval: 1m
     rules:
-      # PROPOSED leak ceilings from a measured soak's flat baselines (3.45 h clean
-      # run: FD 69, threads 93, heap ~220-290 MB). A monotonic leak eventually
-      # crosses these generous margins without the GC-sawtooth false positives a
-      # deriv() alert would suffer. Confirm and tighten these against a longer
-      # representative soak on real hardware.
+      # RATIFIED (72h fault-injected soak 2026-07-23, a93eae8): leak ceilings held
+      # with wide margin over a full 72h/8258-sample run through 11 faults — the
+      # per-run maxima were FD 144, threads 115, heap ratio 0.36 (peak ~370 MB
+      # against a 1 GB heap). All three signals were flat (heap-used 2nd-half
+      # median +0.6% vs 1st-half; FD 144->143; threads 116->111), so a real
+      # monotonic leak crosses these generous ceilings while GC-sawtooth noise
+      # never does. The ceilings below sit ~2.5-3.5x above the measured maxima —
+      # confirmed, not tightened onto the measured peak (headroom is deliberate so
+      # a larger fleet/workload does not false-fire).
       - alert: ConfigdFileDescriptorLeak
         expr: max(process_open_fds) > 500
         for: 15m
         labels: {severity: warn}
         annotations:
-          summary: "Open FDs > 500 (S5 baseline ~69) — descriptor leak suspected"
+          summary: "Open FDs > 500 (72h-soak steady max 144) — descriptor leak suspected"
           runbook_url: ops/runbooks/resource-leak.md
       - alert: ConfigdThreadLeak
         expr: max(jvm_threads_current) > 400
         for: 15m
         labels: {severity: warn}
         annotations:
-          summary: "Thread count > 400 (S5 baseline ~93) — thread leak suspected"
+          summary: "Thread count > 400 (72h-soak steady max 115) — thread leak suspected"
           runbook_url: ops/runbooks/resource-leak.md
       - alert: ConfigdHeapPressure
         expr: (max(jvm_heap_used_bytes) / max(jvm_heap_max_bytes)) > 0.9
