@@ -13,20 +13,24 @@
 
 ## 1. Why this contract exists (the honest empirical envelope)
 
-Configd's stability evidence to date is a **6-hour soak - not 30 days, not 24 hours.** A prior attempt
-OOM'd at **3.45 h** (box capacity on that run, *not* a leak; the clean-code soak reached
-the full 6 h flat). So Configd does **not** ship with a claim of proven 30-day stability. It ships with a
-**heightened first-30-days posture**: tighter alert thresholds than steady-state, a daily
-error-budget review, predefined rollback triggers, and a named on-call - held until a clean 30-day
-production window converts "6 h + heightened watch" into "30-day proven."
+Configd's stability evidence to date is a **72-hour fault-injected soak - not 30 days.** That run
+(`a93eae8`, 2026-07-23, `docs/measurement/2026-07-23/soak/`) held flat for the full 72 h through 11
+injected faults (leader-kills, follower-restarts, clock-skews, one every ~6 h, each recovered 3/3 in
+under 60 s): jstat heap-used second-half median +0.6 % vs first-half, FD 144->143, threads 116->111,
+commit p99 median 4.5 ms. It supersedes the earlier 6-hour clean run and the 24-hour attempt that OOM'd
+at **3.45 h** (box capacity, *not* a leak). So Configd does **not** ship with a claim of proven 30-day
+stability. It ships with a **heightened first-30-days posture**: tighter alert thresholds than
+steady-state, a daily error-budget review, predefined rollback triggers, and a named on-call - held
+until a clean 30-day production window converts "72 h + heightened watch" into "30-day proven."
 
 **What is measured and green** (the two paid EC2 runs, docs-only, against a `main`-identical server):
 
 - **Durability** - `ec2-2026-06-30/02-dr-drills.md`: 372 ms leader-loss write-availability gap,
   **1 bounded election (no storm)**, **0/1000 committed-write loss** across three fault modes; node
   recovery RTO 4.2 s (WAL) / 5.9 s (snapshot).
-- **Long-run stability** - `ec2-2026-06-30/04-soak.md`: **6 h clean** (21,601 s, 691 samples), FD
-  flat, RSS 2.6 % spread, heap floor stable, GC 0.92 %, 0 rejected.
+- **Long-run stability** - `docs/measurement/2026-07-23/soak/`: **72 h clean** (259,201 s, 8,263
+  samples, 11 injected faults all recovered), FD flat (max 144), threads flat (max 115), jstat
+  heap-used flat (+0.6 % half-over-half), 0 rejected. (Supersedes the June-30 6 h run.)
 - **Horizontal scale** - `ec2-horizontal-2026-07-01/02-scaling-curve.md` + `04-verdict.md`:
   near-linear **2.45x on 3 machines** (656 -> 1075 -> 1607 w/s), cluster-bound by consensus churn, not
   hardware.

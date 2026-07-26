@@ -1,0 +1,207 @@
+# TYPE fanout_buffer_dropped_total counter
+fanout_buffer_dropped_total 0
+# TYPE configd_http_request_rejected_payload_too_large_total counter
+configd_http_request_rejected_payload_too_large_total 0
+# TYPE configd_raft_peer_identity_mismatch_total counter
+configd_raft_peer_identity_mismatch_total 0
+# TYPE configd_http_request_rejected_bad_request_total counter
+configd_http_request_rejected_bad_request_total 0
+# TYPE configd_raft_autobalance_skipped_unstable_term_churn_total counter
+configd_raft_autobalance_skipped_unstable_term_churn_total 0
+# TYPE configd_raft_autobalance_transfer_refused_total counter
+configd_raft_autobalance_transfer_refused_total 0
+# TYPE configd_raft_autobalance_skipped_unstable_unknown_leader_total counter
+configd_raft_autobalance_skipped_unstable_unknown_leader_total 0
+# TYPE configd_write_commit_failed_total counter
+configd_write_commit_failed_total 2
+# TYPE configd_raft_autobalance_would_transfer_total counter
+configd_raft_autobalance_would_transfer_total 0
+# TYPE configd_edge_read_total counter
+configd_edge_read_total 0
+# TYPE configd_command_malformed_total counter
+configd_command_malformed_total 0
+# TYPE propagation_lag_violation_total counter
+propagation_lag_violation_total 0
+# TYPE configd_acl_policy_load_failed_total counter
+configd_acl_policy_load_failed_total 0
+# TYPE configd_write_rejected_overloaded_total counter
+configd_write_rejected_overloaded_total 0
+# TYPE configd_snapshot_rebuild_total counter
+configd_snapshot_rebuild_total 0
+# TYPE configd_acl_policy_reload_total counter
+configd_acl_policy_reload_total 0
+# TYPE configd_raft_autobalance_cycle_errors_total counter
+configd_raft_autobalance_cycle_errors_total 0
+# TYPE configd_snapshot_install_failed_total counter
+configd_snapshot_install_failed_total 0
+# TYPE configd_raft_transport_connection_decode_dropped_total counter
+configd_raft_transport_connection_decode_dropped_total 0
+# TYPE configd_raft_autobalance_transfers_initiated_total counter
+configd_raft_autobalance_transfers_initiated_total 0
+# TYPE configd_raft_autobalance_skipped_unstable_cooldown_total counter
+configd_raft_autobalance_skipped_unstable_cooldown_total 0
+# TYPE configd_raft_decode_dropped_total counter
+configd_raft_decode_dropped_total 0
+# TYPE configd_write_commit_total counter
+configd_write_commit_total 1422
+# TYPE configd_raft_elections_total counter
+configd_raft_elections_total 3
+# TYPE raft_shard_apply_lag_1 gauge
+raft_shard_apply_lag_1 0
+# TYPE raft_shard_current_term_3 gauge
+raft_shard_current_term_3 6
+# TYPE raft_shard_apply_lag_0 gauge
+raft_shard_apply_lag_0 0
+# TYPE raft_shard_apply_lag_3 gauge
+raft_shard_apply_lag_3 0
+# TYPE raft_shard_apply_lag_2 gauge
+raft_shard_apply_lag_2 0
+# TYPE raft_shard_leader_1 gauge
+raft_shard_leader_1 0
+# TYPE raft_shard_leader_0 gauge
+raft_shard_leader_0 0
+# TYPE raft_shard_leader_3 gauge
+raft_shard_leader_3 1
+# TYPE raft_shard_leader_2 gauge
+raft_shard_leader_2 0
+# TYPE raft_shard_current_term_1 gauge
+raft_shard_current_term_1 2
+# TYPE raft_shard_current_term_2 gauge
+raft_shard_current_term_2 5
+# TYPE raft_shard_current_term_0 gauge
+raft_shard_current_term_0 3
+# TYPE configd_raft_transport_frames_dropped gauge
+configd_raft_transport_frames_dropped 0
+# TYPE jvm_gc_collection_millis gauge
+jvm_gc_collection_millis 81
+# TYPE configd_raft_autobalance_cooldown_active gauge
+configd_raft_autobalance_cooldown_active 0
+# TYPE raft_node_leader_count gauge
+raft_node_leader_count 1
+# TYPE raft_shard_snapshot_chunk_send_rejected_2 gauge
+raft_shard_snapshot_chunk_send_rejected_2 0
+# TYPE raft_shard_snapshot_chunk_send_rejected_1 gauge
+raft_shard_snapshot_chunk_send_rejected_1 0
+# TYPE raft_shard_snapshot_chunk_send_rejected_3 gauge
+raft_shard_snapshot_chunk_send_rejected_3 0
+# TYPE raft_shard_snapshot_chunk_send_rejected_0 gauge
+raft_shard_snapshot_chunk_send_rejected_0 0
+# TYPE process_open_fds gauge
+process_open_fds 54
+# TYPE raft_shard_last_applied_0 gauge
+raft_shard_last_applied_0 1485
+# TYPE raft_shard_last_applied_3 gauge
+raft_shard_last_applied_3 1349
+# TYPE raft_shard_last_applied_2 gauge
+raft_shard_last_applied_2 1399
+# TYPE raft_shard_last_applied_1 gauge
+raft_shard_last_applied_1 1436
+# TYPE raft_shard_replication_lag_max_0 gauge
+raft_shard_replication_lag_max_0 0
+# TYPE raft_shard_replication_lag_max_2 gauge
+raft_shard_replication_lag_max_2 0
+# TYPE raft_shard_replication_lag_max_1 gauge
+raft_shard_replication_lag_max_1 0
+# TYPE raft_shard_append_send_rejected_0 gauge
+raft_shard_append_send_rejected_0 0
+# TYPE raft_shard_append_send_rejected_2 gauge
+raft_shard_append_send_rejected_2 0
+# TYPE raft_shard_append_send_rejected_1 gauge
+raft_shard_append_send_rejected_1 0
+# TYPE raft_shard_replication_lag_max_3 gauge
+raft_shard_replication_lag_max_3 0
+# TYPE configd_raft_transport_inbound_connections_refused gauge
+configd_raft_transport_inbound_connections_refused 0
+# TYPE raft_shard_append_send_rejected_3 gauge
+raft_shard_append_send_rejected_3 0
+# TYPE jvm_heap_max_bytes gauge
+jvm_heap_max_bytes 2147483648
+# TYPE raft_shard_commit_index_0 gauge
+raft_shard_commit_index_0 1485
+# TYPE jvm_gc_collections gauge
+jvm_gc_collections 6
+# TYPE configd_raft_last_applied_index gauge
+configd_raft_last_applied_index 1485
+# TYPE raft_shard_commit_index_2 gauge
+raft_shard_commit_index_2 1399
+# TYPE raft_shard_commit_index_1 gauge
+raft_shard_commit_index_1 1436
+# TYPE jvm_threads_current gauge
+jvm_threads_current 25
+# TYPE configd_raft_pending_apply_entries gauge
+configd_raft_pending_apply_entries 0
+# TYPE jvm_heap_used_bytes gauge
+jvm_heap_used_bytes 211812352
+# TYPE configd_subscription_prefix_count gauge
+configd_subscription_prefix_count 0
+# TYPE raft_shard_snapshot_reassembly_refused_3 gauge
+raft_shard_snapshot_reassembly_refused_3 0
+# TYPE raft_shard_snapshot_reassembly_refused_2 gauge
+raft_shard_snapshot_reassembly_refused_2 0
+# TYPE configd_raft_autobalance_leader_spread gauge
+configd_raft_autobalance_leader_spread 0
+# TYPE configd_snapshot_bytes gauge
+configd_snapshot_bytes 0
+# TYPE raft_shard_snapshot_reassembly_refused_1 gauge
+raft_shard_snapshot_reassembly_refused_1 0
+# TYPE raft_shard_snapshot_reassembly_refused_0 gauge
+raft_shard_snapshot_reassembly_refused_0 0
+# TYPE raft_shard_commit_index_3 gauge
+raft_shard_commit_index_3 1349
+# TYPE configd_edge_read_seconds histogram
+configd_edge_read_seconds_bucket{le="0.0001"} 0
+configd_edge_read_seconds_bucket{le="0.0005"} 0
+configd_edge_read_seconds_bucket{le="0.001"} 0
+configd_edge_read_seconds_bucket{le="0.0025"} 0
+configd_edge_read_seconds_bucket{le="0.005"} 0
+configd_edge_read_seconds_bucket{le="0.010"} 0
+configd_edge_read_seconds_bucket{le="0.025"} 0
+configd_edge_read_seconds_bucket{le="0.050"} 0
+configd_edge_read_seconds_bucket{le="0.100"} 0
+configd_edge_read_seconds_bucket{le="+Inf"} 0
+configd_edge_read_seconds_count 0
+# TYPE configd_propagation_delay_seconds histogram
+configd_propagation_delay_seconds_bucket{le="0.010"} 0
+configd_propagation_delay_seconds_bucket{le="0.025"} 0
+configd_propagation_delay_seconds_bucket{le="0.050"} 0
+configd_propagation_delay_seconds_bucket{le="0.100"} 0
+configd_propagation_delay_seconds_bucket{le="0.250"} 0
+configd_propagation_delay_seconds_bucket{le="0.500"} 0
+configd_propagation_delay_seconds_bucket{le="1.000"} 0
+configd_propagation_delay_seconds_bucket{le="2.500"} 0
+configd_propagation_delay_seconds_bucket{le="5.000"} 0
+configd_propagation_delay_seconds_bucket{le="10.000"} 0
+configd_propagation_delay_seconds_bucket{le="+Inf"} 0
+configd_propagation_delay_seconds_count 0
+# TYPE configd_apply_seconds histogram
+configd_apply_seconds_bucket{le="0.005"} 4062
+configd_apply_seconds_bucket{le="0.010"} 4095
+configd_apply_seconds_bucket{le="0.025"} 4095
+configd_apply_seconds_bucket{le="0.050"} 4096
+configd_apply_seconds_bucket{le="0.100"} 4096
+configd_apply_seconds_bucket{le="0.150"} 4096
+configd_apply_seconds_bucket{le="0.250"} 4096
+configd_apply_seconds_bucket{le="0.500"} 4096
+configd_apply_seconds_bucket{le="1.000"} 4096
+configd_apply_seconds_bucket{le="2.500"} 4096
+configd_apply_seconds_bucket{le="5.000"} 4096
+configd_apply_seconds_bucket{le="10.000"} 4096
+configd_apply_seconds_bucket{le="+Inf"} 5655
+configd_apply_seconds_count 5655
+# TYPE configd_write_commit_seconds histogram
+configd_write_commit_seconds_bucket{le="0.005"} 786
+configd_write_commit_seconds_bucket{le="0.010"} 982
+configd_write_commit_seconds_bucket{le="0.025"} 1157
+configd_write_commit_seconds_bucket{le="0.050"} 1277
+configd_write_commit_seconds_bucket{le="0.100"} 1304
+configd_write_commit_seconds_bucket{le="0.150"} 1309
+configd_write_commit_seconds_bucket{le="0.250"} 1316
+configd_write_commit_seconds_bucket{le="0.500"} 1336
+configd_write_commit_seconds_bucket{le="1.000"} 1387
+configd_write_commit_seconds_bucket{le="2.500"} 1422
+configd_write_commit_seconds_bucket{le="5.000"} 1422
+configd_write_commit_seconds_bucket{le="10.000"} 1422
+configd_write_commit_seconds_bucket{le="+Inf"} 1422
+configd_write_commit_seconds_count 1422
+# TYPE configd_state_machine_hash gauge
+configd_state_machine_hash{hash="97e22f3c268bca191b0d09f6e622a7f166ab6cb1676b68e3a9e7213b482283aa"} 1

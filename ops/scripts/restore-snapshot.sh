@@ -29,10 +29,14 @@
 #     passes --dry-run=false AND --i-have-a-backup. Both are required.
 #   - The reference deployment is Kubernetes (deploy/kubernetes/configd-
 #     statefulset.yaml). The script scales the configd StatefulSet to 0,
-#     waits for pods to terminate, copies the snapshot into the data dir
-#     (operator-supplied; reference Job pattern documented in
-#     ops/runbooks/restore-from-snapshot.md Step 3), runs the conformance
-#     check, then scales back up to the original replica count.
+#     waits for pods to terminate, stages the snapshot (operator-supplied PVC
+#     injection is the reference Job pattern documented in
+#     ops/runbooks/restore-from-snapshot.md Step 3), scales back up, and THEN
+#     runs the conformance check against the now-live restored cluster (the
+#     check reads applied-index + state-machine hash off /metrics, so it
+#     requires a running cluster — it cannot run while scaled to 0).
+#   - kubectl is required only for a real restore; --dry-run performs no
+#     cluster operations and needs no kubectl.
 #
 # Exit codes:
 #   0  success (or successful dry-run)
@@ -156,12 +160,14 @@ if ! [[ "$REPLICAS" =~ ^[0-9]+$ ]] || [ "$REPLICAS" -lt 1 ]; then
 fi
 
 # -----------------------------------------------------------------------------
-# Detect kubectl on PATH and fail-close with a clear error if absent.
-# The reference deployment is K8s; no kubectl == no restore primitive.
+# Detect kubectl on PATH. The reference deployment is K8s; no kubectl == no
+# restore primitive. Only REQUIRED for a real (destructive) restore: a dry-run
+# performs no kubectl operations (it only logs the commands it WOULD run), so it
+# stays useful for validating a snapshot on a bastion that has no kubectl.
 # -----------------------------------------------------------------------------
 KUBECTL_BIN="$(command -v kubectl 2>/dev/null || true)"
-if [ -z "$KUBECTL_BIN" ]; then
-  die 3 "kubectl not found on PATH; the reference Configd deployment is Kubernetes (see deploy/kubernetes/configd-statefulset.yaml). Install kubectl on the bastion before retrying."
+if [ -z "$KUBECTL_BIN" ] && [ "$DRY_RUN" != "true" ]; then
+  die 3 "kubectl not found on PATH; the reference Configd deployment is Kubernetes (see deploy/kubernetes/configd-statefulset.yaml). Install kubectl on the bastion before retrying (not needed for --dry-run=true)."
 fi
 
 log "snapshot-path=$SNAPSHOT_PATH target-cluster=$TARGET_CLUSTER namespace=$NAMESPACE statefulset=$STATEFULSET replicas=$REPLICAS dry-run=$DRY_RUN kubectl=$KUBECTL_BIN"
@@ -272,9 +278,38 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Step 4 — integrity check via the conformance script.
+# Step 4 — scale the StatefulSet back up on the restored data.
+#
+# Conformance MUST run against a LIVE restored cluster (it reads the post-restore
+# applied index and state-machine hash off /metrics), so the cluster is brought
+# back up BEFORE the check — not after. Scaling up before verifying is safe: the
+# check still gates SUCCESS, and a failed check surfaces non-zero for the runbook
+# to act on.
 # -----------------------------------------------------------------------------
-log "step 4: invoking conformance check"
+log "step 4: scaling StatefulSet $NAMESPACE/$STATEFULSET back to $REPLICAS replicas"
+
+if [ "$DRY_RUN" = "true" ]; then
+  log "[dry-run] would run: $KUBECTL_BIN -n $NAMESPACE scale statefulset $STATEFULSET --replicas=$REPLICAS"
+  log "[dry-run] would run: $KUBECTL_BIN -n $NAMESPACE rollout status statefulset/$STATEFULSET --timeout=300s"
+else
+  if ! "$KUBECTL_BIN" -n "$NAMESPACE" scale statefulset "$STATEFULSET" \
+         --replicas="$REPLICAS"; then
+    die 3 "failed to scale statefulset $NAMESPACE/$STATEFULSET to $REPLICAS"
+  fi
+  # Wait for the restored pods to become Ready so the conformance check below
+  # hits a live cluster; downstream the runbook does per-pod verification too.
+  if ! "$KUBECTL_BIN" -n "$NAMESPACE" rollout status \
+         "statefulset/$STATEFULSET" --timeout=300s; then
+    die 3 "$NAMESPACE/$STATEFULSET did not become Ready within 300s"
+  fi
+  log "$NAMESPACE/$STATEFULSET is back at $REPLICAS replicas"
+fi
+
+# -----------------------------------------------------------------------------
+# Step 5 — integrity check via the conformance script, against the now-live
+# restored cluster (applied-index >= snapshot seq, state-machine hash match).
+# -----------------------------------------------------------------------------
+log "step 5: invoking conformance check against the restored cluster"
 
 if [ ! -x "$CONFORMANCE_SCRIPT" ]; then
   die 3 "conformance script not found or not executable: $CONFORMANCE_SCRIPT"
@@ -293,27 +328,6 @@ if ! "$CONFORMANCE_SCRIPT" "${CONFORMANCE_ARGS[@]}"; then
 fi
 
 log "conformance check passed"
-
-# -----------------------------------------------------------------------------
-# Step 5 — scale the StatefulSet back up.
-# -----------------------------------------------------------------------------
-log "step 5: scaling StatefulSet $NAMESPACE/$STATEFULSET to $REPLICAS replicas"
-
-if [ "$DRY_RUN" = "true" ]; then
-  log "[dry-run] would run: $KUBECTL_BIN -n $NAMESPACE scale statefulset $STATEFULSET --replicas=$REPLICAS"
-else
-  if ! "$KUBECTL_BIN" -n "$NAMESPACE" scale statefulset "$STATEFULSET" \
-         --replicas="$REPLICAS"; then
-    die 3 "failed to scale statefulset $NAMESPACE/$STATEFULSET to $REPLICAS"
-  fi
-  # Best-effort wait for pod-0 to come back; downstream the runbook does
-  # the per-pod readiness verification.
-  if ! "$KUBECTL_BIN" -n "$NAMESPACE" rollout status \
-         "statefulset/$STATEFULSET" --timeout=300s; then
-    die 3 "$NAMESPACE/$STATEFULSET did not become Ready within 300s"
-  fi
-  log "$NAMESPACE/$STATEFULSET is back at $REPLICAS replicas"
-fi
 
 log "restore-snapshot.sh completed (dry-run=$DRY_RUN)"
 exit 0

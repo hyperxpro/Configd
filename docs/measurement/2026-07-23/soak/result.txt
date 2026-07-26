@@ -1,0 +1,20 @@
+soak harness
+  jar=/home/ubuntu/Configd/configd-server/target/configd-server-0.1.0-SNAPSHOT.jar
+  gc=-XX:+UseZGC heap=-Xmx1g -Xms1g rate=100/s seed=42 sample=30s
+  requested_duration_sec=259200
+  start_utc=2026-07-23T07:38:48Z
+  label=SOAK (real-duration leak/drift run)
+  end_utc=2026-07-26T07:38:49Z
+  measured_elapsed_sec=259201
+  samples=8263
+  status=DONE
+  --- leak/drift check (post-warmup >=180s: 1st-half-median vs 2nd-half-median) ---
+  post_warmup_samples=8258  (first cold sample rss was 748416 kb — JVM heap-commit ramp excluded)
+  rss_total_kb:       1stH-median 1469576 -> 2ndH-median 2799836
+  heap_used_total_kb: 1stH-median 371305 -> 2ndH-median 373395  (jstat — the DEFINITIVE Java-heap-leak signal)
+  fd_total:           144 -> 143  (first sample vs last — FD leaks show from t0)
+  threads_total:      116 -> 111  (first sample vs last — thread leaks show from t0)
+  VERDICT: jstat heap-used flat across post-warmup window — no Java heap-leak signal
+  VERDICT: RSS grew > 10% post-warmup BUT jstat heap-used flat — native-footprint/throttle (likely ZGC lazy-uncommit on a 2-vCPU box), NOT a Java heap leak; confirm on the long run
+  VERDICT: FD count flat — no FD leak signal
+  VERDICT: thread count flat — no thread leak signal

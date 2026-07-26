@@ -1,0 +1,1 @@
+[nxk] DATA-ON-NVMe: /mnt/nvme/nxk-n4/n1/shard-0/raft-log.wal

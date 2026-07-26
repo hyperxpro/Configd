@@ -1,0 +1,39 @@
+=== Configd DR drills @ 2026-07-23T07:06:52Z ===
+[dr] jar=/home/ubuntu/Configd/configd-server/target/configd-server-0.1.0-SNAPSHOT.jar base=/mnt/nvme/dr seed_keys=1000 load_rate=100 heap=-Xmx2g -Xms2g
+[dr] initial leader = node 3
+[dr] seeding 1000 known keys via leader 3...
+[dr] seeded_ok=1000 / 1000
+[dr] leader commit_index after seed = 1002
+[dr] 
+[dr] ===== DRILL A: LEADER-LOSS under load =====
+[dr] background load pid=25642 (60s @ 100/s)
+[dr] killed leader node 3 (pid 22434) at t_kill; measuring failover...
+[dr] failover: new write-leader = node 1; write-availability GAP = 371 ms
+[dr] elections_total: before_kill=1 after_settle=2 (delta=1 — bounded election, not a storm)
+[dr] seeded read-back via node 1: intact=1000 missing=0 mismatch=0
+[dr] DRILL A VERDICT: NO committed-write loss (all 1000 seeded keys survived leader loss)
+[dr] restarting ex-leader node 3 (rejoin via its own data dir)...
+[dr] node 3 rejoined
+[dr] 
+[dr] ===== DRILL B: NODE RECOVERY via WAL replay (kill+restart, same data dir) =====
+[dr] leader=1 follower-to-recover=2
+[dr] leader commit_index = 1921
+[dr] killed follower 2; restarting from its OWN data dir (WAL/snapshot replay)...
+[dr] WAL-replay recovery: ready_in=3719ms converged_in=3752ms (follower ci>=leader ci=1921)
+[dr] DRILL B read-back via recovered node 2: intact=1000 missing=0 mismatch=0
+[dr] DRILL B VERDICT: recovered, NO loss (RTO=3752ms)
+[dr] 
+[dr] ===== DRILL D: InstallSnapshot catch-up (follower falls behind a compaction, rejoins from OWN dir) =====
+[dr] leader=1 follower-to-lag=2
+[dr] killed follower 2; driving writes + waiting for leader compaction to advance past it...
+[dr] leader commit_index after burst = 3038 (leader snapshot_bytes=0)
+[dr] InstallSnapshot catch-up: ready+converged_in=6970ms (follower ci>=leader ci=3038; install_failed=0)
+[dr] DRILL D read-back via caught-up node 2: intact=1000 missing=0 mismatch=0
+[dr] DRILL D VERDICT: caught up via leader stream, NO loss (RTO=6970ms)
+[dr] 
+[dr] ===== DRILL C: same-id WIPE-REJOIN must be REFUSED by the R-a' anchor witness (safety) =====
+[dr] leader=1 follower-to-wipe=2
+[dr] killed + WIPED follower 2 data dir; restarting EMPTY under the SAME id (must be REFUSED)...
+[dr] DRILL C VERDICT: PASS - same-id wipe-rejoin correctly REFUSED by R-a' (anchor rollback, halt 71)
+[dr] 
+[dr] === DR drills complete @ 2026-07-23T07:08:08Z ===

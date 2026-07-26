@@ -1,0 +1,2 @@
+CALIBRATE-RESULT shards=1 concurrency=128 measureSec=17.0 committed_200=5280 non200=23973 retargets=18 sustained_commit_rate_per_sec=311
+CALIBRATE-STATUS 200=5280 503=23861 504=112

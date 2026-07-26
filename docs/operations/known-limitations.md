@@ -250,17 +250,46 @@ inert-but-grantable footgun.
 
 ## What's measured, and what isn't
 
-**Soak.** The clean-code soak ran a flat 6 hours (file descriptors flat at 350, RSS spread 2.6%, heap
-floor stable, GC overhead 0.92%, zero rejected writes; git history:
-`docs/archive/measurement/ec2-2026-06-30/04-soak.md`). A prior attempt at 24 hours ran out of box
-capacity at 3.45 hours - not a Configd leak. No full 24-hour or 72-hour soak has completed yet; the
-first-30-days posture is the [burn-in contract](burn-in-contract.md).
+**Soak.** A full **72-hour fault-injected soak completed clean** (commit `a93eae8`, 2026-07-23,
+m6id.xlarge single-box three-node, 100/s, 8258 post-warmup samples over 72h; results
+`docs/measurement/2026-07-23/soak/`). No resource leak on any definitive signal: jstat heap-used
+second-half-median vs first-half-median +0.6% (flat), file descriptors 144->143, threads 116->111,
+commit p99 median 4.5 ms / worst-window 10.8 ms. RSS rose from 1.47 GB to 2.80 GB but heap-used stayed
+flat — that is ZGC making the committed `-Xms1g` heap resident as GC touches pages (confirmed by NMT:
+native categories flat, Java-heap committed = exactly 1 GB), bounded at ~1.2 GB/node (~3.6 GB for three
+nodes vs 16 GB box), not a leak. **11 fault events were injected during the run** (4 leader-kills, 4
+follower-restarts, 3 clock-skews, one every ~6h) and **every one recovered to 3/3 healthy in under 60
+seconds** with writes never dropping below the target rate. This supersedes the earlier 6-hour clean run
+and the 24-hour attempt that ran out of box capacity at 3.45 hours (an undersized box, not a leak). The
+soak ran plaintext-loopback at a single-box-sustainable rate; endurance beyond 72h and cross-region
+behaviour remain the [burn-in contract](burn-in-contract.md).
 
-**Disaster recovery.** Leader-loss under load, WAL-replay restart, and wipe-plus-install-snapshot were
-all run on real hardware: 372 ms failover (one bounded election, no storm), zero committed-write loss
-across all three fault modes out of 1000 writes, and recovery times of 4.2 s (WAL replay) and 5.9 s
-(snapshot install). This ran on a single-box, three-co-located-node topology - cross-machine failover
-adds network RTT, but the correctness (no loss, bounded election) is topology-independent.
+**Disaster recovery.** Four fault modes were run on real hardware (single-box, three-co-located-node,
+commit `a93eae8`, 2026-07-23): leader-loss under load, WAL-replay restart, InstallSnapshot catch-up of
+a follower that fell behind a leader compaction, and a same-id wipe-rejoin. Failover was 371 ms (one
+bounded election, no storm) with zero committed-write loss out of 1000 seeded writes; WAL-replay
+recovery RTO was 3.8 s and InstallSnapshot catch-up RTO 7.0 s, both with zero loss and zero
+snapshot-install failures. A follower whose disk is wiped and restarted under the **same node-id** is
+deliberately **refused** at boot by the peer-quorum anchor witness (Gate 3c R-a', `halt(71)`):
+surviving peers still witness its prior `anchorSeq`, so a within-term re-vote could double-vote and
+split-brain. The supported recovery for a lost-disk node is therefore whole-cluster snapshot restore
+([`restore-from-snapshot`](../../ops/runbooks/restore-from-snapshot.md)) or membership add-server under
+a new node-id — not same-id wipe-rejoin. This ran on a single-box topology; cross-machine failover adds
+network RTT, but the correctness (no loss, bounded election, anchor-rollback refusal) is
+topology-independent. (These supersede the earlier 372 ms / 4.2 s / 5.9 s June-30 figures, which were
+measured before ~30k lines of consensus/storage/auth change and before the R-a' witness existed.)
+
+**Snapshot restore.** A restore was run end-to-end (commit `a93eae8`, 2026-07-23): a node was genuinely
+restored from a snapshot and `ops/scripts/restore-conformance-check.sh` returned PASS on all four checks,
+including the two metrics added for this — the restored node's `configd_raft_last_applied_index` reached
+the snapshot's index and its `configd_state_machine_hash` matched the snapshot payload hash byte-for-byte
+(evidence `docs/measurement/2026-07-23/restore/`). One tooling gap remains: there is **no first-class
+command to export a raw snapshot file** in the `ConfigStateMachine#snapshot()` format the conformance
+check consumes — the durable on-disk `raft-log.snapshot.dat` is integrity-envelope-wrapped/keyed and
+cannot be fed to the check directly, so the reference `.snap` must come from out-of-band backup tooling
+(the K8s runbook flow) or be reproduced in-process. `restore-snapshot.sh` itself was corrected in this
+pass (it no longer requires `kubectl` for a dry-run, and it now runs the conformance check against the
+scaled-back-up cluster rather than while it is scaled to zero).
 
 **Faulted linearizability.** An adversarial matrix drives a real cluster under process kills and
 restarts, network partitions (including multi-node quorum-breaking partitions), process pauses, packet
