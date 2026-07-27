@@ -52,7 +52,6 @@ final class SimInvariants {
     private final long seed;
     private final int nodeCount;
 
-    /** Highest store version observed per node - guards monotonicity per observer. */
     private final long[] lastVersionPerNode;
 
     /**
@@ -85,10 +84,9 @@ final class SimInvariants {
     }
 
     /**
-     * Runs all cross-node safety checks against the current cluster state. Throws
-     * {@link SafetyViolation} on the first breach. Cheap: O(nodes) plus O(nodes)
-     * map lookups per tick.
-     */
+         * Runs all cross-node safety checks against the current cluster state. Throws
+         * {@link SafetyViolation} on the first breach.
+         */
     void checkAll() {
         checkSingleLeaderPerTerm();
         checkVersionMonotonicityPerObserver();
@@ -98,7 +96,6 @@ final class SimInvariants {
 
     /** <=1 LEADER per term across the whole cluster (Election Safety, global view). */
     private void checkSingleLeaderPerTerm() {
-        // term -> the first leader id seen for it this tick
         Map<Long, Integer> leaderByTerm = new HashMap<>();
         for (int i = 0; i < nodeCount; i++) {
             RaftNode n = cluster.node(i);
@@ -113,7 +110,6 @@ final class SimInvariants {
         }
     }
 
-    /** Each node's store version never decreases tick-to-tick (per-observer monotonicity). */
     private void checkVersionMonotonicityPerObserver() {
         for (int i = 0; i < nodeCount; i++) {
             long v = cluster.store(i).currentVersion();

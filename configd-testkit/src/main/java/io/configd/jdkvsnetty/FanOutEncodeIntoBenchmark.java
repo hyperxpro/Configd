@@ -22,28 +22,26 @@ import java.util.concurrent.TimeUnit;
 import java.util.zip.CRC32C;
 
 /**
- * Single-pass encode baseline - the <b>production</b> single-pass {@link EdgeFrameCodec#encodeInto} against the
- * original multi-pass baseline, on the batch-64 signed NOTIFY (the head-to-head surface-3 shape).
- * Run with {@code -prof gc} (B/op, CPU-count-independent on the 2-vCPU box).
+ * Single-pass encode baseline - the <b>production</b> {@link EdgeFrameCodec#encodeInto}
+ * against the original multi-pass encode, on the batch-64 signed NOTIFY (the head-to-head
+ * surface-3 shape). Run with {@code -prof gc} (B/op, CPU-count-independent on the 2-vCPU
+ * box).
  *
- * <p>This differs from {@code FanOutWireH2HBenchmark} (which raced two <em>testkit</em> encoders,
- * {@code H2HCodecs} / {@code NettyWireEncoders}, before the production codec itself was rewritten
- * to single-pass) by measuring the encoder that actually shipped:
  * <ul>
- *   <li>{@code legacyMultiPassEncode} - a verbatim copy of the {@code EdgeFrameCodec.encode}
- *       (intermediate {@code List<byte[]>}, per-notification + payload + out arrays). The 69,492
- *       B/op baseline, kept here so the A/B is reproducible in one run.</li>
- *   <li>{@code prodEncodeIntoHeapReused} - {@link EdgeFrameCodec#encodeInto} into a reused
- *       {@link HeapFrameSink} (the JDK fan-out writer's per-connection buffer). Expected ~ 25,520
- *       (the message-building floor).</li>
- *   <li>{@code prodEncodeIntoByteBufPooled} - {@link EdgeFrameCodec#encodeInto} into a pooled,
- *       reference-counted Netty {@code ByteBuf} (the in-pipeline encoder). Expected ~ 25,776
- *       (floor + the pooled-{@code ByteBuf} holder bookkeeping).</li>
- *   <li>{@code messageBuildingFloor} - the irreducible floor reference (encodeBatch + sig/nonce
- *       clones) that NEITHER backend removes.</li>
+ *   <li>{@code legacyMultiPassEncode} - the 69,492 B/op baseline, kept here so the A/B is
+ *       reproducible in one run.</li>
+ *   <li>{@code prodEncodeIntoHeapReused} - into a reused {@link HeapFrameSink} (the JDK
+ *       fan-out writer's per-connection buffer). Expected ~ 25,520 (the message-building
+ *       floor).</li>
+ *   <li>{@code prodEncodeIntoByteBufPooled} - into a pooled, reference-counted Netty
+ *       {@code ByteBuf} (the in-pipeline encoder). Expected ~ 25,776 (floor + the
+ *       pooled-{@code ByteBuf} holder bookkeeping).</li>
+ *   <li>{@code messageBuildingFloor} - the irreducible floor reference (encodeBatch +
+ *       sig/nonce clones) that NEITHER backend removes.</li>
  * </ul>
- * If the two {@code encodeInto} legs ~ {@code messageBuildingFloor} << {@code legacyMultiPassEncode},
- * the single-pass rewrite shipped the win and Netty does not regress the floor.
+ * If the two {@code encodeInto} legs ~ {@code messageBuildingFloor} << {@code
+ * legacyMultiPassEncode}, the single-pass rewrite shipped the win and Netty does not regress
+ * the floor.
  */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
@@ -63,8 +61,8 @@ public class FanOutEncodeIntoBenchmark {
     private static final int ED25519_SIG_BYTES = 64;
 
     private EdgeFrame.Notify notifyFrame;
-    private HeapFrameSink reuseHeapSink;     // reused JDK destination
-    private ByteBufAllocator alloc;          // pooled Netty destination
+    private HeapFrameSink reuseHeapSink;
+    private ByteBufAllocator alloc;
     private int bufCapacity;
 
     @Setup(Level.Trial)
@@ -95,13 +93,11 @@ public class FanOutEncodeIntoBenchmark {
         EdgeFrameCodec.encodeInto(notifyFrame, reuseHeapSink);
     }
 
-    /** BASELINE: the original multi-pass encode (all intermediate churn). */
     @Benchmark
     public byte[] legacyMultiPassEncode() {
         return legacyEncode(notifyFrame);
     }
 
-    /** PRODUCTION (JDK path): single pass into one reused heap sink. */
     @Benchmark
     public int prodEncodeIntoHeapReused() {
         reuseHeapSink.reset();
@@ -109,7 +105,6 @@ public class FanOutEncodeIntoBenchmark {
         return reuseHeapSink.writerIndex();
     }
 
-    /** PRODUCTION (Netty path): single pass into a pooled, released {@code ByteBuf}. */
     @Benchmark
     public int prodEncodeIntoByteBufPooled() {
         ByteBuf buf = alloc.directBuffer(bufCapacity);
@@ -121,7 +116,6 @@ public class FanOutEncodeIntoBenchmark {
         }
     }
 
-    /** The codec-internal floor neither backend removes: encodeBatch + sig/nonce clones. */
     @Benchmark
     public void messageBuildingFloor(Blackhole bh) {
         for (CommitNotification n : notifyFrame.notifications()) {

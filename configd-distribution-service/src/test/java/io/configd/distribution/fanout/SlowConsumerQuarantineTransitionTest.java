@@ -7,17 +7,6 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * {@code demoteLimit} distress demotions within {@code demoteWindowMs} transition the
- * identity to QUARANTINED; the caller disconnects with {@code ErrorCode.QUARANTINED}
- * (wire code 8). The metric {@code edge_fanout_quarantines_total} fires and the structured
- * event carries the cursor evidence.
- *
- * <p>Also pins the reason weighting: GAP demotions (network/eviction artifacts) are
- * counted separately at the higher {@code gapDemoteLimit}, so a lossy-WAN edge that gaps
- * and heals repeatedly does not walk to QUARANTINED - while a genuine gap loop still trips
- * the backstop.
- */
 class SlowConsumerQuarantineTransitionTest {
 
     private static final String EDGE = "CN=edge-2,O=configd";
@@ -49,7 +38,6 @@ class SlowConsumerQuarantineTransitionTest {
                 governor.onDemotion(EDGE, distress(110, 90), T0 + 10_000));
         assertEquals(0, probe.quarantines, "two demotions must not quarantine");
 
-        // The third distress demotion inside the 60 s window trips the limit.
         assertEquals(ConsumerState.QUARANTINED,
                 governor.onDemotion(EDGE, distress(120, 90), T0 + 20_000));
         assertEquals(1, probe.quarantines,
@@ -79,7 +67,6 @@ class SlowConsumerQuarantineTransitionTest {
         assertEquals(0, probe.quarantines,
                 "the demotion window is sliding — stale demotions must not count");
 
-        // But a third inside the window does trip it.
         assertEquals(ConsumerState.QUARANTINED,
                 governor.onDemotion(EDGE, distress(40, 5), T0 + 70_000));
         assertEquals(1, probe.quarantines);
@@ -87,8 +74,6 @@ class SlowConsumerQuarantineTransitionTest {
 
     @Test
     void gapDemotionsAreWeightedSeparatelyAndDoNotTripTheDistressLimit() {
-        // A healthy edge flapping on a lossy network (GAP demotions) must not be
-        // quarantined at the distress limit.
         RecordingPolicyProbe probe = new RecordingPolicyProbe();
         SlowConsumerGovernor governor =
                 new SlowConsumerGovernor(config(), probe, probe::onTransition);
@@ -100,7 +85,6 @@ class SlowConsumerQuarantineTransitionTest {
         assertEquals(0, probe.quarantines,
                 "GAP demotions beyond demoteLimit must NOT quarantine (reason weighting)");
 
-        // ... and the recovered edge goes back to HEALTHY on ack progress.
         governor.onAckProgress(EDGE, 60, 60, T0 + 10_000);
         assertEquals(ConsumerState.HEALTHY, governor.state(EDGE));
     }
@@ -157,7 +141,6 @@ class SlowConsumerQuarantineTransitionTest {
         assertEquals(ConsumerState.QUARANTINED, governor.state(EDGE));
         int transitionsAtQuarantine = probe.transitions.size();
 
-        // A straggler demotion from the dying session must be inert.
         assertEquals(ConsumerState.QUARANTINED,
                 governor.onDemotion(EDGE, distress(14, 5), T0 + 3_500));
         assertEquals(1, probe.quarantines);

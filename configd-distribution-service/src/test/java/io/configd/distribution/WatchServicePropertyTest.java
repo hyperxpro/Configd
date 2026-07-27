@@ -12,11 +12,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Property-based tests for the watch/notification system.
- * Verifies invariants that must hold regardless of mutation sequences,
- * prefix filters, and watcher registration patterns.
- */
 class WatchServicePropertyTest {
 
     private static final byte[] VALUE = "val".getBytes();
@@ -28,10 +23,6 @@ class WatchServicePropertyTest {
         return new WatchService(coalescer);
     }
 
-    /**
-     * Every committed mutation generates exactly one notification per
-     * matching watcher (prefix filter). No duplicates, no missed events.
-     */
     @Property(tries = 200)
     void everyMutationNotifiesMatchingWatchersExactlyOnce(
             @ForAll @IntRange(min = 1, max = 20) int numKeys) {
@@ -56,10 +47,6 @@ class WatchServicePropertyTest {
                 "INV-W1: total mutations received must match total committed");
     }
 
-    /**
-     * Version cursors are strictly monotonically increasing across
-     * consecutive events delivered to the same watcher.
-     */
     @Property(tries = 200)
     void versionCursorsAreMonotonicallyIncreasing(
             @ForAll @IntRange(min = 2, max = 30) int numMutations) {
@@ -82,10 +69,6 @@ class WatchServicePropertyTest {
         }
     }
 
-    /**
-     * A watcher with prefix P only receives mutations for keys starting
-     * with P; it never receives non-matching keys.
-     */
     @Property(tries = 200)
     void prefixFilterNeverDeliversNonMatchingKeys(
             @ForAll @StringLength(min = 1, max = 10) String prefix) {
@@ -116,11 +99,6 @@ class WatchServicePropertyTest {
         }
     }
 
-    /**
-     * Coalescing preserves all mutations: the union of mutations across
-     * all events delivered to a watcher equals the set of matching
-     * committed mutations.
-     */
     @Property(tries = 100)
     void coalescingPreservesAllMutations(
             @ForAll @IntRange(min = 1, max = 50) int numMutations) {
@@ -159,9 +137,6 @@ class WatchServicePropertyTest {
                 "INV-W4 violated: coalesced events must contain all committed mutations");
     }
 
-    /**
-     * Cancelled watches never receive further events.
-     */
     @Property(tries = 100)
     void cancelledWatchNeverReceivesEvents(
             @ForAll @IntRange(min = 1, max = 10) int cancelAfter,
@@ -190,10 +165,6 @@ class WatchServicePropertyTest {
                         + (received.size() - deliveredBeforeCancel) + " extra events");
     }
 
-    /**
-     * A watch's cursor after processing matches the version of the last
-     * event it received.
-     */
     @Property(tries = 200)
     void cursorMatchesLastEventVersion(
             @ForAll @IntRange(min = 1, max = 20) int numMutations) {

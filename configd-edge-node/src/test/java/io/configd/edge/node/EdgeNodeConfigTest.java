@@ -82,7 +82,6 @@ class EdgeNodeConfigTest {
 
     @Test
     void partialTlsTripleIsRejectedFailClosed() {
-        // A missing TLS flag must never silently downgrade to plaintext.
         assertThrows(IllegalArgumentException.class,
                 () -> EdgeNodeConfig.parse(minimal("--tls-cert", "/tmp/c.pem")));
         assertThrows(IllegalArgumentException.class,
@@ -136,7 +135,6 @@ class EdgeNodeConfigTest {
 
     @Test
     void endpointHostAndPortBoundaries() {
-        // Degenerate host/port shapes are rejected…
         assertThrows(IllegalArgumentException.class, () -> EdgeNodeConfig.parse(new String[]{
                 "--edge-id", "e", "--fanout-endpoints", ":7000", "--data-dir", "/tmp"}),
                 "empty host");
@@ -146,7 +144,6 @@ class EdgeNodeConfigTest {
         assertThrows(IllegalArgumentException.class, () -> EdgeNodeConfig.parse(new String[]{
                 "--edge-id", "e", "--fanout-endpoints", "h:0", "--data-dir", "/tmp"}),
                 "port 0 is not a connectable endpoint");
-        // …while the valid extremes are accepted.
         assertEquals(1, EdgeNodeConfig.parse(new String[]{
                 "--edge-id", "e", "--fanout-endpoints", "h:1", "--data-dir", "/tmp"})
                 .fanOutEndpoints().get(0).getPort());

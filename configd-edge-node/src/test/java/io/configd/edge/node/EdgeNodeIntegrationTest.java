@@ -71,12 +71,10 @@ class EdgeNodeIntegrationTest {
         }
     }
 
-    // Fixture
 
-    /** Starts a plaintext single-node server with an ephemeral edge port + signing key. */
     private ConfigdServer startServer() throws Exception {
         Path signingKey = tempDir.resolve("signing-key.bin");
-        SigningKeyStore.loadOrCreate(signingKey); // deterministic pre-creation
+        SigningKeyStore.loadOrCreate(signingKey);
         ServerConfig cfg = new ServerConfig(
                 NodeId.of(0), tempDir.resolve("server-data"), Set.of(), "127.0.0.1",
                 0, 0 /* api ephemeral */, null, null, null, null,
@@ -84,7 +82,6 @@ class EdgeNodeIntegrationTest {
         return ConfigdServer.start(cfg);
     }
 
-    /** Exports the verify key via the REAL distribution path (VerifyKeyExporter). */
     private Path exportVerifyKey() throws Exception {
         Path verifyKey = tempDir.resolve("verify-key.der");
         VerifyKeyExporter.export(tempDir.resolve("signing-key.bin"), verifyKey);
@@ -101,7 +98,6 @@ class EdgeNodeIntegrationTest {
         return EdgeNodeMain.start(cfg);
     }
 
-    // Tests
 
     @Test
     void writePropagatesOverSignedChainAndServesWithCursor() throws Exception {
@@ -111,7 +107,6 @@ class EdgeNodeIntegrationTest {
         String serverBase = "http://127.0.0.1:" + server.apiPort();
         String edgeBase = "http://127.0.0.1:" + edge.apiPort();
 
-        // --- write -> propagate -> read with cursor (read-your-writes through the real path) ---
         long seq1 = putCommitted(serverBase, "svc/a", "v-a");
         HttpResponse<String> read1 = pollUntilServed(edgeBase, "svc/a", seq1);
         assertEquals("v-a", read1.body());
@@ -122,22 +117,18 @@ class EdgeNodeIntegrationTest {
                 read1.headers().firstValue(EdgeHttpServer.HDR_CURSOR).orElseThrow());
         assertTrue(servedCursor >= seq1, "every read returns its cursor (>= the write seq)");
 
-        // A second write: the carried-forward cursor stays monotonically satisfiable.
         long seq2 = putCommitted(serverBase, "svc/a", "v-a2");
         HttpResponse<String> read2 = pollUntilServed(edgeBase, "svc/a", seq2);
         assertEquals("v-a2", read2.body());
 
-        // --- the signed chain verified (positive case) ---
         assertTrue(edge.core().appliedCount() >= 2, "deltas applied through the verifier");
         assertEquals(0, edge.core().verifyRejections(),
                 "a correctly signed chain must not be rejected");
 
-        // --- skew sanity: same-host clocks, ordered stream -> no implausible samples ---
         assertEquals(0, edge.metricsRegistry()
                         .counter(io.configd.edge.StalenessTracker.IMPLAUSIBLE_METRIC).get(),
                 "no implausible frontier samples on an ordered same-clock stream");
 
-        // --- the edge metric series moved ---
         String metrics = get(edgeBase + "/metrics").body();
         assertSeriesMoved(metrics, "edge_applied_total");
         assertSeriesMoved(metrics, "edge_reads_total");
@@ -147,8 +138,6 @@ class EdgeNodeIntegrationTest {
 
     @Test
     void edgeWithoutVerifyKeyRejectsTheSignedChainFailClosed() throws Exception {
-        // The server signs every delta; an edge with NO verify key configured must reject
-        // the signed chain fail-closed — never apply.
         server = startServer();
         edge = startEdge("edge-it-noverify", null, server.fanOutServer().localPort());
         String serverBase = "http://127.0.0.1:" + server.apiPort();
@@ -173,7 +162,6 @@ class EdgeNodeIntegrationTest {
         pollUntilServed(edgeBase, "svc/c", seq);
         assertEquals(200, get(edgeBase + "/health/ready").statusCode(), "caught-up edge is ready");
 
-        // Kill the source: heartbeats stop, the frontier freezes, staleness climbs.
         server.shutdown();
         server = null;
 
@@ -199,13 +187,7 @@ class EdgeNodeIntegrationTest {
                 "liveness is process-liveness, not staleness");
     }
 
-    // Helpers (deadline-polling; no sleep-as-sync)
 
-    /**
-     * Polls the edge read with {@code X-Configd-Cursor: seq} until served. Every non-200
-     * along the way MUST be the consistent refusal (404 + cursor-behind) — never a stale
-     * 200 below the cursor.
-     */
     private HttpResponse<String> pollUntilServed(String edgeBase, String key, long seq)
             throws Exception {
         long deadline = System.nanoTime() + POLL_DEADLINE.toNanos();

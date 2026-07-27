@@ -52,7 +52,6 @@ class StorageEnospcConsensusReactionTest {
         }
         assertEquals(RaftRole.LEADER, node.role());
 
-        // Establish committed state on a healthy disk.
         for (int i = 0; i < 3; i++) {
             assertEquals(ProposalResult.ACCEPTED, node.propose(("ok" + i).getBytes()).result());
         }
@@ -118,14 +117,12 @@ class StorageEnospcConsensusReactionTest {
         assertThrows(UncheckedIOException.class, node::triggerSnapshot,
                 "a failed snapshot-blob write must surface, not be swallowed");
 
-        // Oracle: WAL prefix NOT truncated (no loss), snapshot boundary NOT advanced.
         assertEquals(snapBefore, log.snapshotIndex(),
                 "snapshotIndex must NOT advance when the blob write failed");
         assertEquals(lastIndexBefore, log.lastIndex(),
                 "the WAL prefix must NOT be truncated when the snapshot write failed (persist-before-truncate, no loss)");
         assertEquals(committedBefore, log.commitIndex(), "committed prefix intact");
 
-        // Defined degradation: once the disk recovers, a later snapshot succeeds and DOES compact.
         assertEquals(ProposalResult.ACCEPTED, node.propose("more".getBytes()).result());
         assertTrue(node.triggerSnapshot(), "a later snapshot succeeds once the disk recovers");
         assertTrue(log.snapshotIndex() > snapBefore, "snapshot now advances");

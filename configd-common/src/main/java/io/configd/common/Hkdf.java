@@ -23,10 +23,9 @@ import java.util.Arrays;
 public final class Hkdf {
 
     private static final String HMAC = "HmacSHA256";
-    private static final int HASH_LEN = 32; // SHA-256 output, in bytes
+    private static final int HASH_LEN = 32;
 
     private Hkdf() {
-        // utility class
     }
 
     /**
@@ -73,15 +72,6 @@ public final class Hkdf {
         return Arrays.copyOf(okm, length);
     }
 
-    /**
-     * Convenience: full extract-then-expand. {@code OKM = Expand(Extract(salt, ikm), info, length)}.
-     *
-     * @param ikm    input keying material (non-null)
-     * @param salt   optional salt (may be null/empty)
-     * @param info   optional context info (may be null)
-     * @param length desired key length in bytes
-     * @return the derived key bytes
-     */
     public static byte[] deriveKey(byte[] ikm, byte[] salt, byte[] info, int length) {
         return expand(extract(salt, ikm), info, length);
     }

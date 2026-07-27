@@ -36,7 +36,6 @@ class KmsProviderFactoryTest {
 
     @Test
     void coreClasspathDiscoversNoExternalFactory() {
-        // configd-common must not ship or transitively pull any KMS provider module: the core is custodian-free.
         assertTrue(KmsProviderFactory.discover().isEmpty(),
                 "the core classpath must advertise no external KMS provider factory");
     }

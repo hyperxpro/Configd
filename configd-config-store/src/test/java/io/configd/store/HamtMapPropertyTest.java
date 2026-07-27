@@ -57,7 +57,6 @@ class HamtMapPropertyTest {
         }
         int originalSize = original.size();
 
-        // Modify a copy - original must be unchanged
         HamtMap<String, String> modified = original.put("__new_key__", "v2");
 
         assertEquals(originalSize, original.size());

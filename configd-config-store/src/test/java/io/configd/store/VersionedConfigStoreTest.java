@@ -14,9 +14,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link VersionedConfigStore}.
- */
 class VersionedConfigStoreTest {
 
     private VersionedConfigStore store;
@@ -105,12 +102,10 @@ class VersionedConfigStoreTest {
         @Test
         void deleteWithStaleSequenceThrows() {
             store.put("k", bytes("v"), 10);
-            // A replayed delete at a sequence <= the current version must be rejected.
             assertThrows(IllegalArgumentException.class,
                     () -> store.delete("k", 5), "delete below the current version must throw");
             assertThrows(IllegalArgumentException.class,
                     () -> store.delete("k", 10), "delete at the current version (equal, not >) must throw");
-            // The store is unchanged: version stays 10 and the key is still present.
             assertEquals(10, store.currentVersion(), "a rejected delete must not regress the version");
             assertTrue(store.get("k").found(), "a rejected delete must not remove the key");
         }
@@ -121,13 +116,10 @@ class VersionedConfigStoreTest {
             List<ConfigMutation> batch = List.of(
                     new ConfigMutation.Put("a", bytes("1")),
                     new ConfigMutation.Delete("k"));
-            // A replayed batch at a sequence <= the current version must be rejected.
             assertThrows(IllegalArgumentException.class,
                     () -> store.applyBatch(batch, 5), "batch below the current version must throw");
             assertThrows(IllegalArgumentException.class,
                     () -> store.applyBatch(batch, 10), "batch at the current version (equal, not >) must throw");
-            // The store is unchanged: version stays 10, the new key was not added,
-            // and the targeted key was not deleted.
             assertEquals(10, store.currentVersion(), "a rejected batch must not regress the version");
             assertFalse(store.get("a").found(), "a rejected batch must not apply any of its mutations");
             assertTrue(store.get("k").found(), "a rejected batch must not delete the key");
@@ -135,7 +127,6 @@ class VersionedConfigStoreTest {
 
         @Test
         void monotonicDeleteAndBatchStillApply() {
-            // Liveness: the guard must NOT reject legitimately-increasing sequences.
             store.put("k", bytes("v"), 10);
             store.delete("k", 11);
             assertFalse(store.get("k").found(), "a delete at a higher sequence must apply");
@@ -184,7 +175,7 @@ class VersionedConfigStoreTest {
         void emptyBatchIsNoOp() {
             store.put("a", bytes("1"), 1);
             store.applyBatch(List.of(), 2);
-            assertEquals(1, store.currentVersion()); // no bump
+            assertEquals(1, store.currentVersion());
         }
     }
 
@@ -212,7 +203,7 @@ class VersionedConfigStoreTest {
 
             assertTrue(store.get("key", 5).found());
             assertTrue(store.get("key", 3).found());
-            assertFalse(store.get("key", 6).found()); // store at v5, requesting v6
+            assertFalse(store.get("key", 6).found());
         }
     }
 
@@ -248,7 +239,6 @@ class VersionedConfigStoreTest {
             // version is the store version of the SAME snapshot the scan observed
             assertEquals(store.currentVersion(), scan.version());
             assertEquals(3, scan.version());
-            // entries are exactly the prefix matches - identical to getPrefix
             assertEquals(2, scan.entries().size());
             assertTrue(scan.entries().containsKey("db.host"));
             assertTrue(scan.entries().containsKey("db.port"));
@@ -342,7 +332,6 @@ class VersionedConfigStoreTest {
             assertEquals(2, delta.fromVersion());
             assertEquals(5, delta.toVersion());
 
-            // Should have: delete(a), put(b, updated), put(c, 3)
             assertEquals(3, delta.size());
 
             boolean hasPutB = false, hasPutC = false, hasDeleteA = false;
@@ -375,7 +364,7 @@ class VersionedConfigStoreTest {
             store.put("b", bytes("2"), 2);
 
             ConfigDelta delta = DeltaComputer.compute(null, store.snapshot());
-            assertEquals(2, delta.size()); // all entries are puts
+            assertEquals(2, delta.size());
             delta.mutations().forEach(m ->
                     assertInstanceOf(ConfigMutation.Put.class, m));
         }

@@ -115,9 +115,6 @@ class PoisonPillRebootstrapTest {
     @Test
     void quarantineForcesSnapshotRebootstrapThatHealsPastThePoisonSeq() throws Exception {
         startServer();
-        // A separate fan-out endpoint over the SAME seams (same commit-notification source)
-        // with queueFrames=4: a cursor-0 subscriber whose backlog exceeds 4 gets
-        // SNAPSHOT_FIRST — the forced re-bootstrap genuinely snapshots at process level.
         smallQueueEndpoint = new FanOutServer(
                 new InetSocketAddress("127.0.0.1", 0), null,
                 server.commitNotificationSource(), server.replaySource(),
@@ -133,7 +130,6 @@ class PoisonPillRebootstrapTest {
         SeqPoison poison = new SeqPoison();
         edge.core().setApplyFaultInjectorForTest(poison);
 
-        // Build a backlog > queueFrames(4) and converge.
         long last = 0;
         for (int i = 1; i <= 6; i++) {
             last = putCommitted(serverBase, "svc/p" + i, "v" + i);
@@ -141,13 +137,10 @@ class PoisonPillRebootstrapTest {
         final long converged = last;
         await("edge converged on the backlog", () -> edge.core().currentVersion() >= converged);
 
-        // Poison the NEXT seq, then commit it.
         poison.poisonSeq = edge.core().currentVersion() + 1;
         long poisonedSeq = putCommitted(serverBase, "svc/poisoned", "the-poison-payload");
         assertEquals(poison.poisonSeq, poisonedSeq, "fixture: the poisoned seq is the next commit");
 
-        // Bounded retries → quarantine → forced cursor-0 resubscribe → SNAPSHOT_FIRST
-        // (backlog 7 > 4) → the snapshot covers the poison seq → recovery, process LIVES.
         await("snapshot re-bootstrap healed past the poison",
                 () -> edge.core().currentVersion() >= poisonedSeq);
 
@@ -161,13 +154,11 @@ class PoisonPillRebootstrapTest {
         assertTrue(edge.core().snapshotsApplied() >= 1, "the heal was a snapshot, not a delta");
         assertFalse(edge.core().isTerminal());
 
-        // The poisoned key's value arrived VIA THE SNAPSHOT (the delta never re-applied).
         HttpResponse<String> read = get("http://127.0.0.1:" + edge.apiPort()
                 + "/v1/config/svc/poisoned");
         assertEquals(200, read.statusCode());
         assertEquals("the-poison-payload", read.body());
 
-        // And the chain continues normally past the healed wedge.
         long next = putCommitted(serverBase, "svc/after", "alive");
         final long nextSeq = next;
         await("post-recovery convergence", () -> edge.core().currentVersion() >= nextSeq);
@@ -184,14 +175,10 @@ class PoisonPillRebootstrapTest {
         edge = startEdge("edge-poison-term", server.fanOutServer().localPort(),
                 terminalRuns::incrementAndGet);
         SeqPoison poison = new SeqPoison();
-        poison.poisonAllApplies = true; // every delta apply throws
-        poison.poisonSnapshots = true;  // every snapshot cutover throws
+        poison.poisonAllApplies = true;
+        poison.poisonSnapshots = true;
         edge.core().setApplyFaultInjectorForTest(poison);
 
-        // The first commit starts the ladder: TAIL apply fails -> resubscribe(0) ->
-        // SNAPSHOT_FIRST (data exists) -> snapshot fails -> bounded retries exhaust ->
-        // quarantine -> forced re-bootstrap -> ITS snapshot fails too -> TERMINAL:
-        // the injected exit action runs (production: System.exit non-zero).
         String serverBase = "http://127.0.0.1:" + server.apiPort();
         putCommitted(serverBase, "svc/t", "v1");
         await("terminal action invoked (production: System.exit non-zero)",
@@ -216,7 +203,6 @@ class PoisonPillRebootstrapTest {
                         l.startsWith("configd_edge_poison_pill_total ") && l.endsWith(" 1")));
     }
 
-    // Fixture and helpers
 
     private void startServer() throws Exception {
         Path signingKey = tempDir.resolve("signing-key.bin");

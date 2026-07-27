@@ -110,7 +110,7 @@ class RolloutControllerTest {
         controller.startRollout("r2", RolloutController.RolloutPolicy.PROGRESSIVE); // in progress
 
         controller.cleanup();
-        assertNull(controller.status("r1")); // cleaned up
-        assertNotNull(controller.status("r2")); // still active
+        assertNull(controller.status("r1"));
+        assertNotNull(controller.status("r2"));
     }
 }

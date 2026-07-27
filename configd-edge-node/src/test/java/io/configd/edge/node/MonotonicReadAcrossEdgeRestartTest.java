@@ -85,7 +85,6 @@ class MonotonicReadAcrossEdgeRestartTest {
         edge = startEdge(edgeDataDir, verifyKey);
         String edgeBase = "http://127.0.0.1:" + edge.apiPort();
 
-        // Converge incarnation #1 and let the CLIENT capture its cursor from a real read.
         putCommitted(serverBase, "svc/k", "v1");
         long seq2 = putCommitted(serverBase, "svc/k", "v2");
         HttpResponse<String> served = pollUntilServed(edgeBase, "svc/k", seq2);
@@ -116,16 +115,13 @@ class MonotonicReadAcrossEdgeRestartTest {
                 afterRestart.headers().firstValue(EdgeHttpServer.HDR_VERSION).orElseThrow());
         assertTrue(version >= seq2, "served at or past the held cursor, never below");
 
-        // The re-bootstrap really ran through the fresh process (applied from scratch).
         assertTrue(edge.core().currentVersion() >= heldCursor,
                 "incarnation #2 re-bootstrapped to (at least) the held cursor");
 
-        // And the recovered edge is live for NEW writes (full recovery, not a one-off).
         long seq3 = putCommitted(serverBase, "svc/k", "v3");
         assertEquals("v3", pollUntilServed(edgeBase2, "svc/k", seq3).body());
     }
 
-    // Helpers (deadline-polling; no sleep-as-sync)
 
     private EdgeNodeMain startEdge(Path dataDir, Path verifyKey) {
         return EdgeNodeMain.start(new EdgeNodeConfig(
@@ -137,7 +133,6 @@ class MonotonicReadAcrossEdgeRestartTest {
                 EdgeNodeConfig.DEFAULT_POISON_MAX_RETRIES));
     }
 
-    /** Polls a held-cursor read; every non-200 must be the cursor-behind refusal. */
     private HttpResponse<String> pollUntilServed(String edgeBase, String key, long cursor)
             throws Exception {
         long deadline = System.nanoTime() + DEADLINE.toNanos();

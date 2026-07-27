@@ -6,13 +6,10 @@ package io.configd.common;
  */
 public interface Clock {
 
-    /** Wall-clock time in milliseconds since epoch. */
     long currentTimeMillis();
 
-    /** Monotonic nanosecond counter for elapsed time measurement. */
     long nanoTime();
 
-    /** System clock implementation using real time. */
     static Clock system() {
         return SystemClock.INSTANCE;
     }

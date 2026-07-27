@@ -76,8 +76,6 @@ class EdgeTransportSanMismatchTest {
         serverCert = fixtureDir.resolve("server.pem");
         clientCert = fixtureDir.resolve("client.pem");
 
-        // Server SAN deliberately does NOT cover 127.0.0.1 (the host the edge connects to) — the
-        // ONLY thing that should fail is HTTPS endpoint identification on the client.
         genKeyPair(serverKeyStore, "server", "CN=other-host.invalid,O=configd-test",
                 "san=dns:other-host.invalid");
         // Legit client cert (so server-side need-client-auth admits the edge; the rejection under
@@ -87,8 +85,6 @@ class EdgeTransportSanMismatchTest {
 
         exportCert(serverKeyStore, "server", serverCert);
         exportCert(clientKeyStore, "client", clientCert);
-        // The shared trust store trusts the SERVER cert (so trust-anchor verification PASSES and the
-        // SAN check is the sole gate) and the legit client (server-side admission).
         importCert(serverTrustStore, "server", serverCert);
         importCert(serverTrustStore, "client", clientCert);
     }
@@ -103,7 +99,6 @@ class EdgeTransportSanMismatchTest {
                 try {
                     Files.deleteIfExists(p);
                 } catch (IOException ignored) {
-                    // best-effort temp cleanup
                 }
             });
         }
@@ -124,10 +119,6 @@ class EdgeTransportSanMismatchTest {
     @Test
     @Timeout(120)
     void serverCertWithWrongSanIsRejectedByTheClient() throws Exception {
-        // The server presents a TRUSTED cert whose SAN does not cover 127.0.0.1; the edge connects
-        // to 127.0.0.1. Endpoint identification must reject it -> the edge never subscribes,
-        // while its reconnect machinery demonstrably keeps trying (proving the rejection is at the
-        // handshake, not a config that simply never attempts a connection).
         int port = startMtlsServer();
         edge = startEdge(port, tlsManager(clientCert, clientKeyStore, serverTrustStore));
 
@@ -138,7 +129,6 @@ class EdgeTransportSanMismatchTest {
         assertEquals(0, edge.core().currentVersion());
     }
 
-    // Fixture plumbing
 
     private int startMtlsServer() throws Exception {
         TlsConfig serverTls = new TlsConfig(
@@ -169,7 +159,6 @@ class EdgeTransportSanMismatchTest {
                 true, List.of("TLS_AES_256_GCM_SHA384"), List.of("TLSv1.3"), PASS));
     }
 
-    /** Waits until the edge's reconnect counter shows >= n attempts (it IS retrying). */
     private static void awaitReconnectAttempts(EdgeNodeMain edge, int n) {
         long deadline = System.nanoTime() + Duration.ofSeconds(60).toNanos();
         while (System.nanoTime() < deadline) {
@@ -182,7 +171,6 @@ class EdgeTransportSanMismatchTest {
         fail("edge did not attempt " + n + " reconnects within the deadline");
     }
 
-    // Keytool fixture builders (SAN passed per cert)
 
     private static void genKeyPair(Path keyStore, String alias, String dname, String sanExt)
             throws Exception {

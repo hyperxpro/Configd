@@ -58,22 +58,17 @@ class ServerObeysDataPlaneTest {
         }
     }
 
-    // Routing (D2-2) and empty-key pre-auth (D2-4).
 
     @Test
     @Tag("clause:D2-2")
     void routingIsExactForFixedEndpointsPrefixForConfigElse404() throws Exception {
         URI base = startAuthOff();
-        // prefix-match: /v1/config/{key} routes to the seeded key (200).
         assertEquals(200, raw("GET", base.resolve("/v1/config/app/name"), null, null).statusCode(),
                 "/v1/config/ is prefix-routed (D2-2)");
-        // exact-match: the fixed endpoint routes...
         assertEquals(200, raw("GET", base.resolve("/health/live"), null, null).statusCode(),
                 "/health/live is exact-routed (D2-2)");
-        // ...but a suffix variant of a fixed endpoint does not match -- it is 404, never the real endpoint.
         assertEquals(404, raw("GET", base.resolve("/metricsZ"), null, null).statusCode(),
                 "a suffix variant of a fixed endpoint is 404, not the endpoint (D2-2)");
-        // any other path is 404.
         assertEquals(404, raw("GET", base.resolve("/totally/unknown/path"), null, null).statusCode(),
                 "an unknown path is 404 (D2-2)");
     }
@@ -81,7 +76,7 @@ class ServerObeysDataPlaneTest {
     @Test
     @Tag("clause:D2-4")
     void emptyKeyIs400EmittedBeforeAuthentication() throws Exception {
-        URI base = startAuthOn(); // auth is ON, yet the empty-key 400 is emitted at routing time, PRE-auth...
+        URI base = startAuthOn();
         HttpResponse<byte[]> r = raw("GET", base.resolve("/v1/config/"), null /* no bearer */, null);
         assertEquals(400, r.statusCode(),
                 "/v1/config/ with no key is 400 at routing time, BEFORE auth (not 401) (D2-4)");
@@ -92,8 +87,8 @@ class ServerObeysDataPlaneTest {
     @Tag("clause:D3-5_D3-5a")
     void strongReadKeyFailsClosedWithNoLinearizablePathWired() throws Exception {
         URI base = startAuthOff(); // readService is null, so no linearizable path is wired
-        // A strong-read (default secure/) key is force-linearizable; with no linearizable path it fails closed:
-        // 503 + X-Fail-Closed: strong-read, and serves no stale value -- never a 200 with a local copy (D3-5).
+        // "secure/" is the default strong-read key prefix (force-linearizable) — that's why this specific key
+        // exercises the fail-closed path (D3-5).
         HttpResponse<byte[]> r = raw("GET", base.resolve("/v1/config/secure/kill-switch"), null, null);
         assertEquals(503, r.statusCode(), "a strong-read key with no linearizable path is 503, never stale (D3-5)");
         assertEquals(Optional.of("strong-read"), r.headers().firstValue("X-Fail-Closed"),
@@ -106,8 +101,8 @@ class ServerObeysDataPlaneTest {
     void aclPutIsValidatedAsPolicyPreCommitAndIncompleteIsNotAnError() throws Exception {
         URI base = startAuthOn();
         try (ConfigdHttpClient admin = httpClient(base, "admin-tok")) {
-            // A malformed policy shape (an unknown role-line effect) is a 400 "Invalid ACL policy" pre-commit
-            // (the store is unchanged) -- a policy-shape rejection distinct from a key/value-limit 400 (D4-5).
+            // Distinct from the D8 key/value-limit 400s: this is a POLICY-SHAPE rejection (unknown role-line effect),
+            // and the store is unchanged (D4-5).
             assertThrows(BadRequestException.class,
                     () -> admin.blocking().put("_acl/roles/reader",
                             "not-an-effect READ app/".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults()),
@@ -120,22 +115,18 @@ class ServerObeysDataPlaneTest {
         }
     }
 
-    // Key and value validation (D8).
 
     @Test
     @Tag("clause:D8-1")
     void serverEnforcesOnlyNonBlankAnd1024ByteKeyLengthBeforeBlank() throws Exception {
         URI base = startAuthOff();
-        // Over-length key: 400 with the length reason.
         String overLong = "a".repeat(1025);
         HttpResponse<byte[]> tooLong = raw("PUT", base.resolve("/v1/config/" + overLong), null, bytes("v"));
         assertEquals(400, tooLong.statusCode(), "a >1024-byte key is rejected (D8-1)");
         assertTrue(bodyText(tooLong).contains("1024"), "the reason is the length limit (D8-1)");
-        // Length-before-blank: a key that is BOTH over-length AND blank (1025 spaces) yields the LENGTH reason.
         HttpResponse<byte[]> longBlank = raw("PUT", base.resolve("/v1/config/" + "%20".repeat(1025)), null, bytes("v"));
         assertEquals(400, longBlank.statusCode());
         assertTrue(bodyText(longBlank).contains("length"), "length is checked before blank (D8-1)");
-        // A blank (but short) key: the non-blank reason.
         HttpResponse<byte[]> blank = raw("PUT", base.resolve("/v1/config/%20"), null, bytes("v"));
         assertEquals(400, blank.statusCode());
         assertTrue(bodyText(blank).contains("blank"), "a blank key is rejected non-blank (D8-1)");
@@ -145,12 +136,11 @@ class ServerObeysDataPlaneTest {
     @Tag("clause:D8-2")
     void serverAcceptsAKeyThatViolatesTheClientSidePathGrammar() throws Exception {
         URI base = startAuthOff();
-        // §1's strict path grammar (seg-char only, no empty segments) is a CLIENT-side contract; the server does
-        // NOT enforce it and ACCEPTS a violating legacy key verbatim (D8-2). An empty-segment key `a//b`...
+        // §1's strict path grammar (seg-char only, no empty segments) is a CLIENT-side contract only — the
+        // server does NOT enforce it and accepts a violating legacy key verbatim (D8-2).
         HttpResponse<byte[]> emptySeg = raw("PUT", base.resolve("/v1/config/a//b"), null, bytes("v"));
         assertEquals(200, emptySeg.statusCode(), "an empty-segment key (§1-illegal) is accepted by the server (D8-2)");
         assertTrue(bodyText(emptySeg).contains("Committed: seq="), "the write committed");
-        // ...and a key bearing a non-seg-char (a space) is likewise accepted.
         HttpResponse<byte[]> spaced = raw("PUT", base.resolve("/v1/config/a%20b"), null, bytes("v"));
         assertEquals(200, spaced.statusCode(), "a space-bearing key (§1-illegal) is accepted by the server (D8-2)");
     }
@@ -169,22 +159,20 @@ class ServerObeysDataPlaneTest {
     @Tag("clause:D8-4")
     void keyValidationIsPostAuthExceptTheEmptyKey() throws Exception {
         URI base = startAuthOn();
-        // A bad (over-length) key without a token is 401 -- authentication runs before key validation, so the
-        // caller gets 401, never a 400 that would leak that the key was malformed (D8-4).
+        // Auth precedes key validation specifically so an unauthenticated caller never learns THAT the key was
+        // malformed via a 400 (D8-4).
         String overLong = "a".repeat(1025);
         HttpResponse<byte[]> unauth = raw("PUT", base.resolve("/v1/config/" + overLong), null, bytes("v"));
         assertEquals(401, unauth.statusCode(), "auth precedes key validation (401 before 400) (D8-4)");
-        // The ONE exception: the empty-key 400 is emitted at routing time, pre-auth (still 400 without a token).
         HttpResponse<byte[]> empty = raw("GET", base.resolve("/v1/config/"), null, null);
         assertEquals(400, empty.statusCode(), "the empty-key 400 is the pre-auth exception (D8-4)");
     }
 
-    // Operational endpoints (D10).
 
     @Test
     @Tag("clause:D10-1")
     void healthIsGetOnlyRealJsonAndUnauthenticated() throws Exception {
-        URI base = startAuthOn(); // auth is configured, yet /health/* is NOT authenticated
+        URI base = startAuthOn();
         HttpResponse<byte[]> live = raw("GET", base.resolve("/health/live"), null /* no token */, null);
         assertEquals(200, live.statusCode(), "/health/live is unauthenticated and 200 when healthy (D10-1)");
         assertEquals(Optional.of("application/json"), live.headers().firstValue("Content-Type"),
@@ -192,7 +180,6 @@ class ServerObeysDataPlaneTest {
         String body = bodyText(live);
         assertTrue(body.startsWith("{\"healthy\":") && body.contains("\"checks\":"),
                 "the health body is the structured JSON shape (D10-1)");
-        // GET-only.
         assertEquals(405, raw("POST", base.resolve("/health/live"), null, bytes("x")).statusCode(),
                 "/health/* is GET-only (405 otherwise) (D10-1)");
     }
@@ -201,26 +188,22 @@ class ServerObeysDataPlaneTest {
     @Tag("clause:D10-2")
     void metricsIsGetOnlyPrometheusBearerGatedAndExactPath() throws Exception {
         URI base = startAuthOn();
-        // Bearer-gated when auth is configured: a missing token gets 401 + WWW-Authenticate: Bearer (authentication,
-        // not authorization -- there is no ACL for scraping).
+        // This is authentication, not authorization — there is no ACL for scraping; a missing token is 401,
+        // never 403.
         HttpResponse<byte[]> noToken = raw("GET", base.resolve("/metrics"), null, null);
         assertEquals(401, noToken.statusCode(), "/metrics is bearer-gated when auth is on (D10-2)");
         assertEquals(Optional.of("Bearer"), noToken.headers().firstValue("WWW-Authenticate"),
                 "the 401 carries WWW-Authenticate: Bearer (D10-2)");
-        // A valid token: 200 Prometheus text exposition.
         HttpResponse<byte[]> ok = raw("GET", base.resolve("/metrics"), "admin-tok", null);
         assertEquals(200, ok.statusCode());
         assertTrue(ok.headers().firstValue("Content-Type").orElse("").startsWith("text/plain; version=0.0.4"),
                 "/metrics is Prometheus text exposition (D10-2)");
-        // GET-only.
         assertEquals(405, raw("POST", base.resolve("/metrics"), "admin-tok", bytes("x")).statusCode(),
                 "/metrics is GET-only (405 otherwise) (D10-2)");
-        // Exact-match path: a suffix variant is 404, not the metrics endpoint.
         assertEquals(404, raw("GET", base.resolve("/metricsZ"), "admin-tok", null).statusCode(),
                 "/metrics is exact-match; /metricsZ is 404 (D10-2)");
     }
 
-    // Fixtures.
 
     /** An auth-OFF server (readService null) for routing / key-validation / strong-read fail-close. */
     private URI startAuthOff() throws IOException {

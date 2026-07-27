@@ -171,7 +171,7 @@ class RaftMonitorViewConcurrencyTest {
      * reference, and {@link RaftMetrics} is a deeply-immutable carrier. These assertions fail the instant
      * either is lost - e.g. a refactor that drops {@code volatile} (an off-owner reader could then miss
      * the publication) or adds a mutable/aliasable field to the snapshot (a monitor could observe
-     * post-publish mutation). See docs/phase0-B/h3-monitor-view-design.md.
+     * post-publish mutation).
      */
     @Test
     void monitorViewFieldStaysVolatile_elseTheNoTearProofIsVoid() throws Exception {

@@ -11,11 +11,6 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for the payload-carrying {@link HeartbeatCoalescer}: the tick window, latest-wins per
- * (peer, group), per-peer coalescing across groups (the flat-in-N property at the data-structure level),
- * and the drain.
- */
 class HeartbeatCoalescerTest {
 
     private static final NodeId PEER_A = NodeId.of(2);
@@ -59,7 +54,6 @@ class HeartbeatCoalescerTest {
             coalescer.recordIfCollecting(PEER_A, 1, heartbeat(0));
             coalescer.drainAndEndTick();
             assertFalse(coalescer.isCollecting());
-            // After drain, a further record without a new beginTick is refused.
             assertFalse(coalescer.recordIfCollecting(PEER_A, 1, heartbeat(0)));
         }
 
@@ -94,7 +88,7 @@ class HeartbeatCoalescerTest {
             AppendEntriesRequest stale = heartbeat(10);
             AppendEntriesRequest fresh = heartbeat(99);
             coalescer.recordIfCollecting(PEER_A, 1, stale);
-            coalescer.recordIfCollecting(PEER_A, 1, fresh); // same (peer, group) - overwrite
+            coalescer.recordIfCollecting(PEER_A, 1, fresh);
 
             Map<NodeId, Map<Integer, AppendEntriesRequest>> drained = coalescer.drainAndEndTick();
             assertEquals(1, drained.get(PEER_A).size());

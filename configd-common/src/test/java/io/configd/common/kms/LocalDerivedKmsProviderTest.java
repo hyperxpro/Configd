@@ -66,7 +66,6 @@ class LocalDerivedKmsProviderTest {
         assertFalse(Arrays.equals(rootBytes, integrity), "encryption root must differ from K_integrity");
         assertFalse(Arrays.equals(rootBytes, audit), "encryption root must differ from K_audit");
 
-        // and it equals the expected KEK derivation exactly
         byte[] expected = Hkdf.deriveKey(ikm, salt, LocalDerivedKmsProvider.KEK_INFO, 32);
         assertArrayEquals(expected, rootBytes);
     }

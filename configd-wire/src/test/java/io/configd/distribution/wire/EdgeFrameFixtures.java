@@ -75,8 +75,8 @@ final class EdgeFrameFixtures {
         m.put("cursor_ack.bin", new EdgeFrame.CursorAck(4242L));
         m.put("heartbeat.bin", new EdgeFrame.Heartbeat(9000L, 1_700_000_000_500L));
 
-        // One ERROR_CLOSE per built taxonomy code. NOT_AUTHORIZED (0x02-era, W7-5a), STALE_TOPOLOGY,
-        // and CREDENTIAL_EXPIRED (AU3-3) are 0x02-era additions covered as fixtures in buildV2(), so
+        // One ERROR_CLOSE per built taxonomy code. NOT_AUTHORIZED, STALE_TOPOLOGY, and
+        // CREDENTIAL_EXPIRED are 0x02-era additions covered as fixtures in buildV2(), so
         // the 0x01 ERROR_CLOSE golden set stays minimal AND byte-frozen (each code lives in exactly
         // one golden map).
         for (ErrorCode ec : ErrorCode.values()) {
@@ -155,12 +155,12 @@ final class EdgeFrameFixtures {
         m.put("watch_snapshot_end.bin", new EdgeFrame.WatchSnapshotEnd(7L, 1, 200L));
 
         // A NOTIFY reused on a 0x02 connection - byte-identical to its v1 fixture
-        // (notify_single_unsigned) except the version byte and the CRC over it (W5-2 / W5-11).
+        // (notify_single_unsigned) except the version byte and the CRC over it.
         m.put("notify_reused.bin", new EdgeFrame.Notify(List.of(notif(100L, 1_700_000_000_000L,
                 new ConfigDelta(99L, 100L,
                         List.of(new ConfigMutation.Put("svc/cfg", bytes(0xDE, 0xAD, 0xBE, 0xEF))))))));
 
-        // ERROR_CLOSE carrying the 0x02-era NOT_AUTHORIZED code (W7-5a).
+        // ERROR_CLOSE carrying the 0x02-era NOT_AUTHORIZED code.
         m.put("error_not_authorized.bin",
                 new EdgeFrame.ErrorClose(ErrorCode.NOT_AUTHORIZED, ErrorCode.NOT_AUTHORIZED.name()));
         // ERROR_CLOSE carrying the STALE_TOPOLOGY code: the SUBSCRIBE-side delivery of a
@@ -168,7 +168,7 @@ final class EdgeFrameFixtures {
         // coverage tripwire that pins every ErrorCode to a golden fixture.
         m.put("error_stale_topology.bin",
                 new EdgeFrame.ErrorClose(ErrorCode.STALE_TOPOLOGY, ErrorCode.STALE_TOPOLOGY.name()));
-        // ERROR_CLOSE carrying the CREDENTIAL_EXPIRED code (AU3-3): a connection-level auth-expiry
+        // ERROR_CLOSE carrying the CREDENTIAL_EXPIRED code: a connection-level auth-expiry
         // close is a BUSINESS ERROR_CLOSE (stamped at the connection's version), NOT a 0x04 auth frame, so
         // it is covered here (mirroring NOT_AUTHORIZED/STALE_TOPOLOGY) and satisfies the coverage tripwire.
         m.put("error_credential_expired.bin",

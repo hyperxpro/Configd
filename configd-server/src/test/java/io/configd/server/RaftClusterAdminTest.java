@@ -33,7 +33,6 @@ class RaftClusterAdminTest {
     private static final String STATUS = "/v1/admin/raft/status";
     private static final String ADD = "/v1/admin/raft/add-server";
 
-    /** A fake seam: records add-server attempts, returns a configurable result or throws timeout. */
     private static final class FakeRaftClusterAdmin implements AdminApiHandler.RaftClusterAdmin {
         final Set<Integer> knownGroups;
         final AtomicInteger addAttempts = new AtomicInteger();
@@ -93,7 +92,7 @@ class RaftClusterAdminTest {
         return new AdminApiHandler(new HealthService(), null, new VersionedConfigStore(),
                 null, null, auth, acl, StrongReadPolicy.defaultPolicy(),
                 (scope, key) -> NodeId.of(1), null, null,
-                /* leadershipAdmin */ null, /* chain */ null, seam, /* keyringRotator */ null);
+ null, null, seam, null);
     }
 
     private static AdminApiHandler.AdminRequest req(String method, String path, String query, String token) {
@@ -118,7 +117,6 @@ class RaftClusterAdminTest {
         return h.handle(req(method, path, query, token));
     }
 
-    // ---- status: ADMIN gate ----
 
     @Test
     void statusUnauthenticatedIsRejected401() throws Exception {
@@ -136,7 +134,6 @@ class RaftClusterAdminTest {
 
     @Test
     void statusAuthDisabledIsRefused403() throws Exception {
-        // Auth off + ACL off: cluster status is control-plane state, refused during an insecure bring-up.
         AdminApiHandler h = handler(null, null, new FakeRaftClusterAdmin(0));
         assertEquals(403, call(h, "GET", STATUS, null, null).status(),
                 "auth-off: status (control-plane topology) must be refused, not open");
@@ -185,7 +182,6 @@ class RaftClusterAdminTest {
                 "a non-GET on status must be 405");
     }
 
-    // ---- add-server: ADMIN gate + mapping ----
 
     @Test
     void addServerUnauthenticatedIsRejected401AndNotAttempted() throws Exception {
@@ -276,7 +272,6 @@ class RaftClusterAdminTest {
                 "a bounded-wait timeout on the owner thread must map to 503");
     }
 
-    // ---- add-server: input validation ----
 
     @Test
     void addServerMissingOrMalformedNodeIs400BeforeGate() throws Exception {
@@ -293,7 +288,7 @@ class RaftClusterAdminTest {
 
     @Test
     void addServerUnknownGroupIs400AfterGateButNoProbing() throws Exception {
-        FakeRaftClusterAdmin seam = new FakeRaftClusterAdmin(0); // only group 0 registered
+        FakeRaftClusterAdmin seam = new FakeRaftClusterAdmin(0);
         AdminApiHandler h = handler(acl(), auth(), seam);
         assertEquals(400, call(h, "POST", ADD, "group=99&node=2", "root").status(),
                 "add-server for an unregistered group must be 400");
@@ -308,7 +303,6 @@ class RaftClusterAdminTest {
         assertEquals(404, call(h, "GET", "/v1/admin/raft/frobnicate", null, "root").status(),
                 "an unknown admin-raft sub-resource must be 404");
 
-        // With no seam wired, the whole /v1/admin/raft/ namespace is absent (falls through to 404).
         AdminApiHandler noSeam = new AdminApiHandler(new HealthService(), null, new VersionedConfigStore(),
                 null, null, auth(), acl(), StrongReadPolicy.defaultPolicy(),
                 (BiFunction<io.configd.common.ConfigScope, String, NodeId>) (scope, key) -> NodeId.of(1),

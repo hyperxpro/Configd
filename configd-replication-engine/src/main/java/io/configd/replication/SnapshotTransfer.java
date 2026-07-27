@@ -27,21 +27,8 @@ import java.util.Objects;
  */
 public final class SnapshotTransfer {
 
-    /** Size of each chunk in bytes: 64 KB. */
     public static final int CHUNK_SIZE = 64 * 1024;
 
-    /**
-     * A single chunk of a snapshot transfer.
-     * <p>
-     * The sender produces these chunks in sequence. The receiver
-     * accepts them in order and reassembles the complete snapshot.
-     *
-     * @param offset            byte offset of this chunk within the full snapshot data
-     * @param data              the chunk payload
-     * @param done              {@code true} if this is the final chunk
-     * @param lastIncludedIndex the log index of the last entry included in the snapshot
-     * @param lastIncludedTerm  the term of the last entry included in the snapshot
-     */
     public record SnapshotChunk(
             int offset,
             byte[] data,
@@ -83,13 +70,6 @@ public final class SnapshotTransfer {
         }
     }
 
-    /**
-     * Tracks the state of an ongoing snapshot send operation.
-     * <p>
-     * Holds the full snapshot data and the current byte offset.
-     * The sender calls {@link SnapshotTransfer#nextChunk(SnapshotSendState)}
-     * repeatedly until all chunks have been produced.
-     */
     public static final class SnapshotSendState {
         private final byte[] snapshotData;
         private final long lastIncludedIndex;
@@ -103,40 +83,27 @@ public final class SnapshotTransfer {
             this.currentOffset = 0;
         }
 
-        /** Returns the total size of the snapshot data in bytes. */
         public int totalSize() {
             return snapshotData.length;
         }
 
-        /** Returns the current byte offset into the snapshot data. */
         public int currentOffset() {
             return currentOffset;
         }
 
-        /** Returns the last included log index for this snapshot. */
         public long lastIncludedIndex() {
             return lastIncludedIndex;
         }
 
-        /** Returns the last included term for this snapshot. */
         public long lastIncludedTerm() {
             return lastIncludedTerm;
         }
 
-        /** Returns {@code true} if all chunks have been produced. */
         public boolean isComplete() {
             return currentOffset >= snapshotData.length;
         }
     }
 
-    /**
-     * Tracks the state of an ongoing snapshot receive operation.
-     * <p>
-     * Holds the received chunks in order. The receiver calls
-     * {@link SnapshotTransfer#acceptChunk(SnapshotReceiveState, int, byte[], boolean)}
-     * for each arriving chunk, then {@link SnapshotTransfer#assemble(SnapshotReceiveState)}
-     * once complete.
-     */
     public static final class SnapshotReceiveState {
         private final long lastIncludedIndex;
         private final long lastIncludedTerm;
@@ -152,38 +119,22 @@ public final class SnapshotTransfer {
             this.complete = false;
         }
 
-        /** Returns the last included log index for this snapshot. */
         public long lastIncludedIndex() {
             return lastIncludedIndex;
         }
 
-        /** Returns the last included term for this snapshot. */
         public long lastIncludedTerm() {
             return lastIncludedTerm;
         }
 
-        /** Returns {@code true} if all chunks have been received. */
         public boolean isComplete() {
             return complete;
         }
     }
 
-    /**
-     * Creates a new SnapshotTransfer instance.
-     */
     public SnapshotTransfer() {
     }
 
-    /**
-     * Starts a new snapshot send operation.
-     *
-     * @param snapshotData      the full serialized snapshot bytes
-     * @param lastIncludedIndex the log index of the last entry included in the snapshot
-     * @param lastIncludedTerm  the term of the last entry included in the snapshot
-     * @return the send state for producing chunks
-     * @throws NullPointerException     if {@code snapshotData} is null
-     * @throws IllegalArgumentException if index or term is negative
-     */
     public SnapshotSendState startSend(byte[] snapshotData, long lastIncludedIndex, long lastIncludedTerm) {
         Objects.requireNonNull(snapshotData, "snapshotData");
         if (lastIncludedIndex < 0) {
@@ -195,17 +146,6 @@ public final class SnapshotTransfer {
         return new SnapshotSendState(snapshotData, lastIncludedIndex, lastIncludedTerm);
     }
 
-    /**
-     * Produces the next chunk from an ongoing snapshot send.
-     * <p>
-     * Each chunk is at most {@link #CHUNK_SIZE} bytes. The final chunk
-     * has {@code done == true}. Returns {@code null} if all chunks have
-     * already been produced.
-     *
-     * @param state the send state
-     * @return the next chunk, or {@code null} if the transfer is complete
-     * @throws NullPointerException if {@code state} is null
-     */
     public SnapshotChunk nextChunk(SnapshotSendState state) {
         Objects.requireNonNull(state, "state");
         if (state.isComplete()) {
@@ -223,14 +163,6 @@ public final class SnapshotTransfer {
         return new SnapshotChunk(offset, chunkData, done, state.lastIncludedIndex, state.lastIncludedTerm);
     }
 
-    /**
-     * Starts a new snapshot receive operation.
-     *
-     * @param lastIncludedIndex the log index of the last entry included in the snapshot
-     * @param lastIncludedTerm  the term of the last entry included in the snapshot
-     * @return the receive state for accepting chunks
-     * @throws IllegalArgumentException if index or term is negative
-     */
     public SnapshotReceiveState startReceive(long lastIncludedIndex, long lastIncludedTerm) {
         if (lastIncludedIndex < 0) {
             throw new IllegalArgumentException("lastIncludedIndex must be >= 0: " + lastIncludedIndex);
@@ -275,17 +207,6 @@ public final class SnapshotTransfer {
         return true;
     }
 
-    /**
-     * Assembles the complete snapshot from received chunks.
-     * <p>
-     * May only be called after all chunks have been received
-     * ({@link #isComplete(SnapshotReceiveState)} returns {@code true}).
-     *
-     * @param state the completed receive state
-     * @return the full snapshot data
-     * @throws NullPointerException  if {@code state} is null
-     * @throws IllegalStateException if the receive is not yet complete
-     */
     public byte[] assemble(SnapshotReceiveState state) {
         Objects.requireNonNull(state, "state");
         if (!state.complete) {
@@ -304,14 +225,6 @@ public final class SnapshotTransfer {
         return out.toByteArray();
     }
 
-    /**
-     * Returns whether all chunks have been received for the given
-     * receive operation.
-     *
-     * @param state the receive state
-     * @return {@code true} if the snapshot is fully received
-     * @throws NullPointerException if {@code state} is null
-     */
     public boolean isComplete(SnapshotReceiveState state) {
         Objects.requireNonNull(state, "state");
         return state.complete;

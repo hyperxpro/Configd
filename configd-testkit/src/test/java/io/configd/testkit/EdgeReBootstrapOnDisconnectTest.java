@@ -59,21 +59,17 @@ class EdgeReBootstrapOnDisconnectTest {
             sim.tick();
         }
 
-        // exactly ONE re-bootstrap per DISCONNECTED entry (the
-        // entry-edge semantics - a wedged edge must not thrash), at the CURRENT cursor.
         tick(sim, 50); // let the entry tick's directive drain through the recovery sink
         assertEquals(1, victim.disconnectedRebootstraps(),
                 "exactly one re-bootstrap firing per DISCONNECTED entry");
         assertTrue(driver.resubscribes() >= 1,
                 "the trigger drove a REAL resubscribe through the driver");
 
-        // Staying DISCONNECTED (still partitioned) must not re-fire the trigger.
         long disconnectedFirings = victim.disconnectedRebootstraps();
         tick(sim, 2_000);
         assertEquals(disconnectedFirings, victim.disconnectedRebootstraps(),
                 "no re-fire while the edge stays DISCONNECTED");
 
-        // Heal: the recovery converges the edge and the frontier returns to CURRENT.
         sim.healEdge(0);
         long target = sim.cpSim().store(victim.subscribedCpNode()).currentVersion();
         for (int t = 0; t < 5_000 && (victim.currentVersion() < target
@@ -89,7 +85,6 @@ class EdgeReBootstrapOnDisconnectTest {
         assertTrue(sim.terminalFailures().isEmpty(), "nothing terminal about a partition");
     }
 
-    // --- helpers ---
 
     private static void tick(EdgeFanOutSim sim, int n) {
         for (int i = 0; i < n; i++) {

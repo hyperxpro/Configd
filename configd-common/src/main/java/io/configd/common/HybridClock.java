@@ -52,19 +52,15 @@ public final class HybridClock {
         this.state = encode(physicalClock.currentTimeMillis(), 0);
     }
 
-    // Encoding helpers
 
-    /** Pack (physicalMs, logical) into a single long. */
     public static long encode(long physicalMs, int logical) {
         return (physicalMs << LOGICAL_BITS) | (logical & LOGICAL_MASK);
     }
 
-    /** Extract the physical millisecond component from a packed timestamp. */
     public static long physicalOf(long packed) {
         return (packed & PHYSICAL_MASK) >>> LOGICAL_BITS;
     }
 
-    /** Extract the logical counter component from a packed timestamp. */
     public static int logicalOf(long packed) {
         return (int) (packed & LOGICAL_MASK);
     }
@@ -74,12 +70,10 @@ public final class HybridClock {
         return new HybridTimestamp(physicalOf(packed), logicalOf(packed));
     }
 
-    /** Packs a structured timestamp into a long. */
     public static long fromTimestamp(HybridTimestamp ts) {
         return encode(ts.wallTime(), ts.logical());
     }
 
-    // Hot path: returns packed longs, zero allocation
 
     /**
      * Generate a new timestamp for a local event and return it packed.
@@ -141,12 +135,10 @@ public final class HybridClock {
         }
     }
 
-    /** Current packed HLC value without advancing. */
     public long current() {
         return (long) STATE.getVolatile(this);
     }
 
-    // Structured-form conveniences (allocate; not on hot path)
 
     /**
      * Structured form of {@link #now()}. Prefer the primitive variant on
@@ -157,12 +149,10 @@ public final class HybridClock {
         return toTimestamp(now());
     }
 
-    /** Structured form of {@link #receive(long)}. */
     public HybridTimestamp receive(HybridTimestamp received) {
         return toTimestamp(receive(fromTimestamp(received)));
     }
 
-    /** Structured form of {@link #current()}. */
     public HybridTimestamp currentStructured() {
         return toTimestamp(current());
     }

@@ -28,17 +28,6 @@ public final class CrossShardWriteGuard {
     private CrossShardWriteGuard() {
     }
 
-    /**
-     * Verifies that every key of a multi-key write resolves to a single shard, and returns that shard.
-     *
-     * @param map   the shard map (routing)
-     * @param scope the write's configuration scope
-     * @param keys  the keys of the multi-key write (must be non-empty)
-     * @return the single group id that owns all the keys
-     * @throws CrossShardBatchException if the keys span more than one shard
-     * @throws IllegalArgumentException if {@code keys} is empty
-     * @throws NullPointerException     if any argument (or an element of {@code keys}) is null
-     */
     public static int requireSingleShard(ShardMap map, ConfigScope scope, List<String> keys) {
         Objects.requireNonNull(map, "map");
         Objects.requireNonNull(scope, "scope");

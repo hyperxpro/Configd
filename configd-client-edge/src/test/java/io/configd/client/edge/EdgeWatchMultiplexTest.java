@@ -42,7 +42,7 @@ class EdgeWatchMultiplexTest {
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
             long w1 = readCreate(conn);
             w(conn, created(w1));
-            long w2 = readCreate(conn); // arrives after the second watch shares the connection
+            long w2 = readCreate(conn);
             w(conn, created(w2));
             w(conn, event(w1, 0, 1, "a", "1"));
             w(conn, event(w2, 0, 1, "b", "2"));
@@ -73,9 +73,9 @@ class EdgeWatchMultiplexTest {
             w(conn, created(w1));
             long w2 = readCreate(conn);
             w(conn, created(w2));
-            w(conn, event(w2, 0, 1, "b", "1"));                                  // sibling event
-            w(conn, new EdgeFrame.WatchCanceled(w1, ErrorCode.NOT_AUTHORIZED, null, "revoked")); // kill ONLY w1
-            w(conn, event(w2, 0, 2, "b", "2"));                                  // sibling STILL streams
+            w(conn, event(w2, 0, 1, "b", "1"));
+            w(conn, new EdgeFrame.WatchCanceled(w1, ErrorCode.NOT_AUTHORIZED, null, "revoked"));
+            w(conn, event(w2, 0, 2, "b", "2"));
             conn.parkUntilClosed();
         })) {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(trustedConfig(server.port()))) {
@@ -87,11 +87,9 @@ class EdgeWatchMultiplexTest {
                 Collector c2 = subscribe(sibling);
                 sibling.awaitCreated(Duration.ofSeconds(10));
 
-                // The host watch is terminated per-watch...
                 ExecutionException ee = assertThrows(ExecutionException.class,
                         () -> host.terminalFuture().get(10, TimeUnit.SECONDS));
                 assertInstanceOf(ForbiddenException.class, ee.getCause());
-                // ...but its sibling on the SAME connection keeps receiving events, and the connection lives.
                 await("sibling received both events across the host's cancel", () -> c2.events.size() == 2);
                 assertEquals(1, server.connectionCount(), "the per-watch reject did NOT tear down the connection");
                 assertTrue(sibling.terminalFuture().isDone() == false, "sibling is still live");
@@ -107,11 +105,11 @@ class EdgeWatchMultiplexTest {
             w(conn, created(w1));
             long w2 = readCreate(conn);
             w(conn, created(w2));
-            EdgeFrame next = conn.readFrame(); // the client cancels one watch
+            EdgeFrame next = conn.readFrame();
             if (next instanceof EdgeFrame.WatchCancel wc) {
                 canceledId.complete(wc.watchId());
             }
-            w(conn, event(w2, 0, 1, "b", "1")); // the OTHER watch keeps receiving
+            w(conn, event(w2, 0, 1, "b", "1"));
             conn.parkUntilClosed();
         })) {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(trustedConfig(server.port()))) {
@@ -122,7 +120,7 @@ class EdgeWatchMultiplexTest {
                 Collector c2 = subscribe(sibling);
                 sibling.awaitCreated(Duration.ofSeconds(10));
 
-                host.close(); // cancel just the host watch
+                host.close();
                 assertEquals(host.watchId(), canceledId.get(10, TimeUnit.SECONDS));
                 await("sibling keeps streaming after the host is canceled", () -> c2.events.size() == 1);
                 assertEquals(1, server.connectionCount(), "canceling one shared watch keeps the connection open");
@@ -140,7 +138,6 @@ class EdgeWatchMultiplexTest {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(trustedConfig(server.port()))) {
                 Watch host = client.watch(WatchTarget.key("/a"), WatchOptions.defaults());
                 host.awaitCreated(Duration.ofSeconds(10));
-                // A cursored (independently-resumed) watch cannot ride a shared drain.
                 IllegalStateException ex = assertThrows(IllegalStateException.class, () ->
                         client.watch(WatchTarget.key("/b"),
                                 WatchOptions.defaults().resume(WatchCursor.of(0, 5)).shareConnectionOf(host)));

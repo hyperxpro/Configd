@@ -28,17 +28,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-/**
- * CLIENT-CONFORMS, binary edge auth lifecycle (§03 §4A / §5). Drives the reference {@link ConfigdEdgeClient}
- * against the scriptable {@link MockEdgeServer} (reached via this package) and asserts the wire the client
- * emits and the reaction it takes: the single pre-auth {@code AUTH} is the first routed frame, a rejected
- * credential recovers only via a bounded fresh-connection reconnect (never a hot-loop), business frames are
- * pipelined <b>behind</b> the credential (never before it), renewal is a {@code REFRESH_AUTH} rather than a
- * second {@code AUTH}, and a {@code CREDENTIAL_EXPIRED} close is a reconnect-with-a-fresh-credential signal.
- * Plaintext loopback keeps the auth/framing logic under test without a TLS handshake (transport-agnostic; the
- * §06 F9 TLS cases live in {@code EdgeTlsTest}). The bodies mirror the {@code EdgeConnectionAuthTest} scenarios,
- * re-expressed and clause-tagged for the frozen conformance contract.
- */
 @Timeout(30)
 class ClauseAuthLifecycleTest {
 
@@ -48,8 +37,8 @@ class ClauseAuthLifecycleTest {
         // AU4-4: a certificate-less token driver sends EXACTLY ONE AUTH as its first routed frame, then is
         // authenticated (the wire carries no AUTH-OK, so authentication is optimistic-present).
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            conn.readFrame();                                   // the AUTH
-            conn.send(new EdgeFrame.Heartbeat(0L, 1L));         // a positive liveness confirmation
+            conn.readFrame();
+            conn.send(new EdgeFrame.Heartbeat(0L, 1L));
             conn.parkUntilClosed();
         })) {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(tokenConfig(server.port(), tokens("golden")))) {
@@ -73,7 +62,7 @@ class ClauseAuthLifecycleTest {
         // driver MUST NOT hot-loop AUTH frames on one socket. It sends exactly one AUTH per fresh connection
         // and, because no positive frame ever confirms health, exhausts the bounded budget and gives up.
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            conn.readFrame();                                   // the AUTH
+            conn.readFrame();
             conn.send(new EdgeFrame.ErrorClose(ErrorCode.AUTH_FAIL, "bad token"));
         })) {
             RetryPolicy bounded = new RetryPolicy(Duration.ofMillis(5), Duration.ofMillis(20), 2);
@@ -105,9 +94,9 @@ class ClauseAuthLifecycleTest {
         // AU4-1 / AU4-7: authentication precedes ANY data/subscribe frame -- the credential is the first routed
         // frame and the SUBSCRIBE follows it; no business frame ever precedes the AUTH.
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            conn.readFrame();                                   // the AUTH
+            conn.readFrame();
             conn.send(new EdgeFrame.Heartbeat(0L, 1L));
-            conn.parkUntilClosed();                             // reads the SUBSCRIBE that follows
+            conn.parkUntilClosed();
         })) {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(tokenConfig(server.port(), tokens("t")))) {
                 client.subscribeFullStore(SubscribeOptions.defaults()); // drives connect -> AUTH -> SUBSCRIBE
@@ -134,8 +123,8 @@ class ClauseAuthLifecycleTest {
         // BEFORE the AUTH, a second AUTH, or more than 8 frames pipelined behind it), never the pipeline-behind
         // this exercises.
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            conn.readFrame();                                   // the AUTH
-            conn.parkUntilClosed();                             // reads the pipelined SUBSCRIBE; sends no ack
+            conn.readFrame();
+            conn.parkUntilClosed();
         })) {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(tokenConfig(server.port(), tokens("t")))) {
                 client.subscribeFullStore(SubscribeOptions.defaults());
@@ -157,9 +146,9 @@ class ClauseAuthLifecycleTest {
         // be a PROTOCOL_VIOLATION). Assert the renewal frame is a REFRESH_AUTH and there is still exactly ONE
         // AUTH on the connection.
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            conn.readFrame();                                   // the AUTH
+            conn.readFrame();
             conn.send(new EdgeFrame.Heartbeat(0L, 1L));
-            conn.parkUntilClosed();                             // reads the REFRESH_AUTH
+            conn.parkUntilClosed();
         })) {
             ConfigdClientConfig config = tokenConfig(server.port(), tokens("auth-1", "refresh-2"));
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(config)) {
@@ -184,7 +173,7 @@ class ClauseAuthLifecycleTest {
         // and from a permanent 403. The driver opens a FRESH connection and presents its next (rotated)
         // credential; the second connection is healthy, so this is a recovery, not a terminal give-up.
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            conn.readFrame();                                   // the AUTH on this connection
+            conn.readFrame();
             if (conn.index == 1) {
                 conn.send(new EdgeFrame.ErrorClose(ErrorCode.CREDENTIAL_EXPIRED, "session aged out"));
             } else {

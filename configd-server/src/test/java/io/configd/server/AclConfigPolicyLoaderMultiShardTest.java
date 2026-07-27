@@ -49,7 +49,6 @@ class AclConfigPolicyLoaderMultiShardTest {
     private static final Set<String> RESERVED_PRINCIPALS = Set.of("root");
     private static final ConfigScope SCOPE = ConfigScope.GLOBAL;
 
-    // helpers
 
     private static void put(VersionedConfigStore store, String key, String value) {
         store.put(key, value.getBytes(StandardCharsets.UTF_8), store.currentVersion() + 1);
@@ -72,13 +71,11 @@ class AclConfigPolicyLoaderMultiShardTest {
         return new AclConfigPolicyLoader(acl, stores, RESERVED_ROLES, RESERVED_PRINCIPALS, reg);
     }
 
-    /** Routes {@code key} to its owning store under this shard map (the same routing production writes use). */
     private static VersionedConfigStore storeFor(StaticShardMap map, List<VersionedConfigStore> stores,
                                                  String key) {
         return stores.get(map.shardFor(SCOPE, key));
     }
 
-    /** Finds an {@code _acl/roles/<name>} key that routes to a shard other than the primary (group 0). */
     private static String roleNameRoutingOffPrimary(StaticShardMap map, String base) {
         for (int i = 0; i < 1_000_000; i++) {
             String name = base + i;
@@ -89,7 +86,6 @@ class AclConfigPolicyLoaderMultiShardTest {
         throw new IllegalStateException("no off-primary role key found for base " + base);
     }
 
-    /** Finds an {@code _acl/roles/<name>} key that routes to exactly {@code targetShard}. */
     private static String roleNameRoutingTo(StaticShardMap map, String base, int targetShard) {
         for (int i = 0; i < 1_000_000; i++) {
             String name = base + i;
@@ -108,7 +104,6 @@ class AclConfigPolicyLoaderMultiShardTest {
         return acl.configPolicy().roles().containsKey(roleName);
     }
 
-    // the centerpiece: the RED/GREEN regression proving a non-primary-shard DENY is enforced
 
     @Test
     void tB6_multiShard_appliesNonPrimaryShardDeny_watchRejected() {
@@ -117,14 +112,11 @@ class AclConfigPolicyLoaderMultiShardTest {
         AclService acl = new AclService();
         MetricsRegistry reg = new MetricsRegistry();
 
-        // Principal "watcher" has a STATIC ALLOW covering the PREFIX target "app." (READ and WATCH), so before
-        // any config policy the whole-subtree watch is authorized.
         acl.grant("app.", "watcher", EnumSet.of(AclService.Permission.READ, AclService.Permission.WATCH));
         AclServiceWatchAuthorizer authz = new AclServiceWatchAuthorizer(acl);
         assertTrue(authz.authorizeWatch("watcher", Set.of(), prefixTarget("app.")),
                 "precondition: the static ALLOW authorizes the app. subtree watch");
 
-        // A DENY-carrying role on a NON-PRIMARY shard carves a hole under app. and is bound to watcher.
         String carve = roleNameRoutingOffPrimary(map, "carve");
         String roleKey = "_acl/roles/" + carve;
         put(storeFor(map, stores, roleKey), roleKey, "deny READ,WATCH app.secret.");
@@ -133,8 +125,6 @@ class AclConfigPolicyLoaderMultiShardTest {
         try (AclConfigPolicyLoader loader = multiShardLoader(acl, stores, reg)) {
             loader.bootSeed();
 
-            // (i) the deny rule is present in the published policy, (ii) the version advanced from MIN_VALUE,
-            // (iii) the whole-subtree watch is now rejected (the interior DENY carves it).
             assertTrue(policyHasRole(acl, carve), "the non-primary-shard DENY role is in the policy snapshot");
             assertTrue(acl.configPolicyVersion() > Long.MIN_VALUE,
                     "configPolicyVersion advanced from MIN_VALUE on the non-primary DENY apply");
@@ -164,22 +154,18 @@ class AclConfigPolicyLoaderMultiShardTest {
         VersionedConfigStore roleStore = storeFor(map, stores, roleKey);
         put(roleStore, roleKey, "deny READ,WATCH app.secret.");
         put(storeFor(map, stores, "_acl/bindings/watcher"), "_acl/bindings/watcher", carve);
-        // Sanity: the DENY role really is off the primary store.
         assertFalse(stores.get(0) == roleStore, "the DENY role must live on a non-primary store for this proof");
 
-        // Today's wiring: the single-store loader reads ONLY the primary store (group 0).
         AclConfigPolicyLoader primaryOnly = new AclConfigPolicyLoader(
                 acl, stores.get(0), RESERVED_ROLES, RESERVED_PRINCIPALS, reg);
-        primaryOnly.rebuild(); // the boot seed, primary store only
+        primaryOnly.rebuild();
 
-        // RED-PROOF: the non-primary DENY is INVISIBLE to the primary-only loader.
         assertFalse(policyHasRole(acl, carve),
                 "BUG: the non-primary-shard DENY role is absent from a primary-only policy snapshot");
         assertTrue(authz.authorizeWatch("watcher", Set.of(), prefixTarget("app.")),
                 "BUG: the watch stays authorized because the primary-only loader never saw the DENY (under-deny bypass)");
     }
 
-    // scatter-gather union content == the single-store scan
 
     /**
      * The scatter-gather union over a set of stores publishes the same {@link ConfigPolicy} the single-store
@@ -189,8 +175,6 @@ class AclConfigPolicyLoaderMultiShardTest {
      */
     @Test
     void scatterGatherUnionEqualsSingleStoreContent() {
-        // A battery of _acl/ scenarios; for each, a single-store loader and a multi-shard loader built over a
-        // store set holding the same keys must publish an EQUAL ConfigPolicy.
         List<List<String[]>> scenarios = List.of(
                 List.<String[]>of(),
                 List.<String[]>of(new String[]{"_acl/roles/reader", "allow READ app."}),
@@ -225,7 +209,6 @@ class AclConfigPolicyLoaderMultiShardTest {
         }
     }
 
-    // no lost update under concurrent apply threads (N=3)
 
     @Test
     void tConverge_concurrentAppliesAcrossShards_unionWithNoLostUpdate() throws InterruptedException {
@@ -233,7 +216,6 @@ class AclConfigPolicyLoaderMultiShardTest {
         List<VersionedConfigStore> stores = stores(3);
         AclService acl = new AclService();
 
-        // One distinct role per shard, each written to its routed store.
         String[] roleNames = new String[3];
         for (int shard = 0; shard < 3; shard++) {
             String name = roleNameRoutingTo(map, "role_s" + shard + "_", shard);
@@ -269,7 +251,6 @@ class AclConfigPolicyLoaderMultiShardTest {
         }
     }
 
-    // a partial cross-shard edit is fail-safe, then converges
 
     @Test
     void tNonAtomic_bindingBeforeRole_isInertThenConverges() {
@@ -285,16 +266,14 @@ class AclConfigPolicyLoaderMultiShardTest {
         String bindKey = "_acl/bindings/p2";
 
         try (AclConfigPolicyLoader loader = multiShardLoader(acl, stores, new MetricsRegistry())) {
-            loader.bootSeed(); // empty policy
+            loader.bootSeed();
 
-            // (1) binding first, role still absent -> inert (p2 gains NO grant, never a transient over-grant).
             put(storeFor(map, stores, bindKey), bindKey, grantRole);
             loader.onConfigChange(putMutation(bindKey), 1L);
             loader.awaitQuiescence();
             assertFalse(authz.authorizeWatch("p2", Set.of(), prefixTarget("svc.")),
                     "a binding to a not-yet-defined role is inert (no transient over-grant)");
 
-            // (2) role now applies -> the grant is effective.
             put(storeFor(map, stores, roleKey), roleKey, "allow READ,WATCH svc.");
             loader.onConfigChange(putMutation(roleKey), 2L);
             loader.awaitQuiescence();
@@ -303,7 +282,6 @@ class AclConfigPolicyLoaderMultiShardTest {
         }
     }
 
-    // a non-primary snapshot install picks up a DENY
 
     @Test
     void tSnap_nonPrimarySnapshotInstall_picksUpDeny() {
@@ -319,7 +297,7 @@ class AclConfigPolicyLoaderMultiShardTest {
         assertFalse(stores.get(0) == roleStore, "the DENY role must live on a non-primary store");
 
         try (AclConfigPolicyLoader loader = multiShardLoader(acl, stores, new MetricsRegistry())) {
-            loader.bootSeed(); // empty
+            loader.bootSeed();
             assertTrue(authz.authorizeWatch("watcher", Set.of(), prefixTarget("app.")));
 
             // A snapshot install on the non-primary store delivers the DENY wholesale (no per-key mutation),
@@ -335,7 +313,6 @@ class AclConfigPolicyLoaderMultiShardTest {
         }
     }
 
-    // a non-primary DENY apply advances the version
 
     @Test
     void tW7Ver_nonPrimaryDenyApply_advancesConfigPolicyVersion() {
@@ -359,7 +336,6 @@ class AclConfigPolicyLoaderMultiShardTest {
         }
     }
 
-    // boot-seed vs an enqueued apply; latest wins, version monotone
 
     @Test
     void tBootRace_enqueuedApplyThenBootSeed_latestWinsMonotone() {
@@ -387,9 +363,7 @@ class AclConfigPolicyLoaderMultiShardTest {
         }
     }
 
-    // constructor guards
 
-    // close() drains the worker (no daemon-thread leak)
 
     @Test
     void close_terminatesTheWorkerThread_noLeak() throws InterruptedException {
@@ -397,7 +371,7 @@ class AclConfigPolicyLoaderMultiShardTest {
         AclService acl = new AclService();
         List<VersionedConfigStore> stores = stores(2);
         AclConfigPolicyLoader loader = multiShardLoader(acl, stores, new MetricsRegistry());
-        loader.bootSeed(); // starts and uses the worker
+        loader.bootSeed();
 
         Set<Thread> spawned = aliveThreadsNamed("configd-acl-policy-loader");
         spawned.removeAll(before);

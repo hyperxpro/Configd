@@ -62,7 +62,7 @@ class SeedSweepTest {
 
         for (int t = 0; t < SWEEP_TICKS; t++) {
             cluster.tick();
-            inv[0].checkAll(); // SAFETY: every tick, every seed
+            inv[0].checkAll();
             for (int i = 0; i < NODES; i++) {
                 if (cluster.node(i).role() == RaftRole.LEADER) {
                     activity.recordLeaderAtTerm(cluster.node(i).currentTerm());
@@ -70,9 +70,6 @@ class SeedSweepTest {
             }
         }
 
-        // Liveness goal: a leader must have been elected. A miss is a recorded
-        // stall (NOT a silent pass) - for a no-fault 5-node cluster it should
-        // never happen, so we assert it to keep the sweep honest.
         assertTrue(activity.leaderElected(),
                 "LIVENESS-STALL (recorded, not a safety bug): no leader elected in "
                         + SWEEP_TICKS + " ticks (seed=" + seed + ") — a no-fault cluster"
@@ -104,9 +101,6 @@ class SeedSweepTest {
 
         int leader = electWhileChecking(cluster, inv[0], activity, 1200);
         if (leader < 0) {
-            // A recorded liveness stall - the safety invariants were still checked
-            // on every tick above; we simply did not reach the durability assertion
-            // this seed.
             return activity;
         }
         activity.recordLeaderAtTerm(cluster.node(leader).currentTerm());
@@ -114,7 +108,7 @@ class SeedSweepTest {
         long seq = proposeAndCommitWhileChecking(cluster, inv[0], leader,
                 "sweep-key", "sweep-val", 200);
         if (seq <= 0) {
-            return activity; // recorded no-commit stall
+            return activity;
         }
         activity.recordCommit();
 
@@ -125,7 +119,7 @@ class SeedSweepTest {
         int newLeader = awaitStableLeaderWhileChecking(cluster, inv[0], activity,
                 Set.of(leader), 2000);
         if (newLeader < 0) {
-            return activity; // recorded no-failover stall
+            return activity;
         }
         activity.recordFailover();
 

@@ -72,7 +72,7 @@ class RealServerHttpTest {
     @Test
     void getPutDeleteAndAdminAgainstRealServer() throws Exception {
         VersionedConfigStore store = new VersionedConfigStore();
-        store.put("app/name", "configd".getBytes(StandardCharsets.UTF_8), 5L); // seed a readable key
+        store.put("app/name", "configd".getBytes(StandardCharsets.UTF_8), 5L);
 
         AuthInterceptor auth = new AuthInterceptor(token -> switch (token) {
             case "writer-tok" -> new AuthInterceptor.AuthResult.Authenticated("writer", Set.of("writer"));
@@ -108,7 +108,6 @@ class RealServerHttpTest {
         server.start();
         URI base = URI.create("http://127.0.0.1:" + server.port());
 
-        // The writer principal: get a seeded key, put, delete.
         try (ConfigdHttpClient writer = client(base, "writer-tok")) {
             GetResult read = writer.blocking().get("app/name", GetOptions.defaults());
             assertTrue(read.found());
@@ -128,9 +127,7 @@ class RealServerHttpTest {
             assertThrows(ForbiddenException.class, () -> writer.blocking().transferLeadership(0, 2));
         }
 
-        // The admin principal: reserved-prefix read passes the ADMIN gate, transfer is initiated.
         try (ConfigdHttpClient admin = client(base, "admin-tok")) {
-            // ADMIN gate passes (not 403): the key is absent, so this is a definite 404 and an empty result.
             GetResult reserved = admin.blocking().get("_acl/roles/x", GetOptions.defaults());
             assertFalse(reserved.found(), "admin passes the ADMIN gate; the key is simply absent (404)");
 

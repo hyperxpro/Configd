@@ -66,8 +66,8 @@ public class FanOutWireH2HBenchmark {
 
     private EdgeFrame.Notify notifyFrame;
     private byte[] preEncodedNotify;
-    private ByteBuffer reuseBuf; // BEST-JDK reused destination
-    private ByteBufAllocator alloc; // BEST-NETTY pooled allocator
+    private ByteBuffer reuseBuf;
+    private ByteBufAllocator alloc;
     private int bufCapacity;
 
     @Setup(Level.Trial)

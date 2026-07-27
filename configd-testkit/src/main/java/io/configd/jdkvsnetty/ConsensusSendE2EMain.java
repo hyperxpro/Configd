@@ -87,7 +87,6 @@ public final class ConsensusSendE2EMain {
         }
         int cap = 4 + FrameCodec.frameSize(payloadBytes);
 
-        // Optional 6th arg selects a single variant (for focused allocation profiling); default all.
         String only = args.length > 5 ? args[5] : "all";
         if (only.equals("all") || only.equals("jdk")) {
             jdkSend(host, port, type, payload, cap, warmupN, measureN, false);
@@ -144,7 +143,7 @@ public final class ConsensusSendE2EMain {
                 }
                 CountDownLatch done = new CountDownLatch(1);
                 Drainer d = new Drainer(ch, msg, n, done);
-                ch.eventLoop().execute(d); // submit ONCE; it self-reschedules on the event loop
+                ch.eventLoop().execute(d);
                 done.await();
                 if (measure) {
                     report("netty-eventloop(epoll=" + epoll + ")", msg.payload().length, n,
@@ -157,7 +156,6 @@ public final class ConsensusSendE2EMain {
         }
     }
 
-    /** Reused, self-rescheduling event-loop writer - writes inline (no WriteTask), no per-op lambda. */
     private static final class Drainer implements Runnable {
         private static final int CHUNK = 256;
         private final Channel ch;
@@ -176,7 +174,7 @@ public final class ConsensusSendE2EMain {
         public void run() {
             int c = 0;
             while (remaining > 0 && c < CHUNK && ch.isWritable()) {
-                ch.write(msg, ch.voidPromise()); // ON the event loop -> inline, NO WriteTask
+                ch.write(msg, ch.voidPromise());
                 remaining--;
                 c++;
             }
@@ -195,7 +193,7 @@ public final class ConsensusSendE2EMain {
             s.setTcpNoDelay(true);
             OutputStream raw = s.getOutputStream();
             OutputStream out = batched ? new BufferedOutputStream(raw, 64 * 1024) : raw;
-            ByteBuffer reuse = ByteBuffer.allocate(cap); // ONE reused heap buffer (production-style)
+            ByteBuffer reuse = ByteBuffer.allocate(cap);
             for (long phase = 0; phase < 2; phase++) {
                 boolean measure = phase == 1;
                 long n = measure ? measureN : warmupN;
@@ -293,7 +291,7 @@ public final class ConsensusSendE2EMain {
                 }
                 for (long i = 0; i < n; i++) {
                     awaitWritable(ch);
-                    ch.write(msg, ch.voidPromise());      // encode happens IN the pipeline (event loop)
+                    ch.write(msg, ch.voidPromise());
                     if ((i & (FLUSH_EVERY - 1)) == 0) {
                         ch.flush();
                     }

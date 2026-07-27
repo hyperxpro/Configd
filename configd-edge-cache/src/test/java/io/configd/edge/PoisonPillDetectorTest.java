@@ -31,7 +31,7 @@ class PoisonPillDetectorTest {
             PoisonPillDetector detector = new PoisonPillDetector(3);
             detector.recordFailure("key1", "error");
             detector.recordFailure("key1", "error");
-            detector.recordSuccess("key1"); // reset
+            detector.recordSuccess("key1");
             detector.recordFailure("key1", "error");
             detector.recordFailure("key1", "error");
             assertFalse(detector.isPoisoned("key1")); // only 2 consecutive

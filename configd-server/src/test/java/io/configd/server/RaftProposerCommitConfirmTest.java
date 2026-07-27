@@ -44,7 +44,6 @@ class RaftProposerCommitConfirmTest {
         });
     }
 
-    /** Minimal mutating state machine: assigns a monotonic seq per non-empty command. */
     private static final class SeqStateMachine implements StateMachine {
         private long seq;
         @Override public long apply(long index, long term, byte[] command) {
@@ -58,7 +57,7 @@ class RaftProposerCommitConfirmTest {
     }
 
     private static RaftNode singleNodeLeader(ScheduledExecutorService exec) throws Exception {
-        RaftConfig config = RaftConfig.of(NodeId.of(1), Set.of()); // single-node
+        RaftConfig config = RaftConfig.of(NodeId.of(1), Set.of());
         RaftNode node = new RaftNode(config, new RaftLog(),
                 (target, message) -> { }, new SeqStateMachine(), new java.util.Random(7));
         exec.submit(() -> { for (int i = 0; i < 400; i++) node.tick(); }).get(5, TimeUnit.SECONDS);
@@ -129,7 +128,7 @@ class RaftProposerCommitConfirmTest {
             // (NotLeader/Lost), and then dispatch the cleanup that cancels the
             // abandoned callback (no map-entry leak).
             ConfigWriteService.RaftProposer proposer =
-                    ConfigdServer.raftProposer(driverFor(node), GROUP, exec, 1 /* ms */);
+                    ConfigdServer.raftProposer(driverFor(node), GROUP, exec, 1);
 
             exec.execute(() -> {
                 try { Thread.sleep(300); } catch (InterruptedException ignored) {
@@ -156,8 +155,6 @@ class RaftProposerCommitConfirmTest {
     void appendedButUncommittedIsNotAckedAsCommitted() throws Exception {
         ScheduledExecutorService exec = raftExecutor();
         try {
-            // 3-node cluster wired through a controllable in-memory bus, all driven
-            // on the single raft executor.
             Bus bus = new Bus();
             RaftNode n1 = busNode(1, Set.of(NodeId.of(2), NodeId.of(3)), bus);
             RaftNode n2 = busNode(2, Set.of(NodeId.of(1), NodeId.of(3)), bus);
@@ -166,7 +163,6 @@ class RaftProposerCommitConfirmTest {
             bus.register(NodeId.of(2), n2);
             bus.register(NodeId.of(3), n3);
 
-            // Elect n1: tick it to campaign and deliver messages until it leads.
             exec.submit(() -> {
                 for (int round = 0; round < 400 && n1.role() != RaftRole.LEADER; round++) {
                     n1.tick();
@@ -186,7 +182,7 @@ class RaftProposerCommitConfirmTest {
             // that will never come - and keep the leader ticking so it is not the
             // executor-saturation case but a true no-quorum case.
             ConfigWriteService.RaftProposer proposer =
-                    ConfigdServer.raftProposer(driver, GROUP, exec, 200 /* ms */);
+                    ConfigdServer.raftProposer(driver, GROUP, exec, 200);
             ScheduledFuture<?> ticker = exec.scheduleAtFixedRate(
                     n1::tick, 0, 5, TimeUnit.MILLISECONDS);
             try {
@@ -202,7 +198,6 @@ class RaftProposerCommitConfirmTest {
         }
     }
 
-    /** A controllable in-memory message bus for a small RaftNode cluster. */
     private static final class Bus {
         private final java.util.Map<NodeId, RaftNode> nodes = new java.util.concurrent.ConcurrentHashMap<>();
         private final java.util.List<Runnable> queue =

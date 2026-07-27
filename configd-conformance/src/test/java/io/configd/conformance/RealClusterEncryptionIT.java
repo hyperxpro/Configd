@@ -131,7 +131,6 @@ class RealClusterEncryptionIT {
         ConfigdServer server = bootSingleNode(root, dataDir);
 
         try (ConfigdHttpClient http = httpClient(server)) {
-            // put then get: the reference client round-trips the canary against the encrypted node.
             WriteOutcome put = http.blocking().put(CANARY_KEY, CANARY_VALUE.getBytes(UTF_8), WriteOptions.defaults());
             assertTrue(put.seq() > 0, "the encrypted node must commit the write (seq=" + put.seq() + ")");
             GetResult read = http.blocking().get(CANARY_KEY, GetOptions.defaults());
@@ -186,9 +185,6 @@ class RealClusterEncryptionIT {
                     "the client reads the value back on the plaintext node too");
         }
 
-        // CONTROL: with encryption OFF the SAME committed value MUST be findable on disk in cleartext. This
-        // proves the ON-side absence is caused by encryption, not by a value that never reached durable storage
-        // or a blind spot in the walk.
         String hit = firstFileContaining(dataDir, CANARY_VALUE.getBytes(UTF_8));
         assertTrue(hit != null,
                 "control (encryption OFF): the committed value must appear on disk in cleartext so the walk is "
@@ -197,9 +193,6 @@ class RealClusterEncryptionIT {
                 + hit + ") — the on-disk walk is sensitive, so the ON-side absence is genuinely encryption");
     }
 
-    // =======================================================================
-    // single-node boot + reference clients
-    // =======================================================================
 
     private ConfigdServer bootSingleNode(Path root, Path dataDir) throws Exception {
         // Signing key kept outside the data dir: the boot guard refuses a key co-located with the encrypted
@@ -219,7 +212,6 @@ class RealClusterEncryptionIT {
         ConfigdServer server = ConfigdServer.start(config);
         running.add(server);
 
-        // The single node must self-elect before it can serve writes.
         assertTrue(await(ELECT_MS, () -> {
             var node = server.driver().getGroup(0);
             return node != null && node.monitorView().role() == RaftRole.LEADER;
@@ -268,9 +260,6 @@ class RealClusterEncryptionIT {
         };
     }
 
-    // =======================================================================
-    // on-disk cleartext walk
-    // =======================================================================
 
     /** Returns the path of the first regular file under {@code dir} whose bytes contain {@code needle}, or null. */
     private static String firstFileContaining(Path dir, byte[] needle) throws Exception {

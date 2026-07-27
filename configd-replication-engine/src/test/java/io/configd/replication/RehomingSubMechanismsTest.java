@@ -64,7 +64,6 @@ class RehomingSubMechanismsTest {
         @Override public void restoreSnapshot(byte[] snapshot) { }
     }
 
-    /** Counts raft_owner_thread fires AND throws on any violation (sim/macro discipline). */
     private static final class CountingThrowingChecker implements RaftNode.InvariantChecker {
         final AtomicInteger ownerFires = new AtomicInteger();
         final AtomicReference<String> firstViolation = new AtomicReference<>();
@@ -79,7 +78,6 @@ class RehomingSubMechanismsTest {
         }
     }
 
-    /** Builds a storage-backed single-node leader, bound + self-elected on its floorMod owner (INLINE flush). */
     private static RaftNode buildLeaderBoundTo(OwnerExecutorPool pool, int gid,
                                                RaftNode.InvariantChecker checker) throws Exception {
         Storage storage = Storage.inMemory();
@@ -93,7 +91,6 @@ class RehomingSubMechanismsTest {
         return node;
     }
 
-    /** Runs {@code task} on the given owner and waits for it. */
     private static void onOwner(OwnerExecutorPool pool, int ownerIndex, RunnableEx task) throws Exception {
         pool.ownerByIndex(ownerIndex).submit(() -> {
             try { task.run(); } catch (Exception e) { throw new RuntimeException(e); }
@@ -102,16 +99,15 @@ class RehomingSubMechanismsTest {
 
     @FunctionalInterface private interface RunnableEx { void run() throws Exception; }
 
-    // (1) quiesce - force-sync buffered entries on the losing owner before the handoff point.
 
     @Test
     @Timeout(30)
     void quiesce_flushesBufferedEntriesDurableAcrossRehome() throws Exception {
-        OwnerExecutorPool pool = new OwnerExecutorPool(2); // group 0 -> owner0 by floorMod
+        OwnerExecutorPool pool = new OwnerExecutorPool(2);
         CountingThrowingChecker checker = new CountingThrowingChecker();
         MultiRaftDriver driver = new MultiRaftDriver(LOCAL, Clock.system());
         driver.setOwnerPool(pool);
-        RaftNode g = buildLeaderBoundTo(pool, 0, checker); // elected + no-op committed (INLINE flush)
+        RaftNode g = buildLeaderBoundTo(pool, 0, checker);
         driver.addGroup(0, g);
 
         // Switch to a DEFERRED flush scheduler: from now on, scheduled flushes are PARKED in `pending`
@@ -122,10 +118,9 @@ class RehomingSubMechanismsTest {
         Deque<Runnable> pending = new ArrayDeque<>();
         g.setGroupCommit((flush, delayMicros) -> pending.add(flush), 4096, 0);
 
-        long base = commitIndexVia(pool, driver, g, 0); // committed no-op (everything durable from INLINE era)
+        long base = commitIndexVia(pool, driver, g, 0);
         assertTrue(base >= 1, "precondition: the election no-op committed before we deferred flushes");
 
-        // Propose a NEW entry on the current owner (owner0). It is appended-no-sync and its flush is parked.
         onOwner(pool, 0, () -> driver.propose(0, "buffered".getBytes()));
         assertTrue(pending.size() >= 1, "the buffered propose must have PARKED a flush");
         int parkedBefore = pending.size();
@@ -151,14 +146,12 @@ class RehomingSubMechanismsTest {
         assertTrue(pool.awaitTermination(10, TimeUnit.SECONDS));
     }
 
-    /** Ticks the group on {@code ownerIndex} to republish its monitor view, then reads commitIndex (S-set). */
     private static long commitIndexVia(OwnerExecutorPool pool, MultiRaftDriver driver, RaftNode g, int ownerIndex)
             throws Exception {
         onOwner(pool, ownerIndex, () -> driver.tickOwner(ownerIndex));
         return g.monitorView().commitIndex();
     }
 
-    // (2) FlushScheduler retarget - the dispatched flush targets the CURRENT owner; flushDurable guarded.
 
     @Test
     @Timeout(30)
@@ -170,7 +163,6 @@ class RehomingSubMechanismsTest {
         RaftNode g = buildLeaderBoundTo(pool, 0, checker);
         driver.addGroup(0, g);
 
-        // Capture the node's real flush task (node::flushDurable) via a deferred scheduler + a propose.
         AtomicReference<Runnable> captured = new AtomicReference<>();
         g.setGroupCommit((flush, delayMicros) -> captured.set(flush), 4096, 0);
         onOwner(pool, 0, () -> driver.propose(0, "x".getBytes()));
@@ -181,7 +173,7 @@ class RehomingSubMechanismsTest {
         // WITHOUT firing - a flush scheduled before/after a rehome lands on the new owner.
         driver.rehomeGroup(0, 1);
         driver.dispatchFlush(0, flushTask, 0);
-        onOwner(pool, 1, () -> { }); // drain owner1 so the dispatched flush completed
+        onOwner(pool, 1, () -> { });
 
         assertEquals(0, checker.ownerFires.get(),
                 "dispatchFlush must target the current owner (owner1) — zero fires; first: " + checker.firstViolation.get());
@@ -206,7 +198,7 @@ class RehomingSubMechanismsTest {
         Runnable flushTask = captured.get();
         assertNotNull(flushTask);
 
-        driver.rehomeGroup(0, 1); // group now owned by owner1
+        driver.rehomeGroup(0, 1);
 
         // The hazard the retarget closes: a flush that runs on the OLD owner (owner0) after the rehome -
         // exactly what a closure that CAPTURED owner0 would do. flushDurable is now owner-guarded, so this
@@ -231,7 +223,6 @@ class RehomingSubMechanismsTest {
         assertTrue(pool.awaitTermination(10, TimeUnit.SECONDS));
     }
 
-    // (3) abortHandoff - roll a partial handoff back to the losing owner if the gaining owner is dead.
 
     @Test
     @Timeout(30)
@@ -240,7 +231,7 @@ class RehomingSubMechanismsTest {
         CountingThrowingChecker checker = new CountingThrowingChecker();
         MultiRaftDriver driver = new MultiRaftDriver(LOCAL, Clock.system());
         driver.setOwnerPool(pool);
-        RaftNode g = buildLeaderBoundTo(pool, 0, checker); // bound to owner0
+        RaftNode g = buildLeaderBoundTo(pool, 0, checker);
         driver.addGroup(0, g);
         long base = commitIndexVia(pool, driver, g, 0);
 
@@ -251,8 +242,6 @@ class RehomingSubMechanismsTest {
         assertThrows(RejectedExecutionException.class, () -> driver.rehomeGroup(0, 1),
                 "rehoming to a dead owner must surface the failure (after rolling back)");
 
-        // ROLLBACK: routing restored to owner0 (no leaked override), and owner0 re-adopted - the group is
-        // back on its original owner, not wedged on the HANDOFF sentinel.
         assertEquals(0, driver.currentOwnerIndex(0), "abort must restore routing to the losing owner (owner0)");
         assertEquals(RaftRole.LEADER, g.role(), "rollback preserves group state (still LEADER, no torn state)");
 
@@ -271,7 +260,6 @@ class RehomingSubMechanismsTest {
                 "the abort/rollback path runs entirely on the losing owner — zero fires; first: "
                         + checker.firstViolation.get());
 
-        // A message routed to the (live) owner0 is handled, not bounced into the void.
         onOwner(pool, 0, () -> driver.routeMessage(0,
                 new io.configd.raft.RequestVoteRequest(0L, PHANTOM, 0L, 0L, true)));
 

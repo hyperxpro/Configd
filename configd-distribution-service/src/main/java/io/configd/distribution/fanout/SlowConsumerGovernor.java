@@ -55,23 +55,16 @@ public final class SlowConsumerGovernor {
 
     private static final Logger LOG = Logger.getLogger(SlowConsumerGovernor.class.getName());
 
-    /** Per-identity consumer states, in escalation order. */
     public enum ConsumerState {
         /** Keeping up (or unknown - an untracked identity is healthy by definition). */
         HEALTHY,
-        /** Outbound queue at/above the warn threshold sustained past the warn window. */
         SLOW,
-        /** Demoted (a snapshot re-bootstrap is in flight); cleared by ack progress. */
         CATCHUP,
-        /** Disconnected by policy; SUBSCRIBEs refused for {@code quarantineCooldownMs}. */
         QUARANTINED,
-        /** Repeat-quarantined; refused for {@code unhealthyCooldownMs} (alert-grade). */
         UNHEALTHY
     }
 
-    /** The SUBSCRIBE-time admission ruling (consulted by the server at SUBSCRIBE). */
     public enum AdmissionDecision {
-        /** Admit as requested. */
         ALLOW,
         /** Admit, but force re-bootstrap: the resume cursor must be rebound to 0 so the
          *  {@code decideMode} cursor-0 rule yields SNAPSHOT_FIRST. */
@@ -152,12 +145,10 @@ public final class SlowConsumerGovernor {
         this.consumers = new LinkedHashMap<>(16, 0.75f, true);
     }
 
-    /** The policy thresholds this governor enforces. */
     public SlowConsumerPolicyConfig config() {
         return config;
     }
 
-    // Signals (fed by the server / sim driver).
 
     /**
      * Queue-pressure <b>edge</b>: the session's unacked-frame depth crossed the
@@ -260,7 +251,6 @@ public final class SlowConsumerGovernor {
         }
     }
 
-    // Admission (consulted by the server at SUBSCRIBE).
 
     /**
      * The SUBSCRIBE-time admission ruling for {@code identity}:
@@ -319,7 +309,6 @@ public final class SlowConsumerGovernor {
         }
     }
 
-    // Read-only accessors.
 
     /** The identity's current state (HEALTHY if untracked). */
     public synchronized ConsumerState state(String identity) {
@@ -327,12 +316,10 @@ public final class SlowConsumerGovernor {
         return (c == null) ? ConsumerState.HEALTHY : c.state;
     }
 
-    /** The number of identities currently tracked (diagnostic). */
     public synchronized int trackedIdentities() {
         return consumers.size();
     }
 
-    // Internals.
 
     private ConsumerRecord record(String identity) {
         Objects.requireNonNull(identity, "identity must not be null");
@@ -482,7 +469,6 @@ public final class SlowConsumerGovernor {
         final Deque<Long> distressDemotions = new ArrayDeque<>(4);
         /** GAP demotion timestamps (weighted separately from distress demotions). */
         final Deque<Long> gapDemotions = new ArrayDeque<>(4);
-        /** Quarantine timestamps inside the unhealthy window. */
         final Deque<Long> quarantines = new ArrayDeque<>(4);
     }
 }

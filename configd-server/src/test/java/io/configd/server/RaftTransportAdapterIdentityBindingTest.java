@@ -30,7 +30,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
  */
 class RaftTransportAdapterIdentityBindingTest {
 
-    /** A fake transport that captures the registered inbound handler for direct injection. */
     private static final class CapturingTransport implements RaftTransport {
         private MessageHandler handler;
         @Override public void send(NodeId target, Object message) { }
@@ -43,7 +42,6 @@ class RaftTransportAdapterIdentityBindingTest {
                 new AppendEntriesRequest(5L, leaderId, 0L, 0L, List.of(), 0L), 0);
     }
 
-    /** A coalesced heartbeat bundling one empty AppendEntries per given leaderId (group ids 0,1,...). */
     private static FrameCodec.Frame coalescedHeartbeat(NodeId... leaders) {
         Map<Integer, AppendEntriesRequest> hb = new LinkedHashMap<>();
         int gid = 0;
@@ -104,7 +102,6 @@ class RaftTransportAdapterIdentityBindingTest {
         RaftMessage[] seen = new RaftMessage[1];
         adapter.registerInboundHandler((from, gid, message) -> { dispatched.incrementAndGet(); seen[0] = message; });
 
-        // Well-formed: senderId (from) == in-body leaderId == Node-4. Passes untouched.
         transport.inject(NodeId.of(4), appendEntriesFrom(NodeId.of(4)));
 
         assertEquals(1, dispatched.get(), "a same-identity frame must be dispatched");
@@ -140,7 +137,6 @@ class RaftTransportAdapterIdentityBindingTest {
         AtomicInteger dispatched = new AtomicInteger();
         adapter.registerInboundHandler((from, gid, message) -> dispatched.incrementAndGet());
 
-        // Every per-group leaderId == from (Node-4): an honest coalesced heartbeat; both groups dispatch.
         transport.inject(NodeId.of(4), coalescedHeartbeat(NodeId.of(4), NodeId.of(4)));
 
         assertEquals(2, dispatched.get(), "an honest coalesced HB dispatches every per-group heartbeat");
@@ -168,7 +164,6 @@ class RaftTransportAdapterIdentityBindingTest {
     void mismatchIsIgnoredWhenUnenforced() {
         CapturingTransport transport = new CapturingTransport();
         AtomicInteger rejections = new AtomicInteger();
-        // Legacy 2-arg constructor => enforcement off, byte-identical dispatch behaviour.
         RaftTransportAdapter adapter = new RaftTransportAdapter(transport, 0);
 
         AtomicInteger dispatched = new AtomicInteger();

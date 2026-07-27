@@ -109,16 +109,12 @@ class EdgeReBootstrapOnDisconnectTest {
                 EdgeNodeConfig.DEFAULT_POISON_MAX_RETRIES));
         String edgeBase = "http://127.0.0.1:" + edge.apiPort();
 
-        // Converged baseline.
         long seq1 = putCommitted(serverBase, "svc/r", "v1");
         await("edge converged", () -> edge.core().currentVersion() >= seq1);
         long reconnectsBefore = edge.metricsRegistry().counter("edge.reconnects").get();
 
-        // Trigger a re-bootstrap: tear down + immediate full re-subscribe (the same call
-        // the composed hook makes on a DISCONNECTED entry).
         edge.streamClient().requestRebootstrap("test-trigger");
 
-        // The session cycled (a reconnect was counted)...
         await("reconnect cycle ran",
                 () -> edge.metricsRegistry().counter("edge.reconnects").get() > reconnectsBefore);
 
@@ -140,7 +136,6 @@ class EdgeReBootstrapOnDisconnectTest {
                 "edge_rebootstrap_triggered_total must be exported eagerly");
     }
 
-    // --- helpers ---
 
     private void await(String what, BooleanSupplier condition) {
         long deadline = System.nanoTime() + DEADLINE.toNanos();

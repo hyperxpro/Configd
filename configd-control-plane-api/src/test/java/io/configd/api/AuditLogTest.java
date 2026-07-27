@@ -41,7 +41,6 @@ final class AuditLogTest {
         };
     }
 
-    // (a) Completeness: each event produces exactly one correct record.
 
     @Test
     void everyEventProducesExactlyOneCorrectRecord() {
@@ -67,7 +66,6 @@ final class AuditLogTest {
         assertTrue(records.get(2).outcome().startsWith("denied"));
         assertEquals("-", records.get(3).actor(), "unauthenticated attempt is recorded with actor '-'");
 
-        // Persisted store has exactly the same four framed records.
         assertEquals(4, storage.readLog(AuditLog.LOG_NAME).size());
         assertTrue(log.verify().valid(), "the freshly-built chain must verify clean");
         assertTrue(log.verifyPersisted().valid(), "the persisted chain must verify clean");
@@ -86,12 +84,10 @@ final class AuditLogTest {
         assertFalse(r.toString().contains("s3cr3t-token"));
     }
 
-    // (b) Tamper-evidence: mutate / drop / reorder -> verify() is false.
 
     @Test
     void flippingAByteInAPersistedRecordIsDetected() {
         AtomicLong now = new AtomicLong(1_000L);
-        // A mutable in-memory storage we can reach into to flip a byte.
         TamperableStorage storage = new TamperableStorage();
         AuditLog log = new AuditLog(storage, fixedClock(now));
         log.record("writer", "PUT", "app/a", "committed seq=1");
@@ -123,7 +119,6 @@ final class AuditLogTest {
         now.addAndGet(1);
         log.record("writer", "PUT", "app/c", "committed seq=3");
 
-        // Attack: delete the middle record from the persisted log.
         storage.dropFrame(1);
 
         AuditLog.VerifyResult result = log.verifyPersisted();
@@ -144,7 +139,6 @@ final class AuditLogTest {
         now.addAndGet(1);
         log.record("writer", "PUT", "app/c", "committed seq=3");
 
-        // Attack: swap records at indices 1 and 2.
         storage.swapFrames(1, 2);
 
         assertFalse(log.verifyPersisted().valid(), "reordering records must be detected");
@@ -169,10 +163,10 @@ final class AuditLogTest {
 
     @Test
     void auditChainVerifiesOverRealFileStorageWal(@TempDir Path tempDir) throws Exception {
-        // Composition: over a REAL FileStorage the security-audit.wal gets the WAL container header
-        // (piece 2) AND each record carries the self-versioned audit header (piece 6). The two nest
-        // cleanly: readLog strips the container header, decode validates the record header, and the
-        // chain verifies. This is the only path where both markers meet on disk.
+        // Composition: over a REAL FileStorage the security-audit.wal gets the WAL container header AND
+        // each record carries the self-versioned audit header. The two nest cleanly: readLog strips the
+        // container header, decode validates the record header, and the chain verifies. This is the only
+        // path where both markers meet on disk.
         AtomicLong now = new AtomicLong(1_000L);
         Storage storage = Storage.file(tempDir);
         AuditLog log = new AuditLog(storage, fixedClock(now), hmacKey("k-audit"));
@@ -183,7 +177,6 @@ final class AuditLogTest {
         assertTrue(log.verifyPersisted().valid(),
                 "the audit chain must verify through the real WAL container + record headers");
 
-        // The persisted audit .wal begins with the WAL container magic (RWLF).
         byte[] fileBytes = Files.readAllBytes(tempDir.resolve(AuditLog.LOG_NAME + ".wal"));
         assertEquals(WalContainer.WAL_FILE_MAGIC, ByteBuffer.wrap(fileBytes).getInt(),
                 "the audit WAL must carry the WAL container header");
@@ -208,7 +201,6 @@ final class AuditLogTest {
         assertEquals(1, r.brokenIndex(), "verify must pinpoint the version-tampered record");
     }
 
-    // (c) Non-vacuity: a clean chain over many records verifies true.
 
     @Test
     void cleanChainVerifiesTrue() {
@@ -234,19 +226,17 @@ final class AuditLogTest {
                 "canonical bytes must differ when the actor differs");
     }
 
-    // Bounding: the in-memory chain never exceeds the cap (anti-DoS).
 
     @Test
     void inMemoryChainIsBoundedByMaxRecords() {
         AtomicLong now = new AtomicLong(1_000L);
         Storage storage = Storage.inMemory();
-        AuditLog log = new AuditLog(storage, fixedClock(now), 10); // tiny cap
+        AuditLog log = new AuditLog(storage, fixedClock(now), 10);
         for (int i = 0; i < 100; i++) {
             log.record("writer", "PUT", "app/k" + i, "committed seq=" + i);
             now.addAndGet(1);
         }
         assertTrue(log.size() <= 10, "the in-memory chain must not exceed the cap: " + log.size());
-        // The retained segment (anchored at its head's prevHash) still verifies.
         assertTrue(log.verify().valid(), "the retained segment must still verify after rotation");
         assertTrue(log.verifyPersisted().valid(),
                 "the rotated on-disk log must verify (re-seeded from the retained head)");
@@ -254,18 +244,12 @@ final class AuditLogTest {
                 "the on-disk log must be bounded too");
     }
 
-    // The keyed-vs-keyless distinction. An attacker with file-write access
-    // can EDIT the file AND re-chain the WHOLE persisted log. A keyless SHA-256
-    // chain is defeated (they recompute every hash - no secret needed). A KEYED
-    // HMAC chain is NOT: re-chaining without K_audit yields MACs the real key
-    // rejects. This test performs the full re-chain attack and proves the gap.
 
     @Test
     void keyedChainDefeatsAttackerWhoRechainsTheWholeLogWithoutTheKey() {
         AtomicLong now = new AtomicLong(1_000L);
         javax.crypto.SecretKey kAudit = hmacKey("the-real-audit-key-not-known-to-attacker");
 
-        // 1) A genuine KEYED audit log records three events.
         TamperableStorage victim = new TamperableStorage();
         AuditLog keyed = new AuditLog(victim, fixedClock(now), kAudit);
         keyed.record("writer", "PUT", "app/a", "committed seq=1");
@@ -286,22 +270,17 @@ final class AuditLogTest {
         AuditLog attackerKeyless = new AuditLog(forgeStore, fixedClock(forgeClock));
         attackerKeyless.record("writer", "PUT", "app/a", "committed seq=1");
         forgeClock.addAndGet(1);
-        attackerKeyless.record("writer", "DELETE", "app/secret", "DENIED nothing happened"); // forged
+        attackerKeyless.record("writer", "DELETE", "app/secret", "DENIED nothing happened");
         forgeClock.addAndGet(1);
         attackerKeyless.record("writer", "PUT", "app/c", "committed seq=3");
-        // Overwrite the victim's persisted bytes with the attacker's re-chained log.
         victim.replaceAllFrames(forgeStore.readLog(AuditLog.LOG_NAME));
 
-        // 3) Verifying the rewritten bytes under the REAL key DETECTS the forgery.
         AuditLog.VerifyResult underRealKey = keyed.verifyPersisted();
         assertFalse(underRealKey.valid(),
                 "a keyed chain must reject an attacker re-chain done without K_audit");
         assertEquals(0, underRealKey.brokenIndex(),
                 "the very first record's MAC fails under the real key (attacker used SHA-256)");
 
-        // 4) PROVE THE GAP: the SAME attacker bytes verify TRUE under the keyless
-        //    function - i.e. a keyless AuditLog would have been fully defeated.
-        //    verifyPersistedWith(null) re-walks the persisted bytes keyless.
         assertTrue(keyed.verifyPersistedWith(null).valid(),
                 "the attacker's re-chained log is self-consistent under keyless SHA-256 — "
                         + "this is exactly the gap the HMAC key closes");
@@ -309,7 +288,6 @@ final class AuditLogTest {
 
     @Test
     void verifyingAKeyedLogUnderAWrongKeyFails() {
-        // A wrong key must not verify (constant-time MAC compare).
         AtomicLong now = new AtomicLong(1_000L);
         TamperableStorage storage = new TamperableStorage();
         AuditLog keyed = new AuditLog(storage, fixedClock(now), hmacKey("right-key"));
@@ -333,7 +311,7 @@ final class AuditLogTest {
         now.addAndGet(1);
         keyed.record("writer", "PUT", "app/b", "committed seq=2");
         assertTrue(keyed.verifyPersisted().valid());
-        storage.flipByte(0, 20); // flip a byte in the first record's canonical block
+        storage.flipByte(0, 20);
         AuditLog.VerifyResult r = keyed.verifyPersisted();
         assertFalse(r.valid(), "keyed mode must still catch a naive in-place edit");
         assertEquals(0, r.brokenIndex());
@@ -344,7 +322,6 @@ final class AuditLogTest {
                 material.getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256");
     }
 
-    // A storage that lets a test tamper the persisted frames directly.
 
     private static final class TamperableStorage implements Storage {
         private final java.util.Map<String, java.util.List<byte[]>> logs = new java.util.HashMap<>();
@@ -382,7 +359,6 @@ final class AuditLogTest {
             l.set(i, l.get(j));
             l.set(j, tmp);
         }
-        /** Attacker seam: replace the ENTIRE persisted log with a re-chained one. */
         synchronized void replaceAllFrames(java.util.List<byte[]> frames) {
             java.util.List<byte[]> l = new java.util.ArrayList<>(frames.size());
             for (byte[] f : frames) l.add(f.clone());

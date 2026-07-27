@@ -61,12 +61,10 @@ class SnapshotChunkResumeTest {
         FanOutSessionCore s = new FanOutSessionCore(buffer, replay, sink, cfg,
                 FanOutSessionMetrics.NOOP, clock);
 
-        // The edge resubscribes far behind the horizon -> SNAPSHOT_FIRST.
         s.onSubscribe(new EdgeFrame.Subscribe(true, List.of(), 3L, -1L, "edge-r"));
         assertEquals(EdgeFrame.Mode.SNAPSHOT_FIRST,
                 sink.sentOfType(EdgeFrame.SubscribeOk.class).get(0).mode());
 
-        // Transfer #1 is emitted... and LOST in transit (the edge never sees or acks it).
         sink.clear();
         s.tick(clock.now());
         assertEquals(1, sink.sentOfType(EdgeFrame.SnapshotBegin.class).size());
@@ -75,8 +73,6 @@ class SnapshotChunkResumeTest {
                 "the transfer is UNACKNOWLEDGED: lastAckedSeq must NOT advance (C1(a) fix) — "
                         + "this is exactly what makes the lost transfer recoverable");
 
-        // While unacked, the ack-lag (20 - 3 > 2) keeps re-demoting and re-sending the
-        // WHOLE transfer - the self-healing re-send loop (idempotent by construction).
         sink.clear();
         clock.advance(10);
         s.tick(clock.now());
@@ -88,7 +84,6 @@ class SnapshotChunkResumeTest {
             assertEquals(20L, b.snapshotSeq(), "every re-send carries the full state at 20");
         }
 
-        // This time the edge receives the LAST re-sent transfer: reassemble + apply + ack.
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         int chunksPerTransfer = sink.sentOfType(EdgeFrame.SnapshotChunk.class).size() / resent.size();
         sink.sentOfType(EdgeFrame.SnapshotChunk.class).stream()

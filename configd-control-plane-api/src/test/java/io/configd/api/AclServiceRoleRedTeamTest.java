@@ -56,8 +56,6 @@ class AclServiceRoleRedTeamTest {
         acl = new AclService();
     }
 
-    // Helpers: build literal-prefix allow/deny rules and single/multi-policy roles
-    // (mirrors AclServiceRoleTest so the two role suites read identically).
 
     private static PolicyRule allowRule(String prefix, AclService.Permission... caps) {
         return new PolicyRule(prefix, Set.of(caps), Set.of());
@@ -67,17 +65,10 @@ class AclServiceRoleRedTeamTest {
         return new PolicyRule(prefix, Set.of(), Set.of(caps));
     }
 
-    /** A role wrapping the given rules in a single policy. */
     private static Role role(String name, PolicyRule... rules) {
         return new Role(name, List.of(new Policy(name + "-pol", List.of(rules))));
     }
 
-    // ROLE-ATTACK 1 - ESCALATION PAST DENY (deny-precedence is order-independent THROUGH roles).
-    // A role ALLOW must be overridden by a DENY of the same cap whether the deny is (a) an OWN grant,
-    // (b) ANOTHER role's grant, or (c) a SAME-role rule - in BOTH the deny-at-ancestor/allow-at-descendant
-    // and deny-at-descendant/allow-at-ancestor directions, and in EVERY ordering of the setup calls.
-    // Because isAllowed reads final state and subtracts deny ONCE over the combined own union role set, the
-    // decision must not depend on grant/deny/defineRole/assignRole ordering.
     @Nested
     @DisplayName("Role-Attack 1: a DENY (own / other-role / same-role) beats a role ALLOW, every direction & order")
     class EscalationPastDeny {
@@ -85,14 +76,12 @@ class AclServiceRoleRedTeamTest {
         @Test
         @DisplayName("OWN deny beats role ALLOW — both deny@ancestor/allow@descendant and the reverse")
         void ownDenyBeatsRoleAllow_bothDirections() {
-            // (i) own DENY at ancestor a. beats role ALLOW at descendant a.b. for a.b.x
             AclService a = new AclService();
             a.defineRole(role("descW", allowRule("a.b.", WRITE)));
             a.deny("a.", "p", Set.of(WRITE));
             assertFalse(a.isAllowed("p", Set.of("descW"), "a.b.x", WRITE),
                     "own ancestor DENY(WRITE) must beat a role descendant ALLOW(WRITE)");
 
-            // (ii) own DENY at descendant a.b. beats role ALLOW at ancestor a. for a.b.x
             AclService b = new AclService();
             b.defineRole(role("ancW", allowRule("a.", WRITE)));
             b.deny("a.b.", "p", Set.of(WRITE));
@@ -141,7 +130,7 @@ class AclServiceRoleRedTeamTest {
         @DisplayName("deny beats role ALLOW for ADMIN too (deny beats 'sudo' through roles)")
         void roleAdminDeniedByDeny() {
             acl.defineRole(role("sudo", allowRule("a.", ADMIN)));
-            acl.deny("a.b.", "p", Set.of(ADMIN)); // own carve-out of ADMIN deep down
+            acl.deny("a.b.", "p", Set.of(ADMIN));
             assertAll(
                     () -> assertFalse(acl.isAllowed("p", Set.of("sudo"), "a.b.x", ADMIN),
                             "an own DENY(ADMIN) must beat a role ALLOW(ADMIN) — deny beats sudo through roles"),
@@ -179,9 +168,6 @@ class AclServiceRoleRedTeamTest {
         }
     }
 
-    // ROLE-ATTACK 2 - UNION NEVER MANUFACTURES. No combination of roles + own grants whose rules grant
-    // only {READ, WRITE} can ever yield ADMIN, LIST, or effective-WATCH. Exhaustive small enumeration
-    // across own grants AND two role sources mixed (mirrors own-grants Attack 1, extended through roles).
     @Nested
     @DisplayName("Role-Attack 2: union of READ/WRITE-only sources (own + roles) never manufactures ADMIN/LIST/WATCH")
     class UnionNeverManufactures {
@@ -196,7 +182,7 @@ class AclServiceRoleRedTeamTest {
                 for (Set<AclService.Permission> r1 : options) {
                     for (Set<AclService.Permission> r2 : options) {
                         AclService a = new AclService();
-                        a.grant("a.", "p", own);                                  // own grant on ancestor
+                        a.grant("a.", "p", own);
                         a.defineRole(role("role1", new PolicyRule("a.b.", r1, Set.of())));
                         a.defineRole(role("role2", new PolicyRule("a.b.c.", r2, Set.of())));
                         String key = "a.b.c.x";
@@ -206,7 +192,7 @@ class AclServiceRoleRedTeamTest {
                     }
                 }
             }
-            int admin = adminLeaks, list = listLeaks, watch = watchLeaks; // effectively-final for assertAll lambdas
+            int admin = adminLeaks, list = listLeaks, watch = watchLeaks;
             assertAll(
                     () -> assertEquals(0, admin, "ADMIN manufactured from READ/WRITE-only sources"),
                     () -> assertEquals(0, list, "LIST manufactured from READ/WRITE-only sources"),
@@ -229,10 +215,6 @@ class AclServiceRoleRedTeamTest {
         }
     }
 
-    // ROLE-ATTACK 3 - NO-ESCALATION / DEFAULT-DENY. Degenerate role shapes must grant NOTHING: an
-    // undefined role name, an assigned-but-undefined role, an empty Role (no policies), a Policy with no
-    // rules, a PolicyRule with an empty allow set. An unknown principal carrying arbitrary UNDEFINED roles
-    // is denied every capability.
     @Nested
     @DisplayName("Role-Attack 3: degenerate/undefined role shapes grant nothing (default-deny)")
     class DefaultDenyNoEscalation {
@@ -240,7 +222,6 @@ class AclServiceRoleRedTeamTest {
         @Test
         @DisplayName("unknown principal + arbitrary UNDEFINED roles -> every capability denied")
         void unknownPrincipalUndefinedRolesAllDenied() {
-            // A real role exists but is NOT named by this caller; a real principal exists but is NOT us.
             acl.defineRole(role("real", allowRule("a.", READ, LIST, WRITE, WATCH, ADMIN)));
             acl.grant("a.", "known", Set.of(READ));
             for (AclService.Permission perm : AclService.Permission.values()) {
@@ -252,7 +233,7 @@ class AclServiceRoleRedTeamTest {
         @Test
         @DisplayName("assigned-but-undefined role contributes nothing (binding without a definition)")
         void assignedButUndefinedRoleContributesNothing() {
-            acl.assignRole("p", "neverDefined"); // bound, but defineRole never called
+            acl.assignRole("p", "neverDefined");
             for (AclService.Permission perm : AclService.Permission.values()) {
                 assertFalse(acl.isAllowed("p", Set.of(), "a.x", perm),
                         () -> "an assigned role with no definition must add nothing for " + perm);
@@ -275,7 +256,7 @@ class AclServiceRoleRedTeamTest {
         @Test
         @DisplayName("a defined role NOT held by the principal grants nothing (must be asserted or assigned)")
         void definedButUnheldRoleGrantsNothing() {
-            acl.defineRole(role("powerful", allowRule("", READ, LIST, WRITE, WATCH, ADMIN))); // global grant role
+            acl.defineRole(role("powerful", allowRule("", READ, LIST, WRITE, WATCH, ADMIN)));
             for (AclService.Permission perm : AclService.Permission.values()) {
                 assertFalse(acl.isAllowed("p", Set.of(), "anything", perm),
                         () -> "a defined role the principal neither asserts nor is assigned grants nothing for " + perm);
@@ -295,8 +276,8 @@ class AclServiceRoleRedTeamTest {
         @Test
         @DisplayName("CROWN JEWEL: role holds READ+WATCH (would self-authorize) but an OWN READ-deny on the chain floors it")
         void roleReadWatchFlooredByOwnReadDeny() {
-            acl.defineRole(role("rw", allowRule("a.", READ, WATCH)));  // role alone WOULD authorize WATCH on a.*
-            acl.deny("a.secret.", "p", Set.of(READ));                  // ...but own READ-deny on a child
+            acl.defineRole(role("rw", allowRule("a.", READ, WATCH)));
+            acl.deny("a.secret.", "p", Set.of(READ));
             assertAll(
                     () -> assertFalse(acl.isAllowed("p", Set.of("rw"), "a.secret.k", WATCH),
                             "role READ+WATCH MUST be floored by an OWN READ-deny on the chain — proves deny is "
@@ -311,8 +292,8 @@ class AclServiceRoleRedTeamTest {
         @Test
         @DisplayName("mirror: own holds READ+WATCH but a ROLE READ-deny on the chain floors it")
         void ownReadWatchFlooredByRoleReadDeny() {
-            acl.grant("a.", "p", Set.of(READ, WATCH));                 // own alone WOULD authorize WATCH
-            acl.defineRole(role("blockRead", denyRule("a.secret.", READ))); // role READ-deny on a child
+            acl.grant("a.", "p", Set.of(READ, WATCH));
+            acl.defineRole(role("blockRead", denyRule("a.secret.", READ)));
             assertAll(
                     () -> assertFalse(acl.isAllowed("p", Set.of("blockRead"), "a.secret.k", WATCH),
                             "own READ+WATCH MUST be floored by a ROLE READ-deny on the chain (combined-set deny)"),
@@ -323,7 +304,7 @@ class AclServiceRoleRedTeamTest {
         @Test
         @DisplayName("a role granting WATCH but NO READ (own or role) anywhere -> no effective WATCH")
         void roleWatchWithoutAnyReadIsIneffective() {
-            acl.defineRole(role("watchOnly", allowRule("a.", WATCH, LIST, WRITE, ADMIN))); // everything EXCEPT READ
+            acl.defineRole(role("watchOnly", allowRule("a.", WATCH, LIST, WRITE, ADMIN)));
             assertFalse(acl.isAllowed("p", Set.of("watchOnly"), "a.x", WATCH),
                     "a role cannot manufacture effective WATCH without READ in the combined set");
         }
@@ -332,7 +313,7 @@ class AclServiceRoleRedTeamTest {
         @DisplayName("a ROLE WATCH-deny on the chain removes effective WATCH even with own READ+WATCH")
         void roleWatchDenyRemovesEffectiveWatch() {
             acl.grant("a.b.", "p", Set.of(READ, WATCH));
-            acl.defineRole(role("noWatch", denyRule("a.", WATCH))); // role denies WATCH at the ancestor
+            acl.defineRole(role("noWatch", denyRule("a.", WATCH)));
             assertAll(
                     () -> assertFalse(acl.isAllowed("p", Set.of("noWatch"), "a.b.x", WATCH),
                             "a role DENY(WATCH) at an ancestor removes effective WATCH"),
@@ -347,7 +328,7 @@ class AclServiceRoleRedTeamTest {
             // If a decoy leaked (startsWith broken) or the own walk halted early, effective WATCH would vanish.
             acl.defineRole(role("deepRW", allowRule("a.b.c.d.", READ, WATCH)));
             for (String decoy : List.of("a.a", "a.b.a", "a.b.c.a", "a.b.c.d.a")) {
-                acl.deny(decoy, "p", Set.of(READ, WATCH)); // own denies on non-ancestors of a.b.c.d.e
+                acl.deny(decoy, "p", Set.of(READ, WATCH));
             }
             assertTrue(acl.isAllowed("p", Set.of("deepRW"), "a.b.c.d.e", WATCH),
                     "role-granted deep READ+WATCH must survive — the own decoy denies are non-ancestors, "
@@ -357,8 +338,8 @@ class AclServiceRoleRedTeamTest {
         @Test
         @DisplayName("READ from own ancestor ∧ WATCH from a role descendant compose to effective WATCH (floor over the union)")
         void ownReadAncestorComposesWithRoleWatchDescendant() {
-            acl.grant("a.", "p", Set.of(READ));                        // own READ at the ancestor
-            acl.defineRole(role("w", allowRule("a.b.", WATCH)));        // role WATCH at the descendant
+            acl.grant("a.", "p", Set.of(READ));
+            acl.defineRole(role("w", allowRule("a.b.", WATCH)));
             assertAll(
                     () -> assertTrue(acl.isAllowed("p", Set.of("w"), "a.b.x", WATCH),
                             "own READ(ancestor) ∧ role WATCH(descendant) -> effective WATCH (floor is over the union)"),
@@ -367,9 +348,6 @@ class AclServiceRoleRedTeamTest {
         }
     }
 
-    // ROLE-ATTACK 5 - DECOY / PREFIX-BOUNDARY THROUGH ROLES. Role rules match by the SAME literal
-    // key.startsWith(prefix). A role rule on a NON-ancestor prefix must not bleed; a role deny on
-    // app.secret. must not affect the lexical sibling app.secretZ.
     @Nested
     @DisplayName("Role-Attack 5: role-rule matching is exactly startsWith (no sibling/decoy bleed)")
     class DecoyPrefixBoundaryThroughRoles {
@@ -394,7 +372,6 @@ class AclServiceRoleRedTeamTest {
         @Test
         @DisplayName("a role ALLOW on a NON-ancestor prefix does not reach the key (startsWith confusion)")
         void roleAllowOnNonAncestorDoesNotReach() {
-            // Role grants WRITE on "app.secretZ" (a sibling), nothing on the app.secret. subtree.
             acl.defineRole(role("decoy", allowRule("app.secretZ", WRITE)));
             assertAll(
                     () -> assertFalse(acl.isAllowed("p", Set.of("decoy"), "app.secret.key", WRITE),
@@ -408,7 +385,7 @@ class AclServiceRoleRedTeamTest {
         void emptyPrefixRoleRuleIsGlobal() {
             acl.defineRole(role("globalRead", allowRule("", READ)));
             acl.defineRole(role("globalDenyAdmin", denyRule("", ADMIN)));
-            acl.grant("", "p", Set.of(ADMIN)); // own global ADMIN
+            acl.grant("", "p", Set.of(ADMIN));
             assertAll(
                     () -> assertTrue(acl.isAllowed("p", Set.of("globalRead"), "very/deep/key", READ),
                             "empty-prefix role ALLOW(READ) reaches an arbitrarily deep key (global ancestor)"),
@@ -417,9 +394,6 @@ class AclServiceRoleRedTeamTest {
         }
     }
 
-    // ROLE-ATTACK 6 - CROSS-PRINCIPAL / CROSS-ROLE ISOLATION. assignRole(alice,...) must not affect bob; a
-    // role's grants reach ONLY principals who hold it (authn-asserted OR assignRole); a role's DENY reaches
-    // only its holders too (never shadows a non-holder's own allow).
     @Nested
     @DisplayName("Role-Attack 6: roles reach only their holders (no cross-principal leakage)")
     class CrossPrincipalCrossRoleIsolation {
@@ -476,7 +450,7 @@ class AclServiceRoleRedTeamTest {
         @Timeout(value = 30, unit = TimeUnit.SECONDS)
         @DisplayName("standing ROLE deny (via assignRole) holds while a writer churns own grant/revoke(WRITE)")
         void standingRoleDenyHoldsUnderOwnGrantChurn() throws InterruptedException {
-            acl.defineRole(role("blocker", denyRule("", WRITE))); // global WRITE deny
+            acl.defineRole(role("blocker", denyRule("", WRITE)));
             acl.assignRole("alice", "blocker");                   // PERMANENT - never removed
             acl.grant("", "alice", Set.of(READ, WRITE));          // base own allow (deny must still win)
 
@@ -485,7 +459,7 @@ class AclServiceRoleRedTeamTest {
             Thread writer = new Thread(() -> {
                 try {
                     while (!stop.get()) {
-                        acl.grant("a.", "alice", Set.of(WRITE)); // try to (re)grant WRITE on a subtree
+                        acl.grant("a.", "alice", Set.of(WRITE));
                         acl.revoke("a.", "alice");
                     }
                 } catch (Throwable t) {
@@ -619,7 +593,7 @@ class AclServiceRoleRedTeamTest {
         @Test
         @DisplayName("asserting a role literally NAMED after another principal does not inherit that principal's own grants")
         void roleNameCollidingWithPrincipalDoesNotInheritOwnGrants() {
-            acl.grant("sys.", "alice", Set.of(ADMIN)); // alice's OWN grant, stored in `acls` under principal "alice"
+            acl.grant("sys.", "alice", Set.of(ADMIN));
             assertAll(
                     () -> assertFalse(acl.isAllowed("bob", Set.of("alice"), "sys.x", ADMIN),
                             "bob asserting a role named 'alice' must NOT inherit principal alice's own grants "
@@ -636,16 +610,13 @@ class AclServiceRoleRedTeamTest {
             acl.defineRole(role("ops", allowRule("cfg.", WRITE)));
 
             assertAll(
-                    // Principal ops, asserting NO roles: only its own READ on log.; no WRITE on cfg.
                     () -> assertTrue(acl.isAllowed("ops", Set.of(), "log.x", READ), "own grant intact"),
                     () -> assertFalse(acl.isAllowed("ops", Set.of(), "cfg.x", WRITE),
                             "principal ops does not get role ops's WRITE unless it asserts/holds the role"),
-                    // Principal ops, asserting role "ops": now BOTH apply (own READ + role WRITE) - additive, still disjoint stores
                     () -> assertTrue(acl.isAllowed("ops", Set.of("ops"), "cfg.x", WRITE),
                             "asserting role ops adds the role's WRITE on cfg."),
                     () -> assertFalse(acl.isAllowed("ops", Set.of("ops"), "cfg.x", READ),
                             "role ops grants only WRITE on cfg.; READ there was granted by neither store"),
-                    // A different principal asserting role "ops" gets ONLY the role's grant, never principal ops's own READ
                     () -> assertTrue(acl.isAllowed("eve", Set.of("ops"), "cfg.x", WRITE), "eve gets the role grant"),
                     () -> assertFalse(acl.isAllowed("eve", Set.of("ops"), "log.x", READ),
                             "eve asserting role ops does NOT inherit principal ops's own READ on log."));
@@ -665,7 +636,7 @@ class AclServiceRoleRedTeamTest {
         @DisplayName("role grants READ+WATCH on a subtree but a descendant READ-deny (own) the watch would deliver is invisible at the root")
         void roleSubtreeWatchRootCheckMissesDescendantDeny() {
             acl.defineRole(role("subtreeWatcher", allowRule("a.", READ, WATCH)));
-            acl.deny("a.secret.", "p", Set.of(READ)); // own carve-out on a descendant
+            acl.deny("a.secret.", "p", Set.of(READ));
 
             assertTrue(acl.isAllowed("p", Set.of("subtreeWatcher"), "a.", WATCH),
                     "isAllowed at the SUBTREE ROOT says WATCH — the a.secret. READ-deny is a DESCENDANT, "

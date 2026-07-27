@@ -31,7 +31,6 @@ import static org.junit.jupiter.api.Assertions.fail;
  */
 class OverloadChaosTest {
 
-    // D-1: control-plane write flood - OVERLOADED shed, bounded (plateau) queue, recovery.
     @Test
     void controlPlaneWriteFlood_shedsWithOverload_boundedQueue_recovers() {
         PartitionMatrixTest.Cluster c = new PartitionMatrixTest.Cluster(7L);
@@ -56,7 +55,6 @@ class OverloadChaosTest {
         assertTrue(overloaded > 0, "D-1: the write flood must shed with OVERLOADED (the §11 429-equivalent)");
         assertTrue(accepted < FLOOD, "D-1: not every write accepted — the queue is bounded");
 
-        // Sustained MORE load must NOT grow the queue - it plateaus at the bound (never unbounded).
         int overloaded2 = 0;
         for (int i = 0; i < FLOOD; i++) {
             ProposalResult r = ldr.propose(CommandCodec.encodePut("flood/b" + i, ("v" + i).getBytes())).result();
@@ -69,7 +67,6 @@ class OverloadChaosTest {
                 "D-1: the uncommitted queue must PLATEAU under sustained overload (bounded, never unbounded)");
         assertEquals(FLOOD, overloaded2, "D-1: once the bound is hit, ALL further writes are shed (no silent buffering)");
 
-        // Recovery: resume delivery -> commits drain -> queue clears -> writes accepted again.
         for (int t = 0; t < 3000; t++) {
             c.step();
         }
@@ -84,7 +81,6 @@ class OverloadChaosTest {
                 + overloaded + " queuePlateau=" + uncommitted1 + " (bounded, recovered)");
     }
 
-    // D-2: post-partition reconnect storm - a fleet of edges all DISCONNECTED then HEALED at once.
     @Test
     void postPartitionReconnectStorm_allEdgesRecoverToCurrent() {
         // 5 edges is the regression anchor; postPartitionReconnectStorm_fleetSizeDistribution
@@ -124,7 +120,6 @@ class OverloadChaosTest {
             sim.enableEdgeRecovery(e);
         }
 
-        // The storm setup: cut the WHOLE fleet off and commit writes none of them can see.
         for (int e = 0; e < edges; e++) {
             sim.partitionEdge(e);
         }
@@ -133,7 +128,6 @@ class OverloadChaosTest {
             commit(sim, obs, "storm/k" + i, "v" + i);
         }
 
-        // Walk the WHOLE fleet to DISCONNECTED (logical-time ladder, no wall-clock sleeps).
         long start = sim.currentTime();
         while (!allAtLeast(sim, edges, StalenessTracker.State.DISCONNECTED)) {
             if (sim.currentTime() - start > 60_000) {
@@ -142,8 +136,6 @@ class OverloadChaosTest {
             sim.tick();
         }
 
-        // THE STORM: heal the entire fleet at the SAME instant - every edge reconnects +
-        // re-bootstraps at once (the catch-up thundering herd). All must recover to CURRENT.
         long target = sim.cpSim().store(obs).currentVersion();
         for (int e = 0; e < edges; e++) {
             sim.healEdge(e);

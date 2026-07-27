@@ -66,7 +66,6 @@ final class RaftTransportAdapterLoopbackTest {
         transportB.start();
         int portB = transportB.localPort();
 
-        // Node A: knows B's address; its adapter encodes + sends over TCP.
         transportA = new TcpRaftTransport(nodeA, new InetSocketAddress("127.0.0.1", 0),
                 Map.of(nodeB, new InetSocketAddress("127.0.0.1", portB)), null, m -> {});
         RaftTransportAdapter adapterA = new RaftTransportAdapter(transportA, GROUP);

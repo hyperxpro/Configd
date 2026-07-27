@@ -58,7 +58,6 @@ public final class ConfigdEdgeClient implements AutoCloseable {
         return open(config, null);
     }
 
-    /** Opens a standalone edge client with an inbound-frame handler (the later gates' extension point). */
     public static ConfigdEdgeClient open(ConfigdClientConfig config, InboundFrameHandler handler) {
         return new ConfigdEdgeClient(config, defaultScheduler(), true, handler);
     }
@@ -73,7 +72,6 @@ public final class ConfigdEdgeClient implements AutoCloseable {
         return new ConfigdEdgeClient(config, scheduler, false, handler);
     }
 
-    /** The auth mode this client presents, derived from its configuration. */
     public AuthMode authMode() {
         return mode;
     }
@@ -88,7 +86,6 @@ public final class ConfigdEdgeClient implements AutoCloseable {
         return primary.authenticate();
     }
 
-    /** Connects then authenticates. */
     public CompletableFuture<Void> connectAndAuthenticate() {
         return primary.connectAndAuthenticate();
     }
@@ -116,7 +113,6 @@ public final class ConfigdEdgeClient implements AutoCloseable {
         return primary.reconnectCount();
     }
 
-    /** Subscribes to the whole store and hydrates a verified {@link LocalConfigView}. */
     public Subscription subscribeFullStore(SubscribeOptions options) {
         return subscribe(true, List.of(), options);
     }
@@ -206,8 +202,6 @@ public final class ConfigdEdgeClient implements AutoCloseable {
         EdgeSession session = host.edgeSession();
         WatchMultiplexHandler mux = host.multiplex();
         if (mux == null) {
-            // First share: convert the host's dedicated session to a multiplex. Bind the live connection, adopt
-            // the host's watch (it keeps streaming), then route the session's inbound + lifecycle through the mux.
             mux = new WatchMultiplexHandler();
             mux.bindConnection(session.currentConnection());
             mux.adopt(host.session());
@@ -220,7 +214,6 @@ public final class ConfigdEdgeClient implements AutoCloseable {
         return new Watch(ws, session, mux, true);
     }
 
-    /** Builds the signed-chain verifier from config (VERIFY with a leader key, or explicit TRUST-UNVERIFIED). */
     SignedChainVerifier buildVerifier() {
         if (config.leaderVerifyKey().isPresent()) {
             return SignedChainVerifier.verifying(config.leaderVerifyKey().get(), config.epochStore());

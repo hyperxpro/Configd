@@ -61,7 +61,6 @@ class EdgeInvariantsTestTheTesterTest {
         EdgeInvariants inv = new EdgeInvariants(SEED, activity);
         EdgeActor edge = newEdge(0);
 
-        // Drive the read store to version 10 via a doctored Snapshot.
         edge.deliver(new EdgeStream.Snapshot(snapshotWith(10, "k", "v10", 10), 10));
         edge.tick();
         inv.checkAll(List.of(edge), now.get(), e -> true); // records baseline version 10
@@ -82,26 +81,22 @@ class EdgeInvariantsTestTheTesterTest {
     }
 
     /**
-     * The complementary half of (a): the production {@link EdgeActor#applySnapshot} now
-     * REFUSES a backward snapshot (one whose seq is below the edge's current cursor), so the
-     * edge never regresses through the real apply path - production correctness protects the
-     * monotonicity invariant. (Found while building the C1 driver: a demotion snapshot taken
-     * from a transiently-behind subscribed node would otherwise regress the edge.)
-     */
+         * The complementary half of (a): the production {@link EdgeActor#applySnapshot} now
+         * REFUSES a backward snapshot (one whose seq is below the edge's current cursor), so the
+         * edge never regresses through the real apply path - production correctness protects the
+         * monotonicity invariant.
+         */
     @Test
     void productionApplySnapshotRefusesBackwardSnapshotSoTheStoreNeverRegresses() {
         EdgeActivity activity = new EdgeActivity();
         EdgeInvariants inv = new EdgeInvariants(SEED, activity);
         EdgeActor edge = newEdge(0);
 
-        // Reach version 10 via the real apply path.
         edge.deliver(new EdgeStream.Snapshot(snapshotWith(10, "k", "v10", 10), 10));
         edge.tick();
         assertEquals(10, edge.currentVersion());
         inv.checkAll(List.of(edge), now.get(), e -> true);
 
-        // A backward snapshot (seq 5 < cursor 10) delivered through the REAL path is refused;
-        // the edge stays at version 10, so the monotonicity checker has nothing to catch.
         edge.deliver(new EdgeStream.Snapshot(snapshotWith(5, "k", "v5", 5), 5));
         edge.tick();
         assertEquals(10, edge.currentVersion(), "backward snapshot must be refused (no regression)");
@@ -117,7 +112,6 @@ class EdgeInvariantsTestTheTesterTest {
         EdgeInvariants inv = new EdgeInvariants(SEED, activity);
         EdgeActor edge = newEdge(0);
 
-        // Key 'k' at version 10 (store version 10).
         edge.deliver(new EdgeStream.Snapshot(snapshotWith(10, "k", "v10", 10), 10));
         edge.tick();
         inv.checkAll(List.of(edge), now.get(), e -> true);
@@ -147,13 +141,10 @@ class EdgeInvariantsTestTheTesterTest {
         // InvariantMonitor wired into the edge's read LocalConfigStore, which throws
         // (fails the seed). This proves the monotonic_read seam is live and non-vacuous.
         EdgeActor edge = newEdge(0);
-        // Edge store at version 3 (key k=v3).
         edge.deliver(new EdgeStream.Notify(notification(3, 0, 3, "k", "v3")));
         edge.tick();
         assertEquals(3, edge.currentVersion());
 
-        // A read with a cursor at version 9 (ahead of the store's 3) must trip
-        // Monotonic-read guarantee (monotonic_read) - test mode -> AssertionError, which fails the seed.
         VersionCursor aheadCursor = new VersionCursor(9, now.get());
         AssertionError ex = assertThrows(AssertionError.class,
                 () -> edge.get("k", aheadCursor),
@@ -179,7 +170,6 @@ class EdgeInvariantsTestTheTesterTest {
         EdgeInvariants inv = new EdgeInvariants(SEED, activity);
         EdgeActor edge = newEdge(0);
 
-        // Apply a legitimate delta 0->1 (PUT k=v1) through the real DeltaApplier.
         edge.deliver(new EdgeStream.Notify(notification(1, 0, 1, "k", "v1")));
         edge.tick();
         assertEquals(1, edge.currentVersion(), "legit delta must apply");
@@ -191,8 +181,6 @@ class EdgeInvariantsTestTheTesterTest {
         edge.tick();
         assertEquals(1, edge.currentVersion(), "stale delta must NOT change version");
         assertEquals("v1", value(edge, "k"), "stale delta must NOT overwrite the value");
-        // The checker sees no regression and does not fire - exactly because the
-        // production guard already protected the invariant.
         assertDoesNotThrow(() -> inv.checkAll(List.of(edge), now.get(), e -> true));
     }
 
@@ -204,7 +192,6 @@ class EdgeInvariantsTestTheTesterTest {
         EdgeInvariants inv = new EdgeInvariants(SEED, activity);
         EdgeActor edge = newEdge(0);
 
-        // Edge holds k=vEdge@7; the authoritative leader holds k=vLeader@9.
         edge.deliver(new EdgeStream.Snapshot(snapshotWith(7, "k", "vEdge", 7), 7));
         edge.tick();
         ConfigSnapshot authoritative = snapshotWith(9, "k", "vLeader", 9);
@@ -237,13 +224,11 @@ class EdgeInvariantsTestTheTesterTest {
         long publishedAt = now.get();
         inv.recordPublication(7L, 0, publishedAt, List.of(edge.edgeId()));
 
-        // Before the deadline: no violation recorded yet.
         now.set(publishedAt + bound); // exactly at bound (not strictly past)
         inv.checkAll(List.of(edge), now.get(), e -> true);
         assertEquals(0, activity.deliveryViolationCount(),
                 "no violation at-or-before the bound");
 
-        // Past the deadline by 30ms: a recorded violation with lateness == 30.
         long overshoot = 30L;
         now.set(publishedAt + bound + overshoot);
         inv.checkAll(List.of(edge), now.get(), e -> true);
@@ -272,7 +257,6 @@ class EdgeInvariantsTestTheTesterTest {
         long publishedAt = now.get();
         inv.recordPublication(3L, 0, publishedAt, List.of(edge.edgeId()));
 
-        // Edge observes seq 3 in time (cursor advances via an applied delta 0->3).
         edge.deliver(new EdgeStream.Notify(notification(3, 0, 3, "k", "v")));
         edge.tick();
         assertEquals(3, edge.cursor(), "edge must have observed seq 3");
@@ -283,7 +267,6 @@ class EdgeInvariantsTestTheTesterTest {
                 "no violation when the edge observed the seq before the bound");
     }
 
-    // Helpers.
 
     private static io.configd.distribution.CommitNotification notification(
             long seq, long fromVersion, long toVersion, String key, String value) {

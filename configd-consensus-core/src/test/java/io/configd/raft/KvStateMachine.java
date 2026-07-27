@@ -23,7 +23,6 @@ final class KvStateMachine implements StateMachine {
     private final LinkedHashMap<String, String> state = new LinkedHashMap<>();
     private long appliedSeq;
 
-    /** Encodes a {@code PUT key=value} command. */
     static byte[] put(String key, String value) {
         byte[] k = key.getBytes(StandardCharsets.UTF_8);
         byte[] v = value.getBytes(StandardCharsets.UTF_8);
@@ -37,7 +36,7 @@ final class KvStateMachine implements StateMachine {
     @Override
     public long apply(long index, long term, byte[] command) {
         if (command == null || command.length == 0) {
-            return StateMachine.NON_MUTATING; // no-op entry
+            return StateMachine.NON_MUTATING;
         }
         ByteBuffer buf = ByteBuffer.wrap(command);
         int klen = buf.getInt();

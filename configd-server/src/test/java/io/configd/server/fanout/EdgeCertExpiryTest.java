@@ -94,7 +94,6 @@ class EdgeCertExpiryTest {
         Path serverCert = fixtureDir.resolve("server.pem");
         Path clientCert = fixtureDir.resolve("client.pem");
         genServerKeyPair(serverKeyStore, "server", "CN=localhost,O=configd-test");
-        // A client cert whose notAfter is ~8s from now: startdate = now - (1 day - 8s), validity = 1 day.
         genShortClientKeyPair(clientKeyStore, "client", "CN=edge-cert-client,O=configd-test");
         exportCert(serverKeyStore, "server", serverCert);
         exportCert(clientKeyStore, "client", clientCert);
@@ -117,7 +116,6 @@ class EdgeCertExpiryTest {
                 try {
                     Files.deleteIfExists(p);
                 } catch (IOException ignored) {
-                    // best-effort
                 }
             });
         }
@@ -130,7 +128,6 @@ class EdgeCertExpiryTest {
         }
     }
 
-    // Enforcement ON: the connection is closed CREDENTIAL_EXPIRED at notAfter + leeway.
 
     private void enforcedCertNotAfterClosesCredentialExpired(boolean netty) throws Exception {
         // enforceCertNotAfter ON, leeway 0 so the close fires at notAfter (a few seconds out, or already
@@ -158,7 +155,6 @@ class EdgeCertExpiryTest {
         enforcedCertNotAfterClosesCredentialExpired(true);
     }
 
-    // Enforcement OFF (default): the connection survives past notAfter (byte-identical to the prior behavior).
 
     private void unenforcedCertSurvivesPastNotAfter(boolean netty) throws Exception {
         int port = startMtlsServer(netty, EdgeCertGate.OFF); // default posture
@@ -280,7 +276,6 @@ class EdgeCertExpiryTest {
         return false;
     }
 
-    // TLS material helpers (mirror EdgeTokenAuthMtlsTest).
 
     private static SSLContext clientContext(Path clientKs, Path trustStorePath) throws Exception {
         KeyStore ks = loadStore(clientKs);

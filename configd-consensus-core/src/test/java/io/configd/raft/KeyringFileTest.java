@@ -139,7 +139,7 @@ class KeyringFileTest {
         SecretKey kek = kek((byte) 0x52);
         try (KeyringFile f = KeyringFile.openInDirectory(dir, env)) {
             f.bootstrap(mint(kek));
-            Keyring notBumped = f.current(); // same seq as current
+            Keyring notBumped = f.current();
             assertThrows(IllegalStateException.class, () -> f.write(notBumped),
                     "the dual-slot invariant requires a strictly monotonic keyringSeq");
         }

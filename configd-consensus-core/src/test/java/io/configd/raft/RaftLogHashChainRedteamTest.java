@@ -263,7 +263,6 @@ class RaftLogHashChainRedteamTest {
         assertEquals(2, log.lastTerm());
     }
 
-    /** A single authenticated record must recover. */
     @Test
     void singleRecordRecoversCleanly_hmac(@TempDir Path tempDir) {
         IntegrityEnvelope env = hmacEnvelope();
@@ -275,7 +274,6 @@ class RaftLogHashChainRedteamTest {
         assertEquals("only", new String(log.entryAt(1).command(), StandardCharsets.UTF_8));
     }
 
-    /** A clean multi-record authenticated WAL must recover, in both postures. */
     @Test
     void cleanMultiRecordRecoversCleanly_hmac(@TempDir Path tempDir) {
         assertCleanRecovers(tempDir, hmacEnvelope());

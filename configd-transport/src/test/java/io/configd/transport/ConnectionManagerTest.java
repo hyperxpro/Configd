@@ -58,7 +58,6 @@ class ConnectionManagerTest {
         manager.markConnected(peer);
         manager.markDisconnected(peer);
 
-        // Advance time past backoff
         fakeTimeMs.addAndGet(250);
         assertEquals(ConnectionManager.ConnectionState.DISCONNECTED, manager.state(peer));
         assertTrue(manager.canSend(peer));

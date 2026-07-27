@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class NodeKeyringTest {
 
-    private static final int WAL_MAGIC = 0x5257_414C; // "RWAL"
+    private static final int WAL_MAGIC = 0x5257_414C;
     private static final int SCOPE = 3;               // a per-shard gid; same on wrap+read here
     private static final String REF = "kid-ref";
 
@@ -66,7 +66,6 @@ class NodeKeyringTest {
         return IntegrityEnvelope.encrypting(km);
     }
 
-    // Boot / mint.
 
     @Test
     void firstBoot_mintsRoot1() {
@@ -105,7 +104,6 @@ class NodeKeyringTest {
         }
     }
 
-    // Attack 1: rotate-then-crash mid-write recovers (term rotation).
 
     @Test
     void termRotate_crashBeforeSync_recoversToPreRotationKeyring() {
@@ -115,14 +113,13 @@ class NodeKeyringTest {
         byte[] onDisk;
         try (NodeKeyring k = NodeKeyring.loadOrCreateOverIO(
                 new CrashModelAnchorIO(disk), mac(sk), kek(sk), nodeId("nodeA"), new SecureRandom())) {
-            onDisk = envOf(k).wrap(WAL_MAGIC, SCOPE, plain); // term-1 record
+            onDisk = envOf(k).wrap(WAL_MAGIC, SCOPE, plain);
             // Perform the attack: crash (sync throws) BETWEEN the new-slot write and its fdatasync.
             k.armSyncFailure(1);
             assertThrows(RuntimeException.class, () -> k.rotateTerm(REF),
                     "the injected crash aborts the rotation before the durable barrier");
             assertEquals(1, k.syncFaultsFired());
         }
-        // Reboot: the keyring recovers to the intact prior slot - no torn/lost keys, still term 1.
         try (NodeKeyring k2 = NodeKeyring.loadOrCreateOverIO(
                 new CrashModelAnchorIO(disk), mac(sk), kek(sk), nodeId("nodeA"), new SecureRandom())) {
             assertEquals(1, k2.activeTerm(), "recovered to the pre-rotation keyring");
@@ -132,7 +129,6 @@ class NodeKeyringTest {
         }
     }
 
-    // Attack 2: old segments still verify after a (successful) rotate.
 
     @Test
     void termRotate_oldTermDataStillDecrypts_newWritesUseNewTerm() {
@@ -159,11 +155,9 @@ class NodeKeyringTest {
             newRecord = env.wrap(WAL_MAGIC, SCOPE, newPlain);
             assertEquals(2, keyTermOf(newRecord), "new writes stamp the new term");
 
-            // BOTH decrypt live: old term retained, new term current.
             assertArrayEquals(oldPlain, env.unwrap(WAL_MAGIC, SCOPE, oldRecord));
             assertArrayEquals(newPlain, env.unwrap(WAL_MAGIC, SCOPE, newRecord));
         }
-        // Reboot: keyring now carries BOTH terms; both records still decrypt.
         try (NodeKeyring k2 = NodeKeyring.loadOrCreateOverIO(
                 new CrashModelAnchorIO(disk), mac(sk), kek(sk), nodeId("nodeA"), new SecureRandom())) {
             assertEquals(2, k2.activeTerm());
@@ -175,7 +169,6 @@ class NodeKeyringTest {
         }
     }
 
-    // Attack 2 (HMAC posture): old HMAC segments still verify after a term rotate.
 
     @Test
     void hmacTermRotate_oldTermDataStillVerifies_newWritesUseNewTerm() {
@@ -205,7 +198,6 @@ class NodeKeyringTest {
                     "an HMAC segment written under the old term still verifies after rotation");
             assertArrayEquals(newPlain, env.unwrap(WAL_MAGIC, SCOPE, newRecord));
         }
-        // Reboot: the term-versioned HMAC still verifies both records on the rotated keyring.
         try (NodeKeyring k2 = NodeKeyring.loadOrCreateOverIO(
                 new CrashModelAnchorIO(disk), mac(sk), kek(sk), nodeId("nodeA"), new SecureRandom())) {
             IntegrityEnvelope env2 = IntegrityEnvelope.hmac(
@@ -215,7 +207,6 @@ class NodeKeyringTest {
         }
     }
 
-    // Attack 1: signing-key rewrap-before-swap crash recovers.
 
     @Test
     void signingKeyRewrap_crashBeforeSync_bootsOnOldKeyStillActive() {
@@ -241,7 +232,6 @@ class NodeKeyringTest {
         }
     }
 
-    // Attack 2: signing-key rewrap is non-destructive (old data reads under the new key).
 
     @Test
     void signingKeyRewrap_success_oldDataDecryptsUnderNewKey() {
@@ -272,7 +262,6 @@ class NodeKeyringTest {
         }
     }
 
-    // Attack 4/5: boot fail-closed refusals.
 
     @Test
     void keyringUnderAPriorSigningKey_refuses_notSilentReMint() {

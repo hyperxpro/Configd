@@ -76,7 +76,6 @@ class NoBlockingConnectOnConsensusPathTest {
     private static final Pattern SET_SO_TIMEOUT =
             Pattern.compile("\\.setSoTimeout\\s*\\(");
 
-    /** How many preceding non-blank code lines may separate the bound from the handshake. */
     private static final int HANDSHAKE_LOOKBACK_LINES = 5;
 
     @Test
@@ -106,7 +105,6 @@ class NoBlockingConnectOnConsensusPathTest {
     private static void scanFile(Path file, List<String> violations) throws IOException {
         List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
 
-        // Stripped, non-blank code lines seen so far (for the handshake look-back).
         List<String> codeLines = new ArrayList<>();
 
         for (int i = 0; i < lines.size(); i++) {
@@ -121,9 +119,6 @@ class NoBlockingConnectOnConsensusPathTest {
                 violations.add(rel(file) + ":" + lineNo
                         + "  timeout-less connecting `new Socket(host, port)`  -> " + raw.trim());
             }
-            // Connecting createSocket(...) is only a concern on an SSL factory; we
-            // flag any createSocket with args and exempt the connector's own
-            // bounded no-arg form (already arg-less, so it won't match).
             if (matches(CREATE_SOCKET_CONNECTING, line)) {
                 violations.add(rel(file) + ":" + lineNo
                         + "  timeout-less connecting `factory.createSocket(host, port)`  -> " + raw.trim());
@@ -138,10 +133,6 @@ class NoBlockingConnectOnConsensusPathTest {
         }
     }
 
-    /**
-     * True when one of the last {@link #HANDSHAKE_LOOKBACK_LINES} non-blank code
-     * lines contains a {@code setSoTimeout(} call - the bounded-handshake pattern.
-     */
     private static boolean boundedHandshake(List<String> precedingCodeLines) {
         int from = Math.max(0, precedingCodeLines.size() - HANDSHAKE_LOOKBACK_LINES);
         for (int i = precedingCodeLines.size() - 1; i >= from; i--) {
@@ -167,16 +158,13 @@ class NoBlockingConnectOnConsensusPathTest {
         boolean inStr = false, inChar = false;
         for (int i = 0; i < line.length(); i++) {
             char c = line.charAt(i);
-            // line comment: drop the rest
             if (!inStr && !inChar && c == '/' && i + 1 < line.length() && line.charAt(i + 1) == '/') {
                 break;
             }
-            // block comment / javadoc star-prefixed lines: treat '*' lead and "/*" as comment
             if (!inStr && !inChar && c == '/' && i + 1 < line.length() && line.charAt(i + 1) == '*') {
-                break; // line-local: everything after /* on this line is comment-ish
+                break;
             }
             if (!inStr && !inChar && c == '*') {
-                // javadoc continuation line; if the trimmed line starts with * it's a comment
                 String trimmed = line.stripLeading();
                 if (trimmed.startsWith("*")) {
                     break;
@@ -201,7 +189,6 @@ class NoBlockingConnectOnConsensusPathTest {
         // Tests run with cwd == the module dir (configd-transport). Resolve the
         // sibling module's main sources relative to the reactor root.
         Path reactorRoot = Path.of("").toAbsolutePath();
-        // If we are inside a module, climb to the parent that holds the modules.
         if (!Files.isDirectory(reactorRoot.resolve(module))) {
             Path parent = reactorRoot.getParent();
             if (parent != null && Files.isDirectory(parent.resolve(module))) {

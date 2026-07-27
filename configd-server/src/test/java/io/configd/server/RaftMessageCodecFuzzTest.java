@@ -72,7 +72,6 @@ class RaftMessageCodecFuzzTest {
     /** Bounded per-decode timeout. Decode is microseconds; 2 s catches a true hang. */
     private static final Duration DECODE_BUDGET = Duration.ofSeconds(2);
 
-    /** The authenticated transport sender injected into a witness decode. */
     private static final NodeId FROM = NodeId.of(0x7F7F7F7F);
 
     /** Every raft MessageType that has a decode path (the frame types this codec owns). */
@@ -132,7 +131,7 @@ class RaftMessageCodecFuzzTest {
             @ForAll("hostileInts") int hostile) {
         byte[] payload = valid.payload().clone();
         if (payload.length < 4) {
-            return; // nothing to overwrite
+            return;
         }
         int at = offsetSeed % (payload.length - 3);
         ByteBuffer.wrap(payload).putInt(at, hostile);
@@ -231,11 +230,7 @@ class RaftMessageCodecFuzzTest {
         }
     }
 
-    // Permanent regression corpus of hand-picked hostile byte shapes. Each is a hardcoded byte[]
-    // case; if any codec change reintroduces a forbidden throwable here, CI fails loud on the exact
-    // byte pattern.
 
-    /** A negative InstallSnapshot chunk offset is a clean IllegalArgumentException. */
     @Property(tries = 1, seed = "2001")
     void corpusNegativeInstallSnapshotOffset() {
         ByteBuffer p = ByteBuffer.allocate(29);
@@ -249,7 +244,6 @@ class RaftMessageCodecFuzzTest {
         assertThrows(IllegalArgumentException.class, () -> RaftMessageCodec.decode(frame));
     }
 
-    /** Trailing bytes past a fully-parsed AppendEntries heartbeat are rejected strict-end. */
     @Property(tries = 1, seed = "2002")
     void corpusAppendEntriesTrailingBytes() {
         ByteBuffer p = ByteBuffer.allocate(33);
@@ -266,7 +260,7 @@ class RaftMessageCodecFuzzTest {
     /** A coalesced heartbeat declaring a duplicate group id is rejected (not a silent overwrite). */
     @Property(tries = 1, seed = "2003")
     void corpusCoalescedDuplicateGroupId() {
-        int record = 4 + 8 + 4 + 8 + 8 + 8; // 40
+        int record = 4 + 8 + 4 + 8 + 8 + 8;
         ByteBuffer p = ByteBuffer.allocate(4 + 2 * record);
         p.putInt(2);
         for (int i = 0; i < 2; i++) {
@@ -425,7 +419,6 @@ class RaftMessageCodecFuzzTest {
         return Arbitraries.oneOf(encoded, Arbitraries.of(coalesced));
     }
 
-    /** Hostile 4-byte int values to splat over a valid payload (count / length / id fields). */
     @Provide
     Arbitrary<Integer> hostileInts() {
         return Arbitraries.of(

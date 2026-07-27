@@ -1,23 +1,15 @@
 package io.configd.edge;
 
 /**
- * A space-efficient probabilistic data structure for fast negative lookups.
- * Used by the edge cache to quickly reject queries for keys that are
- * definitely not in the store - avoiding the ~100ns HAMT traversal
+ * Rejects queries for keys definitely not present, avoiding the ~100ns HAMT traversal
  * when a ~10ns Bloom filter check suffices.
  * <p>
- * This implementation uses double hashing (Kirsch & Mitzenmacker, 2006)
- * with MurmurHash3-derived seeds to minimize hash computation while
- * maintaining the theoretical false-positive rate.
+ * Uses double hashing (Kirsch &amp; Mitzenmacker) to derive every probe index from two
+ * MurmurHash3 values instead of k independent hashes, without degrading the false-positive rate.
  * <p>
- * <b>Thread safety:</b> Instances are immutable after construction.
- * To update the filter, create a new instance with {@link #rebuild(Iterable)}.
- * The immutability aligns with the RCU pattern used throughout the edge cache.
+ * Immutable after construction; build a new instance to update.
  * <p>
- * <b>False positive rate:</b> With the default of 10 bits per element
- * and 7 hash functions, the expected FPR is ~0.82%.
- *
- * @see LocalConfigStore
+ * Default of 10 bits/element and 7 hash functions gives an expected FPR of ~0.82%.
  */
 public final class BloomFilter {
 
@@ -39,14 +31,6 @@ public final class BloomFilter {
         this.size = size;
     }
 
-    /**
-     * Builds a Bloom filter from the given keys.
-     *
-     * @param keys the keys to insert
-     * @param expectedSize the expected number of keys (for sizing)
-     * @param bitsPerElement bits per element (higher = lower FPR)
-     * @return a new immutable Bloom filter
-     */
     public static BloomFilter build(Iterable<String> keys, int expectedSize, int bitsPerElement) {
         if (expectedSize <= 0) {
             return EMPTY;
@@ -54,7 +38,7 @@ public final class BloomFilter {
         int numBits = expectedSize * bitsPerElement;
         int numHashes = (int) Math.round((double) numBits / expectedSize * Math.log(2));
         if (numHashes < 1) numHashes = 1;
-        long[] bits = new long[(numBits + 63) >>> 6]; // ceil division by 64
+        long[] bits = new long[(numBits + 63) >>> 6];
 
         int count = 0;
         for (String key : keys) {
@@ -69,22 +53,11 @@ public final class BloomFilter {
         return new BloomFilter(bits, numBits, numHashes, count);
     }
 
-    /**
-     * Builds with default parameters (10 bits/element, 7 hashes).
-     */
     public static BloomFilter build(Iterable<String> keys, int expectedSize) {
         return build(keys, expectedSize, DEFAULT_BITS_PER_ELEMENT);
     }
 
-    /**
-     * Returns true if the key MIGHT be in the set, false if DEFINITELY NOT.
-     * <p>
-     * False negatives are impossible. False positives occur at ~0.82% rate
-     * with default parameters.
-     *
-     * @param key the key to test
-     * @return true if possibly present, false if definitely absent
-     */
+    /** False negatives are impossible: a false answer means the key is definitely absent. */
     public boolean mightContain(String key) {
         if (numBits == 0) return true; // empty filter: pass-through
         int h1 = murmurHash3(key, 0);
@@ -98,18 +71,13 @@ public final class BloomFilter {
         return true;
     }
 
-    /** Returns the number of elements inserted during construction. */
     public int size() { return size; }
 
-    /** Returns the expected false positive rate. */
     public double expectedFpp() {
         if (numBits == 0) return 1.0;
         return Math.pow(1.0 - Math.exp(-(double) numHashes * size / numBits), numHashes);
     }
 
-    /**
-     * MurmurHash3 finalization mix (32-bit). Used for double hashing.
-     */
     private static int murmurHash3(String key, int seed) {
         int h = seed;
         for (int i = 0; i < key.length(); i++) {

@@ -29,11 +29,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-/**
- * The watch plane over the plaintext loopback mock: WATCH_CREATE→CREATED→EVENT, the multi-shard
- * UNION merge + (gid,S) dedup, WATCH_PROGRESS idle-advance, resume-from-vector, per-(watch,gid) catch-up, the
- * NOT_AUTHORIZED per-watch terminal, and full_chain_verify (NOTIFY verify + local filter).
- */
 @Timeout(30)
 class EdgeWatchTest {
 
@@ -66,10 +61,10 @@ class EdgeWatchTest {
             w(conn, new EdgeFrame.WatchCreated(wid, List.of(
                     new EdgeFrame.ShardMode(0, 0, EdgeFrame.Mode.TAIL),
                     new EdgeFrame.ShardMode(1, 0, EdgeFrame.Mode.TAIL))));
-            w(conn, event(wid, 0, 1, "a", "1"));   // shard 0
+            w(conn, event(wid, 0, 1, "a", "1"));
             w(conn, event(wid, 1, 1, "b", "2"));   // shard 1 (same S=1, different gid ⇒ NOT a dup)
             w(conn, event(wid, 0, 1, "a", "dup")); // S=1 ≤ cursor[0]=1 ⇒ dropped
-            w(conn, event(wid, 0, 2, "a", "3"));   // advances shard 0
+            w(conn, event(wid, 0, 2, "a", "3"));
             conn.parkUntilClosed();
         })) {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(trustedConfig(server.port()))) {
@@ -81,8 +76,8 @@ class EdgeWatchTest {
                 await("cursor (0,2) (1,1)", () -> componentS(watch.cursor(), 0) == 2L
                         && componentS(watch.cursor(), 1) == 1L);
                 // The same-key events are same-gid ⇒ ordered; the cross-gid pair is concurrent.
-                assertTrue(WatchEvent.ordered(got.get(0), got.get(2))); // gid0 s1 before gid0 s2
-                assertFalse(WatchEvent.ordered(got.get(0), got.get(1))); // gid0 vs gid1 ⇒ concurrent
+                assertTrue(WatchEvent.ordered(got.get(0), got.get(2)));
+                assertFalse(WatchEvent.ordered(got.get(0), got.get(1)));
             }
         }
     }
@@ -136,7 +131,7 @@ class EdgeWatchTest {
                     StreamFixtures.entries("a", "1", "b", "2"), 8)) {
                 w(conn, f);
             }
-            w(conn, event(wid, 0, 4, "c", "3")); // tail after the snapshot cutover
+            w(conn, event(wid, 0, 4, "c", "3"));
             conn.parkUntilClosed();
         })) {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(trustedConfig(server.port()))) {
@@ -236,7 +231,7 @@ class EdgeWatchTest {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(trustedConfig(server.port()))) {
                 Watch watch = client.watch(WatchTarget.key("/k"), WatchOptions.defaults());
                 watch.awaitCreated(Duration.ofSeconds(10));
-                WatchEvent e = watch.poll(Duration.ofSeconds(10)); // no reactive subscriber — blocking facade
+                WatchEvent e = watch.poll(Duration.ofSeconds(10));
                 assertEquals(1L, e.s());
                 assertEquals("k", e.changes().get(0).key());
                 await("cursor advanced via the blocking path", () -> componentS(watch.cursor(), 0) == 1L);
@@ -252,7 +247,7 @@ class EdgeWatchTest {
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
             long wid = ((EdgeFrame.WatchCreate) conn.readFrame()).watchId();
             w(conn, new EdgeFrame.WatchCreated(wid, List.of(new EdgeFrame.ShardMode(0, 0, EdgeFrame.Mode.TAIL))));
-            w(conn, StreamFixtures.notify(1, 100, matching)); // verbatim signed chain
+            w(conn, StreamFixtures.notify(1, 100, matching));
             w(conn, StreamFixtures.notify(2, 100, other));    // filtered out locally (not under /watched)
             conn.parkUntilClosed();
         })) {

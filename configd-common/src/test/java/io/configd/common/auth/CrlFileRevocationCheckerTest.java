@@ -87,7 +87,6 @@ class CrlFileRevocationCheckerTest {
                 try {
                     Files.deleteIfExists(p);
                 } catch (Exception ignored) {
-                    // best-effort
                 }
             });
         }

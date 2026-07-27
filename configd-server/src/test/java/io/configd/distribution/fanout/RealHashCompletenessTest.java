@@ -31,16 +31,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The real-hash end-to-end completeness proof. Drives the multi-shard {@link FanOutConnectionDriver}
- * over the <b>real</b> {@link StaticShardMap} + {@link ShardMapResolver} and per-shard
- * {@link FanOutBuffer}s (the boot guard stays; no N&gt;1 server is booted). It constructs a key via
- * {@code shardFor} that hashes to a NON-zero shard and proves the coordinator delivers its change
- * tagged with that real gid - the multi-shard analog of the single-shard catch-up leak, over the
- * production routing rather than a test convention.
- *
- * <p>Declared in the {@code io.configd.distribution.fanout} package so it can drive the coordinator's
- * package-private deterministic seam ({@code sweep} / {@code drainInboundCommands}) the same way the
- * distribution-service proofs do, while wiring the server-module {@link ShardMapResolver}.
+ * Declared in {@code io.configd.distribution.fanout} (not the server test package) so it can call the
+ * coordinator's package-private {@code sweep}/{@code drainInboundCommands} directly.
  */
 class RealHashCompletenessTest {
 
@@ -78,9 +70,6 @@ class RealHashCompletenessTest {
         driver.onInboundFrame(fullCreate(1, WatchCursor.fromNow()));
         driver.drainInboundCommands();
 
-        // For EVERY shard (incl. non-zero), publish a key that really hashes to it, into that shard's
-        // buffer - exactly what the write path would do (shardFor routes the write; the group's state
-        // machine feeds that group's buffer).
         Map<Integer, String> keyByShard = new LinkedHashMap<>();
         for (int g = 0; g < N; g++) {
             String key = keyHashingTo(g);
@@ -89,7 +78,6 @@ class RealHashCompletenessTest {
         }
         driver.sweep(clock.currentTimeMillis());
 
-        // Each shard's change is delivered, tagged with its REAL gid (completeness under real routing).
         for (int g = 0; g < N; g++) {
             int shard = g;
             String key = keyByShard.get(g);
@@ -97,7 +85,6 @@ class RealHashCompletenessTest {
                     .filter(e -> e.gid() == shard && e.changes().get(0).key().equals(key)).toList();
             assertEquals(1, hits.size(), "shard " + shard + " change for key " + key + " delivered with gid=" + shard);
         }
-        // At least one delivered event carried a NON-zero gid (the real multi-shard payoff).
         assertTrue(out.events().stream().anyMatch(e -> e.gid() != 0),
                 "a change hash-routed to a non-zero shard was delivered tagged with that gid");
     }
@@ -105,7 +92,6 @@ class RealHashCompletenessTest {
     @Test
     void keyWatchOnANonZeroShardCoversOnlyThatShardAndDeliversWithThatGid() {
         setup();
-        // Pick a key that really hashes to a non-zero shard.
         int target = -1;
         String key = null;
         for (int g = 1; g < N; g++) {
@@ -162,7 +148,6 @@ class RealHashCompletenessTest {
         }
     }
 
-    /** A key that {@link StaticShardMap#shardFor} routes to shard {@code g} (GLOBAL scope). */
     private String keyHashingTo(int g) {
         for (int i = 0; i < 100_000; i++) {
             String key = "/k/" + i;
@@ -187,7 +172,6 @@ class RealHashCompletenessTest {
                 List.of(new ConfigMutation.Put(key, val.getBytes(StandardCharsets.UTF_8)))));
     }
 
-    /** A minimal frame-capturing {@link TransportSink} (the module-crossing analog of RecordingTransportSink). */
     private static final class CapturingSink implements TransportSink {
         private final List<EdgeFrame> sent = new ArrayList<>();
 

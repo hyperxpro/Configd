@@ -32,11 +32,9 @@ class OpHistoryTest {
         boolean sawWrite = false;
         boolean sawRead = false;
         for (HistoryRecorder.Entry e : recorder.entries()) {
-            // Status must be one of the checker-neutral kinds.
             assertTrue(e.status().equals("ok") || e.status().equals("info")
                             || e.status().equals("fail"),
                     "status must be ok/info/fail, got: " + e.status());
-            // Real-time backbone present and ordered (invoke <= response).
             assertTrue(e.responseTs() >= e.invokeTs(), "response_ts >= invoke_ts");
             if (e.opType().equals("PUT") || e.opType().equals("DELETE")) {
                 // Ack semantics: an accepted write is :info (ack != commit).
@@ -52,7 +50,6 @@ class OpHistoryTest {
         assertTrue(sawWrite, "history must contain write ops");
         assertTrue(sawRead, "history must contain read ops");
 
-        // JSON Lines: one well-formed object per line.
         String jsonl = recorder.toJsonl();
         String[] lines = jsonl.split("\n");
         assertEquals(recorder.entries().size(), lines.length, "one JSON line per op");
@@ -62,8 +59,6 @@ class OpHistoryTest {
                     "line carries the required fields");
         }
 
-        // Write a sample for the linearizability checker to consume. Target a stable repo path
-        // under the module's target dir; also drop a copy into the session captures.
         Path out = Path.of("target", "sim-histories");
         Files.createDirectories(out);
         Files.writeString(out.resolve("history-" + seed + ".jsonl"), jsonl);

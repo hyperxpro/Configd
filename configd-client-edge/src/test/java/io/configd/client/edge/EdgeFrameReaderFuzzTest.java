@@ -30,7 +30,6 @@ class EdgeFrameReaderFuzzTest {
         try {
             EdgeFrameReader.readFrame(in, null, SMALL_CAP); // returns a frame or null; both are fine
         } catch (EdgeFrameCodec.CodecException expected) {
-            // the sole structural failure mode — clean
         } catch (IOException io) {
             // an in-memory stream never throws a genuine IOException, and a truncation is remapped to
             // FRAME_CORRUPT, so reaching here is a bug.

@@ -20,11 +20,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class EdgeCodecBoundaryTest {
 
-    // EdgeFrameCodec exact bounds
 
     @Test
     void minimumFrameLengthIsHeaderPlusTrailer() {
-        // A CURSOR_ACK is HEADER(6) + 8 payload + TRAILER(4) = 18 bytes.
         byte[] wire = EdgeFrameCodec.encode(new EdgeFrame.CursorAck(0));
         assertEquals(EdgeFrameCodec.HEADER_SIZE + 8 + EdgeFrameCodec.TRAILER_SIZE, wire.length);
         assertEquals(wire.length, EdgeFrameCodec.peekLength(wire));
@@ -33,7 +31,6 @@ class EdgeCodecBoundaryTest {
     @Test
     void peekLengthRejectsExactlyBelowMinAndExactlyAboveMax() {
         int min = EdgeFrameCodec.HEADER_SIZE + EdgeFrameCodec.TRAILER_SIZE;
-        // length = min-1 rejected; length = min accepted shape (forge a header).
         assertThrows(EdgeFrameCodec.CodecException.class,
                 () -> EdgeFrameCodec.peekLength(lenHeader(min - 1)));
         assertEquals(min, EdgeFrameCodec.peekLength(lenHeader(min)));
@@ -71,7 +68,6 @@ class EdgeCodecBoundaryTest {
         for (int i = 1; i <= EdgeFrameCodec.MAX_NOTIFY_BATCH; i++) {
             batch.add(notif(i));
         }
-        // Exactly 64 must encode (not > cap).
         EdgeFrame.Notify frame = new EdgeFrame.Notify(batch);
         EdgeFrame.Notify back = (EdgeFrame.Notify) EdgeFrameCodec.decode(EdgeFrameCodec.encode(frame));
         assertEquals(EdgeFrameCodec.MAX_NOTIFY_BATCH, back.notifications().size());
@@ -88,21 +84,18 @@ class EdgeCodecBoundaryTest {
         CommitNotification b = notif(11);
         EdgeFrame.Notify single = new EdgeFrame.Notify(List.of(a));
         int singleWire = EdgeFrameCodec.encode(single).length;
-        // singleWire = HEADER + 4(count) + encodedNotification(a) + TRAILER.
         int notifBytesA = singleWire - EdgeFrameCodec.HEADER_SIZE - 4 - EdgeFrameCodec.TRAILER_SIZE;
 
         EdgeFrame.Notify two = new EdgeFrame.Notify(List.of(a, b));
         int twoWire = EdgeFrameCodec.encode(two).length;
-        int notifBytesB = twoWire - singleWire; // adding b adds exactly its encoded bytes
+        int notifBytesB = twoWire - singleWire;
 
-        // The two-notification frame's payload = 4 + notifBytesA + notifBytesB.
         assertEquals(EdgeFrameCodec.HEADER_SIZE + 4 + notifBytesA + notifBytesB
                 + EdgeFrameCodec.TRAILER_SIZE, twoWire);
         assertTrue(notifBytesA > notifBytesB,
                 "the signed notification (with signature+nonce) must be larger than the unsigned one");
     }
 
-    // EdgeSnapshotCodec exact bounds
 
     @Test
     void chunkBoundaryProducesExactChunkCount() {
@@ -112,9 +105,7 @@ class EdgeCodecBoundaryTest {
         assertEquals(3, c.size());
         assertEquals(4, c.get(0).bytes().length);
         assertEquals(2, c.get(2).bytes().length);
-        // chunkBytes == body length -> exactly 1 chunk.
         assertEquals(1, EdgeSnapshotCodec.chunk(body, 10).size());
-        // chunkBytes 1 below length -> 2 chunks.
         assertEquals(2, EdgeSnapshotCodec.chunk(body, 9).size());
     }
 
@@ -142,7 +133,7 @@ class EdgeCodecBoundaryTest {
         assertThrows(IllegalArgumentException.class, () -> EdgeSnapshotCodec.reassemble(List.of(
                 new EdgeFrame.SnapshotChunk(0, new byte[]{1}),
                 new EdgeFrame.SnapshotChunk(1, new byte[]{2}),
-                new EdgeFrame.SnapshotChunk(3, new byte[]{3})))); // index 2 missing
+                new EdgeFrame.SnapshotChunk(3, new byte[]{3}))));
     }
 
     private static byte[] lenHeader(int len) {

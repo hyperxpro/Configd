@@ -41,7 +41,6 @@ import java.util.Locale;
  */
 public final class NettyTransport {
 
-    /** System property to force a transport tier (fail-loud if unavailable). */
     public static final String PROP = "configd.netty.transport";
 
     private NettyTransport() {
@@ -63,19 +62,10 @@ public final class NettyTransport {
                             Class<? extends Channel> clientChannelClass) {
     }
 
-    /**
-     * Resolves the transport per the override, else auto-selects <b>Epoll -&gt; NIO</b>.
-     *
-     * <p>io_uring is NOT auto-selected. Measured at Configd's workload, io_uring delivers no
-     * throughput/tail benefit and a ~2x throughput regression at high fan-out (1024 subscriber
-     * streams) vs Epoll. io_uring's syscall reduction is real but batches per event loop (one loop
-     * per core), so at Configd's connection scale the per-loop density is too low to help.
-     * io_uring is opt-in via {@code -Dconfigd.netty.transport=io_uring}.
-     */
     public static Selection select() {
         String forced = System.getProperty(PROP);
         if (forced != null) {
-            return forced(forced); // io_uring reachable here (opt-in), Epoll, or NIO
+            return forced(forced);
         }
         if (Epoll.isAvailable()) {
             return epoll();

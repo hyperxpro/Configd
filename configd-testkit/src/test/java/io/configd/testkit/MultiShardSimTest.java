@@ -49,9 +49,6 @@ class MultiShardSimTest {
     private static final int R = 5;            // nodes per shard (matches the single-group sweeps)
     private static final int ELECT_TICKS = 2000;
 
-    // =============================================================================================
-    // Routing correctness
-    // =============================================================================================
 
     @Test
     void routingCorrectness_keyAlwaysResolvesToOneShard() {
@@ -85,9 +82,6 @@ class MultiShardSimTest {
                 "the RED must be the routing-correctness check, not an unrelated violation: " + ex.getMessage());
     }
 
-    // =============================================================================================
-    // Disjoint ownership
-    // =============================================================================================
 
     @ParameterizedTest
     @MethodSource("smallSweep")
@@ -123,9 +117,6 @@ class MultiShardSimTest {
                 "the RED must be the disjoint-ownership/routing-to-owner check: " + ex.getMessage());
     }
 
-    // =============================================================================================
-    // Cross-shard isolation
-    // =============================================================================================
 
     @Test
     void crossShardIsolation_oneShardStallDoesNotStopOthers() {
@@ -171,8 +162,8 @@ class MultiShardSimTest {
         sim.electAllLeaders(ELECT_TICKS);
         sim.applyOps(sim.generateOps(20), 5);
         sim.drain(80);
-        for (int s = 0; s < 3; s++) sim.commitsAdvancedOn(s); // baseline the witnesses
-        for (int s = 0; s < 3; s++) sim.faultShardMajority(s); // kill EVERY shard (no quorum anywhere)
+        for (int s = 0; s < 3; s++) sim.commitsAdvancedOn(s);
+        for (int s = 0; s < 3; s++) sim.faultShardMajority(s);
         sim.drain(300); // lagging replicas catch up here - the OLD sum witness would falsely rise
         for (int s = 0; s < 3; s++) {
             assertFalse(sim.commitsAdvancedOn(s),
@@ -181,9 +172,6 @@ class MultiShardSimTest {
         }
     }
 
-    // =============================================================================================
-    // Stale-map redirect correctness (exactly-once: no loss, no scatter)
-    // =============================================================================================
 
     @Test
     void staleLeaderRedirect_recoversTheWrite() {
@@ -216,9 +204,6 @@ class MultiShardSimTest {
                 "without redirect, the stale-leader write MUST be lost (the non-vacuity proof)");
     }
 
-    // =============================================================================================
-    // N=1 equivalence (byte-identical to the single-group path)
-    // =============================================================================================
 
     @ParameterizedTest
     @MethodSource("smallSweep")
@@ -264,9 +249,6 @@ class MultiShardSimTest {
                 "dropping ops at N=1 MUST diverge from the single-group control (the non-vacuity proof)");
     }
 
-    // =============================================================================================
-    // The integrated full-surface sweep (all invariants, every seed) + vacuity guard
-    // =============================================================================================
 
     @ParameterizedTest
     @MethodSource("fullSweep")
@@ -295,7 +277,6 @@ class MultiShardSimTest {
         assertTrue(committed.size() >= 10,
                 "the workload must commit a healthy number of distinct keys (got " + committed.size()
                         + ") — else the sweep is passing vacuously");
-        // And the keys are spread across more than one shard (sharding actually happened).
         long shardsUsed = committed.keySet().stream()
                 .map(k -> sim.shardMap().shardFor(MultiShardSim.SCOPE, k))
                 .distinct().count();
@@ -303,9 +284,6 @@ class MultiShardSimTest {
                 "committed keys must span >= 2 shards (got " + shardsUsed + ") — sharding is exercised");
     }
 
-    // =============================================================================================
-    // Helpers
-    // =============================================================================================
 
     static LongStream smallSweep() {
         return LongStream.range(0, Integer.getInteger("configd.multiShard.smallSweep.count", 12));

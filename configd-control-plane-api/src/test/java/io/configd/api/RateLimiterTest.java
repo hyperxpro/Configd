@@ -52,7 +52,7 @@ class RateLimiterTest {
 
         RateLimiter limiter = new RateLimiter(clock, 100, 5);
 
-        nanos.addAndGet(10_000_000_000L); // 10 seconds
+        nanos.addAndGet(10_000_000_000L);
 
         int acquired = 0;
         while (limiter.tryAcquire()) acquired++;
@@ -88,7 +88,6 @@ class RateLimiterTest {
             @Override public long nanoTime() { return nanos.get(); }
         };
 
-        // 1000 permits/sec, burst of 100
         RateLimiter limiter = new RateLimiter(clock, 1000, 100);
 
         for (int i = 0; i < 100; i++) assertTrue(limiter.tryAcquire());

@@ -62,13 +62,9 @@ public final class FanOutSessionCore {
      */
     static final int MAX_CONSECUTIVE_TRANSIENT_GAPS = 128;
 
-    /** The session states. */
     public enum SessionState {
-        /** Tailing {@code readSince(cursor)} into NOTIFY batches. */
         STREAMING,
-        /** Demoted: a snapshot transfer is owed before tailing resumes. */
         CATCHUP,
-        /** Closed; no further frames are emitted. */
         CLOSED
     }
 
@@ -79,7 +75,6 @@ public final class FanOutSessionCore {
     private final FanOutSessionMetrics metrics;
     private final Clock clock;
 
-    /** Optional structured demotion-event listener (cursor evidence). */
     private final Consumer<DemotionEvent> demotionListener;
 
     private SessionState state = SessionState.STREAMING;
@@ -99,7 +94,6 @@ public final class FanOutSessionCore {
      */
     private long highestDeliveredSeq;
 
-    /** Highest seq the edge has acknowledged via CURSOR_ACK. */
     private long lastAckedSeq;
 
     /** In-flight NOTIFY frames, by their highest contained seq, awaiting CURSOR_ACK. FIFO. */
@@ -108,13 +102,10 @@ public final class FanOutSessionCore {
     /** Sim/wall time (ms) of the last frame this session emitted - heartbeat cadence input. */
     private long lastTrafficMillis = Long.MIN_VALUE;
 
-    /** Whether a slow-consumer warning has already fired since the last drop below threshold. */
     private boolean slowConsumerWarned;
 
-    /** Set when a demotion is pending: the next tick performs the snapshot flow. */
     private boolean catchupSnapshotOwed;
 
-    /** The most recent demotion event (diagnostic; null until the first demotion). */
     private DemotionEvent lastDemotion;
 
     private int demotionCount;
@@ -134,7 +125,6 @@ public final class FanOutSessionCore {
      */
     private ServerPrefixFilter prefixFilter;
 
-    /** Whether this session filters whole signed deltas server-side. */
     private boolean filterActive;
 
     /**
@@ -145,10 +135,6 @@ public final class FanOutSessionCore {
      */
     private long lastAdvertisedCoveredS;
 
-    /**
-     * The in-progress (possibly transport-paused) snapshot transfer; null when none.
-     * See {@link #performSnapshotTransfer} for the backpressure pacing rationale.
-     */
     private PendingSnapshotTransfer pendingTransfer;
 
     /**
@@ -203,7 +189,6 @@ public final class FanOutSessionCore {
         this.demotionListener = demotionListener;
     }
 
-    // Subscribe.
 
     /**
      * Handles the edge's {@code SUBSCRIBE} and emits {@code SUBSCRIBE_OK}. The session
@@ -227,7 +212,6 @@ public final class FanOutSessionCore {
             return;
         }
         if (subscribed) {
-            // One subscribe per connection (protocol rule). A second is a protocol violation.
             closeWith(ErrorCode.PROTOCOL_VIOLATION, "duplicate SUBSCRIBE");
             return;
         }
@@ -270,7 +254,6 @@ public final class FanOutSessionCore {
 
     private EdgeFrame.Mode decideMode(long cursor, long latest) {
         if (latest < 0) {
-            // Empty buffer: nothing to snapshot, just tail when data arrives.
             return EdgeFrame.Mode.TAIL;
         }
         Result probe = source.readSince(cursor);
@@ -295,16 +278,7 @@ public final class FanOutSessionCore {
         return EdgeFrame.Mode.TAIL;
     }
 
-    // Tick (the drain / catch-up / heartbeat loop).
 
-    /**
-     * Advances the session one step at logical time {@code nowMillis}: performs an owed
-     * snapshot transfer (catch-up), drains new notifications into bounded NOTIFY batches,
-     * and emits a heartbeat if idle. Deterministic - all behavior is a function of the
-     * source contents, the acks received, and {@code nowMillis}.
-     *
-     * @param nowMillis the caller's logical/wall time in ms
-     */
     public void tick(long nowMillis) {
         if (state == SessionState.CLOSED || !subscribed) {
             return;
@@ -374,13 +348,10 @@ public final class FanOutSessionCore {
         long scannedThroughSeq = cursor;
         boolean skippedAny = false;
         while (idx < pending.size()) {
-            // Bounded outbound queue: never exceed queueFrames unacked NOTIFY frames.
             if (inFlightFrameMaxSeq.size() >= config.queueFrames()) {
                 demote(DemotionEvent.REASON_QUEUE_OVERFLOW);
                 return true;
             }
-            // Assemble one batch of MATCHING notifications, skipping (dropping whole) any the
-            // filter rejects, respecting batchMaxNotifications / batchMaxBytes.
             List<CommitNotification> batch = new ArrayList<>();
             int batchBytes = 4; // NOTIFY count field
             long batchMaxSeq = cursor;
@@ -399,7 +370,7 @@ public final class FanOutSessionCore {
                 }
                 int encodedBytes = encodedNotificationBytes(n);
                 if (!batch.isEmpty() && batchBytes + encodedBytes > config.batchMaxBytes()) {
-                    break; // byte cap - close this batch, start the next frame
+                    break;
                 }
                 batch.add(n);
                 batchBytes += encodedBytes;
@@ -426,7 +397,6 @@ public final class FanOutSessionCore {
             inFlightFrameMaxSeq.addLast(batchMaxSeq);
             cursor = batchMaxSeq;
             highestDeliveredSeq = batchMaxSeq; // the ack-lag basis: real delivered data
-            // A delivered NOTIFY conveys the covered position through its highest seq.
             lastAdvertisedCoveredS = Math.max(lastAdvertisedCoveredS, batchMaxSeq);
             metrics.onNotifyBatch(batch.size(), batchBytes);
             if (filterActive) {
@@ -437,9 +407,6 @@ public final class FanOutSessionCore {
             lastTrafficMillis = nowMillis;
             emitted = true;
         }
-        // Advance the cursor over any trailing filtered range (deltas dropped after the last
-        // delivered NOTIFY), then tell the edge the new covered position with one coalesced
-        // cursor-advance HEARTBEAT.
         if (filterActive) {
             if (scannedThroughSeq > cursor) {
                 cursor = scannedThroughSeq;
@@ -464,7 +431,7 @@ public final class FanOutSessionCore {
      */
     private boolean maybeAdvanceCoveredCursor(long nowMillis) {
         if (cursor <= lastAdvertisedCoveredS) {
-            return false; // the edge already knows this covered position (a delivered NOTIFY reached it)
+            return false;
         }
         if (sink.offer(new EdgeFrame.Heartbeat(cursor, nowMillis))) {
             lastAdvertisedCoveredS = cursor;
@@ -472,7 +439,7 @@ public final class FanOutSessionCore {
             metrics.onCursorAdvance();
             return true;
         }
-        return false; // would-block: dropped; the next drain pass re-offers a fresher cursor
+        return false;
     }
 
     /**
@@ -658,7 +625,6 @@ public final class FanOutSessionCore {
         }
     }
 
-    // Cursor ack.
 
     /**
      * Records a {@code CURSOR_ACK}: advances {@link #lastAckedSeq} and releases every
@@ -672,7 +638,7 @@ public final class FanOutSessionCore {
             return;
         }
         if (seq <= lastAckedSeq) {
-            return; // stale / duplicate - never moves the watermark backward
+            return;
         }
         lastAckedSeq = seq;
         while (!inFlightFrameMaxSeq.isEmpty() && inFlightFrameMaxSeq.peekFirst() <= seq) {
@@ -684,7 +650,6 @@ public final class FanOutSessionCore {
         }
     }
 
-    // Demotion / close.
 
     private void demote(String reason) {
         demotionCount++;
@@ -729,7 +694,6 @@ public final class FanOutSessionCore {
         metrics.onSessionClosed(code.name());
     }
 
-    /** Closes the session with an orderly {@link ErrorCode#SERVER_SHUTDOWN}. */
     public void close() {
         closeWith(ErrorCode.SERVER_SHUTDOWN, "server shutdown");
     }
@@ -765,9 +729,7 @@ public final class FanOutSessionCore {
                 + 4 + nonceLen;
     }
 
-    // Read-only state accessors.
 
-    /** The current session state. */
     public SessionState state() {
         return state;
     }

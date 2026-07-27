@@ -25,7 +25,6 @@ public final class CrashStorageAdapter implements CrashStorageHandle {
         this.delegate = delegate;
     }
 
-    /** Builds a fresh crash-capable storage handle backed by {@link CrashStorage}. */
     public static CrashStorageHandle create() {
         return new CrashStorageAdapter(new CrashStorage());
     }
@@ -45,7 +44,6 @@ public final class CrashStorageAdapter implements CrashStorageHandle {
         return delegate.recoveredView();
     }
 
-    // Storage delegation.
 
     @Override
     public void put(String key, byte[] value) {

@@ -20,16 +20,11 @@ public final class CrossShardBatchException extends RuntimeException {
 
     private final transient Map<String, Integer> keyToShard;
 
-    /**
-     * @param scope      the write's scope
-     * @param keyToShard each key of the batch mapped to the shard it resolves to (ordered)
-     */
     public CrossShardBatchException(ConfigScope scope, Map<String, Integer> keyToShard) {
         super(buildMessage(scope, keyToShard));
         this.keyToShard = keyToShard;
     }
 
-    /** The offending key-to-shard mapping (the keys did not all resolve to one shard). */
     public Map<String, Integer> keyToShard() {
         return keyToShard;
     }

@@ -24,13 +24,7 @@ import java.util.List;
 public interface RevocationChecker {
 
     /**
-     * Reports the revocation status of {@code leaf} (the end-entity certificate), given its full verified
-     * {@code chain} for issuer resolution. Never throws for a routine responder-unreachable condition -
-     * returns {@link RevocationStatus#UNKNOWN} instead.
-     *
-     * @param leaf  the peer's own (leaf) certificate - the subject of the revocation query
-     * @param chain the full verified chain (leaf-first), for issuer / responder-URL resolution
-     * @return the three-valued revocation status
-     */
+         * @param chain the full verified chain, LEAF-FIRST, for issuer / responder-URL resolution
+         */
     RevocationStatus check(X509Certificate leaf, List<X509Certificate> chain);
 }

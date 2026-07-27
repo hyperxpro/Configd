@@ -15,12 +15,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Tests for the immutable authorization value types {@link PolicyRule}, {@link Policy}, and {@link Role}.
- * Verifies null-rejection, defensive immutability (the records do not alias their constructor inputs and
- * expose unmodifiable views), empty-set permissiveness, the literal {@code startsWith} matcher, and the
- * {@link Role#rules()} flatten order.
- */
 class AclPolicyTypesTest {
 
     @Test
@@ -32,7 +26,7 @@ class AclPolicyTypesTest {
 
     @Test
     void policyRuleEmptyAllowAndDenyAreAllowed() {
-        PolicyRule r = new PolicyRule("a.", Set.of(), Set.of()); // both empty must NOT throw
+        PolicyRule r = new PolicyRule("a.", Set.of(), Set.of());
         assertTrue(r.allow().isEmpty());
         assertTrue(r.deny().isEmpty());
     }
@@ -43,7 +37,7 @@ class AclPolicyTypesTest {
         Set<AclService.Permission> srcDeny = new HashSet<>(Set.of(WRITE));
         PolicyRule r = new PolicyRule("a.", srcAllow, srcDeny);
 
-        srcAllow.add(ADMIN); // mutate the sources AFTER construction
+        srcAllow.add(ADMIN);
         srcDeny.add(ADMIN);
 
         assertEquals(Set.of(READ), r.allow(), "allow must be an immutable snapshot, unaffected by source mutation");
@@ -79,7 +73,7 @@ class AclPolicyTypesTest {
         src.add(new PolicyRule("a.", Set.of(READ), Set.of()));
         Policy p = new Policy("p", src);
 
-        src.add(new PolicyRule("b.", Set.of(WRITE), Set.of())); // mutate the source AFTER construction
+        src.add(new PolicyRule("b.", Set.of(WRITE), Set.of()));
 
         assertEquals(1, p.rules().size(), "rules copied at construction; source mutation must not leak in");
         assertThrows(UnsupportedOperationException.class,
@@ -106,7 +100,7 @@ class AclPolicyTypesTest {
         src.add(new Policy("p1", List.of(new PolicyRule("a.", Set.of(READ), Set.of()))));
         Role r = new Role("r", src);
 
-        src.add(new Policy("p2", List.of())); // mutate the source AFTER construction
+        src.add(new Policy("p2", List.of()));
 
         assertEquals(1, r.policies().size(), "policies copied at construction");
         assertThrows(UnsupportedOperationException.class, () -> r.policies().add(new Policy("p3", List.of())));

@@ -57,7 +57,6 @@ class LivenessBoundedProgressSweepTest {
     private static final int RECOVER_BOUND = 1_500;   // majority re-election after losing leader
     private static final int PROPAGATE_BOUND = 800;   // post-heal convergence to all N nodes
 
-    /** A scripted deterministic 5-node Raft cluster over {@link AdversarialNetwork}. */
     static final class Cluster {
         final List<RaftNode> nodes = new ArrayList<>();
         final List<RaftLog> logs = new ArrayList<>();
@@ -116,7 +115,6 @@ class LivenessBoundedProgressSweepTest {
             return -1;
         }
 
-        /** Steps until a leader exists, up to {@code bound}; returns ticks used, or -1 if none. */
         int stepUntilLeader(int bound) {
             for (int t = 1; t <= bound; t++) {
                 step();
@@ -161,7 +159,7 @@ class LivenessBoundedProgressSweepTest {
             for (int x = 0; x < N; x++) {
                 for (int y = 0; y < N; y++) {
                     if (x != y && minority.contains(x) != minority.contains(y)) {
-                        net.isolate(NodeId.of(x), NodeId.of(y)); // cut cross-group edges only
+                        net.isolate(NodeId.of(x), NodeId.of(y));
                     }
                 }
             }

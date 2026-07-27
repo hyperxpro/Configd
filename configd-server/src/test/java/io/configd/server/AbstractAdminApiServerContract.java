@@ -75,7 +75,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @Timeout(60)
 abstract class AbstractAdminApiServerContract {
 
-    /** A started server: its bound port and a stop hook (transport-agnostic). */
     interface ServerHandle {
         int port();
 
@@ -123,7 +122,6 @@ abstract class AbstractAdminApiServerContract {
         return server.port();
     }
 
-    /** "good-reader" -> reader principal; "good-writer" -> writer principal; else denied. */
     private static AuthInterceptor authInterceptor() {
         return new AuthInterceptor(token -> switch (token) {
             case "good-reader" -> new AuthInterceptor.AuthResult.Authenticated("reader", Set.of("read"));
@@ -132,7 +130,6 @@ abstract class AbstractAdminApiServerContract {
         });
     }
 
-    /** reader: READ on "app/"; writer: READ+WRITE on "app/". Neither has access to "locked/". */
     private static AclService aclService() {
         AclService acl = new AclService();
         acl.grant("app/", "reader", Set.of(AclService.Permission.READ));
@@ -140,31 +137,27 @@ abstract class AbstractAdminApiServerContract {
         return acl;
     }
 
-    /** A write service whose proposer always commits - auth is the gate under test. */
     private static ConfigWriteService committingWriteService() {
         ConfigWriteService.RaftProposer proposer =
                 (scope, keys, command) -> new ConfigWriteService.ProposeCommitResult.Committed(1L);
         return new ConfigWriteService(proposer, null, null);
     }
 
-    /** A write service whose proposer commits at seq=42 - the audit-completeness fixture. */
     private static ConfigWriteService committingWriteServiceSeq42() {
         return new ConfigWriteService(
                 (scope, keys, command) -> new ConfigWriteService.ProposeCommitResult.Committed(42L), null, null);
     }
 
-    /** Spec used by the auth + escalation cases: committing writer, the two principals, the per-prefix ACL. */
     private ServerSpec authSpec() {
         VersionedConfigStore store = new VersionedConfigStore();
         store.put("app/feature", "on".getBytes(), 1);
         store.put("locked/secret", "shh".getBytes(), 2);
         MetricsRegistry registry = new MetricsRegistry();
         return new ServerSpec(null, new HealthService(), new PrometheusExporter(registry),
-                store, committingWriteService(), /* readService */ null, authInterceptor(), aclService(),
-                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null);
+                store, committingWriteService(), null, authInterceptor(), aclService(),
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1), null, null);
     }
 
-    /** A request to {@code /v1/config/<path>} with an optional bearer token + optional body. */
     private HttpResponse<String> send(int port, String method, String path, String token, String body)
             throws IOException, InterruptedException {
         HttpRequest.Builder b = HttpRequest.newBuilder()
@@ -179,7 +172,6 @@ abstract class AbstractAdminApiServerContract {
         return client.send(b.build(), HttpResponse.BodyHandlers.ofString());
     }
 
-    /** A GET of the given (already-encoded) path-and-query, sent VERBATIM (no client re-encoding). */
     private HttpResponse<String> get(int port, String pathAndQuery) throws IOException, InterruptedException {
         return client.send(HttpRequest.newBuilder()
                         .uri(URI.create("http://127.0.0.1:" + port + pathAndQuery))
@@ -222,15 +214,13 @@ abstract class AbstractAdminApiServerContract {
         int port = start(authSpec());
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create("http://127.0.0.1:" + port + "/v1/config/app/feature"))
-                .header("Authorization", "Basic Zm9vOmJhcg==") // not Bearer
+                .header("Authorization", "Basic Zm9vOmJhcg==")
                 .GET().build();
         HttpResponse<String> basic = client.send(req, HttpResponse.BodyHandlers.ofString());
         assertEquals(401, basic.statusCode(), "a non-Bearer Authorization header must not authenticate (401)");
         assertEquals("Bearer", basic.headers().firstValue("WWW-Authenticate").orElse(null));
     }
 
-    // PUT/DELETE with missing/malformed/invalid credentials must also 401, not 403 - tested
-    // independently since each method is its own attack surface.
 
     @Test
     void putWithNoTokenIsUnauthenticated() throws Exception {
@@ -355,7 +345,6 @@ abstract class AbstractAdminApiServerContract {
 
     private final AtomicLong auditNow = new AtomicLong(1_700_000_000_000L);
 
-    /** Builds the audit fixture: a fresh AuditLog over an in-memory store + a monotonic clock. */
     private AuditLog newAuditLog() {
         Clock clock = new Clock() {
             @Override public long currentTimeMillis() { return auditNow.getAndIncrement(); }
@@ -369,7 +358,7 @@ abstract class AbstractAdminApiServerContract {
         MetricsRegistry registry = new MetricsRegistry();
         return start(new ServerSpec(null, new HealthService(), new PrometheusExporter(registry),
                 store, committingWriteServiceSeq42(), null, authInterceptor(), aclService(),
-                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1), auditLog, /* replayGuard */ null));
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1), auditLog, null));
     }
 
     private HttpResponse<String> sendKey(int port, String method, String key, String token, String body)
@@ -430,7 +419,7 @@ abstract class AbstractAdminApiServerContract {
         assertTrue(!r.toString().contains("good-writer"), "the bearer token must never be in the audit record");
     }
 
-    private final AtomicLong replayNow = new AtomicLong(2_000_000_000_000L); // fixed wall clock
+    private final AtomicLong replayNow = new AtomicLong(2_000_000_000_000L);
 
     private static AuthInterceptor writerOnlyAuthInterceptor() {
         return new AuthInterceptor(token -> "good-writer".equals(token)
@@ -456,10 +445,9 @@ abstract class AbstractAdminApiServerContract {
         MetricsRegistry registry = new MetricsRegistry();
         return start(new ServerSpec(null, new HealthService(), new PrometheusExporter(registry),
                 store, committingWriteService(), null, writerOnlyAuthInterceptor(), writerOnlyAclService(),
-                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1), /* auditLog */ null, guard));
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1), null, guard));
     }
 
-    /** Builds a PUT carrying the bearer token + the given replay headers. */
     private HttpRequest put(int port, String key, String body, long timestampMs, String nonce) {
         return HttpRequest.newBuilder()
                 .uri(URI.create("http://127.0.0.1:" + port + "/v1/config/" + key))
@@ -511,8 +499,7 @@ abstract class AbstractAdminApiServerContract {
 
     @Test
     void guardOffMeansHeadersAreNotRequired() throws Exception {
-        // With no guard wired (the default), a PUT without replay headers commits normally.
-        int port = startReplay(/* guard */ null);
+        int port = startReplay( null);
         HttpRequest plain = HttpRequest.newBuilder()
                 .uri(URI.create("http://127.0.0.1:" + port + "/v1/config/app/feature"))
                 .header("Authorization", "Bearer good-writer")
@@ -522,14 +509,10 @@ abstract class AbstractAdminApiServerContract {
         assertEquals(200, resp.statusCode(), "with the guard off, no replay headers are needed: " + resp.body());
     }
 
-    // Strong reads are served linearizably on the leader and fail closed elsewhere; the five
-    // path-normalization evasion vectors below are load-bearing on all three transports.
 
     /** Backing store seeded so a stale local read WOULD succeed if allowed. */
     private VersionedConfigStore seededStore() {
         VersionedConfigStore store = new VersionedConfigStore();
-        // Both a security key and an ordinary key are present locally (a follower's local state);
-        // only the fail-closed contract should stop the security key being served from here.
         store.put("secure/killswitch", "DENY".getBytes(), 7);
         store.put("app/feature", "on".getBytes(), 8);
         return store;
@@ -551,8 +534,8 @@ abstract class AbstractAdminApiServerContract {
                             StrongReadPolicy policy, BiFunction<ConfigScope, String, NodeId> leaderHint) throws Exception {
         MetricsRegistry registry = new MetricsRegistry();
         return start(new ServerSpec(null, new HealthService(), new PrometheusExporter(registry),
-                store, /* writeService */ null, readService, /* auth */ null, /* acl */ null,
-                policy, leaderHint, /* auditLog */ null, /* replayGuard */ null));
+                store, null, readService, null, null,
+                policy, leaderHint, null, null));
     }
 
     @Test
@@ -562,7 +545,6 @@ abstract class AbstractAdminApiServerContract {
         int port = startStrong(store, readService(store, isLeader),
                 StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1));
 
-        // No consistency param: a strong-read key is always linearizable.
         HttpResponse<String> resp = get(port, "/v1/config/secure/killswitch");
         assertEquals(200, resp.statusCode());
         assertEquals("DENY", resp.body());
@@ -573,7 +555,7 @@ abstract class AbstractAdminApiServerContract {
     @Test
     void followerFailsClosedForStrongReadKeyNeverServesStale() throws Exception {
         VersionedConfigStore store = seededStore();
-        AtomicBoolean isLeader = new AtomicBoolean(false); // a follower
+        AtomicBoolean isLeader = new AtomicBoolean(false);
         int port = startStrong(store, readService(store, isLeader),
                 StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(3));
 
@@ -625,7 +607,7 @@ abstract class AbstractAdminApiServerContract {
         // readService == null (a stale-only node): a strong-read key has no safe answer and must
         // fail closed rather than fall through to the store.
         VersionedConfigStore store = seededStore();
-        int port = startStrong(store, /* readService */ null,
+        int port = startStrong(store, null,
                 StrongReadPolicy.defaultPolicy(), (scope, key) -> null);
 
         HttpResponse<String> resp = get(port, "/v1/config/secure/killswitch");
@@ -746,17 +728,13 @@ abstract class AbstractAdminApiServerContract {
         assertEquals("on", resp.body(), "the query string must not redirect to the strong key's value");
     }
 
-    // The /metrics Bearer gate must hold on Netty and NIO, not just a direct JDK server. The
-    // handler's /metrics gate checks the authInterceptor only (no ACL), so any valid token is 200
-    // regardless of grants.
 
-    /** Spec for the metrics gate: the two-principal authInterceptor, no ACL, a metrics-bearing exporter. */
     private int startMetricsGate() throws Exception {
         MetricsRegistry registry = new MetricsRegistry();
         return start(new ServerSpec(null, new HealthService(), new PrometheusExporter(registry),
-                new VersionedConfigStore(), /* writeService */ null, /* readService */ null,
-                authInterceptor(), /* aclService */ null, StrongReadPolicy.defaultPolicy(),
-                (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null));
+                new VersionedConfigStore(), null, null,
+                authInterceptor(), null, StrongReadPolicy.defaultPolicy(),
+                (scope, key) -> NodeId.of(1), null, null));
     }
 
     @Test
@@ -782,10 +760,7 @@ abstract class AbstractAdminApiServerContract {
                 "the metrics exposition is text/plain: " + authed.headers().firstValue("Content-Type").orElse(""));
     }
 
-    // The write-overload contract: a bounded-queue 429 carrying a Retry-After backoff, modelled by
-    // a proposer that returns ProposeCommitResult.Overloaded.
 
-    /** A write service whose proposer always reports backpressure (Overloaded). */
     private static ConfigWriteService overloadedWriteService() {
         ConfigWriteService.RaftProposer proposer =
                 (scope, keys, command) -> new ConfigWriteService.ProposeCommitResult.Overloaded();
@@ -797,8 +772,8 @@ abstract class AbstractAdminApiServerContract {
         VersionedConfigStore store = new VersionedConfigStore();
         MetricsRegistry registry = new MetricsRegistry();
         int port = start(new ServerSpec(null, new HealthService(), new PrometheusExporter(registry),
-                store, overloadedWriteService(), /* readService */ null, authInterceptor(), aclService(),
-                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null));
+                store, overloadedWriteService(), null, authInterceptor(), aclService(),
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1), null, null));
 
         HttpResponse<String> put = send(port, "PUT", "/v1/config/app/feature", "good-writer", "off");
         assertEquals(429, put.statusCode(), "a backpressured write must be rejected with 429 Overloaded");
@@ -876,15 +851,14 @@ abstract class AbstractAdminApiServerContract {
 
     @Test
     void serverSideTlsServesHealthOverHttps() throws Exception {
-        // Server context = the keystore (server identity); client context = the truststore (trusts it).
         SSLContext serverCtx = serverSslContext(tlsKeyStore);
         SSLContext clientCtx = trustingClientContext(tlsTrustStore);
 
         MetricsRegistry registry = new MetricsRegistry();
         int port = start(new ServerSpec(serverCtx, new HealthService(), new PrometheusExporter(registry),
-                new VersionedConfigStore(), /* writeService */ null, /* readService */ null,
-                /* auth */ null, /* acl */ null, StrongReadPolicy.defaultPolicy(),
-                (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null));
+                new VersionedConfigStore(), null, null,
+ null, null, StrongReadPolicy.defaultPolicy(),
+                (scope, key) -> NodeId.of(1), null, null));
 
         // A dedicated HttpClient that trusts the server cert. /health/live is public (no auth fixture).
         try (HttpClient tlsClient = HttpClient.newBuilder()
@@ -940,7 +914,6 @@ abstract class AbstractAdminApiServerContract {
     // reach the server unmodified and are decoded by the same path the strong-read evasion vectors
     // rely on. Write-time validation rejects malformed _acl/ policy with a 400.
 
-    /** root -> allOf (break-glass); admin -> ADMIN on `_acl/`; writer -> broad WRITE but NOT ADMIN. */
     private static AuthInterceptor gateAuthInterceptor() {
         return new AuthInterceptor(token -> switch (token) {
             case "root" -> new AuthInterceptor.AuthResult.Authenticated("root", Set.of());
@@ -958,14 +931,13 @@ abstract class AbstractAdminApiServerContract {
         return acl;
     }
 
-    /** Spec for the gate: the three-principal authenticator + ACL, a committing write service, a seeded _acl/ key. */
     private int startGate() throws Exception {
         VersionedConfigStore store = new VersionedConfigStore();
         store.put("_acl/roles/seed", "allow READ app.".getBytes(), 1);
         MetricsRegistry registry = new MetricsRegistry();
         return start(new ServerSpec(null, new HealthService(), new PrometheusExporter(registry),
-                store, committingWriteService(), /* readService */ null, gateAuthInterceptor(), gateAclService(),
-                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null));
+                store, committingWriteService(), null, gateAuthInterceptor(), gateAclService(),
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1), null, null));
     }
 
     /** A request to a VERBATIM (already-encoded) path with an optional bearer token + body (evasion vectors). */
@@ -1018,8 +990,6 @@ abstract class AbstractAdminApiServerContract {
     @Test
     void percentDecodingEvasionVectorsAreStillAdminGated() throws Exception {
         int port = startGate();
-        // Each decodes to an `_acl/` key before the gate (the adapter's new URI(...).getPath() decodes it),
-        // so a non-ADMIN writer is still 403 - the gate keys off the decoded key, exactly like the store.
         assertEquals(403, sendRaw(port, "PUT", "/v1/config/%5Facl/roles/x", "writer", "v").statusCode(),
                 "%5Facl/ decodes to _acl/ → ADMIN-gated");
         assertEquals(403, sendRaw(port, "PUT", "/v1/config/_acl%2Froles/x", "writer", "v").statusCode(),
@@ -1036,8 +1006,8 @@ abstract class AbstractAdminApiServerContract {
         VersionedConfigStore store = new VersionedConfigStore();
         MetricsRegistry registry = new MetricsRegistry();
         int port = start(new ServerSpec(null, new HealthService(), new PrometheusExporter(registry),
-                store, committingWriteService(), /* readService */ null, /* auth */ null, /* acl */ null,
-                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null));
+                store, committingWriteService(), null, null, null,
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1), null, null));
 
         assertNotEquals(200, send(port, "PUT", "/v1/config/_acl/roles/x", null, "allow READ app.").statusCode(),
                 "auth-off: an _acl/ write must be refused (non-2xx)");

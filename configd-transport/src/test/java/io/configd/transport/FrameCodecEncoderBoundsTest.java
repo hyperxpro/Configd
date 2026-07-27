@@ -25,9 +25,6 @@ class FrameCodecEncoderBoundsTest {
 
     @Test
     void encodeRejectsPayloadAtMaxFrameSize() {
-        // payload + HEADER + TRAILER must be <= MAX_FRAME_SIZE.
-        // A payload of (MAX_FRAME_SIZE - HEADER - TRAILER + 1) overflows
-        // by exactly one byte and must be rejected.
         int oversize = FrameCodec.MAX_FRAME_SIZE - FrameCodec.HEADER_SIZE - FrameCodec.TRAILER_SIZE + 1;
         byte[] payload = new byte[oversize];
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
@@ -37,8 +34,6 @@ class FrameCodecEncoderBoundsTest {
 
     @Test
     void encodeAcceptsPayloadExactlyAtMaxFrameSize() {
-        // (MAX_FRAME_SIZE - HEADER - TRAILER) byte payload exactly hits
-        // MAX_FRAME_SIZE. Must succeed; this is the documented ceiling.
         int max = FrameCodec.MAX_FRAME_SIZE - FrameCodec.HEADER_SIZE - FrameCodec.TRAILER_SIZE;
         byte[] payload = new byte[max];
         byte[] frame = FrameCodec.encode(MessageType.APPEND_ENTRIES, 0, 0L, payload);
@@ -63,14 +58,12 @@ class FrameCodecEncoderBoundsTest {
         byte[] payload = new byte[16];
         int needed = FrameCodec.frameSize(payload.length);
         ByteBuffer buf = ByteBuffer.allocate(needed - 1);
-        // Sentinel byte at start so we can confirm no partial write.
         buf.put((byte) 0x42);
         buf.position(0);
 
         assertThrows(IllegalArgumentException.class,
                 () -> FrameCodec.encode(buf, MessageType.HEARTBEAT, 1, 1L, payload));
 
-        // Verify the sentinel byte survived - no partial write occurred.
         assertEquals((byte) 0x42, buf.get(0));
     }
 

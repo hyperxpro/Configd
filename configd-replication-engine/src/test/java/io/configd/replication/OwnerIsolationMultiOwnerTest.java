@@ -70,9 +70,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class OwnerIsolationMultiOwnerTest {
 
     private static final NodeId LOCAL = NodeId.of(1);
-    private static final NodeId PHANTOM = NodeId.of(2); // benign foreign sender for handleMessage
+    private static final NodeId PHANTOM = NodeId.of(2);
 
-    /** No peers - single-node groups self-elect; transport is unused. */
     private static final class NoopTransport implements RaftTransport {
         @Override public void send(NodeId target, RaftMessage message) { }
     }
@@ -111,12 +110,12 @@ class OwnerIsolationMultiOwnerTest {
     private static RaftNode newSingleNodeLeaderBoundToOwner(OwnerExecutorPool pool, int gid,
                                                             RaftNode.InvariantChecker checker) throws Exception {
         Storage storage = Storage.inMemory();
-        RaftConfig config = RaftConfig.of(LOCAL, Set.of()); // single-node cluster self-elects
+        RaftConfig config = RaftConfig.of(LOCAL, Set.of());
         RaftNode node = new RaftNode(config, new RaftLog(storage), new NoopTransport(),
                 new NoopStateMachine(), new java.util.Random(42L + gid), storage, checker);
         pool.ownerExecutor(gid).submit(() -> {
-            node.bindOwnerThread();                         // bind first, on the group's owner
-            for (int i = 0; i < 400; i++) node.tick();      // self-elect (single-node), proven idiom
+            node.bindOwnerThread();
+            for (int i = 0; i < 400; i++) node.tick();
         }).get(10, TimeUnit.SECONDS);
         assertEquals(RaftRole.LEADER, node.role(), "group " + gid + " should self-elect to LEADER");
         return node;
@@ -126,7 +125,6 @@ class OwnerIsolationMultiOwnerTest {
     @Timeout(60)
     void perOwnerTick_cleanRun_zeroFires_nonVacuousAcrossAllOwners() throws Exception {
         final int n = 3;
-        // owner0={0,3}, owner1={1,4}, owner2={2,5} (floorMod(gid, 3)).
         final int[] gids = {0, 1, 2, 3, 4, 5};
         OwnerExecutorPool pool = new OwnerExecutorPool(n);
         CountingThrowingChecker checker = new CountingThrowingChecker();
@@ -139,7 +137,6 @@ class OwnerIsolationMultiOwnerTest {
             driver.addGroup(gid, node);
             nodes.put(gid, node);
         }
-        // Setup ran entirely on the correct owners - the guard must be silent so far.
         assertEquals(0, checker.ownerFires.get(), "bind/elect on the correct owners must not fire");
 
         // Non-vacuity BASELINE. After self-election each group has already committed its leader no-op
@@ -196,7 +193,7 @@ class OwnerIsolationMultiOwnerTest {
                     for (RaftNode node : nodes.values()) {
                         node.role();
                         node.leaderId();
-                        node.monitorView(); // one volatile load of the immutable snapshot
+                        node.monitorView();
                     }
                 }
             } catch (Throwable t) {
@@ -208,7 +205,6 @@ class OwnerIsolationMultiOwnerTest {
         assertTrue(done.await(50, TimeUnit.SECONDS), "multi-owner workload did not finish in time");
         producerPool.shutdownNow();
 
-        // Drain each owner with a final tick so the last proposals commit, then shut the pool down.
         for (int i = 0; i < n; i++) {
             final int owner = i;
             pool.ownerByIndex(i).submit(() -> driver.tickOwner(owner)).get(5, TimeUnit.SECONDS);
@@ -243,14 +239,14 @@ class OwnerIsolationMultiOwnerTest {
     @Test
     @Timeout(30)
     void crossGroupAccessOnARealOwnerTripsThePerNodeNet() throws Exception {
-        final int n = 2; // owner0={0}, owner1={1}
+        final int n = 2;
         OwnerExecutorPool pool = new OwnerExecutorPool(n);
         CountingThrowingChecker checker = new CountingThrowingChecker();
         MultiRaftDriver driver = new MultiRaftDriver(LOCAL, Clock.system());
         driver.setOwnerPool(pool);
 
-        RaftNode g0 = newSingleNodeLeaderBoundToOwner(pool, 0, checker); // bound to owner[0]
-        RaftNode g1 = newSingleNodeLeaderBoundToOwner(pool, 1, checker); // bound to owner[1]
+        RaftNode g0 = newSingleNodeLeaderBoundToOwner(pool, 0, checker);
+        RaftNode g1 = newSingleNodeLeaderBoundToOwner(pool, 1, checker);
         driver.addGroup(0, g0);
         driver.addGroup(1, g1);
         assertEquals(0, checker.ownerFires.get(), "setup on correct owners must not fire");
@@ -309,7 +305,7 @@ class OwnerIsolationMultiOwnerTest {
     @Test
     @Timeout(30)
     void tickOwnerFiltersToExactlyItsOwnGroups() {
-        final int n = 2;                 // owner0 = {0,2}, owner1 = {1,3}
+        final int n = 2;
         final int[] gids = {0, 1, 2, 3};
         OwnerExecutorPool pool = new OwnerExecutorPool(n);
         MultiRaftDriver driver = new MultiRaftDriver(LOCAL, Clock.system());
@@ -324,21 +320,18 @@ class OwnerIsolationMultiOwnerTest {
             nodes.put(gid, node);
         }
         try {
-            // Tick ONLY owner[0]: its groups (0,2) must elect; owner[1]'s groups (1,3) must NOT be ticked.
             for (int i = 0; i < 400; i++) driver.tickOwner(0);
             assertEquals(RaftRole.LEADER, nodes.get(0).role(), "group 0 (owner0) must be ticked by tickOwner(0)");
             assertEquals(RaftRole.LEADER, nodes.get(2).role(), "group 2 (owner0) must be ticked by tickOwner(0)");
             assertEquals(RaftRole.FOLLOWER, nodes.get(1).role(), "group 1 (owner1) must NOT be ticked by tickOwner(0)");
             assertEquals(RaftRole.FOLLOWER, nodes.get(3).role(), "group 3 (owner1) must NOT be ticked by tickOwner(0)");
 
-            // Now tick owner[1]: its groups elect too - all four LEADER (each ticked by exactly its owner).
             for (int i = 0; i < 400; i++) driver.tickOwner(1);
             for (int gid : gids) {
                 assertEquals(RaftRole.LEADER, nodes.get(gid).role(),
                         "group " + gid + " should be LEADER after its owner ticked");
             }
 
-            // An owner index with NO groups bound to it is a clean no-op (does not throw, ticks nothing).
             OwnerExecutorPool wide = new OwnerExecutorPool(8);
             MultiRaftDriver d2 = new MultiRaftDriver(LOCAL, Clock.system());
             d2.setOwnerPool(wide);

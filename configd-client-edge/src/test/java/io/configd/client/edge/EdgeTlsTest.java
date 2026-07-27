@@ -121,7 +121,6 @@ class EdgeTlsTest {
                 d.maxSnapshotTotalBytes(), d.maxSnapshotChunks());
     }
 
-    /** Holds a connection open and silent long enough for the client's own deadline to fire. */
     private static void holdOpen() {
         try {
             Thread.sleep(5_000);

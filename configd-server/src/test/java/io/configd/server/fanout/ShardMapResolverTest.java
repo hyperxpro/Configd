@@ -58,7 +58,7 @@ class ShardMapResolverTest {
         // single shard the literal path hashes to (that would silently miss the other shards' state).
         StaticShardMap map = new StaticShardMap(4);
         ShardMapResolver resolver = new ShardMapResolver(map);
-        String key = "/app/db/host"; // a concrete key that hashes to exactly one shard
+        String key = "/app/db/host";
         int hashShard = map.shardFor(ConfigScope.GLOBAL, key);
         int[] covered = resolver.coveredGids(new WatchTarget(
                 ConfigScope.GLOBAL.ordinal(), EdgeFrame.WATCH_TARGET_KEY, key, true));

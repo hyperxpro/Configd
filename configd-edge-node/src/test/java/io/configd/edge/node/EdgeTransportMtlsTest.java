@@ -75,7 +75,7 @@ class EdgeTransportMtlsTest {
     private FanOutServer server;
     private FanOutBuffer buffer;
     private EdgeNodeMain edge;
-    private ServerSocket blackhole; // accept-then-black-hole endpoint
+    private ServerSocket blackhole;
 
     @BeforeAll
     static void generateTlsFixture() throws Exception {
@@ -108,7 +108,6 @@ class EdgeTransportMtlsTest {
                 try {
                     Files.deleteIfExists(p);
                 } catch (IOException ignored) {
-                    // best-effort temp cleanup
                 }
             });
         }
@@ -128,13 +127,11 @@ class EdgeTransportMtlsTest {
             try {
                 blackhole.close(); // the accept thread exits on the resulting SocketException
             } catch (IOException ignored) {
-                // best-effort
             }
             blackhole = null;
         }
     }
 
-    // Tests
 
     @Test
     @Timeout(120)
@@ -142,8 +139,6 @@ class EdgeTransportMtlsTest {
         int port = startMtlsServer(serverKeyStore);
         edge = startEdge(port, tlsManager(clientCert, clientKeyStore, serverTrustStore));
 
-        // Functional proof, not just a completed handshake: a published notification
-        // reaches the edge store through the mTLS stream.
         buffer.publish(notification(1, "svc/k", "v1"));
         long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
         while (edge.core().currentVersion() < 1) {
@@ -159,9 +154,6 @@ class EdgeTransportMtlsTest {
     @Timeout(120)
     void untrustedClientCertIsRejectedByTheServer() throws Exception {
         int port = startMtlsServer(serverKeyStore);
-        // The rogue presents a cert the server does not trust. The edge must never
-        // complete a SUBSCRIBE — observed as: reconnect attempts accumulate while the
-        // session never sees SUBSCRIBE_OK (mode stays null), no heartbeats, store at 0.
         edge = startEdge(port, tlsManager(serverCert, rogueKeyStore, serverTrustStore));
 
         awaitReconnectAttempts(edge, 3);
@@ -173,9 +165,6 @@ class EdgeTransportMtlsTest {
     @Test
     @Timeout(120)
     void untrustedServerCertIsRejectedByTheClient() throws Exception {
-        // The server presents the ROGUE identity; the edge's trust store does not contain
-        // it -> the CLIENT side must refuse (trust verification + endpoint identification),
-        // never subscribe.
         int port = startMtlsServer(rogueKeyStore);
         edge = startEdge(port, tlsManager(clientCert, clientKeyStore, serverTrustStore));
 
@@ -202,13 +191,12 @@ class EdgeTransportMtlsTest {
         int port = startBlackholeServer();
         edge = startEdge(port, tlsManager(clientCert, clientKeyStore, serverTrustStore));
 
-        awaitReconnectAttempts(edge, 2); // got PAST a black-holed handshake at least twice
+        awaitReconnectAttempts(edge, 2);
         assertNull(edge.core().mode(), "a black-holed handshake must never reach SUBSCRIBE_OK");
         assertEquals(0, edge.core().heartbeatsObserved(), "no heartbeats from a peer that never handshakes");
         assertEquals(0, edge.core().currentVersion(), "store never advances behind a dead endpoint");
     }
 
-    // Fixture plumbing
 
     /**
      * Binds a plain TCP listener whose accept loop holds every accepted connection OPEN without
@@ -224,7 +212,7 @@ class EdgeTransportMtlsTest {
         Thread.ofVirtual().name("a3-1-blackhole-accept").start(() -> {
             try {
                 while (!ss.isClosed()) {
-                    held.add(ss.accept()); // accept and HOLD: never read/write/close
+                    held.add(ss.accept());
                 }
             } catch (IOException ignored) {
                 // ServerSocket closed at teardown — exit the loop
@@ -271,7 +259,6 @@ class EdgeTransportMtlsTest {
                         new ConfigMutation.Put(key, value.getBytes(StandardCharsets.UTF_8)))));
     }
 
-    /** Waits until the edge's reconnect counter shows >= n attempts (it IS retrying). */
     private static void awaitReconnectAttempts(EdgeNodeMain edge, int n) {
         long deadline = System.nanoTime() + Duration.ofSeconds(60).toNanos();
         while (System.nanoTime() < deadline) {
@@ -284,7 +271,6 @@ class EdgeTransportMtlsTest {
         fail("edge did not attempt " + n + " reconnects within the deadline");
     }
 
-    // ---- keytool fixture builders (the FanOutServerMtlsTest pattern) ----
 
     private static void genKeyPair(Path keyStore, String alias, String dname) throws Exception {
         runKeytool("keytool", "-genkeypair", "-alias", alias,

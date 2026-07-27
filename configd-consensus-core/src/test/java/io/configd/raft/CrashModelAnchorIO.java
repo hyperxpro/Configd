@@ -15,7 +15,6 @@ package io.configd.raft;
  */
 final class CrashModelAnchorIO implements AnchorIO {
 
-    /** The shared durable store: survives a "reboot" (a new IO opened over the same Disk). */
     static final class Disk {
         byte[] image; // the last synced whole-file image, or null before first create
     }

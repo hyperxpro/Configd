@@ -32,7 +32,6 @@ class EdgeFrameGoldenBytesGenerator {
             byte[] wire = EdgeFrameCodec.encode(e.getValue());
             System.out.println("HEX " + name + " = " + hf.formatHex(wire));
         }
-        // 0x02 (EDGE_WIRE_VERSION_V2) fixtures - the watch frames + reused NOTIFY.
         for (Map.Entry<String, EdgeFrame> e : EdgeFrameFixtures.buildV2().entrySet()) {
             String name = e.getKey();
             byte[] wire = EdgeFrameCodec.encode(e.getValue(), EdgeFrameCodec.EDGE_WIRE_VERSION_V2);
@@ -45,13 +44,11 @@ class EdgeFrameGoldenBytesGenerator {
             }
             System.out.println("HEXV2 " + name + " = " + hf.formatHex(wire));
         }
-        // 0x03 (EDGE_WIRE_VERSION_V3) fixtures - the filtered-fan-out SUBSCRIBE / SUBSCRIBE_OK.
         for (Map.Entry<String, EdgeFrame> e : EdgeFrameFixtures.buildV3().entrySet()) {
             String name = e.getKey();
             byte[] wire = EdgeFrameCodec.encode(e.getValue(), EdgeFrameCodec.EDGE_WIRE_VERSION_V3);
             System.out.println("HEXV3 " + name + " = " + hf.formatHex(wire));
         }
-        // 0x04 (EDGE_WIRE_VERSION_V4) fixtures - the auth-phase AUTH / REFRESH_AUTH frames.
         for (Map.Entry<String, EdgeFrame> e : EdgeFrameFixtures.buildV4().entrySet()) {
             String name = e.getKey();
             byte[] wire = EdgeFrameCodec.encode(e.getValue(), EdgeFrameCodec.EDGE_WIRE_VERSION_V4);

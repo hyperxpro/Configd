@@ -166,7 +166,6 @@ class WatchCoalescerTest {
             clock.advanceNanos(10_000_000L);
             coalescer.flush();
 
-            // Adding after a flush restarts the coalescing window from zero.
             coalescer.add(List.of(new ConfigMutation.Put("b", VALUE)), 2);
             assertFalse(coalescer.shouldFlush());
 

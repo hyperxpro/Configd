@@ -25,13 +25,11 @@ class ConfigWriteServicePerPrincipalRateLimitTest {
 
     @Test
     void oneTenantsFloodDoesNotStarveAnother() {
-        // Each principal gets its OWN bucket: rate 1/s, burst 1 (one token; no refill under FIXED).
         ConfigWriteService svc = new ConfigWriteService(
                 ALWAYS_COMMIT, null, null, null,
                 () -> new RateLimiter(FIXED, 1, 1));
 
         byte[] v = "v".getBytes();
-        // Principal A: the first write consumes A's single token; the rest are shed by A's OWN bucket.
         assertInstanceOf(ConfigWriteService.WriteResult.Committed.class,
                 svc.put("a1", v, ConfigScope.GLOBAL, "A"), "A's first write succeeds");
         assertInstanceOf(ConfigWriteService.WriteResult.Overloaded.class,
@@ -39,7 +37,6 @@ class ConfigWriteServicePerPrincipalRateLimitTest {
         assertInstanceOf(ConfigWriteService.WriteResult.Overloaded.class,
                 svc.put("a3", v, ConfigScope.GLOBAL, "A"), "A stays shed");
 
-        // Principal B: unaffected by A's flood - B's OWN fresh bucket grants its first write.
         assertInstanceOf(ConfigWriteService.WriteResult.Committed.class,
                 svc.put("b1", v, ConfigScope.GLOBAL, "B"),
                 "B is NOT starved by A's flood — per-principal isolation is the fix");
@@ -49,12 +46,10 @@ class ConfigWriteServicePerPrincipalRateLimitTest {
     void legacyGlobalLimiterStillGatesWhenNoPerPrincipalFactory() {
         // Backward compatibility: no per-principal factory -> the single global bucket gates (legacy).
         ConfigWriteService svc = new ConfigWriteService(
-                ALWAYS_COMMIT, null, new RateLimiter(FIXED, 1, 1)); // 3-arg legacy ctor
+                ALWAYS_COMMIT, null, new RateLimiter(FIXED, 1, 1));
         byte[] v = "v".getBytes();
         assertInstanceOf(ConfigWriteService.WriteResult.Committed.class,
                 svc.put("k1", v, ConfigScope.GLOBAL, "A"));
-        // Same global bucket: A's second AND B's first are both shed - the shared-bucket behavior
-        // the per-principal path avoids (kept as a guard that the legacy path is unchanged).
         assertInstanceOf(ConfigWriteService.WriteResult.Overloaded.class,
                 svc.put("k2", v, ConfigScope.GLOBAL, "A"));
         assertInstanceOf(ConfigWriteService.WriteResult.Overloaded.class,

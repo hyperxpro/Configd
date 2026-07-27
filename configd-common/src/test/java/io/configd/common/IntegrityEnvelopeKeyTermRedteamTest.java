@@ -38,7 +38,7 @@ class IntegrityEnvelopeKeyTermRedteamTest {
     private static final int WALE_MAGIC = 0x5257_414C; // "RWAL"
     private static final int SNAP_MAGIC = 0x5253_4E50; // "RSNP"
     private static final int SCOPE = 7;                // a per-shard gid, same on wrap + read here
-    private static final int KEY_TERM_OFFSET = IntegrityEnvelope.HEADER_SIZE + IntegrityEnvelope.SCOPE_ID_SIZE; // 12
+    private static final int KEY_TERM_OFFSET = IntegrityEnvelope.HEADER_SIZE + IntegrityEnvelope.SCOPE_ID_SIZE;
 
     private static RootKey rootAt(int term, byte fill) {
         byte[] m = new byte[32];

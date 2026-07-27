@@ -28,7 +28,6 @@ class Rr095StallSeedsIntegratedRerunTest {
     /** Seeds from the 10k sweep that reproduced the diagnosed stall. */
     private static final long[] STALL_SEEDS = {452, 869, 4740, 5100, 5159, 5500, 8319};
 
-    /** The characterization shape: 5 CP nodes, 1500 ticks. */
     private static final int CP_NODES = 5;
     private static final int EDGES = 3;
     private static final int TICKS = 1_500;

@@ -91,7 +91,7 @@ public final class EdgeFrameGoldenBytes {
      *
      * <p>{@code notify_reused.bin} is byte-identical to the v1 {@code notify_single_unsigned.bin}
      * except the version byte (offset 4: {@code 01} to {@code 02}) and the trailing CRC - the
-     * design-A "only the version byte differs" property (W1-3 / W5-11), asserted by
+     * design-A "only the version byte differs" property, asserted by
      * {@code EdgeFrameCodecV2GoldenFixtureTest}.
      */
     private static Map<String, byte[]> v2() {

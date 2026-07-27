@@ -72,13 +72,10 @@ public record EdgeNodeConfig(
     /** Default read-serving API port (the control plane's API default is 8080). */
     public static final int DEFAULT_API_PORT = 8081;
 
-    /** Default base reconnect backoff ms (named config {@code edge.reconnect.backoffMs}). */
     public static final long DEFAULT_RECONNECT_BACKOFF_MS = 100L;
 
-    /** Default silence factor (named config {@code edge.heartbeat.silenceFactor}). */
     public static final int DEFAULT_HEARTBEAT_SILENCE_FACTOR = 8;
 
-    /** Default poison-pill retry bound (named config {@code edge.poisonpill.maxRetries}). */
     public static final int DEFAULT_POISON_MAX_RETRIES = 3;
 
     public EdgeNodeConfig {
@@ -101,8 +98,6 @@ public record EdgeNodeConfig(
                 throw new IllegalArgumentException("subscribe prefix must not be blank");
             }
         }
-        // Fail-closed on a partial TLS triple: silently downgrading to plaintext when
-        // one flag is missing is the failure this rejects. All three or none.
         int tlsFlags = (tlsCertPath != null ? 1 : 0) + (tlsKeyPath != null ? 1 : 0)
                 + (tlsTrustStorePath != null ? 1 : 0);
         if (tlsFlags != 0 && tlsFlags != 3) {
@@ -124,28 +119,10 @@ public record EdgeNodeConfig(
         }
     }
 
-    /** True if the mTLS triple is configured (all three paths). */
     public boolean tlsEnabled() {
         return tlsCertPath != null && tlsKeyPath != null && tlsTrustStorePath != null;
     }
 
-    /**
-     * Parses command-line arguments.
-     * <pre>
-     *   --edge-id                  edge identity; must match the mTLS cert Subject DN (required)
-     *   --fanout-endpoints         h:p[,h:p] ordered fan-out endpoints (required)
-     *   --api-port                 read-serving HTTP port (default 8081; 0 = ephemeral)
-     *   --data-dir                 directory for epoch.lock metadata (required)
-     *   --verify-key               Ed25519 public key, X.509/SPKI DER (optional)
-     *   --subscribe-prefix         storage-filter prefix, repeatable
-     *   --tls-cert/--tls-key/--tls-trust-store  the server's TLS triple (all or none)
-     *   --reconnect-backoff-ms     edge.reconnect.backoffMs base (default 100)
-     *   --heartbeat-silence-factor edge.heartbeat.silenceFactor (default 8)
-     *   --poison-max-retries       edge.poisonpill.maxRetries (default 3)
-     * </pre>
-     *
-     * @throws IllegalArgumentException on missing/invalid arguments
-     */
     public static EdgeNodeConfig parse(String[] args) {
         String edgeId = null;
         String endpointsStr = null;
@@ -239,7 +216,6 @@ public record EdgeNodeConfig(
                 poisonMaxRetries);
     }
 
-    /** Parses {@code h:p[,h:p]} into ordered unresolved endpoints. */
     private static List<InetSocketAddress> parseEndpoints(String str) {
         List<InetSocketAddress> out = new ArrayList<>();
         for (String entry : str.split(",")) {

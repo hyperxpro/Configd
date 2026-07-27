@@ -7,11 +7,6 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.BiConsumer;
 import java.util.random.RandomGenerator;
 
-/**
- * Deterministic simulated network for testing.
- * Messages are queued with configurable latency, drop rate, and partitions.
- * All randomness comes from a seeded PRNG for reproducibility.
- */
 public final class SimulatedNetwork {
 
     public record PendingMessage(long deliverAtMs, NodeId from, NodeId to, Object message) 
@@ -23,7 +18,7 @@ public final class SimulatedNetwork {
     }
 
     private final PriorityQueue<PendingMessage> pendingMessages = new PriorityQueue<>();
-    private final Set<Long> partitions = new HashSet<>(); // encoded as (from << 32) | to
+    private final Set<Long> partitions = new HashSet<>();
     private final RandomGenerator random;
     private final int minLatencyMs;
     private final int maxLatencyMs;
@@ -49,28 +44,23 @@ public final class SimulatedNetwork {
         this.dropRate = rate;
     }
 
-    /** Create a unidirectional partition: messages from 'from' to 'to' are dropped. */
     public void addPartition(NodeId from, NodeId to) {
         partitions.add(encodePartition(from, to));
     }
 
-    /** Remove a unidirectional partition. */
     public void removePartition(NodeId from, NodeId to) {
         partitions.remove(encodePartition(from, to));
     }
 
-    /** Create bidirectional partition between two nodes. */
     public void isolate(NodeId a, NodeId b) {
         addPartition(a, b);
         addPartition(b, a);
     }
 
-    /** Remove all partitions. */
     public void healAll() {
         partitions.clear();
     }
 
-    /** Send a message with simulated latency. */
     public void send(NodeId from, NodeId to, Object message, long currentTimeMs) {
         if (partitions.contains(encodePartition(from, to))) return;
         if (random.nextDouble() < dropRate) return;
@@ -79,7 +69,6 @@ public final class SimulatedNetwork {
         pendingMessages.add(new PendingMessage(currentTimeMs + latency, from, to, message));
     }
 
-    /** Deliver all messages that are due at the given time. Returns count delivered. */
     public int deliverDue(long currentTimeMs) {
         int count = 0;
         while (!pendingMessages.isEmpty() && pendingMessages.peek().deliverAtMs <= currentTimeMs) {
@@ -102,7 +91,6 @@ public final class SimulatedNetwork {
         return !pendingMessages.isEmpty();
     }
 
-    /** Time of next pending message, or Long.MAX_VALUE if none. */
     public long nextDeliveryTime() {
         return pendingMessages.isEmpty() ? Long.MAX_VALUE : pendingMessages.peek().deliverAtMs;
     }

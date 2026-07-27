@@ -35,7 +35,6 @@ final class ReplayGuardTest {
         AtomicLong now = new AtomicLong(1_000_000L);
         ReplayGuard guard = new ReplayGuard(clock(now), 300_000L, 1000);
         assertEquals(ReplayGuard.Decision.ACCEPTED, guard.check(String.valueOf(now.get()), "nonce-1"));
-        // Verbatim replay (same nonce, same in-window timestamp) -> REPLAY.
         assertEquals(ReplayGuard.Decision.REPLAY, guard.check(String.valueOf(now.get()), "nonce-1"));
     }
 
@@ -79,21 +78,17 @@ final class ReplayGuardTest {
         // advances past the window, the same nonce string would itself be STALE
         // (its old timestamp), so eviction loses no protection.
         AtomicLong now = new AtomicLong(1_000_000L);
-        ReplayGuard guard = new ReplayGuard(clock(now), 1000L, 1000); // 1s window
+        ReplayGuard guard = new ReplayGuard(clock(now), 1000L, 1000);
         assertEquals(ReplayGuard.Decision.ACCEPTED, guard.check(String.valueOf(now.get()), "n"));
         // Advance well past the window; the entry is evicted lazily on next check.
         now.addAndGet(5000L);
-        // A fresh request with a CURRENT timestamp but the recycled nonce is
-        // accepted again (the old sighting expired). A replay with the OLD
-        // timestamp would be STALE regardless.
         assertEquals(ReplayGuard.Decision.ACCEPTED, guard.check(String.valueOf(now.get()), "n"));
     }
 
     @Test
     void nonceStoreIsBoundedByMaxNonces() {
         AtomicLong now = new AtomicLong(1_000_000L);
-        ReplayGuard guard = new ReplayGuard(clock(now), 300_000L, 100); // tiny cap
-        // Flood 10_000 unique nonces, all in-window (same instant).
+        ReplayGuard guard = new ReplayGuard(clock(now), 300_000L, 100);
         for (int i = 0; i < 10_000; i++) {
             guard.check(String.valueOf(now.get()), "flood-" + i);
         }

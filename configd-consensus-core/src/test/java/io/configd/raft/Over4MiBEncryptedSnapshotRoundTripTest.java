@@ -66,7 +66,7 @@ class Over4MiBEncryptedSnapshotRoundTripTest {
 
     // v3 envelope fixed offsets (IntegrityEnvelope): header 8 + scopeId 4 -> keyTerm at 12; algId at 6.
     private static final int ALG_ID_OFFSET = 6;
-    private static final int KEY_TERM_OFFSET = 8 + IntegrityEnvelope.SCOPE_ID_SIZE; // 12
+    private static final int KEY_TERM_OFFSET = 8 + IntegrityEnvelope.SCOPE_ID_SIZE;
 
     /** A deterministic blob whose first bytes are a recognizable plaintext sentinel. */
     private static byte[] blob(int size, String sentinel) {
@@ -121,9 +121,6 @@ class Over4MiBEncryptedSnapshotRoundTripTest {
                 .putInt((int) crc.getValue());
     }
 
-    // =======================================================================
-    // (1) The multi-chunk WIRE transfer of a > 4 MiB snapshot (chunking guarantee)
-    // =======================================================================
 
     /**
      * A leader takes a genuinely &gt; 4 MiB snapshot and streams it to a lagging follower over the REAL
@@ -197,9 +194,6 @@ class Over4MiBEncryptedSnapshotRoundTripTest {
                 "no single chunk may exceed the 4 MiB per-chunk frame ceiling; maxChunkLen=" + maxChunkLen);
     }
 
-    // =======================================================================
-    // (2) The > 4 MiB blob ENCRYPTED at rest (encryption + integrity + keyTerm guarantee)
-    // =======================================================================
 
     @Test
     void over4MiBSnapshotAtRestIsGcmEncryptedRoundTripsTamperRefusedAndTermRotates(@TempDir Path root)
@@ -240,7 +234,6 @@ class Over4MiBEncryptedSnapshotRoundTripTest {
         assertThrows(IntegrityException.class, () -> new RaftLog(storageA, env),
                 "recovery must REFUSE a tampered encrypted snapshot (fail closed), not load attacker state");
 
-        // Key-term rotation: a new snapshot stamps the new term; an old-term blob still decrypts.
         km.rotateTo(rootAtTerm(2));
         assertEquals(2, km.activeTerm(), "the manager now writes on term 2");
 

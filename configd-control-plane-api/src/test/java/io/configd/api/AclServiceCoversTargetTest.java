@@ -40,7 +40,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @DisplayName("AclService.coversTarget / authorizesWatch — whole-target watch authorization (dormant)")
 class AclServiceCoversTargetTest {
 
-    // Helpers: a one-liner ALLOW/DENY rule at a literal prefix.
 
     private static PolicyRule allow(String prefix, AclService.Permission... caps) {
         return new PolicyRule(prefix, Set.of(caps), Set.of());
@@ -50,16 +49,14 @@ class AclServiceCoversTargetTest {
         return new PolicyRule(prefix, Set.of(), Set.of(caps));
     }
 
-    // (1) Floor - a watch needs BOTH READ and WATCH over the whole target
 
     @Nested
     @DisplayName("WATCH floor — authorizesWatch requires both READ and WATCH coverage")
     class Floor {
 
-        /** WATCH covers the subtree but READ does not -> no watch (a watch can never out-read a read). */
         @Test
         void watchWithoutReadDoesNotAuthorize() {
-            List<PolicyRule> rules = List.of(allow("a.", WATCH)); // WATCH only, no READ
+            List<PolicyRule> rules = List.of(allow("a.", WATCH));
 
             assertTrue(coversTarget(rules, "a.", WATCH), "WATCH covers the subtree");
             assertFalse(coversTarget(rules, "a.", READ), "READ does NOT cover the subtree");
@@ -67,10 +64,9 @@ class AclServiceCoversTargetTest {
                     "WATCH without READ over the target yields no watch authz (INV-WATCH-READ)");
         }
 
-        /** The converse: READ covers the subtree but WATCH does not -> no watch. */
         @Test
         void readWithoutWatchDoesNotAuthorize() {
-            List<PolicyRule> rules = List.of(allow("a.", READ)); // READ only, no WATCH
+            List<PolicyRule> rules = List.of(allow("a.", READ));
 
             assertTrue(coversTarget(rules, "a.", READ), "READ covers the subtree");
             assertFalse(coversTarget(rules, "a.", WATCH), "WATCH does NOT cover the subtree");
@@ -78,7 +74,6 @@ class AclServiceCoversTargetTest {
                     "READ alone does not confer WATCH (WATCH is separately grantable)");
         }
 
-        /** Both capabilities cover the subtree -> authorized. */
         @Test
         void readAndWatchTogetherAuthorize() {
             List<PolicyRule> rules = List.of(allow("a.", READ, WATCH));
@@ -88,25 +83,15 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // Interior DENY - the crux: a deny strictly BELOW the target defeats whole-target coverage
-    // (the exact case a single-key ancestor-only check cannot see)
 
     @Nested
     @DisplayName("Interior DENY — the case a single-key ancestor-only check cannot catch")
     class InteriorDeny {
 
-        /**
-         * ALLOW {@code "a."} {READ,WATCH}, DENY {@code "a.secret."} {READ} (strictly below {@code "a."}),
-         * target {@code "a."}. The interior READ deny carves a hole, so whole-target READ is NOT covered and
-         * the watch is rejected - even though an ancestor-only single-key check at the root would WRONGLY
-         * pass (it never sees a deny below the key).
-         */
         @Test
         void interiorReadDenyDefeatsWholeTargetReadAndWatch() {
             List<PolicyRule> rules = List.of(allow("a.", READ, WATCH), deny("a.secret.", READ));
 
-            // The interior deny "a.secret." is strictly BELOW the target "a." - NOT an ancestor of it,
-            // so an ancestor-only single-key walk (what isAllowed does) never sees it:
             assertFalse("a.".startsWith("a.secret."),
                     "the deny is strictly below the target → invisible to an ancestor-only walk");
             boolean ancestorOnlyWouldGrantRead =
@@ -115,17 +100,14 @@ class AclServiceCoversTargetTest {
             assertTrue(ancestorOnlyWouldGrantRead,
                     "an ancestor-only single-key READ check at the target root would WRONGLY pass");
 
-            // coversTarget's INTERIOR-DENY term (D.prefix.startsWith(target)) is what rejects it:
             assertFalse(coversTarget(rules, "a.", READ),
                     "the interior READ deny carves a hole in the subtree → whole-target READ NOT covered");
             assertFalse(authorizesWatch(rules, "a."),
                     "a watch over the subtree must be rejected, not silently filtered (W7-2/W7-2a)");
-            // WATCH itself is uncarved here - proving it is specifically the READ floor that rejects.
             assertTrue(coversTarget(rules, "a.", WATCH),
                     "only READ was carved; WATCH still covers the whole subtree");
         }
 
-        /** Symmetric: an interior WATCH deny defeats the watch while READ coverage remains. */
         @Test
         void interiorWatchDenyDefeatsWholeTargetWatch() {
             List<PolicyRule> rules = List.of(allow("a.", READ, WATCH), deny("a.secret.", WATCH));
@@ -137,17 +119,11 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // (3) Ancestor DENY - a deny at/above the target defeats coverage (today's check also catches this)
 
     @Nested
     @DisplayName("Ancestor DENY — deny at/above the target (the regression guard)")
     class AncestorDeny {
 
-        /**
-         * Root ALLOW READ would otherwise cover {@code "a.b."}, but a DENY at the ancestor {@code "a."}
-         * removes it. This is the disjunct a single-key {@code isAllowed} <i>also</i> catches (an ancestor
-         * deny) - the regression guard, contrasted with the interior case above which it cannot.
-         */
         @Test
         void ancestorDenyDefeatsAnAncestorAllow() {
             List<PolicyRule> rules = List.of(allow("", READ), deny("a.", READ));
@@ -158,17 +134,11 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // (4) Sub-target ALLOWs only - a union of grants strictly below the target cannot cover it
 
     @Nested
     @DisplayName("Sub-target ALLOWs only — cannot cover an unbounded subtree")
     class SubTargetAllowsOnly {
 
-        /**
-         * ALLOW {@code "a.b."} and ALLOW {@code "a.c."} (both strictly below {@code "a."}); no
-         * ancestor-or-equal ALLOW of {@code "a."}. A union of sub-grants cannot cover the unbounded subtree
-         * rooted at {@code "a."} (e.g. {@code "a.d.x"} is reached by neither).
-         */
         @Test
         void unionOfStrictlySubTargetAllowsDoesNotCover() {
             List<PolicyRule> rules = List.of(allow("a.b.", READ, WATCH), allow("a.c.", READ, WATCH));
@@ -181,7 +151,6 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // (5) Positive - an ancestor-or-equal ALLOW with no intersecting DENY covers the subtree (and deep keys)
 
     @Nested
     @DisplayName("Positive — ancestor-or-equal ALLOW, no intersecting DENY")
@@ -195,20 +164,17 @@ class AclServiceCoversTargetTest {
             assertTrue(coversTarget(rules, "a.", WATCH));
             assertTrue(authorizesWatch(rules, "a."), "subtree root is covered");
 
-            // a concrete deeper key under the ALLOW is covered too (KEY target).
             assertTrue(coversTarget(rules, "a.b.x", READ));
             assertTrue(coversTarget(rules, "a.b.x", WATCH));
             assertTrue(authorizesWatch(rules, "a.b.x"), "a deep key under the ALLOW is covered");
         }
     }
 
-    // (6) FULL (target == "") - only the root principal covers it; any interior deny closes the bypass
 
     @Nested
     @DisplayName("FULL target (\"\") — root grant ∧ no cap-DENY anywhere")
     class FullTarget {
 
-        /** A subtree-only principal (ALLOW {@code "a."}) does NOT cover FULL - no root-prefix ALLOW. */
         @Test
         void subtreeOnlyPrincipalDoesNotCoverFull() {
             List<PolicyRule> rules = List.of(allow("a.", READ, WATCH));
@@ -218,7 +184,6 @@ class AclServiceCoversTargetTest {
             assertFalse(authorizesWatch(rules, ""), "a subtree grant cannot authorize a FULL watch");
         }
 
-        /** The root principal (ALLOW {@code ""}) covers FULL. */
         @Test
         void rootPrincipalCoversFull() {
             List<PolicyRule> rules = List.of(allow("", READ, WATCH));
@@ -241,12 +206,10 @@ class AclServiceCoversTargetTest {
             assertFalse(coversTarget(rules, "", READ),
                     "any interior READ deny blocks FULL READ coverage (interior disjunct fires at root)");
             assertFalse(authorizesWatch(rules, ""), "the FULL-store bypass is closed by the interior term");
-            // the positive control: WATCH (not denied anywhere) still covers FULL.
             assertTrue(coversTarget(rules, "", WATCH), "WATCH, denied nowhere, still covers FULL");
         }
     }
 
-    // (7) Segment boundary - literal startsWith over-grants ALLOW, over-denies DENY
 
     @Nested
     @DisplayName("Segment boundary — DL-O3-02 literal-startsWith behavior (pinned, not fixed)")
@@ -279,7 +242,6 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // (8) Equal-prefix - the boundary of "ancestor-OR-equal"
 
     @Nested
     @DisplayName("Equal-prefix — ancestor-OR-EQUAL boundary")
@@ -295,23 +257,16 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // (9) Multi-source union - own union role union config folded into one flat rule list (what the gate produces)
 
     @Nested
     @DisplayName("Multi-source union — own ∪ role ∪ config (the gate's assembled rule set)")
     class MultiSourceUnion {
 
-        /**
-         * Models the three sources {@code isAllowed} accumulates, folded into the one flat list the
-         * watch-subscribe gate assembles: own ALLOW {@code "a."} READ + role ALLOW {@code "a."} WATCH cover the subtree with
-         * both caps -> watch authorized. Adding a config interior DENY {@code "a.secret."} READ then defeats
-         * it -> watch rejected - proving deny-precedence composes across sources exactly as the union does.
-         */
         @Test
         void unionedOwnAndRoleCover_thenConfigInteriorDenyDefeats() {
-            PolicyRule ownReadGrant = allow("a.", READ);   // "own" source
-            PolicyRule roleWatchGrant = allow("a.", WATCH); // "role" source
-            PolicyRule configInteriorDeny = deny("a.secret.", READ); // "config" source
+            PolicyRule ownReadGrant = allow("a.", READ);
+            PolicyRule roleWatchGrant = allow("a.", WATCH);
+            PolicyRule configInteriorDeny = deny("a.secret.", READ);
 
             List<PolicyRule> ownPlusRole = List.of(ownReadGrant, roleWatchGrant);
             assertTrue(authorizesWatch(ownPlusRole, "a."),
@@ -323,7 +278,6 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // (10) Default-deny - no ALLOW means no coverage
 
     @Nested
     @DisplayName("Default-deny — no matching ALLOW ⇒ not covered")
@@ -340,7 +294,7 @@ class AclServiceCoversTargetTest {
 
         @Test
         void noAncestorOrEqualAllowCoversNothing() {
-            List<PolicyRule> rules = List.of(allow("b.", READ, WATCH)); // unrelated subtree
+            List<PolicyRule> rules = List.of(allow("b.", READ, WATCH));
 
             assertFalse(coversTarget(rules, "a.", READ),
                     "an ALLOW on an unrelated/sibling subtree does not cover the target");
@@ -348,7 +302,6 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // Null-arg guards - coversTarget validates all three args; authorizesWatch delegates to it
 
     @Nested
     @DisplayName("Null-arg guards")
@@ -380,13 +333,11 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // Cross-capability hygiene - coverage of one cap does not manufacture another
 
     @Nested
     @DisplayName("Cross-capability hygiene — per-capability, no cross-conferral")
     class CrossCapabilityHygiene {
 
-        /** Covering READ AND WATCH must not manufacture coverage of WRITE/LIST/ADMIN over the subtree. */
         @Test
         void watchCoverageDoesNotConferOtherCaps() {
             List<PolicyRule> rules = List.of(allow("a.", READ, WATCH));
@@ -421,12 +372,11 @@ class AclServiceCoversTargetTest {
         };
         private static final AclService.Permission[] CAPS = AclService.Permission.values();
 
-        /** A random rule: a random prefix, with each cap independently in ALLOW and/or DENY. */
         private static PolicyRule randomRule(Random r) {
             EnumSet<AclService.Permission> a = EnumSet.noneOf(AclService.Permission.class);
             EnumSet<AclService.Permission> d = EnumSet.noneOf(AclService.Permission.class);
             for (AclService.Permission p : CAPS) {
-                if (r.nextInt(100) < 40) a.add(p);   // ~40% ALLOW
+                if (r.nextInt(100) < 40) a.add(p);
                 if (r.nextInt(100) < 30) d.add(p);   // ~30% DENY - so allow∩deny on the SAME rule is common
             }
             return new PolicyRule(PREFIXES[r.nextInt(PREFIXES.length)], a, d);
@@ -445,19 +395,19 @@ class AclServiceCoversTargetTest {
             List<String> witnesses = new ArrayList<>();
             witnesses.add(target);
             for (PolicyRule rule : rules) {
-                if (rule.prefix().startsWith(target)) {    // descendant-or-equal of target -> inside the subtree
+                if (rule.prefix().startsWith(target)) {
                     witnesses.add(rule.prefix());
                 }
             }
             for (String k : witnesses) {
                 boolean allowK = false, denyK = false;
                 for (PolicyRule rule : rules) {
-                    if (k.startsWith(rule.prefix())) {     // ancestor-or-equal of k -> matches under isAllowed
+                    if (k.startsWith(rule.prefix())) {
                         if (rule.allow().contains(cap)) allowK = true;
                         if (rule.deny().contains(cap))  denyK = true;
                     }
                 }
-                if (!(allowK && !denyK)) return false;     // this key is NOT per-key-authorized -> not covered
+                if (!(allowK && !denyK)) return false;
             }
             return true;
         }
@@ -465,10 +415,10 @@ class AclServiceCoversTargetTest {
         @Test
         @DisplayName("200k random rule sets: coversTarget == the independent per-key witness oracle")
         void coversTargetEqualsWitnessOracleUnderFuzz() {
-            Random r = new Random(0xC0FFEEL);   // fixed seed -> reproducible, CI-stable
+            Random r = new Random(0xC0FFEEL);
             int iters = 200_000;
             for (int i = 0; i < iters; i++) {
-                int n = r.nextInt(7);           // 0..6 rules
+                int n = r.nextInt(7);
                 List<PolicyRule> rules = new ArrayList<>(n);
                 for (int j = 0; j < n; j++) rules.add(randomRule(r));
                 String target = PREFIXES[r.nextInt(PREFIXES.length)];
@@ -508,7 +458,6 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // Red-team: boundary PoCs the hand matrix leaves un-pinned.
 
     @Nested
     @DisplayName("Red-team — boundary PoCs (same-rule allow∩deny, deny==target, disjoint deny, null element)")
@@ -528,7 +477,6 @@ class AclServiceCoversTargetTest {
             assertFalse(authorizesWatch(rules, "a."), "no watch when the sole rule denies what it allows");
         }
 
-        /** A DENY whose prefix EXACTLY equals the target is an ancestor-or-equal deny - rejects the subtree. */
         @Test
         void denyPrefixEqualToTarget_rejects() {
             List<PolicyRule> rules = List.of(allow("", READ, WATCH), deny("a.", READ));
@@ -566,7 +514,6 @@ class AclServiceCoversTargetTest {
         }
     }
 
-    // Two completeness pins: a no-op rule, and split-cap ancestors.
 
     @Nested
     @DisplayName("Review follow-ups — no-op rule + split-cap ancestors")
@@ -580,7 +527,7 @@ class AclServiceCoversTargetTest {
          */
         @Test
         void noOpRuleChangesNothing() {
-            PolicyRule noOp = allow("a."); // empty varargs -> empty allow AND empty deny
+            PolicyRule noOp = allow("a.");
 
             assertTrue(coversTarget(List.of(allow("a.", READ, WATCH), noOp), "a.", READ),
                     "a no-op rule beside a real ALLOW does not change coverage");
@@ -590,12 +537,6 @@ class AclServiceCoversTargetTest {
             assertFalse(authorizesWatch(List.of(noOp), "a."));
         }
 
-        /**
-         * Split-cap ancestors: an ancestor-or-equal ALLOW carries WATCH but only a STRICTLY-BELOW rule
-         * carries READ. Each {@code coversTarget} pass needs its OWN ancestor-or-equal ALLOW for its cap,
-         * so {@code authorizesWatch} (READ AND WATCH over the whole target) is NOT satisfied - a sub-target
-         * READ cannot complete the floor a subtree WATCH grant opened.
-         */
         @Test
         void splitCapAncestorsDoNotSatisfyTheFloor() {
             List<PolicyRule> rules = List.of(allow("a.", WATCH), allow("a.b.", READ));

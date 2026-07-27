@@ -110,8 +110,8 @@ class OwnerNetCatchesOffOwnerInboundTest {
                 new NoopStateMachine(), new java.util.Random(42),
                 io.configd.common.Storage.inMemory(), checker);
         owner.submit(() -> {
-            node.bindOwnerThread();                    // bind first, on the owner executor
-            for (int i = 0; i < 400; i++) node.tick();  // self-elect, the proven single-node idiom
+            node.bindOwnerThread();
+            for (int i = 0; i < 400; i++) node.tick();
         }).get(5, TimeUnit.SECONDS);
         assertEquals(RaftRole.LEADER, node.role(), "single-node cluster should self-elect to LEADER");
         return node;
@@ -170,7 +170,7 @@ class OwnerNetCatchesOffOwnerInboundTest {
             // then touches the RaftNode off its bound owner, so assertOwnerThread() must fire.
             CountDownLatch routed = new CountDownLatch(1);
             Thread foreign = new Thread(() -> {
-                driver.routeMessage(GROUP, staleAppendEntries()); // off-owner: the deleted-hop bug
+                driver.routeMessage(GROUP, staleAppendEntries());
                 routed.countDown();
             }, "foreign-inbound-no-hop");
             foreign.start();
@@ -234,7 +234,6 @@ class OwnerNetCatchesOffOwnerInboundTest {
         return server.apiPort();
     }
 
-    /** Scrapes the running server's public (no-auth minimal config) /metrics exposition. */
     private static String scrapeMetrics(ConfigdServer server, int port) throws Exception {
         HttpResponse<String> resp = HttpClient.newHttpClient().send(
                 HttpRequest.newBuilder()

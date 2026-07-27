@@ -39,7 +39,6 @@ public sealed interface AuthResult
             }
         }
 
-        /** A principal with no authority-issued credential expiry ({@link #NO_EXPIRY}). */
         public Authenticated(Principal principal) {
             this(principal, NO_EXPIRY);
         }

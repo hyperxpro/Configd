@@ -45,7 +45,6 @@ class SnapshotIntegrityTest {
     };
     private static final RaftTransport NO_PEERS = (target, message) -> { };
 
-    /** A keyed integrity envelope with a fixed test key. */
     static IntegrityEnvelope keyedEnvelope() {
         byte[] k = new byte[32];
         Arrays.fill(k, (byte) 0x5a);
@@ -82,7 +81,6 @@ class SnapshotIntegrityTest {
         flipFirst(raw, (byte) 'A', (byte) 'B');
         Files.write(blob, raw, StandardOpenOption.TRUNCATE_EXISTING);
 
-        // Recovery must REFUSE - fail loud, do not load the tampered state.
         IntegrityException ex = assertThrows(IntegrityException.class,
                 () -> new RaftLog(storage, env));
         assertTrue(ex.getMessage().contains("CRC32C") || ex.getMessage().contains("MAC"),
@@ -197,14 +195,12 @@ class SnapshotIntegrityTest {
         assertEquals("AAAA", sm.snapshotState().get("installed"),
                 "follower restored the installed snapshot");
 
-        // The blob was persisted by handleInstallSnapshot -> log.persistSnapshot.
         Path blob = tempDir.resolve(BLOB_FILE);
         byte[] raw = Files.readAllBytes(blob);
         flipFirst(raw, (byte) 'A', (byte) 'B');
         recomputeEnvelopeCrc(raw);
         Files.write(blob, raw, StandardOpenOption.TRUNCATE_EXISTING);
 
-        // Recovery over the forged installed blob refuses on the shared path.
         IntegrityException ex = assertThrows(IntegrityException.class,
                 () -> new RaftLog(storage, env));
         assertTrue(ex.getMessage().contains("MAC"),
@@ -223,7 +219,6 @@ class SnapshotIntegrityTest {
         node.propose(KvStateMachine.put("b", "2"));
         node.triggerSnapshot();
 
-        // No tamper: a fresh keyed RaftLog + node restores the committed state.
         RaftLog log2 = new RaftLog(storage, env);
         KvStateMachine sm2 = new KvStateMachine();
         bootLeader(storage, env, log2, sm2);

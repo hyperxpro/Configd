@@ -20,18 +20,9 @@ import java.util.function.Predicate;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Bounded watch revocation under live ACL reload. The veneer re-authorizes every live
- * watch when the policy version of the authorizer advances, and force-closes any watch
- * whose grant was revoked, {@code WATCH_CANCELED(NOT_AUTHORIZED)}, within a bounded
- * latency, at zero cost when the policy is unchanged. Driven deterministically through the
- * {@link FanOutConnectionDriver#maybeReauthorizeWatches} test seam, the per-tick step of
- * the session loop, and a mutable fake {@link WatchAuthorizer}.
- */
 @DisplayName("Watch revocation (W7-7) — re-authorize on ACL policy-version change")
 class WatchRevocationTest {
 
-    /** A mutable authorizer: a settable monotonic version, a settable per-target verdict, and a call counter. */
     private static final class FakeAuthorizer implements WatchAuthorizer {
         volatile long version = 0L;
         Predicate<WatchTarget> allow = t -> true;
@@ -78,7 +69,6 @@ class WatchRevocationTest {
         assertEquals(1, out.sentOfType(EdgeFrame.WatchCreated.class).size(), "watch authorized + created");
         out.clear();
 
-        // An _acl/ reload revokes the grant: deny, and advance the policy version.
         authz.allow = t -> false;
         authz.version = 5L;
         driver.maybeReauthorizeWatches(); // the session-loop re-auth step (bounded latency, about one tick)
@@ -98,7 +88,6 @@ class WatchRevocationTest {
         createWatch(1L, "/a");
         out.clear();
 
-        // The version advances (some _acl/ key changed) but THIS watch stays authorized.
         authz.version = 7L; // allow predicate unchanged (still true)
         driver.maybeReauthorizeWatches();
 
@@ -132,7 +121,6 @@ class WatchRevocationTest {
         createWatch(2L, "/b");
         out.clear();
 
-        // Revoke only /b; /a stays authorized.
         authz.allow = t -> t.path().equals("/a");
         authz.version = 3L;
         driver.maybeReauthorizeWatches();

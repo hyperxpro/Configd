@@ -21,7 +21,7 @@ class PlumtreeNodeTest {
         NodeId lazy = NodeId.of(2);
         node.addEagerPeer(eager);
         node.addEagerPeer(lazy);
-        node.receivePrune(lazy); // move to lazy
+        node.receivePrune(lazy);
 
         var id = new PlumtreeNode.MessageId(1, 100);
         node.broadcast(id, new byte[]{1, 2, 3});

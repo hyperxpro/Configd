@@ -54,7 +54,6 @@ class DeltaApplierFilteredModeTest {
         assertEquals(DeltaApplier.ApplyResult.APPLIED, applier.offer(delta(0, 1, "svc/a"), clock.timeMs));
         assertEquals(1L, client.currentVersion());
         assertEquals(DeltaApplier.ApplyResult.APPLIED, applier.offer(delta(5, 6, "svc/b"), clock.timeMs));
-        // The store bridged the jump: its version stepped straight to 6.
         assertEquals(6L, client.currentVersion(), "the store version bridges to toVersion, not fromVersion");
         assertEquals("v", new String(client.get("svc/b").value(), StandardCharsets.UTF_8));
     }
@@ -68,7 +67,7 @@ class DeltaApplierFilteredModeTest {
 
     @Test
     void regressionBelowAppliedVersionIsGap() {
-        applier.offer(delta(0, 10, "svc/a"), clock.timeMs); // jump to 10
+        applier.offer(delta(0, 10, "svc/a"), clock.timeMs);
         assertEquals(10L, client.currentVersion());
         // A delta whose fromVersion is BELOW the applied version (a malformed covered-S) is a gap.
         assertEquals(DeltaApplier.ApplyResult.GAP_DETECTED, applier.offer(delta(3, 11, "svc/b"), clock.timeMs));

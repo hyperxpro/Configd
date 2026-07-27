@@ -42,19 +42,13 @@ import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 
 /**
  * Best-Netty edge read-serving HTTP/1.1 server - the "Netty done properly" side of the
- * edge-read head-to-head. It serves the same response as the production
- * {@link EdgeHttpServer} 200/404 read path - same {@link EdgeClientCore} read, same
- * {@code X-Configd-Cursor}/{@code X-Configd-Version}/{@code Content-Type} headers, same
- * {@link EdgeNodeMetrics} accounting - so the only difference between the two servers
- * is the HTTP transport shell (JDK {@code com.sun.net.httpserver} vs this Netty pipeline). That
- * isolates exactly the contested transport-shell allocation.
+ * edge-read head-to-head against {@link EdgeHttpServer}: same read, same headers, same
+ * metrics, so the only difference is the HTTP transport shell, isolating exactly the
+ * contested transport-shell allocation.
  *
- * <p>Strongest-Netty build per {@code docs/jdk-vs-netty/netty42-api.md}: 4.2
- * {@code MultiThreadIoEventLoopGroup} + {@code Epoll}/{@code Nio} {@code IoHandler} factory,
- * {@code PooledByteBufAllocator.DEFAULT}, {@code HttpServerCodec} with a hand-rolled handler
- * (no {@code HttpObjectAggregator} on the hot path), pooled response buffer, keep-alive honored,
- * {@code voidPromise} writes, flush on {@code channelReadComplete}. Worker threads pinned to 2
- * (the 2-vCPU box).
+ * <p>Deliberately configured for the strongest fair comparison: pooled allocator, no
+ * {@code HttpObjectAggregator} on the hot path, {@code voidPromise} writes, worker threads
+ * pinned to 2 (the 2-vCPU box) - relaxing any of these would bias the comparison.
  */
 public final class NettyEdgeReadServer {
 
@@ -79,7 +73,6 @@ public final class NettyEdgeReadServer {
         this.epoll = Epoll.isAvailable();
     }
 
-    /** @return true if the native Epoll transport is in use; false = NIO fallback. */
     public boolean usingEpoll() {
         return epoll;
     }
@@ -128,10 +121,6 @@ public final class NettyEdgeReadServer {
     /** Sentinel for "no cursor header supplied" (mirrors EdgeHttpServer). */
     private static final long NO_CURSOR = Long.MIN_VALUE;
 
-    /**
-     * Per-channel inbound handler. Mirrors {@link EdgeHttpServer}'s read path so both servers do
-     * equivalent business work; only the transport shell differs.
-     */
     private final class ReadHandler extends ChannelInboundHandlerAdapter {
 
         private boolean keepAlive = true;
@@ -146,7 +135,7 @@ public final class NettyEdgeReadServer {
                 cursorHeader = req.headers().get(EdgeHttpServer.HDR_CURSOR);
             }
             if (msg instanceof HttpContent) {
-                ((HttpContent) msg).release(); // read server ignores the request body
+                ((HttpContent) msg).release();
                 if (msg instanceof LastHttpContent) {
                     respond(ctx);
                 }

@@ -101,7 +101,6 @@ class RehomingInjectedSweepTest {
                 new NoopTransport(), new NoopStateMachine(), new java.util.Random(42L + gid), storage, checker);
         pool.ownerByIndex(pool.ownerIndexOf(gid)).submit(() -> {
             node.bindOwnerThread();
-            // Production-style coalescing flush, dispatched onto the group's CURRENT owner (rehoming-aware).
             node.setGroupCommit((flush, delayMicros) -> driver.dispatchFlush(gid, flush, delayMicros), 4096, 0L);
             for (int i = 0; i < 400; i++) node.tick();
         }).get();
@@ -124,7 +123,7 @@ class RehomingInjectedSweepTest {
 
     private void runOneSweep(long seed) throws Exception {
         final int n = 3;
-        final int[] gids = {0, 1, 2, 3, 4, 5}; // owner0={0,3}, owner1={1,4}, owner2={2,5} initially
+        final int[] gids = {0, 1, 2, 3, 4, 5};
         OwnerExecutorPool pool = new OwnerExecutorPool(n);
         CountingThrowingChecker checker = new CountingThrowingChecker();
         MultiRaftDriver driver = new MultiRaftDriver(LOCAL, Clock.system());
@@ -198,7 +197,7 @@ class RehomingInjectedSweepTest {
                     int gid = gids[rnd.nextInt(gids.length)];
                     int target = rnd.nextInt(n);
                     if (driver.currentOwnerIndex(gid) == target) {
-                        continue; // already there - pick again
+                        continue;
                     }
                     try {
                         driver.rehomeGroup(gid, target);
@@ -234,7 +233,7 @@ class RehomingInjectedSweepTest {
         // bounded workload in well under a minute; a genuine handoff DEADLOCK is caught by @Timeout(600)
         // (with a thread dump). The former 90s budget was the throttle-sensitivity that made this flaky.
         producersDone.await();
-        keepInjecting.set(0); // stop the injector
+        keepInjecting.set(0);
         work.shutdownNow();
         assertTrue(work.awaitTermination(60, TimeUnit.SECONDS), "workforce did not terminate");
 
@@ -265,8 +264,6 @@ class RehomingInjectedSweepTest {
         }
         assertEquals(0, checker.ownerFires.get(), "the pre-drain liveness tick must not fire");
 
-        // DRAIN - settle every group back onto its static owner, then propose + tick it there (clean shutdown +
-        // a post-settle confirmation that the group still serves on its static owner after the sweep).
         for (int gid : gids) {
             int target = pool.ownerIndexOf(gid);
             if (driver.currentOwnerIndex(gid) != target) {

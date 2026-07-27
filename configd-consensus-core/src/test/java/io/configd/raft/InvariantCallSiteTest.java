@@ -68,7 +68,6 @@ class InvariantCallSiteTest {
         return node;
     }
 
-    // becomeLeader: election_safety / leader_completeness
 
     @Test
     void becomeLeaderInvokesElectionSafetyAndLeaderCompleteness() {
@@ -80,7 +79,6 @@ class InvariantCallSiteTest {
                 "becomeLeader must invoke the leader_completeness check");
     }
 
-    // applyCommitted: version_monotonicity / state_machine_safety
 
     @Test
     void applyCommittedInvokesVersionMonotonicityAndStateMachineSafety() {
@@ -111,8 +109,6 @@ class InvariantCallSiteTest {
                 "a non-empty follower append must invoke the log_matching check");
     }
 
-    // proposeConfigChange: single_server_invariant / no_op_before_reconfig /
-    // reconfig_safety
 
     @Test
     void proposeConfigChangeInvokesReconfigTwins() {

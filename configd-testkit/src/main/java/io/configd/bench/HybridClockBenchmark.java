@@ -9,21 +9,9 @@ import org.openjdk.jmh.infra.Blackhole;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Benchmarks {@link HybridClock#now()} and {@link HybridClock#receive(HybridTimestamp)}
- * throughput.
- * <p>
- * The HybridClock is synchronized (uses {@code synchronized} methods),
- * so this benchmark measures the uncontended synchronized cost as a
- * baseline. In production, HLC operations happen on the write path
- * (not the read path), so they are infrequent and contention is low.
- * <p>
- * Two clock implementations are tested:
- * <ul>
- *   <li><b>system</b> - uses {@link System#currentTimeMillis()}, which
- *       exercises the real OS clock call under synchronized.</li>
- *   <li><b>fixed</b> - uses a fixed-time clock to isolate the HLC
- *       logic cost from the OS clock call overhead.</li>
- * </ul>
+ * The clock is synchronized; production HLC calls happen on the write path only, so
+ * contention is rare, making this uncontended measurement representative. The "fixed"
+ * variant isolates HLC logic cost from the OS {@code currentTimeMillis()} call overhead.
  */
 @BenchmarkMode({Mode.Throughput, Mode.AverageTime})
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
@@ -48,39 +36,28 @@ public class HybridClockBenchmark {
         };
         clock = new HybridClock(physicalClock);
 
-        // Pre-generate a representative incoming timestamp for receive() benchmarks
         incomingPacked = HybridClock.encode(System.currentTimeMillis(), 0);
     }
 
-    /**
-     * Measures throughput of generating new HLC timestamps (primitive, zero-alloc).
-     */
     @Benchmark
     public long now() {
         return clock.now();
     }
 
-    /**
-     * Measures throughput of the receive path (primitive, zero-alloc).
-     */
     @Benchmark
     public long receive() {
         return clock.receive(incomingPacked);
     }
 
     /**
-     * Benchmark the structured-form {@code nowStructured()}. This one DOES
-     * allocate a {@link HybridTimestamp} on every call, so it serves as a
-     * baseline for the old-API cost.
+     * DOES allocate a {@link HybridTimestamp} per call; baseline for the old (structured)
+     * API's cost, unlike now()/receive().
      */
     @Benchmark
     public void nowStructured(Blackhole bh) {
         bh.consume(clock.nowStructured());
     }
 
-    /**
-     * Fixed-time clock for isolating HLC logic from OS clock overhead.
-     */
     private static final class FixedClock implements Clock {
         private final long fixedTimeMs;
 

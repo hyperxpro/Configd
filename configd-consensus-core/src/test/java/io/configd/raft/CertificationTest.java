@@ -14,18 +14,6 @@ import java.util.random.RandomGenerator;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Certification tests for Raft safety properties.
- * <p>
- * These tests exercise adversarial scenarios that are critical for correctness
- * but are not covered by the standard test suite:
- * <ul>
- *   <li>Figure 8 adversarial - leader commits prior-term entry indirectly</li>
- *   <li>Joint consensus with leader failure mid-transition</li>
- *   <li>ReadIndex invalidation on leader step-down</li>
- *   <li>Config entry truncation and revert on follower</li>
- * </ul>
- */
 class CertificationTest {
 
     static final class TestTransport implements RaftTransport {
@@ -140,7 +128,6 @@ class CertificationTest {
             }
         }
 
-        /** Delivers messages only between specific nodes (simulates partial connectivity). */
         void deliverMessagesBetween(Set<NodeId> allowedSenders, Set<NodeId> allowedReceivers) {
             Map<NodeId, List<RaftMessage>> toDeliver = new HashMap<>();
             for (var entry : transports.entrySet()) {
@@ -165,7 +152,6 @@ class CertificationTest {
             }
         }
 
-        /** Delivers messages only to specific targets, dropping all others. */
         void deliverMessagesTo(Set<NodeId> targets) {
             Map<NodeId, List<RaftMessage>> toDeliver = new HashMap<>();
             for (var entry : transports.entrySet()) {
@@ -186,7 +172,6 @@ class CertificationTest {
             }
         }
 
-        /** Drops all pending messages without delivering them. */
         void dropAllMessages() {
             for (var transport : transports.values()) {
                 transport.clear();
@@ -281,7 +266,6 @@ class CertificationTest {
             return null;
         }
 
-        /** Count how many leaders exist in the cluster. */
         int countLeaders() {
             int count = 0;
             for (RaftNode node : nodes.values()) {
@@ -291,8 +275,6 @@ class CertificationTest {
         }
     }
 
-    // Figure 8 adversarial - leader cannot commit prior-term entries based on
-    // replication count alone (Raft section 5.4.2, Figure 8).
 
     @Nested
     class Figure8Adversarial {
@@ -320,8 +302,6 @@ class CertificationTest {
             TestCluster cluster = new TestCluster(3);
             NodeId n1 = NodeId.of(1), n2 = NodeId.of(2), n3 = NodeId.of(3);
 
-            // (a) n1 leader at term 1; propose entry X and deliver it to n2 ONLY,
-            //     dropping n2's response so n1 never commits X at term 1.
             cluster.electLeader(n1);
             RaftNode leader = cluster.nodes.get(n1);
             assertEquals(RaftRole.LEADER, leader.role());
@@ -336,12 +316,6 @@ class CertificationTest {
             assertEquals(term1, leader.log().termAt(idxX), "X must be a term-1 entry");
             assertTrue(leader.log().commitIndex() < idxX, "precondition: X uncommitted at term 1");
 
-            // (b) n1 is RE-ELECTED at a higher term (Figure 8: the same server
-            //     returns as leader still holding the uncommitted prior-term entry
-            //     X), and we STOP the instant it wins - before any post-election
-            //     AppendEntries response lands - so its current-term no-op is NOT
-            //     yet committed (commitIndex stays low). becomeLeader appended that
-            //     no-op above X.
             RaftNode reLeader = cluster.electAmongStopAtLeader(n1, Set.of(n1, n2, n3), 8);
             assertNotNull(reLeader, "n1 (holding X) must re-win leadership");
             assertEquals(n1, reLeader.nodeId(), "n1 must be the new leader (most up-to-date log)");
@@ -372,9 +346,6 @@ class CertificationTest {
             assertTrue(leader.log().commitIndex() < idxX,
                     "commitIndex must not have reached X");
 
-            // (d) Liveness sanity (and the indirect-commit half of section 5.4.2): once a
-            //     CURRENT-term entry - the no-op at noopIdx - reaches a quorum, the
-            //     commit advances and X is committed INDIRECTLY (commit >= idxX).
             leader.handleMessage(new AppendEntriesResponse(term2, true, noopIdx, n2));
             assertTrue(leader.log().commitIndex() >= noopIdx,
                     "the current-term no-op at a quorum must commit");
@@ -382,10 +353,6 @@ class CertificationTest {
                     "committing the current-term no-op commits X indirectly (§5.4.2)");
         }
 
-        /**
-         * Verifies that a new leader commits prior-term entries indirectly
-         * by first committing a no-op from its own term (Raft section 5.4.2).
-         */
         @Test
         void newLeaderCommitsPriorTermEntriesIndirectlyViaNoOp() {
             TestCluster cluster = new TestCluster(3);
@@ -395,15 +362,10 @@ class CertificationTest {
             RaftNode leader = cluster.nodes.get(n1);
             long leaderTerm = leader.currentTerm();
 
-            // Propose a command and replicate to n2 only.
             leader.propose("entry-A".getBytes());
             cluster.deliverMessagesTo(Set.of(n2));
             cluster.deliverMessagesTo(Set.of(n1));
 
-            // Now n1 has entries from leaderTerm. If n1 steps down and
-            // n2 becomes leader in leaderTerm+1, n2 will first commit
-            // its no-op (at a new index in the new term), which
-            // indirectly commits all prior entries up to that index.
             cluster.dropAllMessages();
             cluster.triggerElectionTimeout(n2);
             cluster.deliverAllMessages(10);
@@ -418,7 +380,6 @@ class CertificationTest {
         }
     }
 
-    // Joint consensus with leader failure mid-transition.
 
     @Nested
     class JointConsensusLeaderFailure {
@@ -439,12 +400,10 @@ class CertificationTest {
             assertEquals(RaftRole.LEADER, leader.role());
             cluster.addNode(n4, Set.of(n1, n2, n3));
 
-            // Propose config change: {1,2,3} -> {1,2,3,4}
             Set<NodeId> newVoters = Set.of(n1, n2, n3, n4);
             assertTrue(leader.proposeConfigChange(newVoters));
             assertTrue(leader.clusterConfig().isJoint());
 
-            // Replicate the joint config entry to n2 (but NOT n3 or n4)
             cluster.deliverMessagesTo(Set.of(n2));
             cluster.deliverMessagesTo(Set.of(n1));
 
@@ -462,7 +421,6 @@ class CertificationTest {
             cluster.triggerElectionTimeout(n4);
             cluster.dropAllMessages();
 
-            // Now n2 times out and starts PreVote + election among n2, n3, n4
             Set<NodeId> surviving = Set.of(n2, n3, n4);
             for (int round = 0; round < 3; round++) {
                 cluster.triggerElectionTimeout(n2);
@@ -477,10 +435,6 @@ class CertificationTest {
                     "n2 should have advanced to a higher term");
         }
 
-        /**
-         * After leader failure during joint consensus, the new leader can
-         * propose new entries (including completing the reconfig or overwriting it).
-         */
         @Test
         void clusterRemainsAvailableAfterJointConfigLeaderFailure() {
             TestCluster cluster = new TestCluster(3);
@@ -493,7 +447,6 @@ class CertificationTest {
             assertTrue(leader.proposeConfigChange(Set.of(n1, n2, n3, n4)));
             cluster.deliverAllMessages(10);
 
-            // Now "crash" n1 by isolating it; only n2, n3, n4 communicate from here on.
             cluster.dropAllMessages();
             cluster.triggerElectionTimeout(n2);
             for (int i = 0; i < 20; i++) {
@@ -520,7 +473,6 @@ class CertificationTest {
         }
     }
 
-    // ReadIndex invalidation on leader step-down.
 
     @Nested
     class ReadIndexInvalidation {
@@ -542,8 +494,6 @@ class CertificationTest {
             long readId = leader.readIndex();
             assertTrue(readId >= 0, "ReadIndex should return a valid read ID for leader");
 
-            // Simulate the leader discovering a higher term by feeding it an
-            // AppendEntries from a "leader" at that term.
             long higherTerm = leader.currentTerm() + 1;
             AppendEntriesRequest fakeMsg = new AppendEntriesRequest(
                     higherTerm, n2, 0, 0, List.of(), 0);
@@ -555,11 +505,6 @@ class CertificationTest {
                     "Pending ReadIndex must be invalidated after step-down");
         }
 
-        /**
-         * ReadIndex request should not be grantable if leadership changes
-         * between startRead and confirmLeadership. This ensures
-         * linearizability.
-         */
         @Test
         void readIndexNotReadyIfLeadershipLostBeforeConfirmation() {
             TestCluster cluster = new TestCluster(3);
@@ -583,7 +528,6 @@ class CertificationTest {
         }
     }
 
-    // Config entry truncation and revert.
 
     @Nested
     class ConfigEntryTruncation {
@@ -607,7 +551,6 @@ class CertificationTest {
             cluster.addNode(n4, Set.of(n1, n2, n3));
             assertTrue(leader.proposeConfigChange(Set.of(n1, n2, n3, n4)));
 
-            // Replicate to n2 only (not n3).
             cluster.deliverMessagesTo(Set.of(n2));
             cluster.deliverMessagesTo(Set.of(n1));
 
@@ -615,7 +558,6 @@ class CertificationTest {
             assertTrue(node2.clusterConfig().isJoint(),
                     "n2 should have joint config after receiving config entry");
 
-            // Now "crash" n1 and let n3 try to become leader with a different log.
             cluster.dropAllMessages();
             cluster.triggerElectionTimeout(n3);
 
@@ -625,9 +567,6 @@ class CertificationTest {
                 cluster.deliverMessagesBetween(Set.of(n2, n3), Set.of(n2, n3));
             }
 
-            // If n3 becomes leader, it will send AppendEntries that may truncate
-            // n2's config entry. After full sync, no node should have stale joint
-            // config from the old leader.
             for (int i = 0; i < 20; i++) {
                 cluster.deliverMessagesBetween(Set.of(n2, n3), Set.of(n2, n3));
             }
@@ -636,10 +575,6 @@ class CertificationTest {
                     "At most one leader should exist");
         }
 
-        /**
-         * Verifies that recomputeConfigFromLog() correctly falls back to
-         * the initial config when all config entries are truncated.
-         */
         @Test
         void configFallsBackToInitialWhenAllConfigEntriesTruncated() {
             TestCluster cluster = new TestCluster(3);
@@ -663,12 +598,9 @@ class CertificationTest {
                 cluster.deliverMessagesBetween(Set.of(n2, n3), Set.of(n2, n3));
             }
 
-            // If n3 won the election and truncated the config entry on n2, n2 should
-            // have reverted to the original config {1,2,3}.
             RaftNode node2After = cluster.nodes.get(n2);
             RaftNode node3 = cluster.nodes.get(n3);
 
-            // n3's config should be the original one - it never had the config entry.
             assertFalse(node3.clusterConfig().isJoint(),
                     "n3 should have simple (non-joint) config");
             assertEquals(Set.of(n1, n2, n3), node3.clusterConfig().voters(),
@@ -676,7 +608,6 @@ class CertificationTest {
         }
     }
 
-    // Leadership transfer blocked during reconfig.
 
     @Nested
     class LeadershipTransferDuringReconfig {
@@ -706,7 +637,6 @@ class CertificationTest {
         }
     }
 
-    // RCFG magic collision guard.
 
     @Nested
     class RcfgMagicGuard {
@@ -731,9 +661,6 @@ class CertificationTest {
                     "Commands starting with RCFG magic must be rejected");
         }
 
-        /**
-         * A client command that does NOT start with "RCFG" should be accepted normally.
-         */
         @Test
         void acceptsNormalCommands() {
             TestCluster cluster = new TestCluster(3);
@@ -747,15 +674,10 @@ class CertificationTest {
         }
     }
 
-    // inflightCount never goes negative.
 
     @Nested
     class InflightCountSafety {
 
-        /**
-         * After processing an AppendEntriesResponse, the inflight count
-         * for a peer must never go below zero.
-         */
         @Test
         void inflightCountClampedAtZero() {
             TestCluster cluster = new TestCluster(3);

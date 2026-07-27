@@ -14,7 +14,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** The off/lax/strict revocation posture: the admit + alarm decision matrix and fail-closed config. */
 class RevocationPolicyTest {
 
     private static ConfigSource cfg(Map<String, String> m) {

@@ -71,7 +71,7 @@ class NGreaterThanOneBootSmokeTest {
                 "--api-port", "0"
         });
 
-        ConfigdServer server = ConfigdServer.start(config); // must not throw: N>1 boot is supported
+        ConfigdServer server = ConfigdServer.start(config);
         try {
             MultiRaftDriver driver = server.driver();
             RaftNode g0 = driver.getGroup(0);
@@ -79,20 +79,16 @@ class NGreaterThanOneBootSmokeTest {
             assertNotNull(g0, "shard 0 must be registered at N=2");
             assertNotNull(g1, "shard 1 must be registered at N=2 (the guard removal lets N>1 boot)");
 
-            // Both single-node shards self-elect LEADER via the running tick loop.
             awaitLeader(g0, "shard 0");
             awaitLeader(g1, "shard 1");
 
-            // A propose to shard 0 commits + applies on shard 0 ONLY (live cross-shard isolation).
             long g1AppliedBefore = g1.monitorView().lastApplied();
             commitTo(driver, 0, "alpha", "v0");
             assertEquals(g1AppliedBefore, g1.monitorView().lastApplied(),
                     "a write to shard 0 must NOT advance shard 1's applied index (cross-shard isolation)");
 
-            // A propose to shard 1 commits + applies on shard 1.
             commitTo(driver, 1, "beta", "v1");
 
-            // Per-shard observability is live at N>1: shard 1's series exist.
             String metrics = server.scrapeMetrics();
             assertTrue(metrics.contains("raft_shard_leader_1") || metrics.contains("raft.shard.leader.1")
                             || metrics.contains("raft_shard_current_term_1"),
@@ -119,9 +115,9 @@ class NGreaterThanOneBootSmokeTest {
                 "--data-dir", dataDir.toString(),
                 "--peers", "",
                 "--api-port", "0",
-                "--edge-port", "0"   // edge enabled + N>1: boots (multi-shard WATCH supported)
+                "--edge-port", "0"
         });
-        ConfigdServer server = ConfigdServer.start(config); // must not throw: N>1 + edge boot is supported
+        ConfigdServer server = ConfigdServer.start(config);
         try {
             assertNotNull(server.fanOutServer(),
                     "the edge endpoint must be bound at N>1 (the boot guard is gone)");
@@ -137,7 +133,6 @@ class NGreaterThanOneBootSmokeTest {
                 "a booted N>1+edge deploy must persist the fixed-at-deploy topology descriptor");
     }
 
-    /** Polls the group's owner-published monitor view until it is LEADER (single-node self-election). */
     private static void awaitLeader(RaftNode node, String label) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
         while (System.nanoTime() < deadline) {
@@ -149,7 +144,6 @@ class NGreaterThanOneBootSmokeTest {
         throw new AssertionError(label + " did not self-elect LEADER within 30s");
     }
 
-    /** Proposes a PUT to shard {@code gid} on its owner and waits for the running tick loop to apply it. */
     private static void commitTo(MultiRaftDriver driver, int gid, String key, String value)
             throws Exception {
         byte[] cmd = CommandCodec.encodePut(key, value.getBytes(StandardCharsets.UTF_8));
@@ -160,7 +154,7 @@ class NGreaterThanOneBootSmokeTest {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         while (System.nanoTime() < deadline) {
             if (driver.getGroup(gid).monitorView().lastApplied() > before) {
-                return; // committed + applied by the running tick loop
+                return;
             }
             Thread.sleep(20);
         }

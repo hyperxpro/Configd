@@ -44,8 +44,6 @@ class MiniJepsenSweepTest {
             int elect = c.stepUntilLeader(600, ctx);
             assertTrue(elect > 0, ctx + ": no initial leader");
 
-            // The sustained mixed-fault storm: every few ticks, roll a random fault and (when a
-            // leader exists) propose a write. Safety is asserted on every step below.
             for (int t = 0; t < HORIZON; t++) {
                 c.step();
                 c.assertSafety(ctx);
@@ -86,12 +84,9 @@ class MiniJepsenSweepTest {
                 }
             }
 
-            // Final heal -> the whole cluster must converge (the mixed-fault history left it
-            // recoverable, never wedged). A committed write must propagate to ALL N nodes.
             c.net.healAll();
             c.net.setDropRate(0.0);
             c.net.endDelaySpike();
-            // Land a fresh write on the (re-elected) leader.
             int settle = c.stepUntilLeader(2_000, ctx);
             assertTrue(settle > 0, ctx + ": no leader after final heal");
             int ldr = c.findLeader();

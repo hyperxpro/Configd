@@ -8,9 +8,6 @@ import java.security.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link ConfigSigner}.
- */
 class ConfigSignerTest {
 
     private static KeyPair keyPair;

@@ -59,11 +59,9 @@ import static org.junit.jupiter.api.Assertions.fail;
  * Real-server conformance for the watch plane: drives the thin reference client's {@link Watch} against a
  * live {@link FanOutServer} (the actual {@code 0x02} WATCH_CREATE->CREATED->EVENT path, per-shard cursor
  * advance, and CURSOR_ACK), not a mock. With static sharding this is one shard (gid 0), so it exercises the
- * vector-native cursor machinery at its degenerate single-component width.
+ * vector-native cursor machinery at its degenerate single-component width. Both server-obeys and
+ * client-conforms assertions live here, against the one live {@link FanOutServer}.
  */
-// Server-obeys + client-conforms on the 0x02 watch plane: WATCH_CREATE->CREATED->EVENT with a per-shard cursor
-// vector plus CURSOR_ACK (from-now tail), the shared-connection multiplex where a sibling survives, and the
-// loud refuse of a cursored share, all against a live FanOutServer.
 @Timeout(60)
 @Tag("clause:W1-2")
 @Tag("clause:W3-4")
@@ -151,7 +149,6 @@ class RealServerWatchTest {
             shared.awaitCreated(Duration.ofSeconds(20));
 
             publish(1, "/multi/key", "v");
-            // The real server fans the commit to BOTH watch_ids over the ONE shared connection.
             await("host watch received the commit", () -> countChanges(hostEvents) >= 1);
             await("shared watch received the same commit on the same connection", () -> countChanges(sharedEvents) >= 1);
         }
@@ -169,7 +166,6 @@ class RealServerWatchTest {
         }
     }
 
-    // -----------------------------------------------------------------------
 
     private ConfigdClientConfig clientConfig(int port) {
         return ConfigdClientConfig.builder()

@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  *
  * <p><b>This does NOT rebaseline the 0x01 fixtures.</b> The built {@code 0x01} golden image is
  * frozen and proven byte-identical by {@link EdgeFrameCodecGoldenFixtureTest}; 0x02 is purely
- * additive (W1-3 / W5-11). The <b>rebaseline rule</b> for v2 is the same: a drift here is a
+ * additive. The <b>rebaseline rule</b> for v2 is the same: a drift here is a
  * 0x02 wire-format change - revert, or regenerate via {@code EdgeFrameGoldenBytesGenerator}.
  */
 class EdgeFrameCodecV2GoldenFixtureTest {
@@ -65,7 +65,6 @@ class EdgeFrameCodecV2GoldenFixtureTest {
                 assertArrayEquals(expected, live,
                         "edge 0x02 wire drift for " + name + ": expected " + hf.formatHex(expected)
                                 + " but got " + hf.formatHex(live) + ". Revert, or regenerate.");
-                // Golden bytes decode back to the canonical frame.
                 assertEquals(frame, EdgeFrameCodec.decode(expected),
                         "v2 golden bytes for " + name + " must decode to the canonical frame");
             }));
@@ -73,7 +72,6 @@ class EdgeFrameCodecV2GoldenFixtureTest {
         return tests;
     }
 
-    /** Every v2 golden entry is a structurally valid frame the decoder accepts, and peekLength agrees. */
     @Test
     void everyV2GoldenEntryDecodesCleanly() {
         Map<String, byte[]> golden = EdgeFrameGoldenBytes.forVersion(V2 & 0xFF);
@@ -86,7 +84,6 @@ class EdgeFrameCodecV2GoldenFixtureTest {
         }
     }
 
-    /** The v2 fixture set covers every WATCH_* frame type. */
     @Test
     void v2FixturesCoverEveryWatchFrameType() {
         Map<String, EdgeFrame> fixtures = EdgeFrameFixtures.buildV2();
@@ -103,7 +100,7 @@ class EdgeFrameCodecV2GoldenFixtureTest {
     }
 
     /**
-     * The design-A property (W1-3 / W5-11): a frame reused on a 0x02 connection is
+     * The design-A property: a frame reused on a 0x02 connection is
      * byte-identical to its 0x01 encoding <b>except the version byte (offset 4) and the CRC
      * trailer</b>. Proven against the same NOTIFY payload encoded at both versions.
      */
@@ -138,7 +135,7 @@ class EdgeFrameCodecV2GoldenFixtureTest {
                 "the reused NOTIFY's 0x01 encoding must equal the frozen v1 golden image");
     }
 
-    /** A WATCH_* frame cannot be encoded on a 0x01 connection (W5-11) - caller error. */
+    /** A WATCH_* frame cannot be encoded on a 0x01 connection - caller error. */
     @Test
     void watchFrameRefusedUnderV1Encode() {
         EdgeFrame watchCreate = EdgeFrameFixtures.buildV2().get("watch_create.bin");
@@ -150,9 +147,7 @@ class EdgeFrameCodecV2GoldenFixtureTest {
                 "encoding a WATCH_* frame explicitly at 0x01 must throw");
     }
 
-    // Per-connection version pin (peekVersion + decode(byte[], version)).
 
-    /** {@code peekVersion} returns the stamped version (no CRC validation) and bounds-rejects a short buffer. */
     @Test
     void peekVersionReturnsStampedVersionAndBoundsChecks() {
         byte[] v1 = EdgeFrameCodec.encode(new EdgeFrame.CursorAck(1));
@@ -164,13 +159,11 @@ class EdgeFrameCodecV2GoldenFixtureTest {
         assertEquals(ErrorCode.FRAME_CORRUPT, ex.code());
     }
 
-    /** {@code decode(data, negotiatedVersion)} fails closed when the stamped version != the pin (W5-11). */
     @Test
     void decodeWithNegotiatedVersionPinsPerConnection() {
         byte[] v1Frame = EdgeFrameCodec.encode(new EdgeFrame.CursorAck(9));
         byte[] v2Frame = EdgeFrameCodec.encode(EdgeFrameFixtures.buildV2().get("watch_cancel.bin"), V2);
 
-        // Matching pins succeed.
         assertEquals(new EdgeFrame.CursorAck(9),
                 EdgeFrameCodec.decode(v1Frame, EdgeFrameCodec.EDGE_WIRE_VERSION));
         assertEquals(new EdgeFrame.WatchCancel(7L), EdgeFrameCodec.decode(v2Frame, V2));

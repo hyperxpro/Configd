@@ -35,8 +35,6 @@ class EdgeStalenessDistributionSimTest {
         sim.attachProbe(probe);
         sim.run();
 
-        // The probe MECHANISM must have produced a non-vacuous global distribution: every
-        // delivered commit yields one publish->visible sample.
         assertTrue(probe.globalCount() > 0,
                 "the probe must have recorded propagation samples (mechanism non-vacuity)");
 
@@ -48,8 +46,6 @@ class EdgeStalenessDistributionSimTest {
         assertTrue(p50 <= p99 && p99 <= max,
                 "distribution must be monotone: p50=" + p50 + " p99=" + p99 + " max=" + max);
 
-        // The staleness frontier on the edges is sane: with heartbeats flowing under
-        // a no-fault schedule, the edges are not stuck DISCONNECTED at end of run.
         for (EdgeActor edge : sim.edges()) {
             if (edge.alive() && edge.cursor() > 0) {
                 assertTrue(edge.staleness() != StalenessTracker.State.DISCONNECTED,

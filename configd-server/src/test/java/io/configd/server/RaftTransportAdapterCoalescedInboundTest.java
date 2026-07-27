@@ -29,11 +29,10 @@ class RaftTransportAdapterCoalescedInboundTest {
 
     private static final NodeId FROM = NodeId.of(42);
 
-    /** Fake transport that captures the registered handler so the test can fire frames at it. */
     private static final class CapturingTransport implements RaftTransport {
         private MessageHandler handler;
 
-        @Override public void send(NodeId target, Object message) { /* unused */ }
+        @Override public void send(NodeId target, Object message) { }
 
         @Override public void registerHandler(MessageHandler handler) { this.handler = handler; }
 
@@ -59,7 +58,6 @@ class RaftTransportAdapterCoalescedInboundTest {
         transport.fire(FROM, coalesced);
 
         assertEquals(2, dispatched.size(), "one dispatch per coalesced group");
-        // Group order preserved: 5 then 2.
         assertEquals(5, dispatched.get(0).groupId());
         assertEquals(2, dispatched.get(1).groupId());
         for (Dispatch d : dispatched) {
@@ -78,7 +76,6 @@ class RaftTransportAdapterCoalescedInboundTest {
         List<Dispatch> dispatched = new ArrayList<>();
         adapter.registerInboundHandler((from, gid, msg) -> dispatched.add(new Dispatch(from, gid, msg)));
 
-        // A normal AppendEntries stamped with groupId 7.
         FrameCodec.Frame normal =
                 RaftMessageCodec.encode(new AppendEntriesRequest(3L, FROM, 0L, 0L, List.of(), 0L), 7);
         transport.fire(FROM, normal);

@@ -80,10 +80,6 @@ public final class FanOutBuffer implements CommitNotificationSource {
         this(maxEntries, FanOutMetrics.NOOP);
     }
 
-    /**
-     * @param maxEntries ring capacity (&gt; 0)
-     * @param metrics    overflow metrics sink (non-null; use {@link FanOutMetrics#NOOP})
-     */
     public FanOutBuffer(int maxEntries, FanOutMetrics metrics) {
         if (maxEntries <= 0) throw new IllegalArgumentException("maxEntries must be positive: " + maxEntries);
         this.capacity = maxEntries;
@@ -94,31 +90,15 @@ public final class FanOutBuffer implements CommitNotificationSource {
     }
 
     /**
-     * Publishes a commit notification to the ring buffer. Allocation-free: the
-     * notification reference is stored directly. On overflow the oldest entry is
-     * evicted (drop-oldest); the eviction is recorded so a lagging consumer gets
-     * a GAP rather than silently-skipped data.
-     *
-     * <p>Named {@code publish} (not {@code append}) so it does not form an
-     * overload pair with the legacy {@link #append(ConfigDelta)} - overloading
-     * would make {@code append(null)} ambiguous for existing callers/tests.
-     *
-     * @param notification the committed-mutation notification (non-null)
+     * Named {@code publish} (not {@code append}) so it does not form an overload
+     * pair with the legacy {@link #append(ConfigDelta)} - overloading would make
+     * {@code append(null)} ambiguous for existing callers/tests.
      */
     public void publish(CommitNotification notification) {
         Objects.requireNonNull(notification, "notification must not be null");
         int slot = (int) (head % capacity);
-        // On eviction, tail must advance before the slot is overwritten in place.
-        // If the overwrite happened first, a reader mid-copy could read the
-        // just-overwritten (lapped) slot and then read tail before the writer's
-        // tail-advance store executed, so its t2==t1 verify would pass and the
-        // non-GAP run would contain a duplicate/non-ascending seq. With tail
-        // advanced first, any reader that observes the overwritten slot value is -
-        // by the volatile total order (the tail write precedes the ring write, so
-        // observing the ring write implies observing the tail write) - guaranteed
-        // to observe t2 > t1 and return GAP.
-        //
-        // Order within an evicting publish:
+        // Order within an evicting publish (see class doc for why the order is
+        // load-bearing for readSince's GAP detection):
         //   1. capture evicted seq from the slot (before it is clobbered)
         //   2. lastEvictedSeq.set(evictedSeq)   - watermark BEFORE tail advance,
         //      so a reader observing the advanced tail also observes the watermark
@@ -133,10 +113,10 @@ public final class FanOutBuffer implements CommitNotificationSource {
             }
             droppedTotal.incrementAndGet();
             metrics.onDropped();
-            tail = tail + 1;            // volatile write - retire oldest BEFORE overwrite
+            tail = tail + 1;
         }
-        ring.set(slot, notification);   // volatile write - publishes slot content
-        head = head + 1;                // volatile write - publishes the new head
+        ring.set(slot, notification);
+        head = head + 1;
     }
 
     /**
@@ -173,8 +153,8 @@ public final class FanOutBuffer implements CommitNotificationSource {
         // slot (i % capacity) requires head to reach i + capacity, which requires
         // tail to advance past t1 (eviction) - which we just proved did not happen.
         // Hence the copy is a clean, strictly ascending, contiguous run.
-        long t1 = tail;             // volatile read
-        long h = head;              // volatile read AFTER tail
+        long t1 = tail;
+        long h = head;
         // If head has outrun tail + capacity, the writer is mid-eviction and has
         // already advanced head past the point where tail WILL move (publish order
         // is ring.set -> head++ -> tail=, so head can be observed ahead of the
@@ -197,7 +177,7 @@ public final class FanOutBuffer implements CommitNotificationSource {
                 out.add(n);
             }
         }
-        long t2 = tail;             // volatile read AFTER the copy
+        long t2 = tail;
         if (t2 != t1) {
             // Eviction happened during the copy - potential in-place overwrite.
             return Result.gap(oldestSeqInternal());
@@ -233,11 +213,11 @@ public final class FanOutBuffer implements CommitNotificationSource {
     }
 
     public List<ConfigDelta> deltasSince(long fromVersion) {
-        long currentTail = tail;   // volatile read
-        long currentHead = head;   // volatile read
+        long currentTail = tail;
+        long currentHead = head;
         List<ConfigDelta> result = new ArrayList<>();
         for (long i = currentTail; i < currentHead; i++) {
-            CommitNotification n = ring.get((int) (i % capacity));  // volatile read
+            CommitNotification n = ring.get((int) (i % capacity));
             if (n != null && n.delta().fromVersion() >= fromVersion) {
                 result.add(n.delta());
             }

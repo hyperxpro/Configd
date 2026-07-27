@@ -155,7 +155,6 @@ edge_serves_at() { # <edge-host:port> <key> <value> <seq>
     [ "$out" = "$3" ]
 }
 
-# sustained writer (background): cycles e2e/k<i>, retries across churn
 writer_loop() {
     local i=0
     while :; do
@@ -196,7 +195,6 @@ assert_monotonic() { # <file> <min-samples> <desc>
         || fail "$3: X-Configd-Cursor DECREASED (monotonic-read violation)"
 }
 
-# Phase 0 — build images, secrets, bring the steady-state topology up
 log "phase 0: stage jars, verify shaded-jar contents, build images, secrets, up"
 
 command -v docker >/dev/null || fail "docker not available"
@@ -264,7 +262,6 @@ poll_until $READY_BUDGET 1 "all 3 edges ready (first sync)" edges_ready \
     || fail "edges never reached ready (first verified apply)"
 pass "3 edge nodes subscribed over mTLS, verified-applied, ready"
 
-# Phase 1 — sustained writes -> propagation to every edge
 log "phase 1: sustained writes -> bounded-read propagation on every edge"
 
 writer_loop & WRITER_PID=$!
@@ -292,7 +289,6 @@ for i in "${!EDGE_PORTS[@]}"; do
 done
 pass "secure/ key fail-closed at EVERY edge (503, never served from edge state)"
 
-# Phase 2 — kill the leader mid-stream
 log "phase 2: kill leader cp$LEADER mid-stream (SIGKILL), watch every edge for monotonicity"
 
 for i in 0 1 2; do
@@ -359,7 +355,6 @@ poll_until $READY_BUDGET 1 "cp$DEAD_CP rejoined" \
 DEAD_CP=""
 pass "killed node restarted and rejoined the cluster"
 
-# Phase 3 — partition one edge: ladder, demotion, catch-up, convergence
 VICTIM=edge1
 VICTIM_PORT=${EDGE_PORTS[0]}
 VICTIM_IP=172.28.0.21   # the compose static IP — reconnect MUST reuse it or the
@@ -401,7 +396,6 @@ RC=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://$(edge_api "$VI
 [ "$RC" = "200" ] || fail "healed $VICTIM /health/ready returned $RC"
 pass "victim caught up (serves marker-p3@>=$MARKER3_SEQ), staleness CURRENT, ready 200"
 
-# Phase 4 — bootstrap a FRESH edge mid-load, then quiesce + byte-equal audit
 log "phase 4: bootstrap edge4 mid-load (zero state => C3 SNAPSHOT_FIRST)"
 
 "${COMPOSE[@]}" --profile bootstrap up -d edge4 || fail "edge4 start failed"
@@ -419,7 +413,6 @@ poll_until $CONVERGE_BUDGET 1 "edge4 serves marker-p4@>=$MARKER4_SEQ" \
     || fail "edge4 never converged to the live stream after bootstrap"
 pass "edge4 cut over to the live stream (serves marker-p4@>=$MARKER4_SEQ)"
 
-# quiesce + byte-equal audit
 log "quiesce: stop the writer, fence-write, then byte-compare every key on every edge"
 kill "$WRITER_PID" 2>/dev/null; wait "$WRITER_PID" 2>/dev/null; WRITER_PID=""
 

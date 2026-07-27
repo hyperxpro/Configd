@@ -28,9 +28,6 @@ public final class TcpRaftTransportRaceTest {
     private TcpRaftTransportRaceTest() {
     }
 
-    // (1) enqueue(out==null) vs teardown-clear vs connect-publish
-    //     Assert: no frame left queued with no scheduled connect (no wedge),
-    //     and no double in-flight connect.
     @JCStressTest
     @State
     @Description("(1) enqueue(out==null) vs teardown vs connect-publish — no wedge, no double connect")
@@ -52,7 +49,6 @@ public final class TcpRaftTransportRaceTest {
 
         @Actor
         public void teardownActor() {
-            // Tear down the currently-published stream (whatever it is).
             StreamRef s = p.out();
             if (s != null) {
                 p.teardown(s);
@@ -74,8 +70,6 @@ public final class TcpRaftTransportRaceTest {
         }
     }
 
-    // (2) scheduleConnect CAS vs connectAndStartWriter finally reset+reschedule
-    //     Assert: exactly one pending connect survives when frames remain.
     @JCStressTest
     @State
     @Description("(2) scheduleConnect CAS vs connect finally reset — exactly one pending connect")
@@ -125,9 +119,6 @@ public final class TcpRaftTransportRaceTest {
         }
     }
 
-    // (3) reader-teardown vs writer-teardown on the SAME socket s
-    //     Assert: identity guard makes teardown idempotent - at most one
-    //     "wasLive" clear; never clobber a newer published socket.
     @JCStressTest
     @State
     @Description("(3) reader-teardown vs writer-teardown same socket — idempotent, one clear")
@@ -162,8 +153,6 @@ public final class TcpRaftTransportRaceTest {
         }
     }
 
-    // (4) socket/out volatile publish vs writer-start visibility
-    //     Assert: the writer never sees a null/stale stream; never two writers.
     @JCStressTest
     @State
     @Description("(4) publish vs writer-start visibility — never null stream, never two writers")
@@ -193,9 +182,6 @@ public final class TcpRaftTransportRaceTest {
         }
     }
 
-    // (5) close() vs in-flight connect past the closed gate
-    //     Assert: at most a benign leaked socket - no writer left running, no
-    //     use of a closed stream; the queue is cleared and closed observed.
     @JCStressTest
     @State
     @Description("(5) close() vs in-flight connect past closed gate — benign leak only")
@@ -228,9 +214,6 @@ public final class TcpRaftTransportRaceTest {
         }
     }
 
-    // (6) drop-oldest evict vs writer poll - framesDropped accounting exact
-    //     Assert: total accounted frames (delivered + dropped + still-queued) is
-    //     conserved; no double count, no missed count.
     @JCStressTest
     @State
     @Description("(6) drop-oldest evict vs writer poll — framesDropped accounting is exact")
@@ -270,9 +253,6 @@ public final class TcpRaftTransportRaceTest {
             int qs = p.queueSize();
             boolean droppedSane = dropped >= 0 && dropped <= 1;
             boolean queueSane = qs >= 0 && qs <= 2;
-            // Frames that entered after construction-fill: the 2 pre-filled + 1 sent
-            // = 3 slots' worth of liveness. With one evict and one poll, at most one
-            // frame is dropped; queue holds the rest minus what poll removed.
             r.r1 = (droppedSane && queueSane) ? 1 : 9;
         }
     }

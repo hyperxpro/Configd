@@ -56,7 +56,6 @@ class WalRecordIntegrityTest {
         return node;
     }
 
-    /** TAMPER: a complete record with a recomputed frame CRC32 is refused by the HMAC. */
     @Test
     void tamperedCompleteWalRecordIsRefused(@TempDir Path tempDir) throws Exception {
         Storage storage = Storage.file(tempDir);
@@ -75,14 +74,12 @@ class WalRecordIntegrityTest {
         tamperWalRecomputingFrameCrc(raw, (byte) 'A', (byte) 'B');
         Files.write(wal, raw, StandardOpenOption.TRUNCATE_EXISTING);
 
-        // Replay (RaftLog construction reads the WAL) must REFUSE.
         IntegrityException ex = assertThrows(IntegrityException.class,
                 () -> new RaftLog(storage, env));
         assertTrue(ex.getMessage().contains("MAC") || ex.getMessage().contains("CRC32C"),
                 "expected a tamper refusal, got: " + ex.getMessage());
     }
 
-    /** TORN: a truncated trailing record is dropped; the prior committed entries recover. */
     @Test
     void tornTrailingWalRecordIsToleratedAndPriorEntriesRecover(@TempDir Path tempDir) throws Exception {
         Storage storage = Storage.file(tempDir);
@@ -115,7 +112,6 @@ class WalRecordIntegrityTest {
         assertEquals("2", recovered.get("b"));
     }
 
-    // helpers
 
     /**
      * Walks the {@code [len][data][crc32c]} FileStorage frames (after the 8-byte container header),

@@ -83,10 +83,8 @@ import java.util.Objects;
  */
 public final class AuditLog {
 
-    /** Default cap on the in-memory chain before the on-disk log rotates. */
     public static final int DEFAULT_MAX_RECORDS = 100_000;
 
-    /** Storage log name for the persisted audit records. */
     public static final String LOG_NAME = "security-audit";
 
     /**
@@ -133,8 +131,6 @@ public final class AuditLog {
     // The chain MAC key. Non-null => keyed HMAC-SHA256 mode; null => keyless SHA-256.
     private final SecretKey key;
 
-    // The in-memory chain (append order). Bounded to maxRecords; rotation drops
-    // the oldest entries and re-seeds the on-disk log from the surviving head.
     private final Deque<Record> chain = new ArrayDeque<>();
     private byte[] lastHash = GENESIS_PREV_HASH;
 
@@ -151,13 +147,6 @@ public final class AuditLog {
         this(storage, clock, DEFAULT_MAX_RECORDS, null);
     }
 
-    /**
-     * Creates a KEYLESS audit log with an explicit record cap.
-     *
-     * @param storage    durable, append+CRC storage (non-null)
-     * @param clock      time source (non-null)
-     * @param maxRecords cap on the in-memory chain before rotation (&gt; 0)
-     */
     public AuditLog(Storage storage, Clock clock, int maxRecords) {
         this(storage, clock, maxRecords, null);
     }
@@ -192,7 +181,7 @@ public final class AuditLog {
             throw new IllegalArgumentException("maxRecords must be positive: " + maxRecords);
         }
         this.maxRecords = maxRecords;
-        this.key = key; // nullable
+        this.key = key;
     }
 
     /**
@@ -314,7 +303,6 @@ public final class AuditLog {
     }
 
     private static VerifyResult verifyRecords(List<Record> records, SecretKey verifyKey) {
-        // An empty chain verifies vacuously true.
         byte[] expectedPrev = null;
         for (int i = 0; i < records.size(); i++) {
             Record r = records.get(i);
@@ -348,7 +336,6 @@ public final class AuditLog {
         return new ArrayList<>(chain);
     }
 
-    /** The number of records currently retained in memory. */
     public synchronized int size() {
         return chain.size();
     }
@@ -363,7 +350,6 @@ public final class AuditLog {
         }
     }
 
-    // Canonical encoding + hashing
 
     /**
      * Canonical, unambiguous record bytes: a fixed field order, each
@@ -390,7 +376,7 @@ public final class AuditLog {
      * of a persisted record breaks the chain, not just a payload edit.
      */
     private static byte[] chainHash(SecretKey key, int recordVersion, byte[] prevHash, byte[] canonical) {
-        byte[] header = recordHeaderBytes(recordVersion); // [AUDIT_MAGIC:4][recordVersion:1]
+        byte[] header = recordHeaderBytes(recordVersion);
         if (key != null) {
             try {
                 Mac mac = Mac.getInstance("HmacSHA256");
@@ -438,12 +424,12 @@ public final class AuditLog {
     private static byte[] encode(Record r) {
         byte[] canonical = canonicalBytes(r.timestampMs(), r.actor(), r.action(), r.target(), r.outcome());
         ByteArrayOutputStream out = new ByteArrayOutputStream(canonical.length + 72 + 5);
-        writeInt(out, AUDIT_MAGIC);       // 4-byte record-header magic
-        out.write(r.recordVersion());     // 1-byte record version
-        writeLong(out, canonical.length); // 8-byte length prefix for the canonical block
+        writeInt(out, AUDIT_MAGIC);
+        out.write(r.recordVersion());
+        writeLong(out, canonical.length);
         out.writeBytes(canonical);
-        out.writeBytes(r.prevHash());     // 32 bytes
-        out.writeBytes(r.recordHash());   // 32 bytes
+        out.writeBytes(r.prevHash());
+        out.writeBytes(r.recordHash());
         return out.toByteArray();
     }
 
@@ -466,7 +452,6 @@ public final class AuditLog {
         }
         int cLen = (int) canonicalLen;
         int cStart = pos;
-        // Parse the canonical block back into fields.
         long ts = readLong(frame, pos);
         pos += 8;
         String actor = readField(frame, pos);

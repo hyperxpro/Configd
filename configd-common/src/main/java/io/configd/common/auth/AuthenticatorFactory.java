@@ -15,7 +15,6 @@ import io.configd.common.config.ConfigSource;
  */
 public interface AuthenticatorFactory {
 
-    /** The provider name this factory builds - matched against the configured provider chain. */
     String type();
 
     /**

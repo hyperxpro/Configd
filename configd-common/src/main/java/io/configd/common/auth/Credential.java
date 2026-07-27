@@ -46,7 +46,6 @@ public sealed interface Credential
             chain = List.copyOf(chain);
         }
 
-        /** The leaf (end-entity) certificate - the peer's own certificate - or {@code null} if the chain is empty. */
         public X509Certificate leaf() {
             return chain.isEmpty() ? null : chain.get(0);
         }
@@ -57,7 +56,6 @@ public sealed interface Credential
         }
     }
 
-    /** An {@code Authorization: Bearer <token>} value (opaque token or a JWT). Redacted in {@code toString}. */
     record BearerToken(String token) implements Credential {
         public BearerToken {
             Objects.requireNonNull(token, "token");

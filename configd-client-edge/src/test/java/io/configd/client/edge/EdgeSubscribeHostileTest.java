@@ -56,7 +56,7 @@ class EdgeSubscribeHostileTest {
     void badSignatureIsFailClosed() throws Exception {
         KeyPair leader = StreamFixtures.ed25519();
         KeyPair impostor = StreamFixtures.ed25519();
-        ConfigDelta wrongSig = StreamFixtures.signedPut(impostor, 0, 1, 1, "k", "v"); // signed by the wrong key
+        ConfigDelta wrongSig = StreamFixtures.signedPut(impostor, 0, 1, 1, "k", "v");
         assertFailClosed(leader, conn -> {
             conn.readFrame();
             conn.send(new EdgeFrame.SubscribeOk(1L, EdgeFrame.Mode.TAIL));
@@ -82,7 +82,7 @@ class EdgeSubscribeHostileTest {
     void epochReplayIsFailClosed() throws Exception {
         KeyPair leader = StreamFixtures.ed25519();
         ConfigDelta first = StreamFixtures.signedPut(leader, 0, 1, 5, "k1", "v1");
-        ConfigDelta replay = StreamFixtures.signedPut(leader, 1, 2, 5, "k2", "v2"); // epoch 5 again ⇒ replay
+        ConfigDelta replay = StreamFixtures.signedPut(leader, 1, 2, 5, "k2", "v2");
         assertFailClosed(leader, conn -> {
             conn.readFrame();
             conn.send(new EdgeFrame.SubscribeOk(2L, EdgeFrame.Mode.TAIL));
@@ -95,13 +95,13 @@ class EdgeSubscribeHostileTest {
     void chainGapReBootstrapsAtCursorZero() throws Exception {
         KeyPair leader = StreamFixtures.ed25519();
         ConfigDelta d1 = StreamFixtures.signedPut(leader, 0, 1, 1, "k1", "v1");
-        ConfigDelta gap = StreamFixtures.signedPut(leader, 2, 3, 2, "k3", "v3"); // fromVersion 2 ≠ applied 1
+        ConfigDelta gap = StreamFixtures.signedPut(leader, 2, 3, 2, "k3", "v3");
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
             conn.readFrame();
             conn.send(new EdgeFrame.SubscribeOk(1L, EdgeFrame.Mode.TAIL));
             if (conn.index == 1) {
                 conn.send(StreamFixtures.notify(1, 100, d1));
-                conn.send(StreamFixtures.notify(3, 100, gap)); // gap ⇒ re-bootstrap
+                conn.send(StreamFixtures.notify(3, 100, gap));
             } else {
                 conn.parkUntilClosed();
             }
@@ -137,7 +137,6 @@ class EdgeSubscribeHostileTest {
     @Test
     void truncatedSnapshotDiscardedAndReBootstraps() throws Exception {
         KeyPair leader = StreamFixtures.ed25519();
-        // Build a real body, chunk it, but declare 3 chunks and send only 2 before END ⇒ truncation.
         HamtMap<String, VersionedValue> data = HamtMap.<String, VersionedValue>empty()
                 .put("a", new VersionedValue("1".getBytes(StandardCharsets.UTF_8), 5L, 0L))
                 .put("b", new VersionedValue("2".getBytes(StandardCharsets.UTF_8), 5L, 0L));
@@ -147,9 +146,9 @@ class EdgeSubscribeHostileTest {
             conn.readFrame();
             conn.send(new EdgeFrame.SubscribeOk(5L, EdgeFrame.Mode.SNAPSHOT_FIRST));
             if (conn.index == 1) {
-                conn.send(new EdgeFrame.SnapshotBegin(5L, chunks.size() + 1, (long) body.length + 4)); // over-declare
+                conn.send(new EdgeFrame.SnapshotBegin(5L, chunks.size() + 1, (long) body.length + 4));
                 for (EdgeFrame.SnapshotChunk c : chunks) {
-                    conn.send(c); // one short of the declared count
+                    conn.send(c);
                 }
                 conn.send(new EdgeFrame.SnapshotEnd(5L));
             } else {

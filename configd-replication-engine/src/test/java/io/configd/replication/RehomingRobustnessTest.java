@@ -113,7 +113,7 @@ class RehomingRobustnessTest {
         CountingThrowingChecker checker = new CountingThrowingChecker();
         MultiRaftDriver driver = new MultiRaftDriver(LOCAL, Clock.system());
         driver.setOwnerPool(pool);
-        RaftNode g = buildLeaderBoundTo(pool, 0, checker); // bound to owner0, LEADER
+        RaftNode g = buildLeaderBoundTo(pool, 0, checker);
         driver.addGroup(0, g);
 
         // Occupy owner0 so the rehome's FIRST barrier task QUEUES behind a blocker.
@@ -131,22 +131,21 @@ class RehomingRobustnessTest {
         Thread coordinator = new Thread(() -> {
             coordStarted.countDown();
             try {
-                driver.rehomeGroup(0, 1);                                       // uninterruptible: completes
-                interruptReasserted.set(Thread.currentThread().isInterrupted()); // deferred interrupt honoured
+                driver.rehomeGroup(0, 1);
+                interruptReasserted.set(Thread.currentThread().isInterrupted());
             } catch (Throwable t) {
                 rehomeError.set(t);
             }
         }, "rehome-coordinator");
         coordinator.start();
         assertTrue(coordStarted.await(5, TimeUnit.SECONDS));
-        Thread.sleep(150);          // let the coordinator reach the first barrier .get() (owner0 blocked)
-        coordinator.interrupt();    // interrupt while it waits on that barrier
+        Thread.sleep(150);
+        coordinator.interrupt();
         Thread.sleep(50);
-        releaseBlocker.countDown();  // owner0 runs the queued handoff task; the barrier completes
+        releaseBlocker.countDown();
         coordinator.join(10_000);
         assertFalse(coordinator.isAlive(), "coordinator must finish (no deadlock under the uninterruptible fix)");
 
-        // FIXED contract: the rehome completed ATOMICALLY to owner1, and the interrupt was re-asserted.
         assertNull(rehomeError.get(), "uninterruptible rehome must complete, not throw: " + rehomeError.get());
         assertTrue(interruptReasserted.get(), "the deferred interrupt must be re-asserted on the coordinator");
         assertEquals(1, driver.currentOwnerIndex(0), "rehome completed to owner1 despite the interrupt");
@@ -156,7 +155,7 @@ class RehomingRobustnessTest {
         boolean wedged = pool.ownerByIndex(0).submit(g::boundToAnotherThread).get(5, TimeUnit.SECONDS)
                 && pool.ownerByIndex(1).submit(g::boundToAnotherThread).get(5, TimeUnit.SECONDS);
         assertFalse(wedged, "group must not be wedged on HANDOFF (owned by nobody) after the interrupt");
-        onOwner(pool, 1, () -> driver.tickOwner(1)); // tick on the new owner - must not fire
+        onOwner(pool, 1, () -> driver.tickOwner(1));
         assertEquals(0, checker.ownerFires.get(),
                 "the completed handoff must leave the group serviceable on owner1 — zero fires: "
                         + checker.firstViolation.get());
@@ -185,7 +184,7 @@ class RehomingRobustnessTest {
         // migrating empty, node.isDetached()==true - an abandoned-handoff terminal state.
         driver.rehomeGroup(0, 1);
         assertEquals(1, driver.currentOwnerIndex(0), "rehomed to owner1");
-        onOwner(pool, 1, g::beginHandoff); // detach: ownerThread -> HANDOFF, never adopt
+        onOwner(pool, 1, g::beginHandoff);
 
         // Drive the REAL production path. The flush body (a counter, not flushDurable, so no fire here)
         // must LAND once - the dispatch must terminate, not re-dispatch forever.
@@ -201,12 +200,11 @@ class RehomingRobustnessTest {
         assertEquals(1, landed,
                 "the dispatched flush on a wedged group must LAND exactly once (not livelock, not run repeatedly)");
 
-        // owner1 must be idle/responsive (not pegged by a self-replenishing queue).
         AtomicInteger probe = new AtomicInteger();
         pool.ownerByIndex(1).submit(probe::incrementAndGet).get(5, TimeUnit.SECONDS);
         assertEquals(1, probe.get(), "owner1 must service new work promptly (not livelocked)");
 
-        onOwner(pool, 1, g::adoptOwnerThread); // clear the wedge for a clean shutdown
+        onOwner(pool, 1, g::adoptOwnerThread);
         pool.shutdown();
         pool.awaitTermination(10, TimeUnit.SECONDS);
     }
@@ -224,12 +222,9 @@ class RehomingRobustnessTest {
         RaftNode g = buildLeaderBoundTo(pool, 0, checker);
         driver.addGroup(0, g);
 
-        // Deterministic wedge: rehome 0->1, then detach on owner1 without adopting (ownerThread=HANDOFF).
         driver.rehomeGroup(0, 1);
         onOwner(pool, 1, g::beginHandoff);
 
-        // An inbound message routed on the wedged group's current owner (owner1) must FIRE the net once
-        // (handleMessage off the HANDOFF sentinel) - not spin re-dispatching forever.
         var ee = assertThrows(java.util.concurrent.ExecutionException.class,
                 () -> pool.ownerByIndex(1).submit(
                                 () -> driver.routeMessage(0, new RequestVoteRequest(0L, PHANTOM, 0L, 0L, true)))
@@ -240,12 +235,11 @@ class RehomingRobustnessTest {
                 "expected raft_owner_thread, got: " + (cause == null ? "null" : cause.getMessage()));
         assertEquals(1, checker.ownerFires.get(), "the net must have fired exactly once (no re-dispatch spin)");
 
-        // owner1 is responsive (not pegged by a self-replenishing queue).
         AtomicInteger probe = new AtomicInteger();
         pool.ownerByIndex(1).submit(probe::incrementAndGet).get(5, TimeUnit.SECONDS);
         assertEquals(1, probe.get(), "owner1 must service new work promptly (not livelocked)");
 
-        onOwner(pool, 1, g::adoptOwnerThread); // clear the wedge for a clean shutdown
+        onOwner(pool, 1, g::adoptOwnerThread);
         pool.shutdown();
         pool.awaitTermination(10, TimeUnit.SECONDS);
     }
@@ -271,21 +265,17 @@ class RehomingRobustnessTest {
         assertEquals(RaftRole.LEADER, g.role());
         driver.addGroup(0, g);
 
-        // Buffer an entry so quiesce has something to sync, then arm the fsync fault.
-        onOwner(pool, 0, () -> g.setGroupCommit((flush, d) -> { /* park */ }, 4096, 0));
+        onOwner(pool, 0, () -> g.setGroupCommit((flush, d) -> { }, 4096, 0));
         onOwner(pool, 0, () -> driver.propose(0, "x".getBytes()));
         syncFault.set(new RuntimeException("induced fsync failure"));
 
-        // Rehome 0->1: quiesce throws on owner0 BEFORE publish+detach - surfaced as IllegalStateException.
         assertThrows(IllegalStateException.class, () -> driver.rehomeGroup(0, 1),
                 "rehome must surface the quiesce failure");
 
-        // CLEAN: still routed to owner0 (no override published), owner0 still owns it (not the HANDOFF sentinel).
         assertEquals(0, driver.currentOwnerIndex(0), "no override should have been published (quiesce failed first)");
         boolean offOwner0 = pool.ownerByIndex(0).submit(g::boundToAnotherThread).get(5, TimeUnit.SECONDS);
         assertFalse(offOwner0, "owner0 must still own the group (not detached to HANDOFF)");
 
-        // Disarm; the group keeps working on owner0 with zero net fires.
         syncFault.set(null);
         onOwner(pool, 0, () -> { driver.propose(0, "y".getBytes()); driver.tickOwner(0); });
         assertEquals(0, checker.ownerFires.get(),
@@ -295,7 +285,6 @@ class RehomingRobustnessTest {
         pool.awaitTermination(10, TimeUnit.SECONDS);
     }
 
-    /** Delegating Storage whose {@code syncLog} throws when the fault is armed. */
     private static final class FaultingStorage implements Storage {
         private final Storage delegate;
         private final AtomicReference<RuntimeException> fault;

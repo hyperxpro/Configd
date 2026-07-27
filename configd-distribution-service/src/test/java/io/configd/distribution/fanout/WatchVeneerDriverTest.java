@@ -52,7 +52,6 @@ class WatchVeneerDriverTest {
     private FanOutBuffer buffer;
     private FanOutConnectionDriver driver;
 
-    // ---- harness ------------------------------------------------------------
 
     private void setup(WatchAuthorizer auth, String identity, FanOutBuffer buf, ReplaySource replay) {
         this.buffer = buf;
@@ -66,7 +65,6 @@ class WatchVeneerDriverTest {
         setup(auth, "edge-1", new FanOutBuffer(64), snapshotAt(0));
     }
 
-    /** Posts a frame and runs the resulting session command on the test (session) thread. */
     private void feed(EdgeFrame frame) {
         driver.onInboundFrame(frame);
         driver.drainInboundCommands();
@@ -82,12 +80,10 @@ class WatchVeneerDriverTest {
         feed(keyCreate(1, "/k/a"));
         tick(); // prove no data frame ever materializes
 
-        // Exactly one frame: the 403-class per-watch terminal.
         assertEquals(1, out.sent().size(), "exactly one frame — the reject");
         EdgeFrame.WatchCanceled cancel = assertInstanceOf(EdgeFrame.WatchCanceled.class, out.sent().get(0));
         assertEquals(1L, cancel.watchId());
         assertEquals(ErrorCode.NOT_AUTHORIZED, cancel.code());
-        // Zero payload-bearing frames precede it.
         assertTrue(out.sentOfType(EdgeFrame.WatchCreated.class).isEmpty());
         assertTrue(out.sentOfType(EdgeFrame.WatchEvent.class).isEmpty());
         assertTrue(out.sentOfType(EdgeFrame.SubscribeOk.class).isEmpty());
@@ -154,7 +150,7 @@ class WatchVeneerDriverTest {
 
     @Test
     void cancelOfOneWatchDoesNotPerturbAnother() {
-        setup(ALLOW); // empty buffer
+        setup(ALLOW);
         feed(keyCreate(1, "/k/a")); // first watch drives the shared drain (TAIL)
         feed(keyCreate(2, "/k/b")); // second watch rides the shared drain
 
@@ -166,7 +162,7 @@ class WatchVeneerDriverTest {
         assertTrue(round1.stream().anyMatch(e -> e.watchId() == 2L));
 
         out.clear();
-        feed(cancel(1)); // cancel A only
+        feed(cancel(1));
         buffer.publish(multiPut(2, "/k/a", "a2", "/k/b", "b2"));
         tick();
 
@@ -183,7 +179,7 @@ class WatchVeneerDriverTest {
         feed(cancel(1)); // id 1 stays burned in everUsed
         out.clear();
 
-        feed(keyCreate(1, "/k/b")); // reuse id 1 -> BAD_SUBSCRIBE
+        feed(keyCreate(1, "/k/b"));
         assertEquals(1, out.sent().size());
         assertReject(1, ErrorCode.BAD_SUBSCRIBE);
     }
@@ -202,7 +198,6 @@ class WatchVeneerDriverTest {
         assertTrue(out.sentOfType(EdgeFrame.WatchCanceled.class).isEmpty(),
                 "nothing is rejected at or below the live cap");
 
-        // One more live watch exceeds the cap -> BAD_SUBSCRIBE, and no ack precedes the reject.
         out.clear();
         feed(keyCreate(cap + 1, "/k/a"));
         assertEquals(1, out.sent().size(), "exactly one frame - the reject");
@@ -248,15 +243,13 @@ class WatchVeneerDriverTest {
     void resumeFromVectorCursorDeliversExactlyReadSinceSet() {
         setup(ALLOW, "edge-1", new FanOutBuffer(64), snapshotAt(0));
         for (long i = 1; i <= 5; i++) {
-            buffer.publish(put(i, "/k/" + i, "v")); // retained 1..5
+            buffer.publish(put(i, "/k/" + i, "v"));
         }
-        // FULL watch resuming at the single-component vector (gid=0, S=2).
         feed(fullCreate(1, 0, WatchCursor.of(0, 2)));
         tick();
 
         List<Long> delivered = out.sentOfType(EdgeFrame.WatchEvent.class).stream()
                 .map(EdgeFrame.WatchEvent::s).toList();
-        // Cross-check: the delivered set is exactly the scalar readSince(2) set, filtered (FULL => all).
         List<Long> expected = ((Result.Ok) buffer.readSince(2)).notifications().stream()
                 .map(CommitNotification::seq).toList();
         assertEquals(List.of(3L, 4L, 5L), delivered);

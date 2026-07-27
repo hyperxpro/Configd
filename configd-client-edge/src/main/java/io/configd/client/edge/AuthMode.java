@@ -17,10 +17,6 @@ public enum AuthMode {
     /** Authentication disabled: the client presents nothing but stays ready. */
     NO_AUTH;
 
-    /**
-     * Resolves the mode from config: a framed credential source ⇒ {@link #TOKEN}; else a client certificate
-     * ⇒ {@link #MTLS}; else {@link #NO_AUTH}.
-     */
     static AuthMode of(ConfigdClientConfig config) {
         if (config.credentialSource().isPresent()) {
             return TOKEN;

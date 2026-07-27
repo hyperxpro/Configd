@@ -16,7 +16,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class ConfigWriteServiceTest {
 
-    /** A proposer that returns a fixed terminal commit outcome. */
     private static ConfigWriteService.RaftProposer proposerReturning(ProposeCommitResult outcome) {
         return (scope, keys, cmd) -> outcome;
     }
@@ -111,7 +110,6 @@ class ConfigWriteServiceTest {
     void putWithRateLimiting() {
         RateLimiter limiter = new RateLimiter(
                 io.configd.common.Clock.system(), 0.001, 0.001);
-        // Exhaust the bucket
         limiter.tryAcquire();
 
         ConfigWriteService service = new ConfigWriteService(

@@ -34,11 +34,6 @@ public final class WireFixtureGenerator {
 
     private WireFixtureGenerator() {}
 
-    /**
-     * Builds the canonical fixture map: one entry per {@link MessageType},
-     * keyed by the lowercase enum name. Encoding is deterministic - the
-     * same map will be produced on every invocation.
-     */
     public static Map<String, byte[]> build() {
         Map<String, byte[]> out = new LinkedHashMap<>();
         for (MessageType type : MessageType.values()) {

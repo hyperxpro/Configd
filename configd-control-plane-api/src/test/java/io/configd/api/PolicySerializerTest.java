@@ -39,7 +39,6 @@ class PolicySerializerTest {
         return rules.get(0);
     }
 
-    // round-trip / accept
 
     @Test
     void emptySubtreeIsEmptyPolicy() {
@@ -141,8 +140,6 @@ class PolicySerializerTest {
 
     @Test
     void bindingToUndefinedRoleIsBenignNotAFailure() {
-        // Well-formed-but-incomplete: a binding to a not-yet-loaded role parses fine and is simply inert.
-        // This is what lets the loader's whole-subtree rebuild converge across out-of-order multi-key writes.
         ConfigPolicy p = PolicySerializer.parse(subtree("_acl/bindings/alice", "not-yet-defined"));
         assertEquals(Set.of("not-yet-defined"), p.bindings().get("alice"));
         assertTrue(p.roles().isEmpty());
@@ -150,7 +147,6 @@ class PolicySerializerTest {
 
     @Test
     void roleWithNoRulesParses() {
-        // An empty role value (only comments/blanks) is a defined role with zero rules - inert, not an error.
         ConfigPolicy p = PolicySerializer.parse(subtree("_acl/roles/empty", "# nothing here\n\n"));
         assertTrue(p.roles().containsKey("empty"));
         assertTrue(p.roles().get("empty").rules().isEmpty());
@@ -168,7 +164,6 @@ class PolicySerializerTest {
 
     @Test
     void explicitSupportedFormatIsAcceptedAndContributesNothing() {
-        // _acl/format=1 is metadata: accepted, but adds no role/binding.
         ConfigPolicy p = PolicySerializer.parse(subtree(
                 "_acl/format", "1",
                 "_acl/roles/reader", "allow READ app.",
@@ -186,7 +181,6 @@ class PolicySerializerTest {
 
     @Test
     void supportedFormatToleratesSurroundingWhitespace() {
-        // A trailing newline / surrounding whitespace is tolerated (line-oriented text format).
         assertTrue(PolicySerializer.parse(subtree("_acl/format", "1\n")).roles().isEmpty());
         assertTrue(PolicySerializer.parse(subtree("_acl/format", "  1  ")).roles().isEmpty());
     }
@@ -212,13 +206,11 @@ class PolicySerializerTest {
 
     @Test
     void unsupportedFormatRejectsTheWholeSubtree() {
-        // An unsupported version rejects EVEN a subtree that also carries a valid role (all-or-nothing).
         assertThrows(PolicyParseException.class, () -> PolicySerializer.parse(subtree(
                 "_acl/format", "2",
                 "_acl/roles/reader", "allow READ app.")));
     }
 
-    // reject matrix (fail-closed: any malformed input -> PolicyParseException)
 
     @Test
     void rejectUnknownAclKeyShape() {
@@ -267,14 +259,13 @@ class PolicySerializerTest {
     @Test
     void rejectMissingFields() {
         assertThrows(PolicyParseException.class,
-                () -> PolicySerializer.parse(subtree("_acl/roles/r", "allow")));            // no caps/prefix
+                () -> PolicySerializer.parse(subtree("_acl/roles/r", "allow")));
         assertThrows(PolicyParseException.class,
                 () -> PolicySerializer.parse(subtree("_acl/roles/r", "allow READ a.\nbogusline")));
     }
 
     @Test
     void rejectIsAllOrNothing() {
-        // A single malformed line rejects the WHOLE subtree (never silently partial).
         assertThrows(PolicyParseException.class, () -> PolicySerializer.parse(subtree(
                 "_acl/roles/good", "allow READ a.",
                 "_acl/roles/bad", "allow NOPE a.")));

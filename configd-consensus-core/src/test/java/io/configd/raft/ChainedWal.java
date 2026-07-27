@@ -71,15 +71,10 @@ final class ChainedWal {
             }
         }
 
-        /** Appends a chained record and returns its hash (the new chain head). */
         byte[] append(long index, long term, String command) {
             byte[] payload = inner(index, term, chainHead, command.getBytes(StandardCharsets.UTF_8));
             storage.appendToLog("raft-log", env.wrap(RaftArtifactMagic.WALE_MAGIC, gid, payload));
             chainHead = sha256(payload);
-            // Maintain the anchor exactly as RaftLog's durable append does: a standalone term write when
-            // the term rises, then the durable-head raise. This keeps the anchor consistent with the
-            // well-formed prefix so a later crafted attack (tail rollback / front truncation) is the
-            // thing an anchor gate refuses.
             if (term > anchor.current().currentTerm()) {
                 anchor.writeTermVote(term, AnchorRecord.VOTED_FOR_NULL);
             }
@@ -87,7 +82,6 @@ final class ChainedWal {
             return chainHead;
         }
 
-        /** Sets the anchor's authenticated snapshot boundary. */
         void setSnapshot(long snapshotIndex, long snapshotTerm) {
             anchor.writeSnapshot(snapshotIndex, snapshotTerm,
                     anchor.current().lastDurableIndex(), anchor.current().lastDurableTerm());

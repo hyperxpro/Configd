@@ -21,11 +21,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * {@link YamlConfigSource}: nested-to-dotted flattening, sequence + scalar handling, the SafeConstructor
- * + resource-exhaustion guards (arbitrary Java types, alias-bomb, deep nesting all rejected), fail-closed
- * behavior on malformed / non-mapping input, and that a YAML layer sits BELOW system properties.
- */
 class YamlConfigSourceTest {
 
     @Test
@@ -97,7 +92,6 @@ class YamlConfigSourceTest {
                 "an unreadable / missing config file fails the boot rather than starting on no config");
     }
 
-    // ---- fail-closed parsing ---------------------------------------------------------------------
 
     @Test
     void malformedYamlIsAConfigException() {
@@ -133,7 +127,6 @@ class YamlConfigSourceTest {
         assertThrows(ConfigException.class, () -> YamlConfigSource.fromYaml(deep, "deep"));
     }
 
-    // layering: YAML sits below system properties + environment
 
     @Test
     void systemPropertyOverridesYamlFile() {

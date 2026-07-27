@@ -23,7 +23,7 @@ public final class AuthInterceptor {
             // canonical constructor cannot reduce that access.
             public Authenticated {
                 Objects.requireNonNull(roles, "roles must not be null");
-                roles = Set.copyOf(roles); // non-null + immutable snapshot; rejects null elements; fixes aliasing/CME
+                roles = Set.copyOf(roles);
             }
         }
         record Denied(String reason) implements AuthResult {}

@@ -97,9 +97,9 @@ public final class EdgeClientCore {
     }
 
     /**
-     * A directive the core asks the shell/sim to act on (the shell owns sockets/reconnect;
-     * the core owns the policy). Sealed and tiny.
-     */
+         * A directive the core asks the shell/sim to act on (the shell owns sockets/reconnect;
+         * the core owns the policy).
+         */
     public sealed interface ConnectionDirective {
         /**
          * Reconnect to the next configured fan-out endpoint and re-SUBSCRIBE carrying
@@ -139,9 +139,7 @@ public final class EdgeClientCore {
         }
     }
 
-    /** Default heartbeat cadence assumed by the silence detector ({@code heartbeatMs}). */
     public static final long DEFAULT_HEARTBEAT_MS = 250L;
-    /** Default silence factor: reconnect after this many missed heartbeat intervals. */
     public static final int DEFAULT_SILENCE_FACTOR = 8;
 
     /**
@@ -174,10 +172,8 @@ public final class EdgeClientCore {
     private final FrameSink sink;
     private final PoisonPillPolicy poisonPolicy;
 
-    /** Applied-mutation seq this edge has reached (cursor; 0 = nothing applied yet). */
     private long cursor;
 
-    /** The highest cursor we have acked to the server (so tick acks only on advance). */
     private long lastAckedSeq;
 
     /** The last heartbeat's {@code latestSeq} (server's highest seq), -1 until first heartbeat. */
@@ -201,18 +197,13 @@ public final class EdgeClientCore {
      */
     private boolean filtered;
 
-    /** Snapshot reassembly state (between SNAPSHOT_BEGIN and SNAPSHOT_END). */
     private final List<EdgeFrame.SnapshotChunk> pendingChunks = new ArrayList<>();
     private long pendingSnapshotSeq = -1L;
     private boolean inSnapshot;
-    /** BEGIN-declared chunk count for the in-flight transfer (accumulation cap). */
     private int pendingChunkCount;
-    /** BEGIN-declared total byte length for the in-flight transfer (accumulation cap). */
     private long pendingTotalBytes;
-    /** Running sum of accumulated chunk payload bytes for the in-flight transfer. */
     private long accumulatedSnapshotBytes;
 
-    /** Pending connection directives for the shell/sim to drain. */
     private final Deque<ConnectionDirective> directives = new ArrayDeque<>();
 
     /** True once a fatal ERROR_CLOSE / reconnect was queued, so we do not spam directives. */
@@ -236,7 +227,6 @@ public final class EdgeClientCore {
      */
     private StalenessTracker.State lastTickStalenessState;
 
-    /** Latched once the poison policy decided TERMINAL: the core stops applying. */
     private boolean terminal;
 
     /**
@@ -257,15 +247,10 @@ public final class EdgeClientCore {
 
     private ApplyFaultInjector applyFaultInjector;
 
-    /**
-     * TEST-ONLY: installs an {@link ApplyFaultInjector} ({@code null} = none). See the
-     * interface javadoc; production never calls this.
-     */
     public void setApplyFaultInjectorForTest(ApplyFaultInjector injector) {
         this.applyFaultInjector = injector;
     }
 
-    // Diagnostic counters, read by tests and by sim digest folding.
 
     private long appliedCount;
     private int gapsDetected;
@@ -367,10 +352,6 @@ public final class EdgeClientCore {
         this.lastTickStalenessState = client.staleness();
     }
 
-    /**
-     * Convenience constructor with default heartbeat cadence + silence factor and the
-     * default strong-read key class.
-     */
     public EdgeClientCore(Clock clock, InvariantMonitor invariantMonitor,
                           MetricsRegistry.Counter implausibleCounter, FrameSink sink) {
         this(clock, invariantMonitor, implausibleCounter, StrongReadKeyClass.DEFAULT, sink,
@@ -383,12 +364,10 @@ public final class EdgeClientCore {
     }
 
     /**
-     * Handles one inbound {@link EdgeFrame} (server to edge). The single entry point for all
-     * protocol effects; the shell/sim decodes the wire and calls this. Edge-to-server frames
-     * ({@code SUBSCRIBE}, {@code CURSOR_ACK}) are never passed here.
-     *
-     * @param frame the inbound frame (non-null)
-     */
+         * Handles one inbound {@link EdgeFrame} (server to edge). The single entry point for all
+         * protocol effects; the shell/sim decodes the wire and calls this. Edge-to-server frames
+         * ({@code SUBSCRIBE}, {@code CURSOR_ACK}) are never passed here.
+         */
     public void onFrame(EdgeFrame frame) {
         Objects.requireNonNull(frame, "frame must not be null");
         if (terminal) {
@@ -526,7 +505,6 @@ public final class EdgeClientCore {
         return true;
     }
 
-    /** Translates a {@link PoisonPillPolicy.Action} into the shell-visible directive. */
     private void actOnPoison(PoisonPillPolicy.Action action, String what) {
         switch (action) {
             // Bounded retry: re-subscribe at the CURRENT cursor; the server redelivers the
@@ -601,7 +579,6 @@ public final class EdgeClientCore {
         }
         long seq = e.snapshotSeq();
         try {
-            // Reassemble + deserialize the snapshot body (bounds-checked by the codec).
             byte[] body = EdgeSnapshotCodec.reassemble(pendingChunks);
             ConfigSnapshot snapshot = EdgeSnapshotCodec.deserialize(body);
             inSnapshot = false;
@@ -663,8 +640,6 @@ public final class EdgeClientCore {
             if (h.latestSeq() > cursor) {
                 cursor = h.latestSeq();
             }
-            // cursor now == latestSeq (when the covered-S advanced), so the frontier advances -
-            // the edge is caught up to the covered position.
             boolean advanced = client.recordHeartbeatFrontier(h.latestSeq(), cursor, h.serverNowMillis());
             if (advanced) {
                 frontierAdvances++;
@@ -707,7 +682,7 @@ public final class EdgeClientCore {
      */
     public void tick(long nowMillis) {
         if (terminal) {
-            return; // Terminal: the shell is about to exit the process.
+            return;
         }
         // Re-ack on advance (idempotent; covers an earlier would-block ack).
         if (cursor > lastAckedSeq) {
@@ -765,7 +740,6 @@ public final class EdgeClientCore {
         return directives.pollFirst();
     }
 
-    /** True if any directive is pending. */
     public boolean hasDirective() {
         return !directives.isEmpty();
     }
@@ -830,7 +804,6 @@ public final class EdgeClientCore {
         return readStore.snapshot();
     }
 
-    /** Covered-frontier staleness state. */
     public StalenessTracker.State stalenessState() {
         return client.staleness();
     }
@@ -850,17 +823,14 @@ public final class EdgeClientCore {
         return mode;
     }
 
-    /** Number of notifications applied. */
     public long appliedCount() {
         return appliedCount;
     }
 
-    /** Number of GAP results observed. */
     public int gapsDetected() {
         return gapsDetected;
     }
 
-    /** Number of snapshots applied (cutover). */
     public int snapshotsApplied() {
         return snapshotsApplied;
     }
@@ -880,7 +850,6 @@ public final class EdgeClientCore {
         return snapshotChunksRejected;
     }
 
-    /** Number of heartbeats observed. */
     public int heartbeatsObserved() {
         return heartbeatsObserved;
     }
@@ -898,7 +867,6 @@ public final class EdgeClientCore {
         return verifyRejections;
     }
 
-    /** True if a snapshot transfer is in progress (between BEGIN and END). */
     public boolean inSnapshot() {
         return inSnapshot;
     }
@@ -911,7 +879,6 @@ public final class EdgeClientCore {
         return disconnectedRebootstraps;
     }
 
-    /** The poison-pill policy (counter reads for the metrics pump and tests). */
     public PoisonPillPolicy poisonPolicy() {
         return poisonPolicy;
     }

@@ -5,42 +5,6 @@
 # repo root itself. Exits non-zero on ANY failure. Prints a final PASS/FAIL
 # summary table with per-step timings.
 #
-# WHAT A GREEN GATE-1 PROVES:
-#   (a) build      clean reactor build + full suite: `./mvnw -B -fae clean verify`
-#                  BUILD SUCCESS, 0 failures, 0 errors, >= 21,000 tests run
-#                  (count tripwire; 8 known accounted skips are OK).
-#   (b) linz       the linearizability harness self-tests: the Porcupine
-#                  checker builds from the repo's Go sources and all 8
-#                  PORCUPINE_BIN-gated CheckerSelfTest tests run green, 0 skips.
-#   (c) jmh        all 9 JMH benchmark classes EXECUTE (exit 0, "Run complete")
-#                  at minimal params — executability only, numbers are NOT
-#                  performance evidence.
-#   (d) tlc        the 3 TLA+ specs pass TLC ("No error") at REDUCED smoke
-#                  bounds (gates/spec-smoke/*.cfg — same invariants as the full
-#                  configs, smaller constants).
-#   (e) multinode  a real 3-node cluster elects a leader, accepts writes,
-#                  survives a leader kill -9, and loses no committed data
-#                  (gates/smoke-multinode.sh — control-plane only).
-#
-# WHAT A GREEN GATE-1 DOES *NOT* PROVE:
-#   - nothing exercises the headline edge-propagation pipeline end-to-end (it
-#     does not exist yet; the suite cannot fail on it).
-#   - no test runs a black-holed peer against the real transport, so gate-1
-#     stays green while one routine network fault freezes a node.
-#   - the restart-after-compaction data-loss path is unreachable by the suite
-#     (compaction itself is unreachable).
-#   - ack-equals-commit (ADR-0033: HTTP 200 "Committed: seq=S" only after
-#     quorum commit + apply) is real, but the discriminating proof lives in
-#     the unit/sim suites, not here: configd-testkit AckEqualsCommitTest
-#     (randomized leader-kill in the append->commit window, 3 fault shapes),
-#     configd-consensus-core CommitOutcomeSeamTest, configd-server
-#     RaftProposerCommitConfirmTest. gate-1's smoke-multinode writes
-#     really-committed entries.
-# Additional limits: the TLC step checks SMOKE bounds only, not full
-# assurance; JMH executability != a performance baseline; the multinode smoke
-# is control-plane only (edge fan-out is not demonstrable); most of the test
-# count is one seed sweep — quote 1,408, not 21,408.
-#
 # Environment knobs:
 #   PORCUPINE_BIN   path to a prebuilt Porcupine checker (skips the Go build)
 #   GATE1_SKIP_LINZ=1  skip step (b) entirely — reported LOUDLY as SKIPPED

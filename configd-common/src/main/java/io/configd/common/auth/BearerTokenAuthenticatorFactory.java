@@ -2,11 +2,6 @@ package io.configd.common.auth;
 
 import io.configd.common.config.ConfigSource;
 
-/**
- * Built-in factory for the {@code bearer} (static shared-secret) mode. Reads {@code configd.auth.bearer.token}
- * (required, fail-closed if absent), {@code configd.auth.bearer.principal} (default {@code "root"}), and
- * {@code configd.auth.bearer.roles} (default none).
- */
 public final class BearerTokenAuthenticatorFactory implements AuthenticatorFactory {
 
     @Override

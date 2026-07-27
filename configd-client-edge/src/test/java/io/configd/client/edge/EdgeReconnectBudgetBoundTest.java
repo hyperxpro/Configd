@@ -38,7 +38,7 @@ class EdgeReconnectBudgetBoundTest {
         // Accept, read the SUBSCRIBE, send NOTHING, close. No positive frame => the ordinary budget increments
         // strictly and the client MUST give up.
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            conn.readFrame(); // drain the SUBSCRIBE, then fall off the handler => socket closes
+            conn.readFrame();
         })) {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(config(server.port(), leader))) {
                 client.subscribeFullStore(SubscribeOptions.defaults());
@@ -61,7 +61,7 @@ class EdgeReconnectBudgetBoundTest {
         // forever; now each connection is torn down before it reaches stability, so the rapid-failure ceiling
         // accrues and the client gives up — bounded, DESPITE every connection's budget-resetting positive frame.
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            conn.readFrame(); // the SUBSCRIBE
+            conn.readFrame();
             conn.send(new EdgeFrame.SubscribeOk(1L, EdgeFrame.Mode.TAIL));
             conn.send(new EdgeFrame.Heartbeat(1L, System.currentTimeMillis()));
             // fall off the handler => socket closes immediately => a rapid (pre-stability) failure

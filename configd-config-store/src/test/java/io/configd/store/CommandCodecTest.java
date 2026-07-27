@@ -10,9 +10,6 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link CommandCodec} - encode/decode roundtrip for all command types.
- */
 class CommandCodecTest {
 
     private static byte[] bytes(String s) {
@@ -133,7 +130,6 @@ class CommandCodecTest {
             CommandCodec.DecodedCommand.Batch batch = (CommandCodec.DecodedCommand.Batch) decoded;
             assertEquals(3, batch.mutations().size());
 
-            // Verify order and types
             ConfigMutation.Put put0 = assertInstanceOf(ConfigMutation.Put.class,
                     batch.mutations().get(0));
             assertEquals("a", put0.key());
@@ -217,7 +213,6 @@ class CommandCodecTest {
     @Nested
     class TotalDecodeHardening {
 
-        /** Assert decode rejects {@code bad} with the domain type and never leaks BufferUnderflow. */
         private void assertMalformed(byte[] bad) {
             assertThrows(CommandCodec.MalformedCommandException.class,
                     () -> CommandCodec.decode(bad));
@@ -229,7 +224,6 @@ class CommandCodecTest {
             } catch (BufferUnderflowException e) {
                 fail("decode leaked BufferUnderflowException instead of MalformedCommandException");
             } catch (CommandCodec.MalformedCommandException expected) {
-                // ok
             }
         }
 

@@ -56,15 +56,6 @@ import java.util.stream.IntStream;
  */
 public interface ShardMap {
 
-    /**
-     * Resolves the shard (Raft group id) that owns {@code key} within {@code scope}. A pure, total
-     * function of its arguments: the same {@code (scope, key)} always returns the same group id, and the
-     * returned id is always a member of {@link #shardIds()}.
-     *
-     * @param scope the configuration scope tier (selects the pool of groups; never null)
-     * @param key   the configuration key (the routing key; never null)
-     * @return the opaque group id owning the key - always one of {@link #shardIds()}
-     */
     int shardFor(ConfigScope scope, String key);
 
     /**

@@ -24,10 +24,6 @@ public interface ConfigSource {
     /** The value for {@code key}, or empty if this source does not define it. Never returns blank-as-absent. */
     Optional<String> getString(String key);
 
-    /**
-     * The value for {@code key}, or a {@link ConfigException} if it is absent or blank. Use for values
-     * with no sensible default whose absence must fail the boot.
-     */
     default String getRequiredString(String key) {
         return getString(key)
                 .filter(v -> !v.isBlank())
@@ -35,11 +31,6 @@ public interface ConfigSource {
                         "required configuration key '" + key + "' is not set (or is blank)"));
     }
 
-    /**
-     * The value for {@code key} parsed as a base-10 int, or {@code defaultValue} if absent. A present but
-     * non-integer value is a {@link ConfigException} (fail-closed): a typo in a numeric knob must fail the
-     * boot, not silently fall back to the default and mask the mistake.
-     */
     default int getInt(String key, int defaultValue) {
         Optional<String> v = getString(key);
         if (v.isEmpty()) {
@@ -53,7 +44,6 @@ public interface ConfigSource {
         }
     }
 
-    /** As {@link #getInt} but for a base-10 long. Present-but-unparseable is a {@link ConfigException}. */
     default long getLong(String key, long defaultValue) {
         Optional<String> v = getString(key);
         if (v.isEmpty()) {
@@ -133,10 +123,6 @@ public interface ConfigSource {
                 .collect(Collectors.toUnmodifiableList());
     }
 
-    /**
-     * The set of defined keys that start with {@code prefix}. Used to enumerate repeated blocks, such as
-     * per-issuer or per-provider configuration. The prefix is matched literally against the dotted keys.
-     */
     Set<String> keysWithPrefix(String prefix);
 
     /**

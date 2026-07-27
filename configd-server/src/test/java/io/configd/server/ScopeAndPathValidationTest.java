@@ -25,26 +25,16 @@ import org.junit.jupiter.api.Test;
 /**
  * The edge contract for scope-through-the-API and the superset key-validation gate, driven through the
  * transport-agnostic {@link AdminApiHandler} decision core (both the JDK and Netty HTTP adapters delegate
- * to it, so this is the single source of truth). Proves:
+ * to it, so this is the single source of truth for both).
  *
- * <ul>
- *   <li><b>Superset key validation</b>: a corpus of currently-valid keys all pass; only
- *       blank / &gt;1024-byte keys are rejected 400 - no currently-valid key becomes invalid. A strict
- *       grammar (absolute, seg-char, canonical) would reject several corpus keys ({@code db.host}
- *       not absolute, {@code a//b} empty segment, {@code secure/../killswitch} dot-dot, {@code :}/{@code @}),
- *       which is exactly why it is NOT applied to this legacy flat-key surface.</li>
- *   <li><b>Scope parsing</b>: {@code ?scope=} is parsed case-insensitively and threaded to the
- *       write path (PUT/DELETE) and the read path (GET); absent => {@code GLOBAL} (the default, byte
- *       identical to the prior surface); an unknown value => 400 and NEVER routes (fail-closed, no
- *       silent mis-route).</li>
- * </ul>
+ * <p>The key-validation gate deliberately does NOT apply a strict grammar (absolute, seg-char, canonical):
+ * several currently-valid keys ({@code db.host}, {@code a//b}, {@code secure/../killswitch}, {@code :}/
+ * {@code @}) would fail one, so tightening validation here would reject real production keys.
  *
- * <p>See {@code ShardedRoutingTest} for the read-your-writes-per-scope proof over the REAL routing seams,
- * and {@code docs/wiring/increment-1-scope-and-path-validation.md}.
+ * <p>See {@code ShardedRoutingTest} for the read-your-writes-per-scope proof over the REAL routing seams.
  */
 class ScopeAndPathValidationTest {
 
-    /** Captures the scope/keys the wiring routes to the write and read paths. */
     private static final class Recorder {
         final AtomicReference<ConfigScope> writeScope = new AtomicReference<>();
         final AtomicReference<List<String>> writeKeys = new AtomicReference<>();
@@ -81,7 +71,6 @@ class ScopeAndPathValidationTest {
                 (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null);
     }
 
-    /** Builds a request whose {@code uri().getPath()} decodes to {@code /v1/config/<key>}. */
     private static AdminApiHandler.AdminRequest req(String method, String key, String query, byte[] body) {
         final URI uri;
         try {
@@ -99,7 +88,6 @@ class ScopeAndPathValidationTest {
         };
     }
 
-    // ---- superset key-validation gate ---------------------------------------------------------
 
     @Test
     void supersetGateAcceptsEveryCurrentlyValidKey() throws Exception {
@@ -145,14 +133,12 @@ class ScopeAndPathValidationTest {
         assertNotEquals(400, h.handle(req("PUT", "x".repeat(1024), null, "b".getBytes(StandardCharsets.UTF_8))).status());
     }
 
-    // ---- scope parsing -------------------------------------------------------------
 
     @Test
     void scopeQueryParamIsThreadedToWriteAndReadPaths() throws Exception {
         Recorder rec = new Recorder();
         AdminApiHandler h = handler(rec);
 
-        // PUT carries an explicit scope to the proposer (case-insensitive).
         assertEquals(200, h.handle(req("PUT", "k", "scope=REGIONAL", "b".getBytes(StandardCharsets.UTF_8))).status());
         assertEquals(ConfigScope.REGIONAL, rec.writeScope.get());
         assertEquals(200, h.handle(req("PUT", "k", "scope=local", "b".getBytes(StandardCharsets.UTF_8))).status());
@@ -162,7 +148,6 @@ class ScopeAndPathValidationTest {
         assertEquals(200, h.handle(req("PUT", "k", null, "b".getBytes(StandardCharsets.UTF_8))).status());
         assertEquals(ConfigScope.GLOBAL, rec.writeScope.get());
 
-        // DELETE carries scope to the proposer as well.
         assertEquals(200, h.handle(req("DELETE", "k", "scope=REGIONAL", new byte[0])).status());
         assertEquals(ConfigScope.REGIONAL, rec.writeScope.get());
 
@@ -193,7 +178,6 @@ class ScopeAndPathValidationTest {
         assertNull(rec.readScope.get(), "an unknown scope must not route to the reader");
     }
 
-    // the read 503 X-Leader-Hint is scope-aware
 
     @Test
     void read503LeaderHintIsResolvedForTheRequestScope() throws Exception {
@@ -214,7 +198,6 @@ class ScopeAndPathValidationTest {
                 readService, /* auth */ null, /* acl */ null, StrongReadPolicy.defaultPolicy(),
                 (scope, key) -> NodeId.of(scope.ordinal()), /* auditLog */ null, /* replayGuard */ null);
 
-        // Ordinary key + explicit linearizable + unconfirmable => 503 with a scope-aware hint.
         AdminApiHandler.AdminResponse regional =
                 h.handle(req("GET", "k", "consistency=linearizable&scope=REGIONAL", new byte[0]));
         assertEquals(503, regional.status());

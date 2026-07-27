@@ -23,10 +23,6 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for the edge cache module: {@link LocalConfigStore},
- * {@link VersionCursor}, and {@link StalenessTracker}.
- */
 class LocalConfigStoreTest {
 
     private LocalConfigStore store;
@@ -72,11 +68,9 @@ class LocalConfigStoreTest {
 
         @Test
         void applyDeltaAddsPuts() {
-            // Start with a snapshot
             ConfigSnapshot initial = buildSnapshot(1, "a", "1");
             store.loadSnapshot(initial);
 
-            // Apply delta adding "b" and updating "a"
             ConfigDelta delta = new ConfigDelta(1, 2, List.of(
                     new ConfigMutation.Put("a", bytes("updated")),
                     new ConfigMutation.Put("b", bytes("2"))
@@ -226,7 +220,7 @@ class LocalConfigStoreTest {
             StalenessTracker tracker = new StalenessTracker(testClock);
             tracker.recordUpdate(1, 0);
 
-            nanoTime.set(250_000_000L); // 250ms
+            nanoTime.set(250_000_000L);
             assertEquals(250, tracker.stalenessMs());
         }
     }
@@ -242,10 +236,8 @@ class LocalConfigStoreTest {
             ConcurrentHashMap<String, Throwable> errors = new ConcurrentHashMap<>();
             CountDownLatch startLatch = new CountDownLatch(1);
 
-            // Seed with initial snapshot
             store.loadSnapshot(buildSnapshot(0, "counter", "0"));
 
-            // Writer thread applies sequential deltas
             Thread writer = Thread.ofPlatform().start(() -> {
                 try {
                     startLatch.await();
@@ -262,7 +254,6 @@ class LocalConfigStoreTest {
                 }
             });
 
-            // Reader threads
             Thread[] readers = new Thread[readerCount];
             for (int r = 0; r < readerCount; r++) {
                 readers[r] = Thread.ofPlatform().start(() -> {
@@ -285,7 +276,6 @@ class LocalConfigStoreTest {
                             }
                             lastSeenVersion = ver;
 
-                            // Value must match version
                             String val = new String(result.value(), StandardCharsets.UTF_8);
                             long parsedVal = Long.parseLong(val);
                             if (parsedVal != ver) {
@@ -327,11 +317,9 @@ class LocalConfigStoreTest {
                     new ConfigMutation.Put("key", bytes("v2"))
             )));
 
-            // snap1 still shows old value
             assertArrayEquals(bytes("v1"), snap1.get("key"));
             assertEquals(1, snap1.version());
 
-            // Current store shows new value
             assertArrayEquals(bytes("v2"), store.get("key").value());
             assertEquals(2, store.currentVersion());
         }
@@ -370,7 +358,6 @@ class LocalConfigStoreTest {
             MetricsRegistry metrics = new MetricsRegistry();
             InvariantMonitor monitor = new InvariantMonitor(metrics, false);
 
-            // Store at version 0; client's cursor at version 5.
             LocalConfigStore store = new LocalConfigStore(
                     ConfigSnapshot.EMPTY, Clock.system(), monitor);
 
@@ -389,7 +376,6 @@ class LocalConfigStoreTest {
             MetricsRegistry metrics = new MetricsRegistry();
             InvariantMonitor monitor = new InvariantMonitor(metrics, false);
 
-            // Store at version 10; cursor at 5.
             ConfigSnapshot snap = new ConfigSnapshot(HamtMap.empty(), 10, 0);
             LocalConfigStore store = new LocalConfigStore(snap, Clock.system(), monitor);
 

@@ -29,7 +29,6 @@ import io.configd.common.config.ConfigSource;
  */
 public record RevocationPolicy(RevocationMode mode, boolean exemptInterNode, long responderTimeoutMs) {
 
-    /** The safe default: OFF (no online check), interior exempt. */
     public static final RevocationPolicy OFF = new RevocationPolicy(RevocationMode.OFF, true, 3_000L);
 
     public RevocationPolicy {
@@ -54,21 +53,10 @@ public record RevocationPolicy(RevocationMode mode, boolean exemptInterNode, lon
         return new RevocationPolicy(mode, exemptInterNode, responderTimeoutMs);
     }
 
-    /** Whether any online check runs at all (i.e. the posture is not {@link RevocationMode#OFF}). */
     public boolean enabled() {
         return mode != RevocationMode.OFF;
     }
 
-    /**
-     * The admission decision for a looked-up {@link RevocationStatus}: {@code true} to ADMIT the cert,
-     * {@code false} to REJECT it. This is where lax-vs-strict lives:
-     * <ul>
-     *   <li>{@code OFF} - admit everything (no check ran);</li>
-     *   <li>{@code LAX} - reject only a definite {@code REVOKED}; fail-OPEN on {@code UNKNOWN};</li>
-     *   <li>{@code STRICT} - admit only a definite {@code GOOD}; fail-CLOSED on {@code REVOKED} and
-     *       {@code UNKNOWN}.</li>
-     * </ul>
-     */
     public boolean admits(RevocationStatus status) {
         return switch (mode) {
             case OFF -> true;
@@ -78,10 +66,9 @@ public record RevocationPolicy(RevocationMode mode, boolean exemptInterNode, lon
     }
 
     /**
-     * Whether a looked-up status warrants the responder-unreachable alarm: an {@code UNKNOWN} answer while
-     * a check is enabled. Under {@code lax} this pairs with a fail-open admission (the alarm is the only
-     * signal the operator gets); under {@code strict} it pairs with a fail-closed rejection.
-     */
+         * Under {@code lax} this is the operator's ONLY signal that the responder is down (admission still
+         * succeeds); under {@code strict} it pairs with a fail-closed rejection.
+         */
     public boolean shouldAlarm(RevocationStatus status) {
         return enabled() && status == RevocationStatus.UNKNOWN;
     }

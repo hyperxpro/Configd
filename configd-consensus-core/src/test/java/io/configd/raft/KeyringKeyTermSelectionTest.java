@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  */
 class KeyringKeyTermSelectionTest {
 
-    private static final int WAL_MAGIC = 0x5257_414C; // "RWAL"
+    private static final int WAL_MAGIC = 0x5257_414C;
     private static final int SCOPE = 3;
     private static final String REF = "kid";
     private static final byte[] NODE = "nodeA".getBytes(StandardCharsets.UTF_8);
@@ -51,7 +51,7 @@ class KeyringKeyTermSelectionTest {
         SecretKey mac = key("configd/keyring-mac/v1", (byte) 0x33, "HmacSHA256");
         SecretKey kek = key("configd/keyring-wrap/v1", (byte) 0x33, "AES");
         NodeKeyring k = NodeKeyring.loadOrCreateOverIO(new CrashModelAnchorIO(disk), mac, kek, NODE, RNG);
-        k.rotateTerm(REF); // now activeTerm 2, two retained terms
+        k.rotateTerm(REF);
         List<RootKey> roots = k.unsealRootKeys(REF);
         SegmentKeyManager km = SegmentKeyManager.overTerms(roots, k.activeTerm());
         return IntegrityEnvelope.encrypting(km);
@@ -123,7 +123,7 @@ class KeyringKeyTermSelectionTest {
         IntegrityEnvelope env = twoTermHmacEnv(new CrashModelAnchorIO.Disk());
         byte[] rec = env.wrap(WAL_MAGIC, SCOPE, "term-2 hmac secret".getBytes(StandardCharsets.UTF_8));
         byte[] forged = rec.clone();
-        setKeyTerm(forged, 99); // no such term
+        setKeyTerm(forged, 99);
         repairCrc(forged);
         assertThrows(IntegrityException.class, () -> env.unwrap(WAL_MAGIC, SCOPE, forged),
                 "an HMAC keyTerm with no root in the keyring fails closed (macKey)");

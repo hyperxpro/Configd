@@ -219,7 +219,7 @@ class RaftLogEncryptionTest {
      * recomputes that frame's trailing CRC32C.
      */
     private static void flipCipherByteRepairingFrameCrc(byte[] wal) {
-        int frameStart = WalContainer.HEADER_SIZE; // first frame begins after the container header
+        int frameStart = WalContainer.HEADER_SIZE;
         int len = ((wal[frameStart] & 0xFF) << 24) | ((wal[frameStart + 1] & 0xFF) << 16)
                 | ((wal[frameStart + 2] & 0xFF) << 8) | (wal[frameStart + 3] & 0xFF);
         int dataStart = frameStart + 4;

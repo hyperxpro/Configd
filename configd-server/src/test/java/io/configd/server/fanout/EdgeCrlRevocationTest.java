@@ -184,7 +184,6 @@ class EdgeCrlRevocationTest {
         strictRevokedCertRejected(true);
     }
 
-    // strict + a good cert (empty CRL) -> admitted
 
     @Test
     void nettyStrictGoodCertAdmitted() throws Exception {
@@ -199,7 +198,6 @@ class EdgeCrlRevocationTest {
         }
     }
 
-    // lax + a missing CRL (responder-down analogue) -> fail-open + alarm
 
     @Test
     void nettyLaxMissingCrlFailsOpenAndAlarms() throws Exception {
@@ -232,7 +230,6 @@ class EdgeCrlRevocationTest {
         }
     }
 
-    // the interior is exempt BY CONSTRUCTION: the Raft transport carries no revocation hook
 
     @Test
     void raftInteriorTransportHasNoRevocationHook() throws Exception {
@@ -254,7 +251,6 @@ class EdgeCrlRevocationTest {
         return n.contains("Revocation") || n.contains("EdgeCertGate");
     }
 
-    // fixtures
 
     private int startMtlsServer(boolean netty, EdgeCertGate certGate) throws Exception {
         TlsConfig serverTls = new TlsConfig(
@@ -315,13 +311,13 @@ class EdgeCrlRevocationTest {
             } catch (java.net.SocketTimeoutException e) {
                 continue;
             } catch (IOException | RuntimeException e) {
-                return true; // reset / decode end -> closed
+                return true;
             }
             if (f == null) {
-                return true; // EOF -> closed
+                return true;
             }
             if (f instanceof EdgeFrame.SubscribeOk) {
-                return false; // admitted -> NOT rejected
+                return false;
             }
         }
         return false;

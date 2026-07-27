@@ -33,7 +33,6 @@ class DurabilityFailClosedTest {
         @Override public void restoreSnapshot(byte[] snapshot) { }
     }
 
-    /** Elects a single-node leader over the given storage, then returns node + log. */
     private static RaftNode leaderOver(Storage storage) {
         RaftConfig config = RaftConfig.of(NodeId.of(1), Set.of());
         RaftLog log = new RaftLog(storage);

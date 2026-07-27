@@ -143,7 +143,7 @@ class RaftSimulationTest {
             sim.addInvariantChecker(s -> {
                 assertSame(sim, s);
             });
-            sim.tick(); // Would throw AssertionError if not same
+            sim.tick();
         }
 
         @Test
@@ -234,18 +234,15 @@ class RaftSimulationTest {
             RaftSimulation sim = new RaftSimulation(42L, 3);
             sim.isolateNode(NodeId.of(0));
 
-            // NODE_0 cannot send to any other node
             long time = sim.clock().currentTimeMillis();
             sim.network().send(NodeId.of(0), NodeId.of(1), "a", time);
             sim.network().send(NodeId.of(0), NodeId.of(2), "b", time);
             assertEquals(0, sim.network().pendingCount());
 
-            // No other node can send to NODE_0 either (bidirectional)
             sim.network().send(NodeId.of(1), NodeId.of(0), "c", time);
             sim.network().send(NodeId.of(2), NodeId.of(0), "d", time);
             assertEquals(0, sim.network().pendingCount());
 
-            // Other nodes can still talk to each other
             sim.network().send(NodeId.of(1), NodeId.of(2), "e", time);
             assertEquals(1, sim.network().pendingCount());
         }

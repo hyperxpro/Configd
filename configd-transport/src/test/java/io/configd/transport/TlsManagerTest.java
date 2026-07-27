@@ -16,17 +16,11 @@ class TlsManagerTest {
     @TempDir
     Path tempDir;
 
-    /**
-     * Generates a PKCS12 keystore with a self-signed certificate using
-     * the JDK's keytool command, then exports the cert into a separate
-     * trust store. Returns a TlsConfig pointing at both files.
-     */
     private TlsConfig generateSelfSignedConfig() throws Exception {
         Path keyStorePath = tempDir.resolve("keystore.p12");
         Path trustStorePath = tempDir.resolve("truststore.p12");
         Path certFile = tempDir.resolve("cert.pem");
 
-        // Generate a self-signed cert + key in a PKCS12 keystore via keytool
         run("keytool",
                 "-genkeypair",
                 "-alias", "configd-test",
@@ -40,7 +34,6 @@ class TlsManagerTest {
                 "-storepass", "changeit",
                 "-keypass", "changeit");
 
-        // Export the certificate
         run("keytool",
                 "-exportcert",
                 "-alias", "configd-test",
@@ -49,7 +42,6 @@ class TlsManagerTest {
                 "-rfc",
                 "-file", certFile.toString());
 
-        // Import into a separate trust store
         run("keytool",
                 "-importcert",
                 "-alias", "configd-test",
@@ -74,7 +66,6 @@ class TlsManagerTest {
         assertEquals(0, rc, "Command failed: " + command[0]);
     }
 
-    // Construction
 
     @Test
     void createsSslContextFromSelfSignedCerts() throws Exception {
@@ -94,7 +85,6 @@ class TlsManagerTest {
         assertNotNull(manager.currentContext());
     }
 
-    // Reload
 
     @Test
     void reloadProducesNewContext() throws Exception {
@@ -117,7 +107,6 @@ class TlsManagerTest {
         SSLContext initial = manager.currentContext();
         assertNotNull(initial);
 
-        // Perform multiple concurrent reads interleaved with a reload
         var readResults = new java.util.concurrent.ConcurrentLinkedQueue<SSLContext>();
         int readerCount = 4;
         var latch = new java.util.concurrent.CountDownLatch(readerCount);
@@ -136,14 +125,12 @@ class TlsManagerTest {
             });
         }
 
-        // Reload while readers are active
         manager.reload();
         SSLContext afterReload = manager.currentContext();
         assertNotSame(initial, afterReload, "Reload must produce a new SSLContext");
 
         latch.await(5, java.util.concurrent.TimeUnit.SECONDS);
 
-        // All reads returned a non-null context - no torn reads
         assertFalse(readResults.isEmpty());
         for (SSLContext ctx : readResults) {
             assertNotNull(ctx);
@@ -163,12 +150,10 @@ class TlsManagerTest {
             contexts.add(manager.currentContext());
         }
 
-        // Each reload should produce a distinct SSLContext instance
         assertEquals(6, contexts.size(),
                 "Each reload must produce a distinct SSLContext");
     }
 
-    // Error handling
 
     @Test
     void constructorWithMissingFileThrows() {
@@ -184,7 +169,6 @@ class TlsManagerTest {
         assertThrows(NullPointerException.class, () -> new TlsManager(null));
     }
 
-    // TlsConfig record
 
     @Test
     void tlsConfigMtlsFactory() {

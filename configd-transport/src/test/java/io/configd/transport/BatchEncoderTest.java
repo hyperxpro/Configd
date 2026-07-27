@@ -31,7 +31,7 @@ class BatchEncoderTest {
 
         assertFalse(encoder.offer(peer, "a", 0));
         assertFalse(encoder.offer(peer, "b", 0));
-        assertTrue(encoder.offer(peer, "c", 0)); // hits max
+        assertTrue(encoder.offer(peer, "c", 0));
     }
 
     @Test
@@ -40,8 +40,8 @@ class BatchEncoderTest {
         NodeId peer = NodeId.of(1);
 
         encoder.offer(peer, "msg", 1000);
-        assertTrue(encoder.readyPeers(1000).isEmpty()); // not enough time
-        assertTrue(encoder.readyPeers(1000 + 200_000).contains(peer)); // time elapsed
+        assertTrue(encoder.readyPeers(1000).isEmpty());
+        assertTrue(encoder.readyPeers(1000 + 200_000).contains(peer));
     }
 
     @Test

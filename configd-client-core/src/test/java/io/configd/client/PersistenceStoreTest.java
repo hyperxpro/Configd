@@ -28,7 +28,6 @@ class PersistenceStoreTest {
         FileEpochStore store = new FileEpochStore(dir);
         store.save(10L);
         assertEquals(10L, store.load());
-        // Corrupt the sidecar: any anomaly demotes to 0 rather than trusting garbage as a high-water.
         Files.write(dir.resolve(FileEpochStore.EPOCH_LOCK_FILENAME), new byte[]{1, 2, 3});
         assertEquals(0L, new FileEpochStore(dir).load(), "a corrupt sidecar reads as absent (fail-open)");
     }
@@ -54,7 +53,6 @@ class PersistenceStoreTest {
     void fileCursorStoreFailsOpenOnCorruption(@TempDir Path dir) throws Exception {
         FileCursorStore store = new FileCursorStore(dir);
         store.save("sub:full", WatchCursor.of(0, 3L));
-        // Corrupt every persisted cursor file; a CRC-mismatched record reads as absent.
         try (var files = Files.list(dir)) {
             for (Path p : files.toList()) {
                 Files.write(p, new byte[]{9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9});

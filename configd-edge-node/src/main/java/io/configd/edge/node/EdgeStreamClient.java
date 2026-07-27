@@ -387,7 +387,6 @@ public final class EdgeStreamClient implements AutoCloseable {
         record Refreshed(Credential credential, long expiresAtMillis) { }
     }
 
-    // ---- Connect + subscribe (bounded) ----
 
     private Connection openAndSubscribe(InetSocketAddress endpoint, boolean failedOver)
             throws IOException {

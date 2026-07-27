@@ -13,13 +13,7 @@ package io.configd.distribution;
  */
 public interface FanOutMetrics {
 
-    /**
-     * Records that one notification was dropped (evicted by drop-oldest overflow).
-     * Backs the {@code fanout_buffer_dropped_total} metric. Called once per
-     * evicted entry, on the appender thread.
-     */
     void onDropped();
 
-    /** No-op sink for tests / pre-wire bootstraps. */
     FanOutMetrics NOOP = () -> {};
 }

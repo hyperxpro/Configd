@@ -27,7 +27,6 @@ import java.io.Closeable;
  */
 interface AnchorIO extends Closeable {
 
-    /** Whether the anchor artifact is present at open time (a real file / a stored value). */
     boolean exists();
 
     /** The full anchor image (container header + both slots), or {@code null} if absent. */

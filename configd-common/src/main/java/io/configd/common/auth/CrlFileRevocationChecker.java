@@ -70,18 +70,17 @@ public final class CrlFileRevocationChecker implements RevocationChecker {
     RevocationStatus checkAt(X509Certificate leaf, long nowMillis) {
         X509CRL crl = load();
         if (crl == null) {
-            return RevocationStatus.UNKNOWN; // missing / unparseable -> responder-down analogue
+            return RevocationStatus.UNKNOWN;
         }
         Date nextUpdate = crl.getNextUpdate();
         if (nextUpdate != null && nowMillis > nextUpdate.getTime()) {
             LOG.log(Level.WARNING, () -> "CRL " + crlFile + " is STALE (nextUpdate " + nextUpdate
                     + " has passed) -> UNKNOWN");
-            return RevocationStatus.UNKNOWN; // stale CRL -> let the mode decide (lax open / strict closed)
+            return RevocationStatus.UNKNOWN;
         }
         return crl.isRevoked(leaf) ? RevocationStatus.REVOKED : RevocationStatus.GOOD;
     }
 
-    /** Loads (mtime-cached) the CRL, or {@code null} on any missing/parse failure (never throws). */
     private X509CRL load() {
         try {
             long mtime = Files.getLastModifiedTime(crlFile).toMillis();

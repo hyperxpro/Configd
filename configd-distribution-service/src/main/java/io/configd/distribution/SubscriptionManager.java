@@ -9,12 +9,6 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Tracks prefix-based subscriptions per edge node.
- * <p>
- * Each edge node subscribes to a set of key prefixes. When a config
- * mutation is committed, the subscription manager determines which
- * edge nodes should receive the delta based on their subscriptions.
- * <p>
  * A prefix of "" (empty string) matches all keys (full-store subscription).
  * <p>
  * Thread safety: designed for single-threaded access from the distribution
@@ -22,7 +16,6 @@ import java.util.Set;
  */
 public final class SubscriptionManager {
 
-    /** Mapping from edge node to set of subscribed prefixes. */
     private final Map<NodeId, Set<String>> subscriptions;
 
     /** Reverse index: prefix to set of subscribing nodes. */
@@ -34,10 +27,6 @@ public final class SubscriptionManager {
     }
 
     /**
-     * Subscribes an edge node to a key prefix.
-     *
-     * @param node   the subscribing edge node
-     * @param prefix the key prefix to subscribe to (empty string = all keys)
      * @return true if this is a new subscription for this node+prefix pair
      */
     public boolean subscribe(NodeId node, String prefix) {
@@ -56,8 +45,6 @@ public final class SubscriptionManager {
     }
 
     /**
-     * Unsubscribes an edge node from a key prefix.
-     *
      * @return true if the subscription existed and was removed
      */
     public boolean unsubscribe(NodeId node, String prefix) {
@@ -82,11 +69,6 @@ public final class SubscriptionManager {
         return true;
     }
 
-    /**
-     * Removes all subscriptions for an edge node.
-     *
-     * @param node the edge node to unsubscribe
-     */
     public void unsubscribeAll(NodeId node) {
         Set<String> prefixes = subscriptions.remove(node);
         if (prefixes != null) {
@@ -102,13 +84,6 @@ public final class SubscriptionManager {
         }
     }
 
-    /**
-     * Returns all edge nodes that should receive a mutation for the given key.
-     * A node matches if any of its subscribed prefixes is a prefix of the key.
-     *
-     * @param key the config key being mutated
-     * @return set of matching edge nodes
-     */
     public Set<NodeId> matchingNodes(String key) {
         Objects.requireNonNull(key, "key must not be null");
 
@@ -122,32 +97,20 @@ public final class SubscriptionManager {
         return result;
     }
 
-    /**
-     * Returns all prefixes subscribed by a specific node.
-     */
     public Set<String> subscriptions(NodeId node) {
         Set<String> prefixes = subscriptions.get(node);
         return (prefixes != null) ? Set.copyOf(prefixes) : Set.of();
     }
 
-    /**
-     * Returns true if the node has any subscriptions.
-     */
     public boolean isSubscribed(NodeId node) {
         Set<String> prefixes = subscriptions.get(node);
         return prefixes != null && !prefixes.isEmpty();
     }
 
-    /**
-     * Returns the total number of subscribing nodes.
-     */
     public int subscriberCount() {
         return subscriptions.size();
     }
 
-    /**
-     * Returns the total number of unique prefix subscriptions across all nodes.
-     */
     public int prefixCount() {
         return prefixIndex.size();
     }

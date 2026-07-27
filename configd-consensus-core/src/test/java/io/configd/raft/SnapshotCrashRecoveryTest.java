@@ -52,9 +52,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 class SnapshotCrashRecoveryTest {
 
     private static final NodeId NODE = NodeId.of(1);
-    /** Ticks to drive a single-node election to LEADER. */
     private static final int ELECTION_TICKS = 400;
-    /** Durable storage key under which the snapshot blob is persisted. */
     private static final String SNAPSHOT_KEY = "raft-log.snapshot";
     /** WAL log name (RaftLog.WAL_NAME). */
     private static final String WAL_NAME = "raft-log";
@@ -66,10 +64,8 @@ class SnapshotCrashRecoveryTest {
         }
     };
 
-    /** No-op transport; single-node cluster sends to no peers. */
     private static final RaftTransport NO_PEERS = (target, message) -> { };
 
-    /** Drives a fresh single-node leader over the given storage and returns it. */
     private static Harness boot(CrashStorage storage) {
         RaftConfig config = RaftConfig.of(NODE, Set.of());
         RaftLog log = new RaftLog(storage);
@@ -103,19 +99,16 @@ class SnapshotCrashRecoveryTest {
         runMatrixSeed(/*seed*/ 1, CrashPoint.AFTER_TRUNCATE);
     }
 
-    /** (b) AFTER persist, BEFORE WAL truncate. */
     @Test
     void recoversWhenCrashedBetweenPersistAndTruncate() {
         runMatrixSeed(2, CrashPoint.AFTER_PERSIST_BEFORE_TRUNCATE);
     }
 
-    /** (a) BEFORE snapshot persist. */
     @Test
     void recoversWhenCrashedBeforeSnapshotPersist() {
         runMatrixSeed(3, CrashPoint.BEFORE_PERSIST);
     }
 
-    /** Sweep every cell across many seeds (distinct write counts / snapshot points). */
     @Test
     void matrixHoldsAcrossSeeds() {
         int seeds = Integer.getInteger("configd.rr003.seeds", 60);
@@ -150,7 +143,6 @@ class SnapshotCrashRecoveryTest {
     void recoversCleanlyFromTornFinalWalRecord(@TempDir Path tempDir) throws Exception {
         Storage storage = Storage.file(tempDir);
 
-        // Build a node, commit three writes (durable WAL frames), capture state.
         RaftConfig config = RaftConfig.of(NODE, Set.of());
         RaftLog log = new RaftLog(storage);
         KvStateMachine sm = new KvStateMachine();
@@ -172,7 +164,6 @@ class SnapshotCrashRecoveryTest {
         byte[] tornFrame = new byte[] {0, 0, 0, 32, 1, 2, 3}; // claims len=32, only 3 bytes follow
         Files.write(wal, tornFrame, java.nio.file.StandardOpenOption.APPEND);
 
-        // Restart: a fresh RaftLog/RaftNode over the same directory.
         RaftLog log2 = new RaftLog(storage);
         KvStateMachine sm2 = new KvStateMachine();
         RaftNode node2 = new RaftNode(config, log2, NO_PEERS, sm2,
@@ -229,10 +220,6 @@ class SnapshotCrashRecoveryTest {
 
         RaftLog log2 = new RaftLog(storage);
         KvStateMachine sm2 = new KvStateMachine();
-        // Recovery (constructor + any apply) walks into the [1..snapshotIndex]
-        // hole with no bytes to fill it. The throwing checker must fire - a
-        // silent skip would advance lastApplied over the hole and boot with an
-        // empty store.
         AssertionError thrown = null;
         try {
             RaftNode node2 = new RaftNode(config, log2, NO_PEERS, sm2,
@@ -264,8 +251,7 @@ class SnapshotCrashRecoveryTest {
      * the same oracle catches it.
      * <p>
      * The real-firmware detection boundary (a device with a volatile write cache under a true
-     * power cut) stays environment-blocked; see
-     * {@code docs/session-4/storage-fault-layer-design.md section 3} ({@code hdparm -W1}, no {@code fua}).
+     * power cut) stays environment-blocked; reproducing it needs {@code hdparm -W1} and no {@code fua}.
      */
     @Test
     void gapDetectionFiresWhenSnapshotFsyncLied() {
@@ -288,9 +274,6 @@ class SnapshotCrashRecoveryTest {
         storage.crash();
         CrashStorage recovered = storage.recoveredView();
 
-        // Restart: recovery walks the [1..snapshotIndex] hole with no bytes to fill it. The
-        // throwing checker MUST fire - a silent skip would advance lastApplied over the hole and
-        // boot with missing committed state.
         AssertionError thrown = null;
         try {
             Harness h2 = boot(recovered);
@@ -338,11 +321,9 @@ class SnapshotCrashRecoveryTest {
             expected.put(k, val);
         }
 
-        // Capture the committed state the snapshot will fold in.
         long preSnapshotApplied = h.log.lastApplied();
         assertTrue(preSnapshotApplied >= firstBatch, "writes must have committed+applied");
 
-        // Drive a snapshot, arming the crash at the requested point.
         boolean crashed = takeSnapshotCrashingAt(h, storage, cp);
 
         if (!crashed) {
@@ -362,7 +343,6 @@ class SnapshotCrashRecoveryTest {
             }
         }
 
-        // Restart over the surviving durable image
         CrashStorage recovered = storage.recoveredView();
         Harness h2;
         try {

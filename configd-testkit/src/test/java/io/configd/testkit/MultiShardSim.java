@@ -149,7 +149,6 @@ final class MultiShardSim {
         this.workloadRng = RandomGeneratorFactory.of("L64X128MixRandom").create(mix(seed, WORKLOAD_TAG));
     }
 
-    /** Bring every shard to a stable leader and seed the client's leader cache. */
     void electAllLeaders(int maxTicks) {
         for (int s = 0; s < shardCount; s++) {
             int leader = shards.get(s).electLeader(maxTicks);
@@ -170,14 +169,13 @@ final class MultiShardSim {
     void tick() {
         for (int s = 0; s < shardCount; s++) {
             shards.get(s).tick();
-            shardInvariants.get(s).checkAll(); // per-shard linearizability (S2 - S4), every tick
+            shardInvariants.get(s).checkAll();
         }
     }
 
     /** A logical client write: a (clientId, key) pair; the value token is positional (op index). */
     record Op(String clientId, String key) {}
 
-    /** Deterministically generate {@code count} routed-write ops from the master seed. */
     List<Op> generateOps(int count) {
         List<Op> ops = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
@@ -187,7 +185,6 @@ final class MultiShardSim {
         return ops;
     }
 
-    /** Apply an op stream: route+propose each, tick {@code ticksPerOp} between, periodic disjoint scan. */
     void applyOps(List<Op> ops, int ticksPerOp) {
         for (int i = 0; i < ops.size(); i++) {
             write(ops.get(i).clientId(), ops.get(i).key(), i);
@@ -195,12 +192,11 @@ final class MultiShardSim {
                 tick();
             }
             if ((i & 0xF) == 0xF) {
-                checkDisjointOwnership(); // periodic global scan for early detection
+                checkDisjointOwnership();
             }
         }
     }
 
-    /** Generate + apply {@code ops} routed writes, then run the full cross-shard check surface. */
     void runWorkload(int ops, int ticksPerOp) {
         applyOps(generateOps(ops), ticksPerOp);
         healAllShards();
@@ -208,7 +204,6 @@ final class MultiShardSim {
         checkAll();
     }
 
-    /** The full per-seed cross-shard surface: disjoint ownership + routing-to-owner + no accepted-write lost. */
     void checkAll() {
         checkDisjointOwnership();
         checkNoWritesLost();
@@ -251,7 +246,6 @@ final class MultiShardSim {
         int target = cachedLeader[s] >= 0 ? cachedLeader[s] : 0;
         boolean accepted = shard.proposePut(target, key, token);
         if (!accepted) {
-            // Stale cached leader -> REDIRECT to the shard's current leader (the hint), update cache, retry.
             if (!bugs.contains(Bug.NO_REDIRECT)) {
                 ConsistencyPropertyTests.ClusterHarness rShard = shards.get(redirectShard);
                 int real = rShard.findLeader();
@@ -271,21 +265,18 @@ final class MultiShardSim {
         return s;
     }
 
-    /** Tick every shard {@code n} times (drain in-flight proposals to commit). */
     void drain(int n) {
         for (int t = 0; t < n; t++) {
             tick();
         }
     }
 
-    /** Heal every shard's network partitions (so accepted writes can commit before the no-loss check). */
     void healAllShards() {
         for (int s = 0; s < shardCount; s++) {
             shards.get(s).sim().healAllPartitions();
         }
     }
 
-    /** The union committed view across all shards: key -> last committed value (read from each leader). */
     Map<String, String> committedView() {
         Map<String, String> view = new HashMap<>();
         for (int s = 0; s < shardCount; s++) {
@@ -299,7 +290,6 @@ final class MultiShardSim {
         return view;
     }
 
-    /** Isolate shard {@code s}'s current leader (force a failover ON THAT SHARD ONLY). */
     int faultShardLeader(int s) {
         int leader = shards.get(s).findLeader();
         if (leader >= 0) {
@@ -322,12 +312,10 @@ final class MultiShardSim {
         cachedLeader[s] = -1;
     }
 
-    /** Heal shard {@code s}'s network partitions. */
     void healShard(int s) {
         shards.get(s).sim().healAllPartitions();
     }
 
-    /** Routing correctness: a key must always resolve to the SAME shard (the map is a function). */
     private void checkRoutingStability(String key, int s) {
         Integer prior = routedShardOf.putIfAbsent(key, s);
         if (prior != null && prior != s) {
@@ -429,13 +417,11 @@ final class MultiShardSim {
     /** Force the client's cached leader for shard {@code s} (to deterministically exercise the redirect). */
     void setCachedLeader(int s, int node) { cachedLeader[s] = node; }
 
-    /** The committed value of {@code key} on its owning shard (read from that shard's leader), or null. */
     String committedValueOf(String key) {
         int s = shardMap.shardFor(SCOPE, key);
         return committedValue(shards.get(s), key);
     }
 
-    /** The fixed keyspace the workload draws from (immutable view). */
     static String[] keyspace() { return KEYSPACE.clone(); }
 
     /** The committed value (last applied) for a key on a shard, read from its current leader (or node 0). */

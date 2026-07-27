@@ -41,7 +41,6 @@ public final class InMemoryRaftCluster {
         this.transports = transports;
     }
 
-    /** Builds a cluster whose every node runs a real {@link ConfigStateMachine}. */
     public static InMemoryRaftCluster realStateMachines(int clusterSize) {
         Map<NodeId, RaftNode> nodes = new LinkedHashMap<>();
         Map<NodeId, RoutingTransport> transports = new LinkedHashMap<>();
@@ -58,7 +57,6 @@ public final class InMemoryRaftCluster {
             RaftConfig config = RaftConfig.of(id, peers);
             RaftLog log = new RaftLog();
             RoutingTransport transport = new RoutingTransport();
-            // Real state machine: decode command + HAMT put on every apply.
             ConfigStateMachine sm = new ConfigStateMachine(new VersionedConfigStore(), Clock.system());
             RandomGenerator rng = RandomGenerator.of("L64X128MixRandom");
 
@@ -72,7 +70,6 @@ public final class InMemoryRaftCluster {
         return new InMemoryRaftCluster(nodes, transports);
     }
 
-    /** Ticks every node until one becomes leader (mirrors RaftCommitBenchmark). */
     public void electLeader() {
         for (int tick = 0; tick < 1000; tick++) {
             for (RaftNode node : nodes.values()) {
@@ -93,10 +90,6 @@ public final class InMemoryRaftCluster {
         return nodes.get(leaderId);
     }
 
-    /**
-     * Drives the cluster (deliver + tick) until the leader's commit index reaches at
-     * least {@code targetIndex}, bounded so a stuck cluster does not spin forever.
-     */
     public void driveToCommit(long targetIndex) {
         RaftNode leader = nodes.get(leaderId);
         for (int i = 0; i < 50; i++) {
@@ -122,7 +115,6 @@ public final class InMemoryRaftCluster {
         }
     }
 
-    /** In-memory transport that buffers sends and routes them directly to target nodes. */
     private static final class RoutingTransport implements RaftTransport {
         private final List<Pending> outbox = new ArrayList<>();
         private Map<NodeId, RaftNode> cluster;

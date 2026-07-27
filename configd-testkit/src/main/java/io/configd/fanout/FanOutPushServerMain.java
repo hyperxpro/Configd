@@ -24,27 +24,20 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Fan-out head-to-head - the <b>server side</b>. Boots the production
- * {@link NettyFanOutServer} (plaintext loopback) over a synthetic {@link FanOutBuffer}
- * {@code CommitNotificationSource}, then publishes committed notifications on command so the
- * fan-out push path can be measured under load. The only thing that varies across a head-to-head
- * pair is the Netty transport tier, forced by {@code -Dconfigd.netty.transport=io_uring|epoll}
- * (fail-loud - a {@code tier=} that does not match the forced value is the silent-fallback trap and
- * is asserted against by the driver).
+ * {@link NettyFanOutServer} over a synthetic {@link FanOutBuffer} source and publishes
+ * notifications on command so the fan-out push path can be measured under load. The
+ * transport tier is forced by {@code -Dconfigd.netty.transport=io_uring|epoll}; a
+ * {@code tier=} that doesn't match the forced value is the silent-fallback trap, and is
+ * asserted against by the driver.
  *
- * <p>The server is the surface {@code strace}/{@code perf} attaches to; it does not self-measure.
- * Each published {@link CommitNotification} is stamped with {@code System.currentTimeMillis()} so
- * the out-of-JVM subscriber ({@link FanOutLoadClientMain}) can compute a one-way delivery latency
- * (ms resolution - the only cross-process-comparable clock on a single box).
- *
- * <pre>
- *   java --enable-preview -Dconfigd.netty.transport=io_uring -cp benchmarks.jar \
- *        io.configd.fanout.FanOutPushServerMain &lt;edgePort&gt; &lt;controlPort&gt;
- * </pre>
+ * <p>Each published {@link CommitNotification} is stamped with
+ * {@code System.currentTimeMillis()} (not {@code nanoTime}, which has no cross-process
+ * meaning) so the out-of-JVM subscriber can compute a one-way delivery latency.
  *
  * <h2>Control protocol (line-based, one client)</h2>
  * <ul>
- *   <li>{@code GO <count> <valueBytes> <ratePerSec(0=max)>} - publish {@code count} notifications
- *       (one Put each), paced to {@code ratePerSec} or as fast as possible; replies
+ *   <li>{@code GO <count> <valueBytes> <ratePerSec(0=max)>} - publish {@code count}
+ *       notifications, paced to {@code ratePerSec} or as fast as possible; replies
  *       {@code PUBLISHED <count> fromSeq=<s>}.</li>
  *   <li>{@code QUIT} - close the server and exit.</li>
  * </ul>
@@ -70,15 +63,12 @@ public final class FanOutPushServerMain {
         FanOutBuffer buffer = new FanOutBuffer(1 << 20);
         AtomicReference<ConfigSnapshot> snapshot = new AtomicReference<>(ConfigSnapshot.EMPTY);
 
-        // Benchmark isolation (apples-to-apples): the slow-consumer governor is a session-policy
-        // layer above the transport. This measures the transport; the governor's
-        // demotion->snapshot->reconnect path (tested elsewhere by the slow-consumer demotion
-        // contract) would otherwise inject run-to-run noise that wrecks the 2-batch syscall delta,
-        // and it does so identically regardless of transport, so it adds nothing to an
-        // io_uring-vs-epoll comparison. We raise the transport-queue and ack-lag thresholds
-        // (identical for both transports) so a keeping-up subscriber that briefly lags (e.g. under
-        // strace overhead) is not demoted. Defaults are benchmark-tolerant; override with
-        // -Dconfigd.fanout.* to exercise the production policy.
+        // Benchmark isolation: the slow-consumer governor's demotion->snapshot->reconnect path (a
+                // session-policy layer above the transport) would inject run-to-run noise identically
+                // regardless of transport, adding nothing to an io_uring-vs-epoll comparison. We relax
+                // the transport-queue and ack-lag thresholds so a keeping-up subscriber isn't demoted
+                // under strace overhead. Override with -Dconfigd.fanout.* to exercise the production
+                // policy.
         int transportQueueFrames = Integer.getInteger("configd.fanout.transportQueueFrames", 65_536);
         FanOutConfig config = new FanOutConfig(
                 Integer.getInteger("configd.fanout.queueFrames", 65_536),  // session offered-not-acked bound

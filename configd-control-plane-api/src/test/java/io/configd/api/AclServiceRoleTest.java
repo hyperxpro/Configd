@@ -42,7 +42,6 @@ class AclServiceRoleTest {
         acl = new AclService();
     }
 
-    // Test helpers: build single-policy roles out of literal-prefix allow/deny rules.
 
     private static PolicyRule allowRule(String prefix, AclService.Permission... caps) {
         return new PolicyRule(prefix, Set.of(caps), Set.of());
@@ -56,7 +55,6 @@ class AclServiceRoleTest {
         return new Role(name, List.of(new Policy(name + "-policy", List.of(rules))));
     }
 
-    // Byte-identity: empty roles reduce the role-aware path to own-grants-only
 
     /**
      * Across a battery of grant shapes the 3-arg {@code isAllowed} equals the 4-arg with an empty role
@@ -68,7 +66,7 @@ class AclServiceRoleTest {
         acl.grant("", "p", Set.of(READ));
         acl.grant("a.", "p", Set.of(READ, WRITE));
         acl.grant("a.b.", "p", Set.of(WATCH));         // WATCH here, READ inherited from "a."
-        acl.deny("a.secret.", "p", Set.of(WRITE));     // deny carve-out
+        acl.deny("a.secret.", "p", Set.of(WRITE));
         acl.grant("c.", "p", Set.of(READ, LIST, WATCH));
 
         String[] keys = {"x", "a.x", "a.b.x", "a.secret.k", "c.k", "miss"};
@@ -85,7 +83,6 @@ class AclServiceRoleTest {
         }
     }
 
-    // Role grants extend reach
 
     @Test
     void roleAddsReach() {
@@ -114,19 +111,18 @@ class AclServiceRoleTest {
 
     @Test
     void roleUnionsWithOwnGrants() {
-        acl.grant("a.", "p", Set.of(READ));                  // own READ
-        acl.defineRole(role("writer", allowRule("a.", WRITE))); // role WRITE
+        acl.grant("a.", "p", Set.of(READ));
+        acl.defineRole(role("writer", allowRule("a.", WRITE)));
 
         assertTrue(acl.isAllowed("p", Set.of("writer"), "a.x", READ), "own READ survives");
         assertTrue(acl.isAllowed("p", Set.of("writer"), "a.x", WRITE), "role WRITE composes with own READ");
     }
 
-    // Deny precedence THROUGH roles - the critical "single subtract over the combined set" property
 
     @Test
     void denyInRoleOverridesOwnAllow() {
-        acl.grant("a.", "p", Set.of(READ, WRITE));            // own ALLOW WRITE
-        acl.defineRole(role("blocker", denyRule("a.", WRITE))); // role DENY WRITE
+        acl.grant("a.", "p", Set.of(READ, WRITE));
+        acl.defineRole(role("blocker", denyRule("a.", WRITE)));
 
         assertFalse(acl.isAllowed("p", Set.of("blocker"), "a.x", WRITE),
                 "a role DENY must beat an own ALLOW (deny subtracted once over the combined set)");
@@ -136,8 +132,8 @@ class AclServiceRoleTest {
 
     @Test
     void ownDenyOverridesRoleAllow() {
-        acl.defineRole(role("writer", allowRule("a.", WRITE))); // role ALLOW WRITE
-        acl.deny("a.", "p", Set.of(WRITE));                     // own DENY WRITE
+        acl.defineRole(role("writer", allowRule("a.", WRITE)));
+        acl.deny("a.", "p", Set.of(WRITE));
 
         assertFalse(acl.isAllowed("p", Set.of("writer"), "a.x", WRITE),
                 "an own DENY must beat a role ALLOW");
@@ -145,13 +141,11 @@ class AclServiceRoleTest {
 
     @Test
     void ancestorDenyKillsRoleAllowAtDescendant() {
-        // OWN deny at ancestor a. beats ROLE allow at descendant a.b. for a.b.x
         acl.defineRole(role("descWriter", allowRule("a.b.", WRITE)));
         acl.deny("a.", "p", Set.of(WRITE));
         assertFalse(acl.isAllowed("p", Set.of("descWriter"), "a.b.x", WRITE),
                 "own ancestor DENY beats role descendant ALLOW (deny is absolute over the union)");
 
-        // ROLE deny at ancestor a. beats ROLE allow at descendant a.b. too
         AclService acl2 = new AclService();
         acl2.defineRole(role("descWriter", allowRule("a.b.", WRITE)));
         acl2.defineRole(role("ancBlocker", denyRule("a.", WRITE)));
@@ -170,35 +164,29 @@ class AclServiceRoleTest {
         assertFalse(acl.isAllowed("p", Set.of("readerOnly"), "a.x", WATCH), "nor (effective) WATCH");
     }
 
-    // ACL-static role binding (assignRole) - additive to authn-asserted roles
 
     @Test
     void assignRoleStaticBinding() {
         acl.defineRole(role("r", allowRule("a.", READ, WRITE)));
         acl.assignRole("p", "r");
 
-        // No authn-asserted roles, yet the static binding applies.
         assertTrue(acl.isAllowed("p", Set.of(), "a.x", READ),
                 "ACL-static binding applies even with an empty authn-asserted role set");
         assertTrue(acl.isAllowed("p", Set.of(), "a.x", WRITE));
-        // The 3-arg path (delegates with empty roles) also resolves the static binding.
         assertTrue(acl.isAllowed("p", "a.x", READ), "3-arg path resolves the static binding too");
-        // A different principal without the binding is denied.
         assertFalse(acl.isAllowed("other", Set.of(), "a.x", READ));
 
-        // Additive to authn-asserted roles: static r (a.) union authn-asserted r2 (b.) both contribute.
         acl.defineRole(role("r2", allowRule("b.", READ)));
         acl.assignRole("q", "r");
         assertTrue(acl.isAllowed("q", Set.of("r2"), "a.x", READ), "static r applies");
         assertTrue(acl.isAllowed("q", Set.of("r2"), "b.x", READ), "authn-asserted r2 also applies (union of sources)");
     }
 
-    /** Assigning the same role twice is stable - no duplication effect, still exactly authorized. */
     @Test
     void assignRoleIsIdempotent() {
         acl.defineRole(role("r", allowRule("a.", READ)));
         acl.assignRole("p", "r");
-        acl.assignRole("p", "r"); // second assign of the same role must change nothing
+        acl.assignRole("p", "r");
 
         assertTrue(acl.isAllowed("p", Set.of(), "a.x", READ),
                 "double assignRole of the same role stays authorized (idempotent)");
@@ -206,26 +194,22 @@ class AclServiceRoleTest {
                 "the double-assign confers nothing beyond the role's single READ rule");
     }
 
-    // The WATCH-requires-READ floor holds across the combined own+role union
 
     @Test
     void watchFloorThroughRoles() {
-        // role WATCH + own READ -> effective WATCH (floor over the combined union)
         acl.grant("a.", "p", Set.of(READ));
         acl.defineRole(role("watcher", allowRule("a.", WATCH)));
         assertTrue(acl.isAllowed("p", Set.of("watcher"), "a.x", WATCH),
                 "role WATCH ∧ own READ -> effective WATCH");
 
-        // role WATCH but READ denied on the key's chain -> no effective WATCH
         AclService acl2 = new AclService();
-        acl2.grant("a.", "p", Set.of(READ, WATCH));               // own READ+WATCH
-        acl2.defineRole(role("readBlocker", denyRule("a.secret.", READ))); // role DENY READ on a child
+        acl2.grant("a.", "p", Set.of(READ, WATCH));
+        acl2.defineRole(role("readBlocker", denyRule("a.secret.", READ)));
         assertFalse(acl2.isAllowed("p", Set.of("readBlocker"), "a.secret.k", WATCH),
                 "a role DENY(READ) on the chain kills effective WATCH (INV-WATCH-READ through roles)");
         assertTrue(acl2.isAllowed("p", Set.of("readBlocker"), "a.public.k", WATCH),
                 "outside the READ carve-out, WATCH ∧ READ still holds");
 
-        // pure-role: WATCH alone (no READ anywhere) is not watchable; adding READ makes it so
         AclService acl3 = new AclService();
         acl3.defineRole(role("watchOnly", allowRule("a.", WATCH)));
         assertFalse(acl3.isAllowed("p", Set.of("watchOnly"), "a.x", WATCH),
@@ -235,11 +219,9 @@ class AclServiceRoleTest {
                 "once a role supplies READ, the WATCH floor is satisfied over the union");
     }
 
-    // Default-deny over unknown principal + unknown role
 
     @Test
     void defaultDenyUnknownPrincipalAndRole() {
-        // Unrelated definitions exist, but neither names this principal nor this role.
         acl.defineRole(role("r", allowRule("a.", READ, LIST, WRITE, WATCH, ADMIN)));
         acl.grant("a.", "known", Set.of(READ));
 
@@ -249,7 +231,6 @@ class AclServiceRoleTest {
         }
     }
 
-    // Null checks (4-arg isAllowed, defineRole, assignRole)
 
     @Test
     void nullChecks() {
@@ -263,7 +244,6 @@ class AclServiceRoleTest {
         assertThrows(NullPointerException.class, () -> acl.assignRole("p", null));
     }
 
-    // Production shape through the role-aware path (the byte-identity wiring guarantee)
 
     /**
      * Mirrors production exactly: {@code grant("", "root", allOf)} plus the authn layer asserting the
@@ -274,7 +254,7 @@ class AclServiceRoleTest {
     @Test
     void productionShapeThroughRoleAwarePath() {
         acl.grant("", "root", EnumSet.allOf(AclService.Permission.class));
-        Set<String> prodRoles = Set.of("admin"); // asserted by authn, never defined as a Role
+        Set<String> prodRoles = Set.of("admin");
 
         for (String key : new String[]{"db.host", "app.name", "/a/b/c", "", "x"}) {
             for (AclService.Permission perm : AclService.Permission.values()) {

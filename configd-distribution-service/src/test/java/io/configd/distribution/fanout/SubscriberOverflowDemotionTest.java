@@ -25,13 +25,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * On outbound overflow the session is DEMOTED from streaming to catch-up (snapshot) mode -
- * never an unbounded queue, never a silent drop. Every demotion carries cursor evidence (a
- * {@link DemotionEvent}), fires a metric, and is recoverable: the subsequent snapshot
- * transfer plus resumed tail loses no committed effect (the edge observes every mutation's
- * effect across the demotion boundary).
- */
 class SubscriberOverflowDemotionTest {
 
     private static final Clock CLOCK = new Clock() {
@@ -59,7 +52,6 @@ class SubscriberOverflowDemotionTest {
         sink.clear();
         s.tick(0L);
 
-        // Demoted, never silently dropped: a DEMOTED_TO_CATCHUP notice on the wire.
         List<EdgeFrame.ErrorClose> notices = sink.sentOfType(EdgeFrame.ErrorClose.class);
         assertEquals(1, notices.size());
         assertEquals(ErrorCode.DEMOTED_TO_CATCHUP, notices.get(0).code());
@@ -71,8 +63,6 @@ class SubscriberOverflowDemotionTest {
         DemotionEvent ev = events.get(0);
         assertEquals(DemotionEvent.REASON_QUEUE_OVERFLOW, ev.reason());
         assertTrue(ev.cursor() >= 1, "demotion event carries the cursor evidence: " + ev.cursor());
-        // The edge resumed at cursor 1 (implicit ack of the resume point) and never acked
-        // beyond it, so lastAckedSeq stays at the subscribe resume cursor.
         assertEquals(1L, ev.lastAckedSeq(), "lastAckedSeq is the subscribe resume cursor (1)");
         assertEquals(FanOutSessionCore.SessionState.CATCHUP, s.state());
         assertFalse(sink.closed(), "demotion is NON-fatal (no session close)");
@@ -93,7 +83,7 @@ class SubscriberOverflowDemotionTest {
         // Block the transport on the 2nd NOTIFY offer (1 SubscribeOk already consumed at subscribe;
         // sink was not cleared, so block offer index relative to now). Clear first for clarity.
         sink.clear();
-        sink.blockNextOffers(1); // first NOTIFY offer would block
+        sink.blockNextOffers(1);
         s.tick(0L);
         assertEquals(FanOutSessionCore.SessionState.CATCHUP, s.state(),
                 "a transport would-block demotes (never an unbounded buffer)");
@@ -102,8 +92,6 @@ class SubscriberOverflowDemotionTest {
 
     @Test
     void noCommittedEffectLostAcrossTheDemotionBoundary() {
-        // Build a store snapshot that reflects all committed keys; after demotion the
-        // snapshot transfer must carry every key so the edge observes every effect.
         FanOutBuffer buffer = new FanOutBuffer(256);
         buffer.publish(notif(1));
         String[] keys = {"a", "b", "c", "d", "e", "f"};
@@ -111,7 +99,6 @@ class SubscriberOverflowDemotionTest {
             long seq = i + 2;
             buffer.publish(put(seq, keys[i], "v" + seq));
         }
-        // Replay snapshot at version 7 containing every key.
         HamtMap<String, VersionedValue> data = HamtMap.empty();
         data = data.put("k1", new VersionedValue("v1".getBytes(StandardCharsets.UTF_8), 7L, 0L));
         for (int i = 0; i < keys.length; i++) {
@@ -134,7 +121,6 @@ class SubscriberOverflowDemotionTest {
         byte[] body = EdgeSnapshotCodec.reassemble(chunks);
         ConfigSnapshot restored = EdgeSnapshotCodec.deserialize(body);
         assertEquals(7L, restored.version());
-        // Every committed key is present in the snapshot the edge applies -> no effect lost.
         for (String k : keys) {
             assertNotNull(restored.get(k), "snapshot must carry committed key '" + k + "'");
         }

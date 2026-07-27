@@ -23,10 +23,6 @@ import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Integration tests for {@link TcpRaftTransport}.
- * Uses plaintext sockets (no TLS) for test simplicity.
- */
 @Timeout(10)
 class TcpRaftTransportTest {
 
@@ -105,11 +101,10 @@ class TcpRaftTransportTest {
         CountDownLatch receivedLatch = new CountDownLatch(1);
         var receivedMessages = new CopyOnWriteArrayList<InboundMessage>();
 
-        // Create transport B first so we know its port
         TcpRaftTransport transportB = createTransport(
                 nodeB,
                 new InetSocketAddress("127.0.0.1", 0),
-                Map.of(), // no peers initially -- will be set after both ports are known
+                Map.of(),
                 msg -> {
                     receivedMessages.add(msg);
                     receivedLatch.countDown();
@@ -118,7 +113,6 @@ class TcpRaftTransportTest {
         transportB.start();
         int portB = transportB.localPort();
 
-        // Create transport A that knows about B
         TcpRaftTransport transportA = createTransport(
                 nodeA,
                 new InetSocketAddress("127.0.0.1", 0),
@@ -127,7 +121,6 @@ class TcpRaftTransportTest {
         );
         transportA.start();
 
-        // Send a message from A to B
         FrameCodec.Frame frame = new FrameCodec.Frame(
                 MessageType.HEARTBEAT, 1, 5L, "hello".getBytes());
         transportA.send(nodeB, frame);
@@ -153,12 +146,10 @@ class TcpRaftTransportTest {
         var receivedByA = new CopyOnWriteArrayList<InboundMessage>();
         var receivedByB = new CopyOnWriteArrayList<InboundMessage>();
 
-        // Bind both to ephemeral ports; we need to create them in stages
-        // Step 1: Create B with no peers, start it to get its port
         TcpRaftTransport transportB = createTransport(
                 nodeB,
                 new InetSocketAddress("127.0.0.1", 0),
-                Map.of(), // peers added via separate transport instance
+                Map.of(),
                 msg -> {
                     receivedByB.add(msg);
                     latchB.countDown();
@@ -167,7 +158,6 @@ class TcpRaftTransportTest {
         transportB.start();
         int portB = transportB.localPort();
 
-        // Step 2: Create A knowing B's port, start it
         TcpRaftTransport transportA = createTransport(
                 nodeA,
                 new InetSocketAddress("127.0.0.1", 0),
@@ -180,7 +170,6 @@ class TcpRaftTransportTest {
         transportA.start();
         int portA = transportA.localPort();
 
-        // A sends to B
         FrameCodec.Frame frameAtoB = new FrameCodec.Frame(
                 MessageType.APPEND_ENTRIES, 1, 10L, "from-a".getBytes());
         transportA.send(nodeB, frameAtoB);
@@ -199,7 +188,6 @@ class TcpRaftTransportTest {
         CountDownLatch secondReceived = new CountDownLatch(2);
         var receivedMessages = new CopyOnWriteArrayList<InboundMessage>();
 
-        // Create B
         TcpRaftTransport transportB = createTransport(
                 nodeB,
                 new InetSocketAddress("127.0.0.1", 0),
@@ -213,7 +201,6 @@ class TcpRaftTransportTest {
         transportB.start();
         int portB = transportB.localPort();
 
-        // Create A
         TcpRaftTransport transportA = createTransport(
                 nodeA,
                 new InetSocketAddress("127.0.0.1", 0),
@@ -222,20 +209,16 @@ class TcpRaftTransportTest {
         );
         transportA.start();
 
-        // Send first message
         FrameCodec.Frame frame1 = new FrameCodec.Frame(
                 MessageType.HEARTBEAT, 1, 1L, "first".getBytes());
         transportA.send(nodeB, frame1);
         assertTrue(firstReceived.await(5, TimeUnit.SECONDS), "First message should arrive");
 
-        // Close B and restart to simulate connection drop
         transportB.close();
         transports.remove(transportB);
 
-        // Small delay to let the close propagate
         Thread.sleep(200);
 
-        // Start a new B on the same port
         TcpRaftTransport transportB2 = createTransport(
                 nodeB,
                 new InetSocketAddress("127.0.0.1", portB),
@@ -247,7 +230,6 @@ class TcpRaftTransportTest {
         );
         transportB2.start();
 
-        // Send second message; should reconnect automatically
         FrameCodec.Frame frame2 = new FrameCodec.Frame(
                 MessageType.HEARTBEAT, 1, 2L, "second".getBytes());
 
@@ -297,7 +279,6 @@ class TcpRaftTransportTest {
         );
         transportA.start();
 
-        // Launch concurrent senders
         CountDownLatch startGun = new CountDownLatch(1);
         Thread[] senders = new Thread[messageCount];
         for (int i = 0; i < messageCount; i++) {
@@ -315,10 +296,8 @@ class TcpRaftTransportTest {
             });
         }
 
-        // Fire!
         startGun.countDown();
 
-        // Wait for all sender threads
         for (Thread t : senders) {
             t.join(5000);
         }
@@ -342,11 +321,9 @@ class TcpRaftTransportTest {
         int port = transportA.localPort();
         assertTrue(port > 0, "Should be bound to a real port");
 
-        // Close and verify no exceptions
         transportA.close();
         transports.remove(transportA);
 
-        // Sending after close should not throw (just silently drop)
         FrameCodec.Frame frame = new FrameCodec.Frame(
                 MessageType.HEARTBEAT, 0, 0L, new byte[0]);
         // send should return without throwing since running is false
@@ -468,7 +445,6 @@ class TcpRaftTransportTest {
 
         CountDownLatch received = new CountDownLatch(1);
 
-        // Server bound to 127.0.0.2 but its cert SAN is "localhost".
         TcpRaftTransport transportB = new TcpRaftTransport(
                 nodeB,
                 new InetSocketAddress("127.0.0.2", 0),
@@ -479,8 +455,6 @@ class TcpRaftTransportTest {
         transportB.start();
         int portB = transportB.localPort();
 
-        // Client targets 127.0.0.2 - the hostname must not be covered by
-        // the SAN, so the handshake must fail.
         TcpRaftTransport transportA = new TcpRaftTransport(
                 nodeA,
                 new InetSocketAddress("127.0.0.1", 0),
@@ -515,7 +489,6 @@ class TcpRaftTransportTest {
         assertEquals(0, rc, "keytool failed: " + command[0]);
     }
 
-    // ---- Helper ----
 
     private TcpRaftTransport createTransport(
             NodeId self,

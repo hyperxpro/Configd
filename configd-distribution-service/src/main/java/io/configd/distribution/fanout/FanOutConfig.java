@@ -111,21 +111,19 @@ public record FanOutConfig(
                 heartbeatMs, idlePollMs, snapshotChunkBytes, false, Set.of(), false);
     }
 
-    /** Defaults: 256 / 80% / 64 / 256 KiB / 8192 / 250 ms / 5 ms / 1 MiB; filtering OFF. */
     public static FanOutConfig defaults() {
         return new FanOutConfig(
-                256,        // queueFrames
-                80,         // queueWarnPct
-                64,         // batchMaxNotifications
-                262_144,    // batchMaxBytes (256 KiB)
-                8_192L,     // ackLagDemoteSeqs
-                250L,       // heartbeatMs
-                5L,         // idlePollMs
-                1_048_576); // snapshotChunkBytes (1 MiB)
+                256,
+                80,
+                64,
+                262_144,
+                8_192L,
+                250L,
+                5L,
+                1_048_576);
     }
 
     /**
-     * Returns a copy of this config with the server-side prefix-filter posture set.
      * The deployment boundary ({@code ConfigdServer}) uses this to flip the product default ON
      * with the resolved strong-read prefixes, leaving the library {@link #defaults()}
      * conservative.
@@ -137,8 +135,7 @@ public record FanOutConfig(
     }
 
     /**
-     * Returns a copy of this config with the legacy-SUBSCRIBE partial-view posture set. The
-     * deployment boundary ({@code ConfigdServer}) flips this ON from
+     * The deployment boundary ({@code ConfigdServer}) flips this ON from
      * {@code -Dconfigd.edge.allowPartialShardView} so a legacy whole-store SUBSCRIBE is admitted at
      * N>1 (accepting the primary-shard-only view); left {@code false} it is refused per-connection.
      * Gates the legacy SUBSCRIBE plane only - multi-shard WATCH is served at N>1 regardless.
@@ -149,7 +146,6 @@ public record FanOutConfig(
                 strongReadPrefixes, on);
     }
 
-    /** The queue depth (in frames) at which a slow-consumer warning fires. */
     public int queueWarnThresholdFrames() {
         return (int) ((long) queueFrames * queueWarnPct / 100L);
     }

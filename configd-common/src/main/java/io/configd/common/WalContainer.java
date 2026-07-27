@@ -47,7 +47,6 @@ public final class WalContainer {
     public static final int HEADER_SIZE = 8;
 
     private WalContainer() {
-        // constants + codec holder
     }
 
     /**

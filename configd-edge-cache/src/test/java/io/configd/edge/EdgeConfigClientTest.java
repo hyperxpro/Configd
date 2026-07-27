@@ -19,14 +19,8 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link EdgeConfigClient} - the high-level edge config facade.
- */
 class EdgeConfigClientTest {
 
-    /**
-     * Simple test clock with explicit time control.
-     */
     static class TestClock implements Clock {
         long timeMs;
 

@@ -66,7 +66,6 @@ class AnchorWitnessRedteamTest {
         return SnapshotIntegrityTest.keyedEnvelope();
     }
 
-    // Harness: file-backed nodes on a queue network with per-frame selective delivery and real disk ops.
 
     private record Rollback(int gid, long bootAnchorSeq, long witnessedSeq, NodeId reporter) {}
 
@@ -274,17 +273,16 @@ class AnchorWitnessRedteamTest {
         assertTrue(v.raft.votingClearedForTest(), "healthy V clears its boot gate");
 
         long T = 1;
-        v.raft.handleMessage(heartbeat(T, X));      // becomeFollower(T): persist {T,null,s0}
+        v.raft.handleMessage(heartbeat(T, X));
         long s0 = v.anchorSeq();
-        Map<String, byte[]> prior = c.snapshotDisk(v); // the genuine authenticated {T,null,s0} image
+        Map<String, byte[]> prior = c.snapshotDisk(v);
 
-        v.raft.handleMessage(voteReq(T, X));        // grant X: persist {T,X,s1}, announce s1, then voteGranted
+        v.raft.handleMessage(voteReq(T, X));
         long s1 = v.anchorSeq();
         assertTrue(s1 > s0, "granting a vote raises anchorSeq");
         assertTrue(v.grantedVoteTo(X), "V granted its term-" + T + " vote to X");
-        c.deliverAll();                             // BOTH peers witness s1 (announce delivered)
+        c.deliverAll();
 
-        // Adversary owns V's disk: roll it back to {T,null,s0}, reboot.
         c.kill(v);
         c.rollbackDisk(v, prior);
         c.reboot(v);
@@ -301,9 +299,8 @@ class AnchorWitnessRedteamTest {
         v.raft.handleMessage(voteReq(T, P));
         assertFalse(v.grantedVoteTo(P), "SPLIT-BRAIN BLOCKED: V must not grant a 2nd vote at term " + T);
 
-        // Adopt-forward cannot unlatch: drive higher terms + more boot rounds; still latched, still refuses.
         for (long t = T + 1; t <= T + 4; t++) {
-            v.raft.handleMessage(heartbeat(t, X));  // becomeFollower(t): adopts term, raises anchorSeq
+            v.raft.handleMessage(heartbeat(t, X));
             c.settle(3);
             v.sent.clear();
             v.raft.handleMessage(voteReq(t, P));
@@ -350,7 +347,7 @@ class AnchorWitnessRedteamTest {
         long s0 = v.anchorSeq();
         Map<String, byte[]> prior = c.snapshotDisk(v);
 
-        v.raft.handleMessage(voteReq(T, X));  // vote persisted (s1); announce + voteGranted ENQUEUED
+        v.raft.handleMessage(voteReq(T, X));
         assertTrue(v.anchorSeq() > s0);
         c.dropAll();                          // crash before ANY of it is delivered: nothing witnessed, X never counts
         assertNull(x.raft.votedFor(), "X never counted V's never-delivered vote");
@@ -367,10 +364,6 @@ class AnchorWitnessRedteamTest {
         assertTrue(v.grantedVoteTo(P), "V's ONE usable vote goes to P - the never-delivered vote is not a double-USE");
     }
 
-    // The boot-reply race is closed by default. An earlier self-counting boot quorum (self + one
-    // peer) let a single non-witness peer answering first false-pass a rolled-back node. The default
-    // is now a peer-majority boot gate, so the same scenario (ordinary announce packet-loss plus a
-    // boot-reply race, no peer crash) is refused - even in the default fast-vote mode.
 
     @Test
     void defaultBoot_singleNonWitnessReplyRace_refusedByPeerMajorityBootGate(@TempDir Path base) {
@@ -385,15 +378,14 @@ class AnchorWitnessRedteamTest {
         long s0 = v.anchorSeq();
         Map<String, byte[]> prior = c.snapshotDisk(v);
 
-        v.raft.handleMessage(voteReq(T, X));   // grant X: announce(s1) enqueued to BOTH peers, then voteGranted
+        v.raft.handleMessage(voteReq(T, X));
         long s1 = v.anchorSeq();
 
         // ORDINARY PACKET LOSS (not a peer crash): the announce to P is dropped; only X witnesses s1.
         c.dropFrom(V);
-        v.raft.witnessAnnounce();               // V re-announces s1 (heartbeat cadence) to all peers
-        c.deliver(e -> e.to().equals(X));       // deliver ONLY to X; P still never witnesses s1
+        v.raft.witnessAnnounce();
+        c.deliver(e -> e.to().equals(X));
 
-        // Adversary crashes V (the victim - allowed), rolls back to {T,null,s0}, reboots.
         c.kill(v);
         c.rollbackDisk(v, prior);
         c.reboot(v);
@@ -401,7 +393,7 @@ class AnchorWitnessRedteamTest {
         c.dropAll();
 
         // Boot-reply RACE: P (the non-witness) answers first; X is healthy but slower.
-        c.tick(v);                              // V broadcasts QUERY to X and P
+        c.tick(v);
         c.deliver(e -> e.from().equals(V) && e.to().equals(P)); // only P is queried (X's QUERY withheld = slower)
         c.deliverFrom(P);                       // P's reply (seenOfYou = s0) reaches V
         c.tick(v);                              // evaluateBootGate: responders={P}, self+P is NOT a peer-majority
@@ -416,7 +408,6 @@ class AnchorWitnessRedteamTest {
         assertEquals(s1, v.rollback.witnessedSeq());
         assertFalse(v.raft.votingClearedForTest());
 
-        // No double-vote at term T: V stays latched and denies a second candidate.
         v.sent.clear();
         v.raft.handleMessage(voteReq(T, P));
         assertFalse(v.grantedVoteTo(P),
@@ -480,7 +471,7 @@ class AnchorWitnessRedteamTest {
         assertEquals(X, v.raft.votedFor(), "the vote is persisted immediately (durability unchanged)");
         assertFalse(v.grantedVoteTo(X), "strict DEFERS voteGranted until a peer-majority acks the announce");
 
-        c.deliverAll();          // peers witness s1
+        c.deliverAll();
         x.raft.witnessAnnounce();
         c.deliverAll();
         assertFalse(v.grantedVoteTo(X), "one peer ack is below the peer-majority - still deferred");
@@ -489,7 +480,6 @@ class AnchorWitnessRedteamTest {
         assertTrue(v.grantedVoteTo(X), "peer-majority acked s1 -> the deferred voteGranted is released");
     }
 
-    // No-false-refuse battery: a spurious refuse bricks a healthy node, which is as bad as a miss.
 
     @Test
     void w1_cleanReboot_passesAndVotes(@TempDir Path base) {
@@ -524,7 +514,7 @@ class AnchorWitnessRedteamTest {
         long T = 1;
         v.raft.handleMessage(heartbeat(T, X));
         long s0 = v.anchorSeq();
-        v.raft.handleMessage(voteReq(T, X));     // writes s1
+        v.raft.handleMessage(voteReq(T, X));
         long s1 = v.anchorSeq();
         assertTrue(s1 > s0);
         c.dropAll();                             // the announce lands NOWHERE - V is simply ahead of peers
@@ -662,12 +652,11 @@ class AnchorWitnessRedteamTest {
         assertFalse(v.raft.votingClearedForTest(), "the safe direction: refuse-and-escalate, not silent accept");
     }
 
-    // N=1 / N=2 boundary.
 
     @Test
     void n1_gateDisabled_selfElects(@TempDir Path base) {
         Cluster c = new Cluster(base);
-        Node solo = c.add(V, Set.of(), false);   // no peers
+        Node solo = c.add(V, Set.of(), false);
         assertTrue(solo.raft.votingClearedForTest(), "N=1 clears immediately - a single voter cannot split-brain");
         for (int i = 0; i < 400 && solo.raft.role() != RaftRole.LEADER; i++) {
             solo.raft.tick();
@@ -694,7 +683,7 @@ class AnchorWitnessRedteamTest {
         Map<String, byte[]> prior = c.snapshotDisk(v);
         v.raft.handleMessage(voteReq(T, X));
         long s1 = v.anchorSeq();
-        c.deliverAll();                          // the single peer X witnesses s1
+        c.deliverAll();
 
         c.kill(v);
         c.rollbackDisk(v, prior);
@@ -771,14 +760,14 @@ class AnchorWitnessRedteamTest {
         Node p = c.add(P, Set.of(V, X), false);
         c.add(X, Set.of(V, P), false);
 
-        p.down = true;                        // only ONE peer (X) reachable
+        p.down = true;
         c.settle(6);
         assertNull(v.rollback, "no rollback - just an unreachable peer");
         assertFalse(v.raft.votingClearedForTest(),
                 "self + one peer is NOT a peer-majority -> V stays latched (availability cost, safe direction)");
         assertEquals(RaftRole.FOLLOWER, v.raft.role(), "a latched node never self-promotes");
 
-        p.down = false;                       // the peer-majority becomes reachable
+        p.down = false;
         c.settle(6);
         assertTrue(v.raft.votingClearedForTest(),
                 "clears once BOTH peers (the peer-majority at N=3) are reachable - no brick, no operator action");
@@ -799,7 +788,7 @@ class AnchorWitnessRedteamTest {
         v.raft.handleMessage(heartbeat(T, X));
         long s0 = v.anchorSeq();
         Map<String, byte[]> prior = c.snapshotDisk(v);
-        v.raft.handleMessage(voteReq(T, X));         // grant X -> s1
+        v.raft.handleMessage(voteReq(T, X));
         long s1 = v.anchorSeq();
         c.deliverAll();                              // BOTH peers witness s1 (pre-crash, in-memory)
 

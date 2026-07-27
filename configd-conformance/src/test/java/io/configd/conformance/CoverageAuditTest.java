@@ -55,10 +55,8 @@ class CoverageAuditTest {
             catalogIds.add(c.id());
         }
 
-        // 1) No stale skip / tag: every skipped or tagged clause must exist in the catalog.
         List<String> staleSkips = skips.keySet().stream().filter(id -> !catalogIds.contains(id)).sorted().toList();
         List<String> staleTags = covered.keySet().stream().filter(id -> !catalogIds.contains(id)).sorted().toList();
-        // 2) STRICT: every catalog clause is covered OR skipped -- an unmapped clause fails.
         List<String> unmapped = catalogIds.stream()
                 .filter(id -> !covered.containsKey(id) && !skips.containsKey(id)).sorted().toList();
         // 3) A clause must not be BOTH covered and skipped (ambiguous accounting).
@@ -73,7 +71,6 @@ class CoverageAuditTest {
                     + section("stale clause: tag (clause not in the catalog)", staleTags));
         }
 
-        // Emit the breakdown + assert it matches the checked-in golden (regenerate-and-commit on change).
         String report = buildReport(catalog, covered, skips);
         String existing = Files.exists(GOLDEN_REPORT) ? Files.readString(GOLDEN_REPORT) : null;
         if (existing == null || !existing.equals(report)) {

@@ -93,7 +93,6 @@ class MultiGroupBringupTest {
         // node-level AuditLog uses in production - for byte-identical WAL/snapshot bytes and paths.
         assertSame(nodeStorage, rt.storage(),
                 "at N=1 the single group must reuse the node-level Storage instance (byte-identity)");
-        // No peers means a no-op transport, so there is no outbound adapter or coalescer to build.
         assertNull(rt.adapter(), "no-peer mode must have no outbound adapter");
         assertNull(rt.coalescingTransport(), "no-peer mode must have no coalescing transport");
         assertNotNull(rt.raftNode());
@@ -128,7 +127,6 @@ class MultiGroupBringupTest {
         for (int gid = 0; gid < n; gid++) {
             assertEquals(RaftRole.LEADER, rts[gid].raftNode().role(), "group " + gid + " must self-elect");
         }
-        // At N>1 each group has its own storage under a distinct dataDir/shard-<gid>, not the node-level one.
         for (int gid = 0; gid < n; gid++) {
             assertNotSame(nodeStorage, rts[gid].storage(),
                     "at N>1 group " + gid + " must NOT reuse the node-level storage");
@@ -192,8 +190,6 @@ class MultiGroupBringupTest {
         }
     }
 
-    /** Builds a group via the real {@link ConfigdServer#buildRaftGroup}, registers + owner-binds it, and
-     *  drives its owner until it self-elects LEADER (single-node cluster, no peers). */
     private ConfigdServer.RaftGroupRuntime bringUpLeader(
             MultiRaftDriver driver, int shardCount, int gid, Path dataDir, Storage nodeStorage)
             throws Exception {
@@ -216,7 +212,6 @@ class MultiGroupBringupTest {
         return rt;
     }
 
-    /** Proposes a PUT to {@code gid} (on its owner) and drives ticks until it commits + applies. */
     private void proposeAndAwaitApply(MultiRaftDriver driver, ConfigdServer.RaftGroupRuntime rt,
             int gid, String key, byte[] value) throws Exception {
         byte[] cmd = CommandCodec.encodePut(key, value);
@@ -247,7 +242,6 @@ class MultiGroupBringupTest {
         return new ConfigdMetrics(new MetricsRegistry(), () -> 0L);
     }
 
-    /** A minimal node-level transport endpoint that records every outbound frame. */
     private static final class RecordingEndpoint implements RaftTransportEndpoint {
         final List<FrameCodec.Frame> sent = new CopyOnWriteArrayList<>();
 

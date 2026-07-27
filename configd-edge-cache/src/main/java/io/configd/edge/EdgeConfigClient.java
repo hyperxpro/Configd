@@ -109,19 +109,10 @@ public final class EdgeConfigClient {
         return store.get(key, cursor);
     }
 
-    /**
-     * Returns the current monotonic version of the local config store.
-     */
     public long currentVersion() {
         return store.currentVersion();
     }
 
-    /**
-     * Returns the current staleness state of this edge node relative to
-     * the control plane (covered-frontier measure).
-     *
-     * @return the discrete staleness state
-     */
     public StalenessTracker.State staleness() {
         return stalenessTracker.currentState();
     }
@@ -254,20 +245,13 @@ public final class EdgeConfigClient {
         subscriptions.subscribe(prefix);
     }
 
-    /**
-     * Unsubscribes from a key prefix.
-     *
-     * @param prefix the key prefix to unsubscribe from (non-null)
-     */
     public void removeSubscription(String prefix) {
         subscriptions.unsubscribe(prefix);
     }
 
     /**
-     * Returns an unmodifiable snapshot of the currently subscribed prefixes.
-     *
-     * @return unmodifiable set of subscribed prefixes
-     */
+         * Returns an unmodifiable snapshot of the currently subscribed prefixes.
+         */
     public Set<String> subscriptions() {
         return subscriptions.prefixes();
     }

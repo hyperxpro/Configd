@@ -65,7 +65,6 @@ class RaftInboundMarshallingTest {
         });
     }
 
-    /** Builds a single-node RaftNode and self-elects it to LEADER on the raft executor thread. */
     private static RaftNode buildLeader(RaftTransport transport, StateMachine sm,
                                         ScheduledExecutorService raftExecutor) throws Exception {
         NodeId id = NodeId.of(1);
@@ -114,7 +113,6 @@ class RaftInboundMarshallingTest {
             ConfigWriteService.RaftProposer proposer =
                     ConfigdServer.raftProposer(driver, GROUP, raftExecutor, 2000);
 
-            // tick on the raft executor - the in-confinement entry point.
             ScheduledFuture<?> ticker = raftExecutor.scheduleAtFixedRate(() -> {
                 try {
                     node.tick();
@@ -239,7 +237,6 @@ class RaftInboundMarshallingTest {
         }
     }
 
-    /** Shared concurrency sentinel: trips if more than one thread is inside an instrumented region. */
     private static final class Sentinel {
         private final AtomicInteger active = new AtomicInteger();
         private final AtomicInteger maxObserved = new AtomicInteger();

@@ -48,7 +48,7 @@ class EdgeHostileServerTest {
     @Test
     void badCrcIsFrameCorrupt() throws Exception {
         byte[] heartbeat = EdgeFrameCodec.encode(new EdgeFrame.Heartbeat(1L, 2L));
-        heartbeat[heartbeat.length - 1] ^= (byte) 0xFF; // flip a CRC byte
+        heartbeat[heartbeat.length - 1] ^= (byte) 0xFF;
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> conn.sendRaw(heartbeat))) {
             EdgeConnection conn = connect(server);
             assertTerminal(conn, ProtocolViolationException.class, ErrorCode.FRAME_CORRUPT);
@@ -121,7 +121,7 @@ class EdgeHostileServerTest {
             assertTrue(conn.readerAlive(), "reader is parked on the idle socket, not spinning");
             conn.close();
             await(() -> !conn.readerAlive());
-            conn.closedFuture().get(10, TimeUnit.SECONDS); // completed normally (client-initiated close)
+            conn.closedFuture().get(10, TimeUnit.SECONDS);
         }
     }
 
@@ -142,7 +142,7 @@ class EdgeHostileServerTest {
         if (expectedCode != null) {
             assertEquals(Optional.of(expectedCode), ex.edgeCode());
         }
-        await(() -> !conn.readerAlive()); // the reader thread stopped — no leak
+        await(() -> !conn.readerAlive());
     }
 
     private static void await(BooleanSupplier condition) {

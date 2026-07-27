@@ -69,7 +69,6 @@ class RaftPeerIdentityBindingTest {
     private static final PeerIdentityPolicy ENFORCED = PeerIdentityPolicy.of("CN",
             Map.of("raft-node-1", NodeId.of(1), "raft-node-2", NodeId.of(2)));
 
-    /** SAN-URI marker allow-list: SPIFFE ids -> NodeId. Mirrors etcd {@code --peer-cert-allowed-hostname}. */
     private static final PeerIdentityPolicy ENFORCED_SAN = PeerIdentityPolicy.ofSanUri(
             Map.of("spiffe://configd/node-1", NodeId.of(1), "spiffe://configd/node-2", NodeId.of(2)));
 
@@ -100,14 +99,11 @@ class RaftPeerIdentityBindingTest {
         importCert(trustStore, "node2", node2Cert);
         importCert(trustStore, "client", clientCert);
 
-        // Separate peer trust anchor: a store the server uses for the Raft interior that trusts ONLY
-        // the real node leaves. An impostor CN=raft-node-1 (different key) is NOT in it, so it cannot
-        // complete the peer handshake even though its CN matches an allow-list entry (a structural check).
         peerTrust = fixtureDir.resolve("peer-trust.p12");
         impostorKs = fixtureDir.resolve("impostor-ks.p12");
         importCert(peerTrust, "node1", node1Cert);
         importCert(peerTrust, "node2", node2Cert);
-        genKeyPair(impostorKs, "impostor", "CN=raft-node-1,O=configd-test"); // same CN, different key
+        genKeyPair(impostorKs, "impostor", "CN=raft-node-1,O=configd-test");
 
         // SAN-URI marker fixture: a node cert carrying its identity in a SAN URI (SPIFFE) rather than the
         // CN. Trusted at the CA-chain layer (imported into the broad trust store); its SPIFFE id is the
@@ -152,7 +148,6 @@ class RaftPeerIdentityBindingTest {
         maliciousServers.clear();
     }
 
-    // ---- Test 1: valid node cert forging another node's senderId -> rejected + counted. ----
 
     @Test
     @Timeout(120)
@@ -169,7 +164,6 @@ class RaftPeerIdentityBindingTest {
         assertTrue(rejections.get() >= 1, "the forged senderId must increment the identity-mismatch counter");
     }
 
-    // ---- Test 2: client cert not in the allow-list -> cannot open a peer connection. ----
 
     @Test
     @Timeout(120)
@@ -187,7 +181,6 @@ class RaftPeerIdentityBindingTest {
         assertTrue(rejections.get() >= 1, "an unauthorized cert identity must increment the mismatch counter");
     }
 
-    // ---- Test 3: well-formed same-identity frame -> delivered, not counted. ----
 
     @Test
     @Timeout(120)
@@ -204,7 +197,6 @@ class RaftPeerIdentityBindingTest {
         assertEquals(0, rejections.get(), "a legitimate frame must not be counted as a mismatch");
     }
 
-    // ---- Test 4: unset allow-list -> legacy CA-chain-only behavior (shared-cert fleet stays green). ----
 
     @Test
     @Timeout(120)
@@ -223,7 +215,6 @@ class RaftPeerIdentityBindingTest {
         assertEquals(0, rejections.get(), "nothing is counted when identity binding is unconfigured");
     }
 
-    // ---- Test 5: reverse-path bypass - a peer forging a senderId on a connection WE dialed. ----
 
     @Test
     @Timeout(120)
@@ -266,7 +257,6 @@ class RaftPeerIdentityBindingTest {
         assertEquals(0, rejections.get());
     }
 
-    // ---- Test 6: enforced allow-list + plaintext transport = hard startup failure (no fail-open). ----
 
     @Test
     @Timeout(120)
@@ -281,7 +271,6 @@ class RaftPeerIdentityBindingTest {
                 "an enforced allow-list without mTLS must fail loud at startup, never fail open");
     }
 
-    // ---- Test 7: separate peer CA - a client-CA cert with a matching CN fails the HANDSHAKE. ----
 
     @Test
     @Timeout(120)
@@ -318,7 +307,6 @@ class RaftPeerIdentityBindingTest {
         assertEquals(0, rejections.get());
     }
 
-    // ---- Test 8: SAN-URI (SPIFFE) marker mode - identity carried in a SAN URI, not the CN. ----
 
     @Test
     @Timeout(120)
@@ -352,14 +340,12 @@ class RaftPeerIdentityBindingTest {
         assertTrue(rejections.get() >= 1, "a missing SAN-URI marker must increment the mismatch counter");
     }
 
-    // ---- helpers ----
 
     private int startServer(PeerIdentityPolicy policy, AtomicInteger inbound, AtomicInteger rejections)
             throws Exception {
         return startServer(policy, trustStore, null, inbound, rejections);
     }
 
-    /** Starts the server (node-1) with a SEPARATE peer trust store for the Raft interior. */
     private int startServerWithPeerTrust(PeerIdentityPolicy policy, Path peerTrustStore,
             AtomicInteger inbound, AtomicInteger rejections) throws Exception {
         return startServer(policy, trustStore, peerTrustStore, inbound, rejections);
@@ -406,7 +392,6 @@ class RaftPeerIdentityBindingTest {
             out.flush();
             drainBriefly(sock.getInputStream());
         } catch (IOException dropped) {
-            // server reset the connection (a valid rejection); asserted via the server-side counters
         }
     }
 
@@ -432,7 +417,6 @@ class RaftPeerIdentityBindingTest {
         }
     }
 
-    /** Our transport under test (node-1) with a single configured peer to dial. */
     private TcpRaftTransport startClientTransport(NodeId peerId, int peerPort, PeerIdentityPolicy policy,
             AtomicInteger inbound, AtomicInteger rejections) throws Exception {
         TlsConfig tls = new TlsConfig(node1Cert, node1Ks, trustStore, true,

@@ -60,19 +60,12 @@ public class HistogramBenchmark {
         }
     }
 
-    /** Single-thread baseline: pure record path, no contention. */
     @Benchmark
     @Threads(1)
     public void recordSingleThreaded(SharedHistogram h, PerThreadValues v) {
         h.histogram.record(v.values[v.cursor++ & 8191]);
     }
 
-    /**
-     * Contended record path. {@code @Threads(8)} forces JMH to spawn
-     * eight worker threads racing on the same shared histogram - this is
-     * the workload that should expose the synchronized min/max CAS cost
-     * on multi-socket machines.
-     */
     @Benchmark
     @Threads(8)
     public void recordContended(SharedHistogram h, PerThreadValues v) {

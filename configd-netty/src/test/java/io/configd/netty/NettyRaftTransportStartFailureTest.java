@@ -34,7 +34,6 @@ class NettyRaftTransportStartFailureTest {
             int attempts = 20;
             for (int i = 0; i < attempts; i++) {
                 NettyRaftTransport t = new NettyRaftTransport(NodeId.of(0), occupied, Map.of(), null, m -> { });
-                // The bind must fail (the port is held), and start() must tear down its own event loops.
                 assertThrows(Exception.class, t::start);
             }
 
@@ -55,7 +54,7 @@ class NettyRaftTransportStartFailureTest {
             Thread.sleep(200);
             delta = nonDaemonThreadCount() - baseline;
             if (delta <= 8) {
-                return; // settled back to baseline: the failed starts leaked nothing
+                return;
             }
         } while (System.nanoTime() < deadlineNanos);
         throw new AssertionError("a failed NettyRaftTransport.start() leaked event-loop threads: " + delta

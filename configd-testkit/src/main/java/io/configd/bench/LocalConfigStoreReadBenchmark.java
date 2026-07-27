@@ -96,27 +96,23 @@ public class LocalConfigStoreReadBenchmark {
         versionOut = new long[1];
     }
 
-    /** Hit: volatile snapshot load + HAMT get + one ReadResult (the documented 24 B). */
     @Benchmark
     public void getHit(Blackhole bh) {
         int idx = randomIndices[cursor++ & 0xFFFF];
         bh.consume(store.get(keys[idx]));
     }
 
-    /** Miss: pre-allocated NOT_FOUND singleton - TRUE zero allocation. */
     @Benchmark
     public void getMiss(Blackhole bh) {
         bh.consume(store.get("config/absent/key"));
     }
 
-    /** Cursor-gated hit (the edge serving path's read): the cursor branch, same alloc. */
     @Benchmark
     public void getHitWithCursor(Blackhole bh) {
         int idx = randomIndices[cursor++ & 0xFFFF];
         bh.consume(store.get(keys[idx], satisfiableCursor));
     }
 
-    /** The strict-zero-alloc hit path: value copied into a caller buffer. */
     @Benchmark
     public void getIntoHit(Blackhole bh) {
         int idx = randomIndices[cursor++ & 0xFFFF];

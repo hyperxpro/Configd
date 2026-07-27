@@ -19,13 +19,6 @@ package io.configd.common;
  */
 public interface Storage {
 
-    /**
-     * Stores a byte array value for the given key. Must be durable
-     * (survive process restart) before returning.
-     *
-     * @param key   the key (non-null)
-     * @param value the value (non-null, may be empty)
-     */
     void put(String key, byte[] value);
 
     /**
@@ -36,13 +29,6 @@ public interface Storage {
      */
     byte[] get(String key);
 
-    /**
-     * Appends data to a named log. Used for WAL entries.
-     * Must be durable before returning.
-     *
-     * @param logName the log name (e.g., "raft-wal")
-     * @param data    the data to append
-     */
     void appendToLog(String logName, byte[] data);
 
     /**
@@ -53,11 +39,6 @@ public interface Storage {
      */
     java.util.List<byte[]> readLog(String logName);
 
-    /**
-     * Truncates a log, removing all entries. Used after snapshot compaction.
-     *
-     * @param logName the log name
-     */
     void truncateLog(String logName);
 
     /**
@@ -70,9 +51,6 @@ public interface Storage {
      */
     void renameLog(String fromLogName, String toLogName);
 
-    /**
-     * Forces all pending writes to durable storage.
-     */
     void sync();
 
     /**
@@ -120,7 +98,6 @@ public interface Storage {
         sync();
     }
 
-    // Factory methods for standard implementations
 
     /**
      * In-memory implementation for testing. NOT durable - data is lost on restart.

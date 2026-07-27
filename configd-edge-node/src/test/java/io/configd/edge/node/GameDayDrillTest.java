@@ -61,7 +61,6 @@ class GameDayDrillTest {
                 EdgeClientCore.DEFAULT_HEARTBEAT_MS, EdgeClientCore.DEFAULT_SILENCE_FACTOR);
         metrics.bind(core);
 
-        // 1. HEALTHY: a fresh delivery at wall-now -> CURRENT, alert quiet (< 500 ms)
         deliver(core, clock, 1, "svc/a", "v1");
         metrics.syncFromCore(core, null);
         assertTrue(stalenessMs(registry) < 500,
@@ -77,8 +76,6 @@ class GameDayDrillTest {
                 "FAULT: edge_staleness_ms must cross the 2 s degraded threshold (alert fires); got "
                         + underFault);
 
-        // 3. RUNBOOK RECOVERY: re-establish fan-out delivery (propagation-delay.md).
-        // A fresh commit at the current wall heals the frontier -> staleness collapses, alert clears.
         deliver(core, clock, 2, "svc/a", "v2");
         metrics.syncFromCore(core, null);
         assertTrue(stalenessMs(registry) < 500,

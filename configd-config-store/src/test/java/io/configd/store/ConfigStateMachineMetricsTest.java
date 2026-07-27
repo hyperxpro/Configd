@@ -60,7 +60,6 @@ class ConfigStateMachineMetricsTest {
 
     @Test
     void noopApplyDoesNotIncrementCommitMetrics() {
-        // CommandCodec.NOOP_BYTES - empty command. Apply with empty array.
         stateMachine.apply(1, 1, new byte[0]);
         assertEquals(0, metrics.successCount.get(),
                 "Noop apply must NOT fire success");
@@ -103,8 +102,6 @@ class ConfigStateMachineMetricsTest {
         assertEquals(0, restoreMetrics.snapshotInstallFailedCount.get());
     }
 
-    // A malformed committed command is skipped deterministically as NON_MUTATING (never
-    // crash-loops the apply loop) and rings the alarm.
 
     @Test
     void malformedCommittedCommandIsSkippedNotThrown() {
@@ -171,9 +168,6 @@ class ConfigStateMachineMetricsTest {
 
     @Test
     void restoreSnapshotFailureIncrementsInstallFailed() {
-        // Craft a malformed envelope with a negative entry count so the
-        // bounds check throws IllegalArgumentException, hitting the
-        // onSnapshotInstallFailed branch.
         ByteBuffer buf = ByteBuffer.allocate(12);
         buf.putLong(0L);    // sequence counter
         buf.putInt(-1);     // entry count - invalid
@@ -186,8 +180,6 @@ class ConfigStateMachineMetricsTest {
         assertEquals(0, metrics.snapshotRebuildCount.get());
     }
 
-    /** Real (non-mock) recording sink - same testing style as the other
-     *  config-store tests use for InvariantChecker. */
     private static final class RecordingMetrics implements StateMachineMetrics {
         final AtomicInteger successCount = new AtomicInteger();
         final AtomicInteger failureCount = new AtomicInteger();

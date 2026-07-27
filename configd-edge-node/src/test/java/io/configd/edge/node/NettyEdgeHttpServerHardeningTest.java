@@ -101,7 +101,6 @@ class NettyEdgeHttpServerHardeningTest {
         return server.port();
     }
 
-    // Oversize request line / headers -> 400 (bounded HttpServerCodec, never unbounded buffering)
 
     @Test
     void oversizeHeaderBlockIsRejectedWith4xx() throws Exception {
@@ -125,7 +124,6 @@ class NettyEdgeHttpServerHardeningTest {
         }
     }
 
-    // Oversize body -> rejected (the request-size ceiling), never accumulated
 
     @Test
     void oversizeBodyIsRejectedNotBuffered() throws Exception {
@@ -156,7 +154,6 @@ class NettyEdgeHttpServerHardeningTest {
         }
     }
 
-    // Slowloris: a request that never completes is closed at the request deadline
 
     @Test
     void slowlorisIncompleteRequestIsClosedAtDeadline() throws Exception {
@@ -175,7 +172,7 @@ class NettyEdgeHttpServerHardeningTest {
                     "slowloris connection must be closed (EOF) or answered, not held open");
             if (first == 'H') {
                 // If the server answered (some builds 408), it must still close promptly — drain to EOF.
-                while (s.getInputStream().read() != -1) { /* drain */ }
+                while (s.getInputStream().read() != -1) { }
             }
         }
     }
@@ -192,7 +189,6 @@ class NettyEdgeHttpServerHardeningTest {
         org.junit.jupiter.api.Assertions.assertEquals("v1", resp.body());
     }
 
-    // Leak-freedom at PARANOID across all buffer paths (hits/misses/refusals/errors)
 
     @Test
     void noByteBufLeaksUnderSustainedTraffic() throws Exception {
@@ -208,14 +204,13 @@ class NettyEdgeHttpServerHardeningTest {
             startServerWith(30_000, 60_000, 1 << 20);
             String base = "http://127.0.0.1:" + port();
             try (HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()) {
-                hammer(http, base, 300);            // batch 1 (1500 req): warm the pool cache
+                hammer(http, base, 300);
                 Thread.sleep(250);
                 long mid = activeAllocations();
-                hammer(http, base, 300);            // batch 2 (1500 req): identical load
+                hammer(http, base, 300);
                 Thread.sleep(250);
                 long end = activeAllocations();
                 long growth = end - mid;
-                // A per-request leak would grow active by ~1500 across batch 2; a warm cache adds ~0.
                 assertTrue(growth <= 128, "ByteBuf leak: active pooled allocations grew by " + growth
                         + " (mid=" + mid + " end=" + end + ") over the 2nd identical 1500-request batch "
                         + "— a per-request leak scales with load; a warm pool cache does not (PARANOID)");
@@ -225,7 +220,6 @@ class NettyEdgeHttpServerHardeningTest {
         }
     }
 
-    /** Drives {@code n} iterations of the full request mix (5 endpoints each) through the server. */
     private static void hammer(HttpClient http, String base, int n) {
         for (int i = 0; i < n; i++) {
             send(http, base + "/v1/config/svc/a");          // hit (pooled body)
@@ -236,7 +230,6 @@ class NettyEdgeHttpServerHardeningTest {
         }
     }
 
-    /** Sum of active (allocated-not-yet-released) pooled allocations across all arenas. */
     private static long activeAllocations() {
         PooledByteBufAllocatorMetric m = PooledByteBufAllocator.DEFAULT.metric();
         long n = 0;

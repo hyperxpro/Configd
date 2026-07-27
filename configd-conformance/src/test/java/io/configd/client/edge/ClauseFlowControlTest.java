@@ -39,22 +39,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-/**
- * Client-conforms tests for the connection-lifecycle and flow-control behaviors: the client's reaction to
- * the server's flow-control signals (the non-fatal {@code DEMOTED_TO_CATCHUP} notice vs the terminal
- * {@code QUARANTINED} teardown), its mandatory {@code CURSOR_ACK} progress, the single-shared-drain
- * refuse-to-share, a reconnect that keeps only the cursor and mints a fresh {@code watch_id}, the
- * snapshot-first re-bootstrap on a stale resume, the token-edge AUTH-before-business-frame ordering, the
- * eager first-frame send on connect, the silent-close-is-retryable-not-a-protocol-error distinction, and the
- * client's own bounded backoff (not a reconnect storm) after a QUARANTINED teardown. Each test drives the
- * reference client against the scriptable {@link MockEdgeServer} and asserts the wire-visible reaction, not
- * just that a clause tag exists.
- *
- * <p>Not asserted here: the aggregate in-flight ceiling (an operator sizing concern, not client-observable).
- * The QUARANTINED-backoff test only asserts the deterministic client residue: the client never machine-parses
- * the untrusted server cooldown text; the identity-stateful cross-reconnect refusal and the cooldown duration
- * are server-side / timing concerns and are not asserted here.
- */
 @Timeout(30)
 class ClauseFlowControlTest {
 
@@ -63,9 +47,8 @@ class ClauseFlowControlTest {
     void demotedToCatchupIsNonFatalTheConnectionSurvives() throws Exception {
         AtomicBoolean caughtUp = new AtomicBoolean(false);
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            // The session in-flight / outbound queue backed up: the server demotes rather than closing.
             conn.send(new EdgeFrame.ErrorClose(ErrorCode.DEMOTED_TO_CATCHUP, "slow reader; switching to catch-up"));
-            conn.parkUntilClosed(); // keep the socket open -- a non-fatal demotion does NOT close the connection
+            conn.parkUntilClosed();
         })) {
             EdgeConnection conn = new EdgeConnection(
                     new ServerAddress("127.0.0.1", server.port()), null, HostileServerLimits.defaults(),
@@ -153,7 +136,6 @@ class ClauseFlowControlTest {
             long wid = ((EdgeFrame.WatchCreate) conn.readFrame()).watchId();
             w(conn, new EdgeFrame.WatchCreated(wid, List.of(new EdgeFrame.ShardMode(0, 0, EdgeFrame.Mode.TAIL))));
             if (conn.index == 1) {
-                // The resume cursor fell off the retained window: force the client to reconnect + re-CREATE.
                 w(conn, new EdgeFrame.WatchCanceled(wid, ErrorCode.GAP_UNRECOVERABLE, null, "cursor too old"));
             } else {
                 conn.parkUntilClosed();
@@ -177,8 +159,7 @@ class ClauseFlowControlTest {
         KeyPair leader = StreamFixtures.ed25519();
         var tail = StreamFixtures.signedPut(leader, 5, 6, 1, "c", "3");
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            conn.readFrame(); // SUBSCRIBE
-            // A stale or too-old resume: the server serves a full snapshot (mode=1), not an incremental tail.
+            conn.readFrame();
             conn.send(new EdgeFrame.SubscribeOk(6L, EdgeFrame.Mode.SNAPSHOT_FIRST));
             for (EdgeFrame f : StreamFixtures.snapshotFrames(5, StreamFixtures.entries("a", "1", "b", "2"), 8)) {
                 conn.send(f);
@@ -199,8 +180,8 @@ class ClauseFlowControlTest {
     @Tag("clause:F10-1e")
     void tokenEdgeSendsAuthBeforeAnyBusinessFrame() throws Exception {
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            conn.readFrame();                            // the AUTH -- the first routed frame on a token edge
-            conn.send(new EdgeFrame.Heartbeat(0L, 1L));  // a positive liveness confirmation, so authenticated
+            conn.readFrame();
+            conn.send(new EdgeFrame.Heartbeat(0L, 1L));
             conn.parkUntilClosed();
         })) {
             ConfigdClientConfig config = tokenConfig(server.port(), tokens("golden-token"));
@@ -312,7 +293,6 @@ class ClauseFlowControlTest {
         }
     }
 
-    // helpers (mirrored from the edge tests this class re-expresses as client-conforms assertions)
 
     /** Sends a server-to-client frame on the 0x02 watch wire (the connection the client pinned via WATCH_CREATE). */
     private static void w(MockEdgeServer.Conn conn, EdgeFrame frame) throws IOException {

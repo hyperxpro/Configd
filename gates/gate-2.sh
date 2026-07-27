@@ -78,7 +78,6 @@ step_p0tests() {
   # logs retain the surefire summary for diagnosis.
   if ! $MVN install -DskipTests 2>&1 | tee "$LOGDIR/p0-install.log" | tail -2; then
     echo "GATE-2 p0tests: reactor install failed (see $LOGDIR/p0-install.log)"; return 1; fi
-  # Named discriminating tests, one surefire run per owning module.
   if ! $MVN -pl configd-consensus-core -am test \
     -Dtest='CommitOutcomeSeamTest,SnapshotCrashRecoveryTest,TimingConversionTests,ReconfigurationTest' \
     -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$LOGDIR/p0-consensus.log" | tail -4; then

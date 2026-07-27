@@ -64,7 +64,7 @@ class StalenessSkewTripwireTest {
     @Test
     void grosslyFutureFrontierViaHeartbeatCountsAndClamps() {
         long cursor = 5;
-        tracker.recordUpdate(cursor, clock.timeMs); // frontier = now
+        tracker.recordUpdate(cursor, clock.timeMs);
         // A lying/skewed relay heartbeat asserting a serverNow 10s in our future.
         tracker.recordFrontier(cursor, cursor, clock.timeMs + 10_000);
         assertEquals(0, tracker.stalenessMs());
@@ -73,8 +73,8 @@ class StalenessSkewTripwireTest {
 
     @Test
     void backwardsFrontierViaUpdateCountsAndHolds() {
-        tracker.recordUpdate(2, clock.timeMs);       // frontier = now (staleness 0)
-        clock.timeMs += 1_000;                        // wall advances 1s -> staleness 1000
+        tracker.recordUpdate(2, clock.timeMs);
+        clock.timeMs += 1_000;
         // A re-ordered/older commit ts that would move the frontier back - refused.
         tracker.recordUpdate(3, clock.timeMs - 5_000);
         assertEquals(1_000, tracker.stalenessMs(),
@@ -85,7 +85,7 @@ class StalenessSkewTripwireTest {
     @Test
     void backwardsFrontierViaHeartbeatCountsAndHolds() {
         long cursor = 7;
-        tracker.recordUpdate(cursor, clock.timeMs);  // frontier = now
+        tracker.recordUpdate(cursor, clock.timeMs);
         clock.timeMs += 500;
         // A cursor-matched heartbeat carrying a serverNow BEHIND our current frontier.
         tracker.recordFrontier(cursor, cursor, clock.timeMs - 800);
@@ -96,7 +96,7 @@ class StalenessSkewTripwireTest {
     @Test
     void noCounterStillClampsImplausibleSamples() {
         StalenessTracker noCounter = new StalenessTracker(clock);
-        noCounter.recordUpdate(1, clock.timeMs + 5_000); // grossly future
+        noCounter.recordUpdate(1, clock.timeMs + 5_000);
         assertEquals(0, noCounter.stalenessMs(), "still clamped even without a counter");
         assertEquals(0L, noCounter.implausibleCount());
     }

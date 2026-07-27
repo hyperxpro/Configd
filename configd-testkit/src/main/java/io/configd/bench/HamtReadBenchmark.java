@@ -7,21 +7,6 @@ import org.openjdk.jmh.infra.Blackhole;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Benchmarks {@link HamtMap#get(Object)} for varying map sizes.
- * <p>
- * Validates two properties:
- * <ol>
- *   <li><b>O(log32 N) lookup</b> - throughput should degrade very gradually
- *       as N grows from 1K to 1M (at most ~4 trie levels at 1M).</li>
- *   <li><b>Zero allocation on the read path</b> - run with {@code -prof gc}
- *       to verify {@code gc.alloc.rate.norm == 0 B/op}.</li>
- * </ol>
- * <p>
- * Keys are pre-generated {@code String} instances stored in an array;
- * the benchmark selects a random key per invocation via a pre-rolled index
- * to avoid measuring key construction or random number generation overhead.
- */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 @State(Scope.Thread)
@@ -68,7 +53,6 @@ public class HamtReadBenchmark {
 
     @Benchmark
     public void getMiss(Blackhole bh) {
-        // Lookup a key that does not exist - verifies zero-alloc on miss path
         bh.consume(map.get("nonexistent/key/path"));
     }
 }

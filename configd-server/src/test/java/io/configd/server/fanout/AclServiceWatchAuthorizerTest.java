@@ -73,7 +73,7 @@ class AclServiceWatchAuthorizerTest {
     void interiorDenyRejectsNotNarrowed() {
         AclService acl = new AclService();
         acl.grant("a.", "p", Set.of(READ, WATCH));
-        acl.deny("a.secret.", "p", Set.of(READ)); // a hole carved inside the subtree
+        acl.deny("a.secret.", "p", Set.of(READ));
         assertFalse(authz(acl, "p", prefix("a.")),
                 "the interior DENY on the descendant a.secret. must reject the whole-subtree watch");
     }
@@ -83,7 +83,7 @@ class AclServiceWatchAuthorizerTest {
     void ancestorDenyRejects() {
         AclService acl = new AclService();
         acl.grant("a.", "p", Set.of(READ, WATCH));
-        acl.deny("", "p", Set.of(WATCH)); // deny at the root (an ancestor of a.)
+        acl.deny("", "p", Set.of(WATCH));
         assertFalse(authz(acl, "p", prefix("a.")));
     }
 
@@ -91,7 +91,7 @@ class AclServiceWatchAuthorizerTest {
     @DisplayName("4 — an over-broad target (grant ⊊ target) is rejected, never narrowed to the subset")
     void overBroadTargetRejectedNotFiltered() {
         AclService acl = new AclService();
-        acl.grant("a.b.", "p", Set.of(READ, WATCH)); // the grant is a strict subset of the target a.
+        acl.grant("a.b.", "p", Set.of(READ, WATCH));
         assertFalse(authz(acl, "p", prefix("a.")),
                 "no ancestor-or-equal ALLOW covers a.; the watch is rejected, not narrowed to a.b.");
     }
@@ -100,7 +100,7 @@ class AclServiceWatchAuthorizerTest {
     @DisplayName("5 — full_chain_verify by a subtree-only principal is rejected (maps to root, W7-3)")
     void fullChainVerifyBySubtreePrincipalRejected() {
         AclService acl = new AclService();
-        acl.grant("a.", "p", Set.of(READ, WATCH)); // a subtree grant, not the root ""
+        acl.grant("a.", "p", Set.of(READ, WATCH));
         assertFalse(authz(acl, "p", fcvPrefix("a.")),
                 "full_chain_verify streams the whole signed chain ⇒ requires a root-scope grant");
     }
@@ -135,7 +135,7 @@ class AclServiceWatchAuthorizerTest {
     @DisplayName("15 — an authenticated-but-ungranted principal is rejected on every target form")
     void ungrantedPrincipalRejected() {
         AclService acl = new AclService();
-        acl.grant("a.", "alice", Set.of(READ, WATCH)); // alice is granted; mallory is not
+        acl.grant("a.", "alice", Set.of(READ, WATCH));
         assertFalse(authz(acl, "mallory", prefix("a.")), "ungranted principal ⇒ reject (PREFIX)");
         assertFalse(authz(acl, "mallory", key("a.k")), "ungranted principal ⇒ reject (KEY)");
         assertFalse(authz(acl, "mallory", full()), "ungranted principal ⇒ reject (FULL)");
@@ -146,7 +146,7 @@ class AclServiceWatchAuthorizerTest {
     void keyWatchNotBlockedByDescendantKeyDeny() {
         AclService acl = new AclService();
         acl.grant("a.", "p", Set.of(READ, WATCH));
-        acl.deny("a.b.c", "p", Set.of(READ)); // a.b.c is a different (descendant) key, not a.b itself
+        acl.deny("a.b.c", "p", Set.of(READ));
         assertTrue(authz(acl, "p", key("a.b")),
                 "a KEY watch on the exact path a.b is unaffected by a DENY on the descendant key a.b.c");
         assertFalse(acl.isAllowed("p", "a.b.c", WATCH), "the descendant key a.b.c itself is correctly denied");
@@ -200,7 +200,7 @@ class AclServiceWatchAuthorizerTest {
     @DisplayName("SUBSCRIBE — a subtree-only grant does not cover the whole store")
     void subscribeSubtreeGrantRejected() {
         AclService acl = new AclService();
-        acl.grant("a.", "edge", Set.of(READ)); // a strict subset of the root
+        acl.grant("a.", "edge", Set.of(READ));
         assertFalse(authzSubscribe(acl, "edge"), "a subtree READ grant cannot cover the root prefix");
     }
 
@@ -209,7 +209,7 @@ class AclServiceWatchAuthorizerTest {
     void subscribeRootReadWithAnyDenyRejected() {
         AclService acl = new AclService();
         acl.grant("", "edge", Set.of(READ));
-        acl.deny("a.secret.", "edge", Set.of(READ)); // a hole carved anywhere under the root
+        acl.deny("a.secret.", "edge", Set.of(READ));
         assertFalse(authzSubscribe(acl, "edge"),
                 "at the root, every deny matches the interior term, so any READ deny blocks SUBSCRIBE");
     }
@@ -218,7 +218,7 @@ class AclServiceWatchAuthorizerTest {
     @DisplayName("SUBSCRIBE — WATCH is not sufficient; READ is what a streaming read requires")
     void subscribeWatchOnlyRootRejected() {
         AclService acl = new AclService();
-        acl.grant("", "edge", Set.of(WATCH)); // WATCH over the root but no READ
+        acl.grant("", "edge", Set.of(WATCH));
         assertFalse(authzSubscribe(acl, "edge"), "SUBSCRIBE authorizes on READ, not WATCH");
     }
 
@@ -237,7 +237,7 @@ class AclServiceWatchAuthorizerTest {
     @DisplayName("SUBSCRIBE — an ungranted principal is denied the whole-store feed")
     void subscribeUngrantedRejected() {
         AclService acl = new AclService();
-        acl.grant("", "edge", Set.of(READ)); // edge holds root READ; mallory does not
+        acl.grant("", "edge", Set.of(READ));
         assertFalse(authzSubscribe(acl, "mallory"), "an ungranted principal cannot open the feed");
     }
 }

@@ -7,20 +7,6 @@ import org.openjdk.jmh.infra.Blackhole;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Benchmarks {@link HamtMap#put(Object, Object)} with structural sharing.
- * <p>
- * Measures the cost of inserting a new key into an existing map and the
- * allocation overhead per operation. Run with {@code -prof gc} to see
- * {@code gc.alloc.rate.norm} - this quantifies the bytes allocated per
- * put due to path-copying (expected: O(log32 N) node copies).
- * <p>
- * Two scenarios are benchmarked:
- * <ul>
- *   <li><b>putNew</b> - insert a key not present in the map (triggers node creation)</li>
- *   <li><b>putOverwrite</b> - overwrite an existing key with a new value (path copy only)</li>
- * </ul>
- */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 @State(Scope.Thread)
@@ -61,12 +47,6 @@ public class HamtWriteBenchmark {
         newKeyCursor = size;
     }
 
-    /**
-     * Inserts a key that does not exist in the map.
-     * Each invocation uses a fresh key to guarantee a new insertion.
-     * The returned map is consumed but not retained - so the base map
-     * stays constant across iterations.
-     */
     @Benchmark
     public void putNew(Blackhole bh) {
         String key = "new/key/" + (newKeyCursor++);
@@ -74,9 +54,7 @@ public class HamtWriteBenchmark {
     }
 
     /**
-     * Overwrites an existing key with a new value.
-     * This triggers path-copying of nodes from root to leaf
-     * but no new bitmap slots.
+     * Path-copies nodes from root to leaf; allocates no new bitmap slots (unlike putNew).
      */
     @Benchmark
     public void putOverwrite(Blackhole bh) {

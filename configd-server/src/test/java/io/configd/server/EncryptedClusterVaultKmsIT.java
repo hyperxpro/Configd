@@ -79,7 +79,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @Timeout(600)
 final class EncryptedClusterVaultKmsIT {
 
-    // Vault, reused from VaultTransitKmsIT's provisioning.
     private static final String ROOT_TOKEN = "root-dev-token";
     private static final String MOUNT = "transit";
     private static final String KEY = "configd-root-kek";
@@ -91,7 +90,7 @@ final class EncryptedClusterVaultKmsIT {
 
     private static final int NODES = 3;
     private static final int SHARDS = 1;
-    private static final int PRIMARY = 0; // the single Raft group
+    private static final int PRIMARY = 0;
 
     private static final long STABILIZE_MS = 120_000;
     private static final long REPLICATE_MS = 45_000;
@@ -173,7 +172,6 @@ final class EncryptedClusterVaultKmsIT {
         System.setProperty("configd.raft.heartbeatIntervalMs", "100");
         System.setProperty("configd.raft.netty.workerThreads", "1");
         System.setProperty("configd.raft.autobalance.enabled", "false");
-        // Point every node at the real Vault Transit custodian.
         System.setProperty("configd.kms.vault.address", vault.getHttpHostAddress());
         System.setProperty("configd.kms.vault.transitMount", MOUNT);
         System.setProperty("configd.kms.vault.transitKeyName", KEY);
@@ -219,7 +217,6 @@ final class EncryptedClusterVaultKmsIT {
             configs[i] = nodeConfig(i, bindPorts, root.resolve("node-" + i), signingKey);
         }
 
-        // --- boot all three: each node UNSEALS its keyring-custody root through the real Vault at boot ---
         ConfigdServer[] servers = new ConfigdServer[NODES];
         for (int i = 0; i < NODES; i++) {
             servers[i] = ConfigdServer.start(configs[i]);
@@ -246,7 +243,6 @@ final class EncryptedClusterVaultKmsIT {
                     "node " + i + " must mint the frozen preallocated keyring under encryption");
         }
 
-        // A stable leader forms (the armed strict-boot witness gate clears at quorum).
         int leader = awaitStableLeader(servers, PRIMARY, STABILIZE_MS);
         assertTrue(leader >= 0, "the single shard must elect one stable leader within " + STABILIZE_MS
                 + "ms: " + leadershipSnapshot(servers, PRIMARY));
@@ -279,7 +275,6 @@ final class EncryptedClusterVaultKmsIT {
         servers[restartTarget].shutdown();
         running.remove(servers[restartTarget]);
 
-        // Advance the cluster (2-of-3 quorum) while the target is down, so recovery reconciles a real gap.
         long postDown = commitAndAwaitReplicationExcluding(servers, PRIMARY, restartTarget,
                 "cfg/gamma", "v-gamma");
 
@@ -297,10 +292,8 @@ final class EncryptedClusterVaultKmsIT {
         assertTrue(caughtUp, "restarted node must re-unseal via Vault and catch shard up to " + postDown
                 + " (got " + appliedIndex(restarted, PRIMARY) + ") — decrypting its recovered log");
 
-        // The previously-committed canary is still served post-restart and still encrypted on disk.
         assertMarkerAbsentOnDisk(root.resolve("node-" + restartTarget), canaryBytes);
 
-        // A fresh write after recovery commits + replicates to all three (the cluster is whole again).
         long finalCommit = commitAndAwaitReplication(servers, PRIMARY, "cfg/epsilon", "v-epsilon");
         assertTrue(finalCommit > postDown, "a post-recovery write commits + replicates across the whole cluster");
     }
@@ -325,7 +318,6 @@ final class EncryptedClusterVaultKmsIT {
                 "must fail closed on an unreachable Vault, never a silent local fallback: " + msg);
     }
 
-    // cluster helpers (deadline-polled; no sleep-as-sync) - mirror the composition test's idiom
 
     private ServerConfig nodeConfig(int nodeId, int[] bindPorts, Path dataDir, Path signingKey) {
         StringBuilder peers = new StringBuilder();
@@ -364,7 +356,7 @@ final class EncryptedClusterVaultKmsIT {
             RaftNode node = servers[i].driver().getGroup(gid);
             if (node != null && node.monitorView().role() == RaftRole.LEADER) {
                 if (leader >= 0) {
-                    return -1; // two leaders observed (transient) - not stable
+                    return -1;
                 }
                 leader = i;
             }
@@ -381,7 +373,6 @@ final class EncryptedClusterVaultKmsIT {
         return -1;
     }
 
-    /** Polls until one node is the sole LEADER for {@code gid} across several consecutive observations. */
     private static int awaitStableLeader(ConfigdServer[] servers, int gid, long budgetMs)
             throws InterruptedException {
         long end = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
@@ -411,7 +402,6 @@ final class EncryptedClusterVaultKmsIT {
         return sb.append(']').toString();
     }
 
-    /** Proposes a PUT on {@code gid}'s current leader and waits until ALL nodes apply it; returns index. */
     private long commitAndAwaitReplication(ConfigdServer[] servers, int gid, String key, String value)
             throws Exception {
         return commitAndAwaitReplicationExcluding(servers, gid, -1, key, value);
@@ -474,7 +464,6 @@ final class EncryptedClusterVaultKmsIT {
         return Math.max(remain, 1_000L); // floor so a late per-node check still gets a chance
     }
 
-    /** Asserts the canary's plaintext bytes appear in NO file under {@code dataDir} (encrypted at rest). */
     private static void assertMarkerAbsentOnDisk(Path dataDir, byte[] marker) throws IOException {
         try (Stream<Path> paths = Files.walk(dataDir)) {
             for (Path p : (Iterable<Path>) paths.filter(Files::isRegularFile)::iterator) {

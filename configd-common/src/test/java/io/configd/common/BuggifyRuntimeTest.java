@@ -55,7 +55,6 @@ class BuggifyRuntimeTest {
         void shouldFireReturnsFalseAfterDisable() {
             BuggifyRuntime.enableSimulationMode(42L);
             BuggifyRuntime.disableSimulationMode();
-            // Once simulation mode is disabled, shouldFire must return false regardless of probability.
             assertFalse(BuggifyRuntime.shouldFire("test.point", 1.0));
         }
     }

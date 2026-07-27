@@ -57,11 +57,9 @@ class InboundReadDeadlineFuzzTest {
             server.setSoTimeout(5_000);
             int port = server.getLocalPort();
 
-            // Attacker side: connect, then send NOTHING (the slow-drip "stall").
             try (Socket attacker = new Socket("127.0.0.1", port);
                  Socket accepted = server.accept()) {
 
-                // The inbound reader path never sets a read timeout: default is 0.
                 assertEquals(0, accepted.getSoTimeout(),
                         "accepted socket default soTimeout is 0 (no deadline) — "
                                 + "this is what the inbound reader relies on");
@@ -70,8 +68,8 @@ class InboundReadDeadlineFuzzTest {
                 AtomicReference<Object> outcome = new AtomicReference<>();
                 Thread reader = new Thread(() -> {
                     try {
-                        int b = in.read(); // blocks: peer sent nothing, conn open
-                        outcome.set(b);    // would be -1 on EOF, >=0 on data
+                        int b = in.read();
+                        outcome.set(b);
                     } catch (IOException e) {
                         outcome.set(e);    // set when we close the socket below
                     }
@@ -79,7 +77,6 @@ class InboundReadDeadlineFuzzTest {
                 reader.setDaemon(true);
                 reader.start();
 
-                // Give the read a generous window to (wrongly) return on its own.
                 reader.join(1_500);
                 assertTrue(reader.isAlive(),
                         "read() returned without data — a real deadline would be needed "
@@ -88,7 +85,6 @@ class InboundReadDeadlineFuzzTest {
                         "no outcome yet: the read is genuinely blocked, holding the "
                                 + "reader thread + socket FD with no timeout");
 
-                // Bounded teardown: closing unblocks the read so the test terminates.
                 accepted.close();
                 reader.join(5_000);
                 assertTrue(!reader.isAlive(), "reader should unblock once the socket closes");

@@ -44,7 +44,6 @@ public final class BurnRateAlertEvaluator {
 
             if (!status.breaching()) continue;
 
-            // Compute burn rate: (1 - compliance) / (1 - target)
             double errorBudgetFraction = 1.0 - status.target();
             if (errorBudgetFraction <= 0) continue;
             double currentErrorRate = 1.0 - status.current();

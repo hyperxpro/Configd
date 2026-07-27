@@ -22,7 +22,6 @@ import java.util.List;
  */
 final class HistoryRecorder {
 
-    /** A single recorded op in checker-neutral form. */
     record Entry(int clientId, String opType, String key, String arg, String ret,
                  long invokeTs, long responseTs, String status, String consistency) {}
 
@@ -48,7 +47,6 @@ final class HistoryRecorder {
                 observedTokenOrNull, ts, ts, "ok", "linearizable"));
     }
 
-    /** Marks the run complete (records the final real-time bound). */
     void finish(long endTs) {
         // No-op for now; kept as a stable lifecycle hook in case a closing marker is
         // later needed by the checker.
@@ -58,7 +56,6 @@ final class HistoryRecorder {
         return entries;
     }
 
-    /** Serializes the history as JSON Lines (one op per line). */
     String toJsonl() {
         StringBuilder sb = new StringBuilder();
         for (Entry e : entries) {

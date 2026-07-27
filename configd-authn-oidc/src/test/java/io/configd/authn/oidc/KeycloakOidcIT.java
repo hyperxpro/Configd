@@ -82,7 +82,6 @@ final class KeycloakOidcIT {
         }
     }
 
-    // ---------------------------------------------------------------- valid + claims + audience
 
     @Test
     void realAccessTokenValidatesWithMappedRolesAndCarriesExp() throws Exception {
@@ -113,7 +112,7 @@ final class KeycloakOidcIT {
         RealmRepresentation rep = realm.toRepresentation();
         int original = rep.getAccessTokenLifespan() == null ? 60 : rep.getAccessTokenLifespan();
         try {
-            rep.setAccessTokenLifespan(2); // seconds
+            rep.setAccessTokenLifespan(2);
             realm.update(rep);
             String token = clientCredentialsToken();
             Thread.sleep(4_000L); // outlive the 2s lifespan
@@ -127,7 +126,6 @@ final class KeycloakOidcIT {
         }
     }
 
-    // ---------------------------------------------------------------- live JWKS key roll (the marquee)
 
     @Test
     void signingKeyRollIsToleratedAndRetiredKidIsRejected() throws Exception {
@@ -159,12 +157,10 @@ final class KeycloakOidcIT {
         realm.components().component(originalKeyComponentId).remove();
         Thread.sleep(2_500L); // outlive the 1s JWKS cache TTL so the next access refetches {kidB}
 
-        // The new kid still validates; the retired kid is now rejected (post-rotation eviction).
         assertInstanceOf(AuthResult.Authenticated.class, auth.authenticate(new Credential.BearerToken(tokenB)));
         assertDenied(auth.authenticate(new Credential.BearerToken(tokenA)));
     }
 
-    // ---------------------------------------------------------------- helpers
 
     private OidcAuthenticator authenticator(String audience, long jwksTtlMillis, long rateLimitMillis)
             throws Exception {

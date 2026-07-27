@@ -54,7 +54,6 @@ public interface KmsProvider extends AutoCloseable {
     /** Discovery discriminator: {@code "local"}, {@code "aws-kms"}, ... */
     String type();
 
-    /** The active KEK identity + keyring term (observability + rotation). */
     KeyId currentKeyId();
 
     /**
@@ -83,17 +82,13 @@ public interface KmsProvider extends AutoCloseable {
      */
     RootKey unwrap(WrappedKey wrapped) throws KmsUnavailableException;
 
-    /** Optional pre-flight reachability probe. Default is a no-op. */
     default void healthCheck() throws KmsUnavailableException {
-        // no-op by default
     }
 
     /** Releases the KMS client (NOT the root key, which the core now owns). */
     @Override
     default void close() {
-        // no-op by default
     }
 
-    /** A freshly-provisioned root key: the live handle plus its sealed carrier to persist. */
     record Provisioned(RootKey rootKey, WrappedKey wrapped) {}
 }

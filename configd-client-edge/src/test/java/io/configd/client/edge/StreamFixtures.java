@@ -36,25 +36,21 @@ final class StreamFixtures {
         return KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
     }
 
-    /** A signed PUT delta {@code from -> to} at {@code epoch}, signed by {@code signer}. */
     static ConfigDelta signedPut(KeyPair signer, long from, long to, long epoch, String key, String value)
             throws Exception {
         return signed(signer, from, to, epoch,
                 List.of(new ConfigMutation.Put(key, value.getBytes(StandardCharsets.UTF_8))));
     }
 
-    /** A signed delta over {@code mutations} at {@code epoch}, signed by {@code signer}. */
     static ConfigDelta signed(KeyPair signer, long from, long to, long epoch, List<ConfigMutation> mutations)
             throws Exception {
         byte[] nonce = new byte[ConfigDelta.NONCE_LEN];
         RNG.nextBytes(nonce);
-        // Build an unsigned delta to compute the exact signing payload, then re-emit signed.
         ConfigDelta unsigned = new ConfigDelta(from, to, mutations, null, epoch, nonce);
         byte[] signature = sign(signer.getPrivate(), unsigned.signingPayload());
         return new ConfigDelta(from, to, mutations, signature, epoch, nonce);
     }
 
-    /** An UNSIGNED delta (for the fail-closed test). */
     static ConfigDelta unsignedPut(long from, long to, String key, String value) {
         return new ConfigDelta(from, to,
                 List.of(new ConfigMutation.Put(key, value.getBytes(StandardCharsets.UTF_8))));
@@ -64,7 +60,6 @@ final class StreamFixtures {
         return new EdgeFrame.Notify(List.of(new CommitNotification(seq, commitTs, delta)));
     }
 
-    /** Builds the {@code SNAPSHOT_BEGIN → CHUNK* → SNAPSHOT_END} frames for a store at {@code seq}. */
     static List<EdgeFrame> snapshotFrames(long seq, Map<String, String> entries, int chunkBytes) {
         HamtMap<String, VersionedValue> data = HamtMap.empty();
         for (Map.Entry<String, String> e : entries.entrySet()) {
@@ -80,7 +75,6 @@ final class StreamFixtures {
         return frames;
     }
 
-    /** Builds the per-(watch_id,gid) {@code WATCH_SNAPSHOT_BEGIN → CHUNK* → END} catch-up substream. */
     static List<EdgeFrame> watchSnapshotFrames(long watchId, int gid, long seq, Map<String, String> entries,
                                                int chunkBytes) {
         HamtMap<String, VersionedValue> data = HamtMap.empty();

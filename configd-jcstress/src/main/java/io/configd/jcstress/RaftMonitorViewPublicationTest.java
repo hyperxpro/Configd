@@ -32,7 +32,7 @@ public final class RaftMonitorViewPublicationTest {
     }
 
     private static final int COHERENT = 1;
-    private static final int TORN = 99;   // any cross-publication splice - surfaces as a distinct outcome
+    private static final int TORN = 99;
 
     /** Immutable multi-field carrier - the {@code RaftMetrics} stand-in. By construction every instance
      *  satisfies {@code b == a + 1 && c == a + 2}; a reader that ever sees that relation broken has
@@ -60,16 +60,16 @@ public final class RaftMonitorViewPublicationTest {
     @Outcome(id = "1", expect = Expect.ACCEPTABLE, desc = "coherent snapshot — saw the seed or the republished view whole")
     @Outcome(expect = Expect.FORBIDDEN, desc = "TORN — fields spliced across publications; the volatile/immutable publish leaked")
     public static class PublishedSnapshotNeverTears {
-        volatile View view = new View(1L);   // seed (constructor; the owner-published initial snapshot)
+        volatile View view = new View(1L);
 
         @Actor
         public void owner() {
-            view = new View(2L);             // republish: one volatile store of a fresh immutable carrier
+            view = new View(2L);
         }
 
         @Actor
         public void reader(I_Result r) {
-            View v = view;                   // one volatile load - the monitorView() read
+            View v = view;
             r.r1 = v.coherent() ? COHERENT : TORN;
         }
     }
@@ -96,7 +96,7 @@ public final class RaftMonitorViewPublicationTest {
 
         @Actor
         public void owner() {
-            a = 2L;                          // per-field publication, in order a -> b -> c
+            a = 2L;
             b = 3L;
             c = 4L;
         }

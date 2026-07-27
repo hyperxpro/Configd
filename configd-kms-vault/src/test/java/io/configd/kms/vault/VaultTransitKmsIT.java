@@ -57,7 +57,6 @@ final class VaultTransitKmsIT {
                         "auth enable approle");
         vault.start();
 
-        // A policy granting the AppRole the Transit custodian operations, then a role bound to it.
         exec("sh", "-c", "echo 'path \"" + MOUNT + "/*\" { capabilities = [\"create\",\"read\",\"update\"] }' "
                 + "| VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=" + ROOT_TOKEN + " vault policy write configd -");
         exec("vault", "write", "auth/approle/role/" + ROLE,
@@ -131,7 +130,6 @@ final class VaultTransitKmsIT {
     @Test
     void aadMismatchIsRejectedByRealVault() throws Exception {
         WrappedKey wrapped = provider("node-gamma").generateRootKey().wrapped();
-        // A different node identity (associated_data) cannot unseal the carrier.
         assertThrows(KmsUnavailableException.class, () -> provider("node-DELTA").unwrap(wrapped));
     }
 

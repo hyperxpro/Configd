@@ -35,7 +35,6 @@ public record CredentialExpiryPolicy(double tokenWindowFraction, long tokenWindo
                                      long certWindowFloorMs, long certWindowCeilMs,
                                      long clockSkewLeewayMs) {
 
-    /** Default windows: token {@code (0.20, 30s, 5m)}, cert {@code (0.10, 5m, 1h)}, leeway 60s. */
     public static final CredentialExpiryPolicy DEFAULTS = new CredentialExpiryPolicy(
             0.20, 30_000L, 300_000L, 0.10, 300_000L, 3_600_000L, 60_000L);
 
@@ -65,12 +64,10 @@ public record CredentialExpiryPolicy(double tokenWindowFraction, long tokenWindo
                 cfg.getLong("configd.auth.clockSkewLeewayMs", DEFAULTS.clockSkewLeewayMs));
     }
 
-    /** The refresh lead-time window (ms) for a token whose total lifetime is {@code lifetimeMs}. */
     public long tokenRefreshWindowMs(long lifetimeMs) {
         return clampWindow(tokenWindowFraction, lifetimeMs, tokenWindowFloorMs, tokenWindowCeilMs);
     }
 
-    /** The refresh lead-time window (ms) for a cert whose total lifetime is {@code lifetimeMs}. */
     public long certRefreshWindowMs(long lifetimeMs) {
         return clampWindow(certWindowFraction, lifetimeMs, certWindowFloorMs, certWindowCeilMs);
     }
@@ -82,7 +79,6 @@ public record CredentialExpiryPolicy(double tokenWindowFraction, long tokenWindo
      */
     public long serverCloseDeadlineMillis(long credentialExpiresAtMillis) {
         long deadline = credentialExpiresAtMillis + clockSkewLeewayMs;
-        // Saturate on overflow (a far-future notAfter + leeway must never wrap to a past time).
         return (deadline < credentialExpiresAtMillis) ? Long.MAX_VALUE : deadline;
     }
 

@@ -62,7 +62,7 @@ class EdgeFilteredForwardApplyTest {
         // behind this latch makes "delivered as a change event" deterministic rather than a thread race.
         CountDownLatch subscriberReady = new CountDownLatch(1);
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            conn.readFrame(); // the SUBSCRIBE
+            conn.readFrame();
             conn.send(new EdgeFrame.SubscribeOk(0L, EdgeFrame.Mode.TAIL, true), V3);
             subscriberReady.await(10, TimeUnit.SECONDS);
             conn.send(StreamFixtures.notify(1, 100, d1), V3);
@@ -74,7 +74,7 @@ class EdgeFilteredForwardApplyTest {
                         SubscribeOptions.defaults().withAcceptFiltered(true));
                 List<ConfigChange> changes = new CopyOnWriteArrayList<>();
                 sub.subscribe(recordingSubscriber(changes));
-                sub.awaitHydrated(Duration.ofSeconds(10)); // TAIL from 0 (empty view) — completes at cursor 0
+                sub.awaitHydrated(Duration.ofSeconds(10));
                 subscriberReady.countDown();
 
                 await("app/tier arrives as exactly one live change event (forward-applied, not re-hydrated)",
@@ -101,14 +101,14 @@ class EdgeFilteredForwardApplyTest {
     @Test
     void filteredBackwardRegressionStillGapsAndReBootstraps() throws Exception {
         KeyPair leader = StreamFixtures.ed25519();
-        ConfigDelta d1 = StreamFixtures.signedPut(leader, 0, 5, 1, "app/a", "1");     // forward jump to v5 (applied)
-        ConfigDelta backward = StreamFixtures.signedPut(leader, 3, 7, 2, "app/b", "2"); // from 3 < applied 5 ⇒ gap
+        ConfigDelta d1 = StreamFixtures.signedPut(leader, 0, 5, 1, "app/a", "1");
+        ConfigDelta backward = StreamFixtures.signedPut(leader, 3, 7, 2, "app/b", "2");
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
             conn.readFrame();
             conn.send(new EdgeFrame.SubscribeOk(0L, EdgeFrame.Mode.TAIL, true), V3);
             if (conn.index == 1) {
                 conn.send(StreamFixtures.notify(1, 100, d1), V3);
-                conn.send(StreamFixtures.notify(2, 100, backward), V3); // backward regression ⇒ re-bootstrap
+                conn.send(StreamFixtures.notify(2, 100, backward), V3);
             } else {
                 conn.parkUntilClosed();
             }
@@ -136,19 +136,19 @@ class EdgeFilteredForwardApplyTest {
     void unfilteredForwardJumpStillGaps() throws Exception {
         KeyPair leader = StreamFixtures.ed25519();
         ConfigDelta d1 = StreamFixtures.signedPut(leader, 0, 1, 1, "app/a", "1");
-        ConfigDelta forwardJump = StreamFixtures.signedPut(leader, 2, 3, 3, "app/b", "2"); // from 2 > applied 1
+        ConfigDelta forwardJump = StreamFixtures.signedPut(leader, 2, 3, 3, "app/b", "2");
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
             conn.readFrame();
-            conn.send(new EdgeFrame.SubscribeOk(1L, EdgeFrame.Mode.TAIL)); // 2-arg ⇒ filtered=false, 0x01
+            conn.send(new EdgeFrame.SubscribeOk(1L, EdgeFrame.Mode.TAIL));
             if (conn.index == 1) {
                 conn.send(StreamFixtures.notify(1, 100, d1));
-                conn.send(StreamFixtures.notify(3, 100, forwardJump)); // gap on the strict classic path
+                conn.send(StreamFixtures.notify(3, 100, forwardJump));
             } else {
                 conn.parkUntilClosed();
             }
         })) {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(config(server.port(), leader))) {
-                Subscription sub = client.subscribeFullStore(SubscribeOptions.defaults()); // 0x01, unfiltered
+                Subscription sub = client.subscribeFullStore(SubscribeOptions.defaults());
                 sub.awaitHydrated(Duration.ofSeconds(10));
                 await("an unfiltered forward jump re-bootstraps (relaxation is gated on filtered)",
                         () -> server.connectionCount() >= 2);
@@ -170,8 +170,8 @@ class EdgeFilteredForwardApplyTest {
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
             conn.readFrame();
             conn.send(new EdgeFrame.SubscribeOk(0L, EdgeFrame.Mode.TAIL, true), V3);
-            conn.send(StreamFixtures.notify(1, 100, d1), V3);         // delivered data: cursor advances to seq 1
-            conn.send(new EdgeFrame.Heartbeat(9L, 200L), V3);        // covered-S 9: drained/filtered through seq 9
+            conn.send(StreamFixtures.notify(1, 100, d1), V3);
+            conn.send(new EdgeFrame.Heartbeat(9L, 200L), V3);
             conn.parkUntilClosed();
         })) {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(config(server.port(), leader))) {

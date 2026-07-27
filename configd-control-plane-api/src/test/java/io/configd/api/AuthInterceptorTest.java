@@ -7,9 +7,6 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link AuthInterceptor}.
- */
 class AuthInterceptorTest {
 
     private static final AuthInterceptor.AuthResult VALID_RESULT =
@@ -96,9 +93,7 @@ class AuthInterceptorTest {
         source.add("admin");
         var auth = new AuthInterceptor.AuthResult.Authenticated("p", source);
 
-        // Immutable snapshot: the exposed set cannot be mutated by the authorization path.
         assertThrows(UnsupportedOperationException.class, () -> auth.roles().add("root"));
-        // Decoupled: mutating the SOURCE set after construction must not change roles().
         source.add("root");
         assertEquals(Set.of("admin"), auth.roles(),
                 "roles() must be a snapshot taken at construction, not an alias of the caller's set");

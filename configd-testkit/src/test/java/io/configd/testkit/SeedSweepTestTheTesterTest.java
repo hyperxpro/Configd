@@ -15,8 +15,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Test-the-tester: proves the de-vacuated sweep's invariant
  * checking actually catches a real safety violation, rather than passing
- * vacuously. Mandatory capture lives at
- * {@code docs/session-2/captures/rr-012-test-the-tester.txt}.
+ * vacuously.
  * <p>
  * <b>The injected violation.</b> We re-introduce the observable symptom of removing
  * Raft's section 5.4.2 current-term commit guard
@@ -41,11 +40,6 @@ class SeedSweepTestTheTesterTest {
 
     private static final int NODES = 5;
 
-    /**
-     * Runs a batch of seeds; for every seed that reaches the injection point
-     * (elects + commits + replicates), arms the corruption and asserts the checker
-     * catches it. Prints each caught seed + the violation message (captured).
-     */
     @Test
     void injectedSafetyViolationIsAlwaysCaught() {
         int batch = Integer.getInteger("configd.testTheTester.batch", 50);
@@ -97,8 +91,6 @@ class SeedSweepTestTheTesterTest {
             inv[0].checkAll();
         }
 
-        // Find a follower that has the committed entry, and an index in its
-        // committed prefix to corrupt.
         int follower = -1;
         long idx = -1;
         for (int i = 0; i < NODES; i++) {
@@ -133,7 +125,6 @@ class SeedSweepTestTheTesterTest {
         }
     }
 
-    // minimal drivers (checking every tick)
 
     private static ConsistencyPropertyTests.ClusterHarness newCheckedCluster(
             long seed, SimInvariants[] out) {

@@ -87,7 +87,6 @@ class EdgeStrongReadFailClosedTest {
         String serverBase = "http://127.0.0.1:" + server.apiPort();
         String edgeBase = "http://127.0.0.1:" + edge.apiPort();
 
-        // Commit one strong-read key and one ordinary key through the control plane.
         long secureSeq = putCommitted(serverBase, "secure/kill-switch", SECRET_VALUE);
         long normalSeq = putCommitted(serverBase, "app/flag", "on");
         long target = Math.max(secureSeq, normalSeq);
@@ -103,13 +102,11 @@ class EdgeStrongReadFailClosedTest {
             Thread.onSpinWait();
         }
 
-        // STORED: the chain delivered it and the store kept it (always-store for snapshot-delta equivalence).
         assertTrue(edge.core().get("secure/kill-switch").found(),
                 "the secure/ key must be STORED at the edge");
         assertEquals(SECRET_VALUE,
                 new String(edge.core().get("secure/kill-switch").value(), StandardCharsets.UTF_8));
 
-        // NEVER SERVED: 503 + X-Fail-Closed, no value leak — with or without a cursor.
         for (String[] headers : new String[][]{{}, {EdgeHttpServer.HDR_CURSOR, String.valueOf(secureSeq)}}) {
             HttpResponse<String> refused = get(edgeBase + "/v1/config/secure/kill-switch", headers);
             assertEquals(503, refused.statusCode(), "strong-read serving must fail closed");
@@ -118,20 +115,16 @@ class EdgeStrongReadFailClosedTest {
             assertFalse(refused.body().contains(SECRET_VALUE), "no value leak in the refusal");
         }
 
-        // Non-secure keys serve normally from the same store.
         HttpResponse<String> served = get(edgeBase + "/v1/config/app/flag",
                 EdgeHttpServer.HDR_CURSOR, String.valueOf(normalSeq));
         assertEquals(200, served.statusCode());
         assertEquals("on", served.body());
 
-        // The refusal metric moved.
         String metrics = get(edgeBase + "/metrics").body();
         assertTrue(metrics.lines().anyMatch(l ->
                         l.startsWith("edge_read_refusals_strong_read_total ") && !l.endsWith(" 0")),
                 "edge_read_refusals_strong_read_total must have moved");
 
-        // --data-dir carries epoch metadata only — the secure/ VALUE bytes must never land
-        // on the edge's disk.
         try (var paths = Files.walk(edgeDataDir)) {
             for (Path p : paths.filter(Files::isRegularFile).toList()) {
                 byte[] content = Files.readAllBytes(p);
@@ -141,7 +134,6 @@ class EdgeStrongReadFailClosedTest {
         }
     }
 
-    // Helpers
 
     private HttpResponse<String> get(String url, String... headers) throws Exception {
         HttpRequest.Builder b = HttpRequest.newBuilder()

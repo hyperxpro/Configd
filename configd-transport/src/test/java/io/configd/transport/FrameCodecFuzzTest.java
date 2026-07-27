@@ -65,7 +65,6 @@ class FrameCodecFuzzTest {
 
     private static final int MIN_FRAME = FrameCodec.HEADER_SIZE + FrameCodec.TRAILER_SIZE; // 30 (v2: 26+4)
 
-    // 1. Arbitrary bytes - the core fuzz oracle.
 
     /**
      * Wholly arbitrary byte arrays of widely varied sizes (empty, 1 byte,
@@ -110,7 +109,6 @@ class FrameCodecFuzzTest {
         });
     }
 
-    // 2. Structured mutations of a VALID frame.
 
     /**
      * Flip the 4-byte length prefix to a hostile value (smaller, larger,
@@ -129,8 +127,6 @@ class FrameCodecFuzzTest {
         }
         byte[] frame = valid.clone();
         ByteBuffer.wrap(frame).putInt(hostileLength);
-        // It must NOT decode to a frame (the length no longer matches the body),
-        // and must throw only a bounded/expected exception.
         assertTimeoutPreemptively(DECODE_BUDGET, () -> {
             try {
                 FrameCodec.decode(frame);
@@ -150,7 +146,7 @@ class FrameCodecFuzzTest {
             @ForAll("validFrames") byte[] valid,
             @ForAll @IntRange(min = 1, max = 255) int delta) {
         byte[] frame = valid.clone();
-        frame[4] = (byte) (frame[4] + delta); // change the version byte
+        frame[4] = (byte) (frame[4] + delta);
         assertRejectedCleanly(frame, "corrupt-version");
     }
 
@@ -210,7 +206,6 @@ class FrameCodecFuzzTest {
         assertRejectedCleanly(frame, "trailing-garbage");
     }
 
-    // 3 & 4. Frame-length-lie / bounded allocation + boundary fuzzing.
 
     /**
      * The OOM lever at the CODEC level: a length prefix at exactly
@@ -231,8 +226,6 @@ class FrameCodecFuzzTest {
                     () -> FrameCodec.peekLength(header),
                     "peekLength must reject hostile length " + hostile + " pre-alloc");
 
-            // decode on a header-only buffer: the length-prefix check fires before
-            // the body is ever touched (a real multi-MiB body never gets allocated).
             byte[] headerOnly = new byte[MIN_FRAME];
             ByteBuffer.wrap(headerOnly).putInt(hostile);
             assertThrows(IllegalArgumentException.class,
@@ -262,7 +255,6 @@ class FrameCodecFuzzTest {
         return FrameCodec.peekLength(header);
     }
 
-    // 3 (read-loop level). Bounded allocation in the TcpRaftTransport reader.
 
     /**
      * The {@link TcpRaftTransport} steady-state read loop (the only place a raw
@@ -325,19 +317,14 @@ class FrameCodecFuzzTest {
                 || frameLength > FrameCodec.MAX_FRAME_SIZE) {
             throw new IOException("Invalid frame length: " + frameLength);
         }
-        // On the accept path production does `new byte[frameLength]`; we return the
-        // size instead of allocating so the test never needs a 16 MiB heap buffer.
         return frameLength;
     }
 
-    // Oracle + helpers.
 
-    /** Runs decode within the time budget and asserts the resource oracle. */
     private static void assertOracleHolds(byte[] data) {
         assertTimeoutPreemptively(DECODE_BUDGET, () -> {
             try {
                 FrameCodec.Frame frame = FrameCodec.decode(data);
-                // Accept path: the frame must be well-formed.
                 assertNotNull(frame, "decode returned a null Frame");
                 assertNotNull(frame.messageType(), "decoded Frame has null messageType");
                 assertNotNull(frame.payload(), "decoded Frame has null payload");
@@ -384,7 +371,6 @@ class FrameCodecFuzzTest {
                 + (data.length > 48 ? "..." : "");
     }
 
-    // Arbitraries.
 
     /**
      * Arbitrary byte arrays whose SIZE distribution is weighted toward the
@@ -424,7 +410,6 @@ class FrameCodecFuzzTest {
         return Arbitraries.bytes().array(byte[].class).ofSize(size);
     }
 
-    /** A small set of well-formed frames covering every MessageType + a few payloads. */
     @Provide
     Arbitrary<byte[]> validFrames() {
         Arbitrary<MessageType> type = Arbitraries.of(MessageType.values());

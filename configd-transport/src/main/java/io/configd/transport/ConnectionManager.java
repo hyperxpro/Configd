@@ -9,28 +9,16 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Manages logical connections to peer nodes with reconnection backoff.
+ * Manages logical connection state only; actual socket/channel management is delegated to
+ * the transport implementation (e.g., Netty).
  * <p>
- * Tracks connection state per peer: connected, disconnected, or backing off.
- * When a connection fails, exponential backoff prevents reconnection storms.
- * <p>
- * This class manages logical state only - actual socket/channel management
- * is delegated to the transport implementation (e.g., Netty).
- * <p>
- * Thread safety: designed for single-threaded access from the transport
- * I/O thread. No synchronization is used.
+ * Single-threaded access from the transport I/O thread. No synchronization is used.
  */
 public final class ConnectionManager {
 
-    /**
-     * Connection states.
-     */
     public enum ConnectionState {
-        /** Connection is established and healthy. */
         CONNECTED,
-        /** Connection failed; waiting for backoff period before reconnect. */
         BACKING_OFF,
-        /** Not connected, eligible for reconnection attempt. */
         DISCONNECTED
     }
 
@@ -41,34 +29,20 @@ public final class ConnectionManager {
     private final Clock clock;
     private final Map<NodeId, PeerConnection> peers;
 
-    /**
-     * Creates a connection manager with the given clock.
-     */
     public ConnectionManager(Clock clock) {
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
         this.peers = new HashMap<>();
     }
 
-    /**
-     * Registers a peer for connection tracking.
-     *
-     * @param peer the peer node to track
-     */
     public void addPeer(NodeId peer) {
         Objects.requireNonNull(peer, "peer must not be null");
         peers.putIfAbsent(peer, new PeerConnection());
     }
 
-    /**
-     * Removes a peer from connection tracking.
-     */
     public void removePeer(NodeId peer) {
         peers.remove(peer);
     }
 
-    /**
-     * Marks a peer as successfully connected. Resets backoff state.
-     */
     public void markConnected(NodeId peer) {
         PeerConnection conn = peers.get(peer);
         if (conn != null) {
@@ -79,10 +53,6 @@ public final class ConnectionManager {
         }
     }
 
-    /**
-     * Marks a peer as disconnected and enters backoff. Each consecutive
-     * failure doubles the backoff period up to {@value MAX_BACKOFF_MS}ms.
-     */
     public void markDisconnected(NodeId peer) {
         PeerConnection conn = peers.get(peer);
         if (conn != null) {
@@ -95,9 +65,6 @@ public final class ConnectionManager {
         }
     }
 
-    /**
-     * Returns the current connection state for a peer.
-     */
     public ConnectionState state(NodeId peer) {
         PeerConnection conn = peers.get(peer);
         if (conn == null) {
@@ -112,32 +79,17 @@ public final class ConnectionManager {
         return conn.state;
     }
 
-    /**
-     * Returns true if the peer is eligible for a reconnection attempt
-     * (either CONNECTED or backoff period has elapsed).
-     */
     public boolean canSend(NodeId peer) {
         ConnectionState s = state(peer);
         return s == ConnectionState.CONNECTED || s == ConnectionState.DISCONNECTED;
     }
 
-    /**
-     * Returns the number of consecutive failures for a peer.
-     */
     public int consecutiveFailures(NodeId peer) {
         PeerConnection conn = peers.get(peer);
         return (conn != null) ? conn.consecutiveFailures : 0;
     }
 
-    /**
-     * Returns how long (ms) until the peer is eligible for the next
-     * reconnection attempt: {@code 0} if it may reconnect now (CONNECTED or the
-     * backoff period has elapsed), otherwise the remaining backoff time. Lets a
-     * connector schedule a reconnect that respects the backoff without polling.
-     *
-     * @param peer the peer
-     * @return remaining backoff in ms, or 0 if eligible now
-     */
+    /** Lets a connector schedule a reconnect that respects the backoff without polling. */
     public long backoffRemainingMs(NodeId peer) {
         PeerConnection conn = peers.get(peer);
         if (conn == null || conn.state != ConnectionState.BACKING_OFF) {
@@ -148,16 +100,10 @@ public final class ConnectionManager {
         return Math.max(0, remaining);
     }
 
-    /**
-     * Returns all tracked peers.
-     */
     public Set<NodeId> peers() {
         return Set.copyOf(peers.keySet());
     }
 
-    /**
-     * Resets all peers to DISCONNECTED state with initial backoff.
-     */
     public void resetAll() {
         for (PeerConnection conn : peers.values()) {
             conn.state = ConnectionState.DISCONNECTED;

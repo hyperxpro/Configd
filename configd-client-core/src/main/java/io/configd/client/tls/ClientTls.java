@@ -117,7 +117,6 @@ public final class ClientTls {
         return clientCertNotAfter != null;
     }
 
-    // -----------------------------------------------------------------------
 
     private static SSLContext buildContext(KeyManager[] keyManagers, Path trustStorePath,
                                            char[] trustStorePassword)

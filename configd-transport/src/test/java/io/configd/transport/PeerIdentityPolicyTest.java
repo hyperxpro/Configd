@@ -126,7 +126,6 @@ class PeerIdentityPolicyTest {
         }
     }
 
-    // ---- fromConfig(ConfigSource): the config path (parity with fromSystemProperties) ----
 
     @Test
     void fromConfigParsesAllowListAndMarker() {
@@ -183,7 +182,6 @@ class PeerIdentityPolicyTest {
                 "a null cert is never an authorized peer (fail closed)");
     }
 
-    // ---- requireEnforcedUnderAuth: the fail-closed default ----
 
     @Test
     void bootGateThrowsWhenAuthAndTlsButNoAllowList() {

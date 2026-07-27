@@ -104,7 +104,6 @@ class NoVersionNegotiationTest {
                         () -> client.blocking().put("some/key", "v".getBytes(StandardCharsets.UTF_8),
                                 io.configd.client.http.WriteOptions.defaults()));
             }
-            // Every path the client ever requested is under the fixed /v1/ prefix -- no hello/capabilities/version probe.
             assertFalse(requestedPaths.isEmpty());
             for (String path : requestedPaths) {
                 assertTrue(path.startsWith("/v1/config/"),

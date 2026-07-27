@@ -31,7 +31,6 @@ class RaftTransportAdapterDecodeDropTest {
         void inject(NodeId from, FrameCodec.Frame frame) { handler.onMessage(from, frame); }
     }
 
-    /** A counting sink for the decode-drop metric. */
     private static RaftTransportMetrics countingDrops(AtomicInteger drops) {
         return new RaftTransportMetrics() {
             @Override public void onInboundFrameDropped() { drops.incrementAndGet(); }
@@ -84,8 +83,6 @@ class RaftTransportAdapterDecodeDropTest {
         AtomicInteger dispatched = new AtomicInteger();
         adapter.registerInboundHandler((from, gid, message) -> dispatched.incrementAndGet());
 
-        // A flood of dormant-type frames: the log is rate-limited (1/sec) but the METRIC counts every one,
-        // so an operator sees the true drop rate even while the log stays quiet.
         final int flood = 1000;
         for (int i = 0; i < flood; i++) {
             transport.inject(NodeId.of(1),

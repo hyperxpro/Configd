@@ -29,22 +29,11 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Runner II -- CLIENT-CONFORMS, HTTP data plane (§04 D-clauses). Drives the reference {@link ConfigdHttpClient}
- * against the scriptable {@link MockControlPlane} (reused via the configd-client-http test-jar) and asserts the
- * client obeys the normative §04 data-plane MUSTs the {@code RealServerHttpTest} / {@code ClientConformsHttpTest}
- * pair does not already cover: the {@code /v1/} version pin, the misleading-{@code Content-Type} plaintext-body
- * trap, the strong-read header-vs-name distinction, the write outcome-to-status table and named-code reactions,
- * the scope query, the replay-guard headers, and the fail-closed-on-unknown / named-omission surface. Each test
- * is {@code @Tag}-ed with the clause-ids it genuinely asserts; grouping (one test, several tags) is used where a
- * single genuine assertion binds several clauses.
- */
 @Timeout(30)
 class ClauseDataPlaneTest {
 
     private static final RetryPolicy FAST = new RetryPolicy(Duration.ofMillis(2), Duration.ofMillis(10), 4);
 
-    // Versioning and surface (D1, D2).
 
     @Test
     @Tag("clause:D1-1_D1-2")
@@ -52,7 +41,6 @@ class ClauseDataPlaneTest {
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.value("v", 1));
             c.blocking().get("app/name", GetOptions.defaults());
-            // The HTTP API version is the /v1/ path prefix ALONE: the request goes straight to /v1/config/...
             assertTrue(s.lastRequest().path().startsWith("/v1/config/"),
                     "the data plane is addressed under the literal /v1/ prefix (D1-1)");
             // No capabilities/hello/downgrade exchange precedes the operation, and there is no version header --
@@ -69,13 +57,13 @@ class ClauseDataPlaneTest {
     void bodiesAreParsedAsPlaintextAndValuesAsOpaqueBytesNeverJson() throws Exception {
         // Write 200: Content-Type is a misleading application/json but the body is the plaintext
         // "Committed: seq=<N>". The client parses it as plaintext (a JSON.parse would fail) -- D2-5a.
+        // Read 200: the value is raw application/octet-stream bytes, returned verbatim and opaque even when the
+        // bytes happen to look like JSON -- the client never interprets/transcodes a value (D2-5/D3-1).
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
-            s.enqueue(Response.committed(42)); // 200, Content-Type: application/json, plaintext body
+            s.enqueue(Response.committed(42));
             WriteOutcome w = c.blocking().put("k", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults());
             assertEquals(42L, w.seq(), "seq recovered by PLAINTEXT parse under a misleading application/json (D2-5a)");
         }
-        // Read 200: the value is raw application/octet-stream bytes, returned verbatim and opaque even when the
-        // bytes happen to look like JSON -- the client never interprets/transcodes a value (D2-5/D3-1).
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             byte[] jsonLooking = "{\"looks\":\"like-json\"}".getBytes(StandardCharsets.UTF_8);
             s.enqueue(Response.of(200, Map.of("Content-Type", "application/octet-stream",
@@ -100,13 +88,10 @@ class ClauseDataPlaneTest {
                 "put/delete exist ONLY on the HTTP data plane (D2-6)");
     }
 
-    // Read consistency and strong-read (D3).
 
     @Test
     @Tag("clause:D3-2a")
     void xConsistencyLinearizableOnAnOrdinaryKeyIsNotAFreshnessProof() throws Exception {
-        // A stale-only deployment echoes X-Consistency: linearizable on an ordinary key WITHOUT X-Strong-Read.
-        // The client must not treat that echo as certified freshness -- only X-Strong-Read: true certifies it.
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.of(200, Map.of("Content-Type", "application/octet-stream",
                     "X-Config-Version", "5", "X-Consistency", "linearizable"), "v"));
@@ -160,7 +145,7 @@ class ClauseDataPlaneTest {
         // of the key is contract-permitted). It is a normal retryable 503 -- distinct from the strong-read
         // fail-close -- so the client retries the same endpoint and returns the value on resolution (D3-6).
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
-            s.enqueue(Response.text(503, "Not Leader - cannot serve linearizable read")); // no X-Fail-Closed, no hint
+            s.enqueue(Response.text(503, "Not Leader - cannot serve linearizable read"));
             s.enqueue(Response.value("fresh", 12));
             GetResult r = c.blocking().get("ordinary/key", GetOptions.defaults().consistency(Consistency.LINEARIZABLE));
             assertArrayEquals("fresh".getBytes(StandardCharsets.UTF_8), r.valueOrThrow());
@@ -176,7 +161,7 @@ class ClauseDataPlaneTest {
         // A GET never mutates, so the client retries a transient 503 freely to a definite answer, and re-reads
         // re-issue (no side-effect / no dedup). 504 is a write-only outcome -- a GET is only ever value/404/retry.
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
-            s.enqueue(Response.text(503, "couldn't serve now")); // transient, hintless
+            s.enqueue(Response.text(503, "couldn't serve now"));
             s.enqueue(Response.value("v", 1));
             GetResult r1 = c.blocking().get("k", GetOptions.defaults());
             assertTrue(r1.found());
@@ -188,7 +173,6 @@ class ClauseDataPlaneTest {
         }
     }
 
-    // Write scope and outcome table (D4).
 
     @Test
     @Tag("clause:D4-4")
@@ -208,13 +192,11 @@ class ClauseDataPlaneTest {
     @Test
     @Tag("clause:D4-6")
     void writeOutcomeStatusTableMapsEachOutcomeToItsReaction() throws Exception {
-        // committed 200: record seq
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.committed(7));
             assertEquals(7L, c.blocking().put("k", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults()).seq(),
                     "committed ⇒ 200 ⇒ record seq (D4-6)");
         }
-        // not leader 503 + X-Leader-Hint: follow the hint to the named node
         try (MockControlPlane n1 = new MockControlPlane(); MockControlPlane n2 = new MockControlPlane()) {
             n1.enqueue(Response.of(503, Map.of("X-Leader-Hint", "2"), "Not Leader (leader=Node-2)"));
             n2.enqueue(Response.committed(8));
@@ -234,14 +216,12 @@ class ClauseDataPlaneTest {
             assertEquals(9L, c.blocking().put("k", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults()).seq(),
                     "indeterminate 504 ⇒ retry to a definite outcome (D4-6/D4-8)");
         }
-        // validation 400: permanent, not retried
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.text(400, "Validation failed: bad"));
             assertThrows(BadRequestException.class,
                     () -> c.blocking().put("k", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults()));
             assertEquals(1, s.requestCount(), "validation 400 ⇒ permanent, not retried (D4-6)");
         }
-        // overloaded 429 + Retry-After: back off then retry
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.of(429, Map.of("Retry-After", "0"), "Overloaded"));
             s.enqueue(Response.committed(10));
@@ -262,7 +242,6 @@ class ClauseDataPlaneTest {
         assertTrue(methods.containsAll(Set.of("get", "put", "delete")), "the built unary surface is present");
     }
 
-    // Composition and forward compatibility (D11).
 
     @Test
     @Tag("clause:D11-1")
@@ -273,7 +252,7 @@ class ClauseDataPlaneTest {
         try (MockControlPlane s = new MockControlPlane();
              ConfigdHttpClient c = ConfigdHttpClient.builder().endpoints(NodeEndpoints.of(s.baseUri()))
                      .allowPlaintext(true).retryPolicy(FAST).build()) {
-            s.enqueue(Response.text(503, "Not Leader")); // hintless -- the normal N=1 election window
+            s.enqueue(Response.text(503, "Not Leader"));
             s.enqueue(Response.committed(4));
             assertEquals(4L, c.blocking().put("k", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults()).seq());
             assertEquals(2, s.requestCount(), "a hintless 503 is backed-off-and-retried on the same endpoint (D11-1)");
@@ -289,7 +268,6 @@ class ClauseDataPlaneTest {
         assertReadThrows(403, io.configd.client.ForbiddenException.class);  // permanently forbidden
         assertReadThrows(400, BadRequestException.class);                   // permanent request error
         assertWriteThrows(405, BadRequestException.class);                  // method error, permanent
-        // 200 read: value; 200 write: committed seq.
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.value("v", 3));
             assertTrue(c.blocking().get("k", GetOptions.defaults()).found(), "200 read ⇒ the value");
@@ -304,7 +282,6 @@ class ClauseDataPlaneTest {
     @Test
     @Tag("clause:D11-3")
     void replayGuardIsOffByDefaultAndStampsAFreshNoncePerAttemptWhenOn() throws Exception {
-        // Default OFF: a mutation carries NO replay headers (no client populates them absent an enabled guard).
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.committed(1));
             c.blocking().put("k", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults());
@@ -353,7 +330,6 @@ class ClauseDataPlaneTest {
         }
     }
 
-    // Helpers.
 
     private void assertReadStatus(int status, java.util.function.Consumer<GetResult> check) throws Exception {
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {

@@ -2,11 +2,6 @@ package io.configd.testkit;
 
 import io.configd.common.Clock;
 
-/**
- * Deterministic simulated clock for testing.
- * Time only advances when explicitly ticked.
- * Enables reproducible, deterministic simulation.
- */
 public final class SimulatedClock implements Clock {
 
     private long currentTimeMs;
@@ -31,13 +26,11 @@ public final class SimulatedClock implements Clock {
         return currentTimeMs * 1_000_000L + nanoOffset;
     }
 
-    /** Advance time by the given number of milliseconds. */
     public void advanceMs(long ms) {
         if (ms < 0) throw new IllegalArgumentException("Cannot go backwards: " + ms);
         currentTimeMs += ms;
     }
 
-    /** Advance time by the given number of nanoseconds (sub-ms precision). */
     public void advanceNanos(long nanos) {
         if (nanos < 0) throw new IllegalArgumentException("Cannot go backwards: " + nanos);
         nanoOffset += nanos;
@@ -48,7 +41,6 @@ public final class SimulatedClock implements Clock {
         }
     }
 
-    /** Set absolute time (for simulation reset). */
     public void setTimeMs(long timeMs) {
         this.currentTimeMs = timeMs;
         this.nanoOffset = 0;

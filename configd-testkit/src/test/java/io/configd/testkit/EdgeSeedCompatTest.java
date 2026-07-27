@@ -49,19 +49,16 @@ class EdgeSeedCompatTest {
         }
     }
 
-    /** CP digest of a plain AdversarialSim (the committed gate behavior). */
     private static String plainCpDigest(long seed) {
         AdversarialSim sim = new AdversarialSim(seed, CP_NODES, TICKS);
         return foldCp(seed, () -> { sim.tick(); return sim; });
     }
 
-    /** CP digest of an EdgeFanOutSim, folding ONLY the CP state. */
     private static String edgeSimCpDigest(long seed, int edges) {
         EdgeFanOutSim sim = new EdgeFanOutSim(seed, CP_NODES, edges, TICKS);
         return foldCp(seed, () -> { sim.tick(); return sim.cpSim(); });
     }
 
-    /** Functional supplier of the CP view after one tick. */
     private interface Stepper { AdversarialSim step(); }
 
     /**
