@@ -29,13 +29,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-/**
- * jqwik property-based fuzz suite for {@link RaftMessageCodec}.
- *
- * <p>Covers the codec bounds for the consensus wire path. Each
- * Raft RPC type has a roundtrip property; non-Raft frame types and
- * truncated payloads are explicitly rejected.
- */
 class RaftMessageCodecPropertyTest {
 
     @Property(tries = 200)
@@ -200,10 +193,6 @@ class RaftMessageCodecPropertyTest {
         assertEquals(leaderId, decoded.leaderId().id());
     }
 
-    /**
-     * Frames carrying a non-Raft message type are rejected by the dispatcher,
-     * preventing accidental cross-protocol decoding.
-     */
     @Property(tries = 50)
     void nonRaftMessageTypesAreRejected(
             @ForAll("nonRaftType") MessageType type,
@@ -216,12 +205,6 @@ class RaftMessageCodecPropertyTest {
                 () -> RaftMessageCodec.decode(frame));
     }
 
-    /**
-     * Encoded AppendEntries with an entry-count past
-     * {@code MAX_ENTRIES_PER_APPEND} is rejected before any list allocation.
-     * This is the amplification guard: a 32-byte adversary frame must not
-     * be able to provoke a multi-GB heap allocation.
-     */
     @Property(tries = 100)
     void appendEntriesWithBogusEntryCountFails(
             @ForAll @LongRange(min = 0, max = Long.MAX_VALUE) long term,
@@ -245,10 +228,6 @@ class RaftMessageCodecPropertyTest {
                 () -> RaftMessageCodec.decode(corrupted));
     }
 
-    /**
-     * Same guard, but for the per-entry command-length field - a single
-     * entry with an oversized cmdLen must not allocate.
-     */
     @Property(tries = 100)
     void appendEntriesWithBogusCmdLenFails(
             @ForAll @LongRange(min = 0, max = Long.MAX_VALUE) long term,
@@ -272,9 +251,6 @@ class RaftMessageCodecPropertyTest {
                 () -> RaftMessageCodec.decode(corrupted));
     }
 
-    /**
-     * InstallSnapshot decoder must reject any oversized data-length field.
-     */
     @Property(tries = 100)
     void installSnapshotWithBogusDataLenFails(
             @ForAll @LongRange(min = 0, max = Long.MAX_VALUE) long term,
@@ -320,7 +296,6 @@ class RaftMessageCodecPropertyTest {
         });
     }
 
-    /** Demonstrates the dispatcher accepts every Raft type via roundtrip. */
     @Property(tries = 1)
     @SuppressWarnings("unused")
     void dispatcherAcceptsEveryRaftType() {

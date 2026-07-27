@@ -32,18 +32,13 @@ public final class HamtMapStructuralSharingTest {
     private HamtMapStructuralSharingTest() {
     }
 
-    // Keys chosen to land in DIFFERENT top-level hash fragments so put() copies a
-    // different path than the one the reader walks for the shared key - exercising
-    // structural sharing (the reader's key must remain reachable through the new
-    // root that shares the untouched subtrie).
+    // Keys land in different hash fragments so put() copies a different path —
+    // exercising structural sharing (the shared key must remain reachable through the new root).
     private static final String SHARED = "shared-key";
     private static final String FRESH = "fresh-key";
 
-    // Writer publishes map.put(FRESH,...) via a volatile swap; reader reads the
-    // volatile map and looks up SHARED, which must ALWAYS be present and correct
-    // regardless of which map version the reader observed (it is in both).
-    // r1 = value seen for SHARED (must be 7); 0 means "absent" (a structural-
-    // sharing tear that lost the shared subtrie) -> FORBIDDEN.
+    // Reader must see SHARED present and correct regardless of which map version it observed.
+    // r1 = value for SHARED (must be 7); 0 = torn/lost through structural sharing (forbidden).
     @JCStressTest
     @State
     @Description("HamtMap: shared key stays reachable through a put that copies a different path")
@@ -58,7 +53,6 @@ public final class HamtMapStructuralSharingTest {
 
         @Actor
         public void writer() {
-            // New map shares the SHARED-key subtrie; publish via volatile write.
             map = map.put(FRESH, 99);
         }
 
@@ -70,12 +64,8 @@ public final class HamtMapStructuralSharingTest {
         }
     }
 
-    // Reader observes BOTH keys through whatever map version it read. The pair
-    // must be internally consistent with one published map version:
-    //   (7, 0)  - read the pre-put map: SHARED=7, FRESH absent.    ACCEPTABLE
-    //   (7, 99) - read the post-put map: both present.              ACCEPTABLE
-    // Anything else (SHARED missing, FRESH with a wrong value, a half-inserted
-    // node) is a torn structural read.                              FORBIDDEN
+    // Outcomes must be internally consistent with one published map version: (7, 0) = pre-put,
+    // (7, 99) = post-put. Anything else (SHARED missing, FRESH wrong, half-inserted) = torn/forbidden.
     @JCStressTest
     @State
     @Description("HamtMap: a read observes a self-consistent map version (no half-insert)")

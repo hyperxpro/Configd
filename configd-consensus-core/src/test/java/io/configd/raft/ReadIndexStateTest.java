@@ -6,16 +6,6 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for the ReadIndex protocol state machine.
- * <p>
- * Verifies the linearizable read protocol:
- * <ol>
- *   <li>Record commit index at read time</li>
- *   <li>Confirm leadership via heartbeat quorum</li>
- *   <li>Wait for state machine to apply up to the recorded index</li>
- * </ol>
- */
 class ReadIndexStateTest {
 
     private ReadIndexState state;
@@ -24,8 +14,6 @@ class ReadIndexStateTest {
     void setUp() {
         state = new ReadIndexState();
     }
-
-    // Basic lifecycle tests
 
     @Nested
     class BasicLifecycleTests {

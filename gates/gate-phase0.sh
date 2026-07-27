@@ -8,31 +8,6 @@
 # placeholders; every test step asserts a REAL result via assert_class_green and
 # FAILS if its summary line is absent (non-vacuity).
 #
-# WHAT A GREEN gate-phase0 PROVES — the re-threading (single tick thread →
-# one owner thread per group) and the group-rehoming hazard closure:
-#   (a) owner net non-vacuous at N>1: a CROSS-GROUP access on a real foreign
-#       owner trips the PER-NODE net (OwnerIsolationMultiOwnerTest); off-owner
-#       inbound trips it under the pool (OwnerNetCatchesOffOwnerInboundTest).
-#   (b) rehoming MECHANISM: quiesce→publish→adopt + check-and-bounce; the net
-#       catches the rehoming-race (RehomingHandoffTest); the deferred
-#       sub-mechanisms (quiesce / flush-retarget / abortHandoff) hold
-#       (RehomingSubMechanismsTest); the red-team/replay robustness findings stay
-#       fixed (RehomingRobustnessTest).
-#   (c) no-double-ownership at the JMM level (jcstress
-#       RehomingDoubleOwnershipTest, run at -m quick where the broken control
-#       reliably fails) + the owner-guard + monitor-view publication proofs.
-#   (c2) COALESCED HEARTBEATS: heartbeat cost flat in group count — one
-#       coalesced message per peer per tick independent of G, un-coalesced
-#       baseline scales with G, + the demux round-trip (HeartbeatCoalescingTest);
-#       no spurious election under idle/low/sustained load WITH coalescing,
-#       broken-drain test-the-testers all churn (CoalescedHeartbeatLivenessTest).
-#       The sim (step d) runs the 20,001-seed sweep WITH coalescing wired — that
-#       green IS the invariant surface coalesced.
-#   (d) the invariant surface WITH rehoming injected: tens of thousands of
-#       handoffs under concurrent multi-owner load, zero off-owner fires, groups
-#       keep committing (RehomingInjectedSweepTest); AND the deterministic
-#       20,001-seed sim + adversarial schedules still green (no regression).
-#   (e) the verified baseline is recorded (main pinned at cedc706).
 #
 # Environment knobs (CI must not set the test skips on a full run):
 #   GATE_PHASE0_SKIP_GATE7=1   skip the cumulative gate-7 (CI runs it as its own job) — LOUD.

@@ -39,7 +39,6 @@ class AclServiceTest {
         acl = new AclService();
     }
 
-    // Basic grant and check (single-level grants - byte-identical to longest-match)
 
     @Nested
     class BasicGrantAndCheck {
@@ -87,7 +86,6 @@ class AclServiceTest {
         }
     }
 
-    // Union of ancestors - PROVES composition; FAILS under longest-match-only
 
     @Nested
     class UnionOfAncestors {
@@ -149,7 +147,6 @@ class AclServiceTest {
         }
     }
 
-    // Deny precedence (deny absolute) - PROVES both directions
 
     @Nested
     class DenyPrecedence {

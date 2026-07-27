@@ -56,15 +56,6 @@ public final class StaticShardMap implements ShardMap {
         this(shardCount, TopologyDescriptor.INITIAL_EPOCH);
     }
 
-    /**
-     * Creates a static shard map over {@code shardCount} groups (ids {@code [0, shardCount)}) at the
-     * given topology epoch (the authoritative {@link TopologyDescriptor#topologyEpoch()} read at boot).
-     *
-     * @param shardCount    the number of shards (Raft groups); must be {@code >= 1}
-     * @param topologyEpoch the deploy-time topology epoch; {@code 0}
-     *                      ({@link TopologyDescriptor#EPOCH_UNSET}) is reserved-illegal
-     * @throws IllegalArgumentException if {@code shardCount < 1} or {@code topologyEpoch <= 0}
-     */
     public StaticShardMap(int shardCount, long topologyEpoch) {
         if (shardCount < 1) {
             throw new IllegalArgumentException("shardCount must be >= 1, got " + shardCount);
@@ -112,7 +103,6 @@ public final class StaticShardMap implements ShardMap {
         return topologyEpoch;
     }
 
-    /** The shard count {@code N} (membership size). */
     public int shardCount() {
         return shardCount;
     }

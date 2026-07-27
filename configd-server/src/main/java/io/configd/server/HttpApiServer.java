@@ -35,38 +35,12 @@ import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.function.BiFunction;
 
-/**
- * JDK-transport adapter for the Configd admin / control-plane HTTP API. Uses the built-in
- * {@link HttpServer} (or {@link HttpsServer} when TLS is configured) and is a <b>thin transport
- * shell</b>: it maps each {@link HttpExchange} to an {@link AdminApiHandler.AdminRequest}, delegates
- * the decision to the shared {@link AdminApiHandler}, and writes back the returned
- * {@link AdminApiHandler.AdminResponse}. All security decision logic (authn/authz/audit/replay/429/
- * strong-read, the {@code /metrics} bearer gate, routing, method validation) lives in
- * {@link AdminApiHandler} so it is proven once and re-proven identically on the Netty adapter.
- *
- * <p>Endpoints: {@code GET /health/live}, {@code GET /health/ready}, {@code GET /metrics},
- * {@code GET|PUT|DELETE /v1/config/{key}}.
- */
+
 public final class HttpApiServer {
 
     private final HttpServer server;
 
-    /**
-     * Creates and configures the HTTP API server.
-     *
-     * @param port           the port to listen on
-     * @param sslContext     SSL context for HTTPS, or null for plain HTTP
-     * @param healthService  health check service
-     * @param prometheusExporter Prometheus metrics exporter
-     * @param configStore    versioned config store for reads
-     * @param writeService   config write service for puts/deletes
-     * @param readService    config read service for linearizable reads (may be null)
-     * @param authInterceptor auth interceptor, or null if auth disabled
-     * @param aclService     ACL service, or null if ACLs disabled
-     * @param strongReadPolicy strong-read key-class policy; must not be null
-     * @param leaderHintSupplier supplies the currently-known leader NodeId for
-     *                       {@code X-Leader-Hint} (may return null when unknown); must not be null
-     */
+    
     public HttpApiServer(int port,
                          SSLContext sslContext,
                          HealthService healthService,
@@ -83,12 +57,7 @@ public final class HttpApiServer {
                 /* auditLog */ null, /* replayGuard */ null);
     }
 
-    /**
-     * Full constructor adding the security controls. Both are optional:
-     *
-     * @param auditLog     tamper-evident audit log; may be null to disable auditing
-     * @param replayGuard  replay protection; may be null (default off, opt-in for pre-production back-compat)
-     */
+    
     public HttpApiServer(int port,
                          SSLContext sslContext,
                          HealthService healthService,
@@ -106,10 +75,7 @@ public final class HttpApiServer {
                 authInterceptor, aclService, strongReadPolicy, leaderHintSupplier, auditLog, replayGuard, null);
     }
 
-    /**
-     * As the full constructor, plus the {@link AdminApiHandler.LeadershipAdmin} seam that backs the
-     * ADMIN-gated leadership-transfer endpoint. A {@code null} seam leaves that endpoint unrouted.
-     */
+    
     public HttpApiServer(int port,
                          SSLContext sslContext,
                          HealthService healthService,
@@ -129,12 +95,7 @@ public final class HttpApiServer {
                 leadershipAdmin, null);
     }
 
-    /**
-     * As the leadership-seam constructor, plus the SPI {@link AuthenticatorChain}. Mirrors
-     * {@code NettyHttpApiServer}'s chain constructor so the two adapters enforce the chain identically:
-     * when the chain is non-null it supersedes {@code authInterceptor}; when null this falls back to
-     * the legacy bearer wiring unchanged.
-     */
+    
     public HttpApiServer(int port,
                          SSLContext sslContext,
                          HealthService healthService,
@@ -156,12 +117,7 @@ public final class HttpApiServer {
                 auditLog, replayGuard, leadershipAdmin, chain);
     }
 
-    /**
-     * As the chain constructor, plus an explicit {@code bindAddress} for the listener so the admin
-     * read/write API honours the SAME interface as the Raft + edge planes. {@code null} binds the wildcard,
-     * matching the default of {@code new InetSocketAddress(port)}. Mirrors {@code NettyHttpApiServer}'s
-     * bindAddress constructor so the drop-in adapter swap keeps an identical arg list.
-     */
+    
     public HttpApiServer(String bindAddress,
                          int port,
                          SSLContext sslContext,
@@ -183,11 +139,7 @@ public final class HttpApiServer {
                 auditLog, replayGuard, leadershipAdmin, chain, null, null);
     }
 
-    /**
-     * As the bindAddress constructor, plus the {@link AdminApiHandler.RaftClusterAdmin} and
-     * {@link AdminApiHandler.KeyringRotationAdmin} seams (Raft status / add-server and keyring rotation).
-     * Kept in parity with {@code NettyHttpApiServer} so the documented one-line adapter revert stays valid.
-     */
+    
     public HttpApiServer(String bindAddress,
                          int port,
                          SSLContext sslContext,
@@ -241,29 +193,22 @@ public final class HttpApiServer {
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
     }
 
-    /** Starts the HTTP server. */
+    
     public void start() {
         server.start();
     }
 
-    /**
-     * The actual bound port. After {@link #start()} with a {@code 0} (ephemeral) port this
-     * returns the OS-assigned port, so tests can target the server without a fixed port.
-     */
+    
     public int port() {
         return server.getAddress().getPort();
     }
 
-    /** The actual bound host (test-visible): distinguishes a loopback bind from the wildcard 0.0.0.0. */
+    
     String boundHost() {
         return server.getAddress().getAddress().getHostAddress();
     }
 
-    /**
-     * Stops the HTTP server.
-     *
-     * @param delaySeconds seconds to wait for in-flight requests
-     */
+    
     public void stop(int delaySeconds) {
         server.stop(delaySeconds);
     }
@@ -289,11 +234,7 @@ public final class HttpApiServer {
         }
     }
 
-    /**
-     * {@link AdminApiHandler.AdminRequest} backed by a JDK {@link HttpExchange}. {@link #uri()}
-     * returns the exchange's already-parsed {@code java.net.URI}; the Netty adapter builds the same
-     * type from the raw request target, so path decoding is identical on both transports.
-     */
+    
     private record ExchangeRequest(HttpExchange exchange) implements AdminApiHandler.AdminRequest {
         @Override
         public String method() {

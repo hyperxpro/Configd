@@ -12,23 +12,9 @@ import java.security.MessageDigest;
 import java.util.Objects;
 
 /**
- * Transport-agnostic edge read-serving decision logic.
- *
- * <p>This is the single source of truth for the edge read surface's behaviour - routing, the
- * cursor/staleness/strong-read/not-subscribed clauses, health gating, the {@code /metrics} Bearer
- * gate, method validation, and metric side-effects. It is driven by both the JDK
- * {@link EdgeHttpServer} adapter and the Netty {@link NettyEdgeHttpServer} adapter so the two
- * transports serve <b>byte-identical</b> responses on the canonical request paths by construction
- * (routing is exact-match).
- *
- * <p><b>Allocation discipline.</b> The logic writes to a {@link Sink} rather than building a
- * response object + header map per request, keeping per-request allocation to a minimum. Header
- * names and the constant strings are interned; the only per-request strings are the cursor/version
- * decimal renderings.
- *
- * <p>The order of clauses (method, key, onRead, stale-header, strong-read, not-subscribed,
- * cursor-parse, store read, found/refused/miss) is a deliberate contract shared by both adapters,
- * as is which paths record the read-latency sample.
+ * Transport-agnostic edge read-serving logic. Single source of truth: routing, cursor/staleness
+ * clauses, health gating, metrics. Driven by both {@link EdgeHttpServer} and
+ * {@link NettyEdgeHttpServer} so responses are byte-identical by construction.
  */
 public final class EdgeReadHandler {
 
@@ -46,13 +32,6 @@ public final class EdgeReadHandler {
     private final PrometheusExporter exporter;
     private final String metricsScrapeToken;
 
-    /**
-     * @param core               the edge client core (lock-free read path + staleness)
-     * @param strongReadKeyClass the strong-read predicate (shared with the storage filter)
-     * @param exporter           the Prometheus exporter over the process registry
-     * @param metrics            the edge metric series (reads/refusals)
-     * @param metricsScrapeToken the optional {@code /metrics} Bearer secret; null = open
-     */
     public EdgeReadHandler(EdgeClientCore core, StrongReadKeyClass strongReadKeyClass,
                            PrometheusExporter exporter, EdgeNodeMetrics metrics,
                            String metricsScrapeToken) {
@@ -64,24 +43,12 @@ public final class EdgeReadHandler {
         this.metricsScrapeToken = metricsScrapeToken;
     }
 
-    /**
-     * The transport's response builder. The logic calls {@link #header} zero or more times, then
-     * exactly one terminal {@link #commit}. Implementations set Content-Length from the body length
-     * and honour the transport's own keep-alive/framing.
-     */
     public interface Sink {
-        /** Set a response header (called before {@link #commit}). */
         void header(CharSequence name, CharSequence value);
 
-        /** Terminal: send {@code status} with {@code contentType} and {@code body} (may be empty). */
         void commit(int status, CharSequence contentType, byte[] body);
     }
 
-    /**
-     * Routes one request. {@code path} must already have any query string stripped (see
-     * {@link #stripQuery}). {@code cursorHeader}/{@code authHeader} are the raw request header
-     * values (null if absent).
-     */
     public void handle(String method, String path, String cursorHeader, String authHeader, Sink out) {
         boolean get = "GET".equals(method);
         if (path.startsWith(CONFIG_PREFIX)) {
@@ -114,16 +81,12 @@ public final class EdgeReadHandler {
         metrics.onRead();
         long readStart = System.nanoTime();
         try {
-            // Stale header on EVERY read while STALE+ (set before any refusal branch, so a
-            // refused/served response alike carries it).
             boolean stale = core.stalenessState().ordinal()
                     >= StalenessTracker.State.STALE.ordinal();
             if (stale) {
                 out.header(EdgeHttpServer.HDR_STALE, "true");
             }
 
-            // Strong-read keys are never served from bounded-stale edge state; fail closed
-            // BEFORE the store is consulted.
             if (strongReadKeyClass.isStrongReadKey(key)) {
                 metrics.onReadRefused(EdgeNodeMetrics.REASON_STRONG_READ);
                 out.header(EdgeHttpServer.HDR_FAIL_CLOSED, "strong-read");
@@ -134,7 +97,6 @@ public final class EdgeReadHandler {
                 return;
             }
 
-            // Out-of-slice reads refuse with a DISTINCT reason before the store read.
             if (!core.servesKey(key)) {
                 metrics.onReadRefused(EdgeNodeMetrics.REASON_NOT_SUBSCRIBED);
                 out.header(EdgeHttpServer.HDR_REFUSED, "not-subscribed");
@@ -151,8 +113,7 @@ public final class EdgeReadHandler {
                 return;
             }
 
-            // Snapshot localVersion BEFORE the read so the !found classification is sound (see
-            // EdgeHttpServer). The cursor'd get() routes through the monitor-wired store.
+            // Capture version before read: needed for sound !found classification.
             long localVersion = core.currentVersion();
             ReadResult result = (cursorVersion == NO_CURSOR)
                     ? core.get(key)
@@ -206,13 +167,11 @@ public final class EdgeReadHandler {
         return s.getBytes(StandardCharsets.UTF_8);
     }
 
-    /** Strips a query string from a raw URI/path. */
     static String stripQuery(String uri) {
         int q = uri.indexOf('?');
         return q < 0 ? uri : uri.substring(0, q);
     }
 
-    /** Parses {@code X-Configd-Cursor}; {@link #NO_CURSOR} if absent, -1 if malformed. */
     static long parseCursor(String raw) {
         if (raw == null || raw.isBlank()) {
             return NO_CURSOR;

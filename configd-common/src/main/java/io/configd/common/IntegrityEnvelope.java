@@ -74,15 +74,10 @@ public final class IntegrityEnvelope {
     /** Fixed format version. Bumping this is a controlled, MAC-covered action. */
     public static final short FORMAT_VERSION = 3;
 
-    /** Header before the scopeId: magic(4) + formatVersion(2) + algId(1) + reserved(1). */
     public static final int HEADER_SIZE = 8;
-    /** The authenticated scope marker (shard/node id) that sits immediately after the header. */
     public static final int SCOPE_ID_SIZE = 4;
-    /** The authenticated keyring term selector, immediately after the scopeId in every keyed posture. */
     public static final int KEY_TERM_SIZE = 4;
-    /** CRC32C trailer size. */
     public static final int CRC_SIZE = 4;
-    /** HMAC-SHA-256 output size. */
     public static final int MAC_SIZE = 32;
 
     /**
@@ -94,24 +89,15 @@ public final class IntegrityEnvelope {
 
     /** The signing-key {@code keyTerm} domain: legal only for {@code KEYRING_MAGIC} (keyring outer env). */
     public static final int KEYRING_KEY_TERM = 0;
-    /** The fixed {@code keyTerm} a single-key ({@code new IntegrityEnvelope(key)}) HMAC stamps. */
     static final int SINGLE_KEY_TERM = 1;
 
-    /**
-     * The {@code KEYRING_MAGIC} value (mirrored from {@code RaftArtifactMagic.KEYRING_MAGIC}, which
-     * lives in {@code configd-consensus-core} and cannot be depended on here). Only used to enforce the
-     * {@code keyTerm=0} domain rule; a cross-module test pins the two equal.
-     */
     static final int KEYRING_MAGIC = 0x524B_5952; // "RKYR"
 
     /** Smallest structurally-valid envelope: header + scopeId + CRC (empty NONE payload). */
-    private static final int MIN_ENVELOPE_SIZE = HEADER_SIZE + SCOPE_ID_SIZE + CRC_SIZE; // 16
+    private static final int MIN_ENVELOPE_SIZE = HEADER_SIZE + SCOPE_ID_SIZE + CRC_SIZE;
 
-    /** algId: no authentication - Layer A only (keyless). */
     public static final byte ALG_NONE = 0;
-    /** algId: HMAC-SHA-256 authentication (Layer B, keyed). */
     public static final byte ALG_HMAC_SHA256 = 1;
-    /** algId: AES-256-GCM authenticated encryption (Layer C, encrypting). */
     public static final byte ALG_AES256_GCM = 2;
 
     private static final String HMAC = "HmacSHA256";
@@ -120,13 +106,12 @@ public final class IntegrityEnvelope {
     //   [ ciphertext+tag ][ CRC32C:4 ]. AAD = the whole ENC_PREFIX (header..nonce).
     private static final String GCM_TRANSFORM = "AES/GCM/NoPadding";
     private static final int GCM_TAG_BITS = 128;
-    private static final int GCM_TAG_SIZE = GCM_TAG_BITS / 8;   // 16
-    /** header(8) + scopeId(4) + keyTerm(4) = the keyed-body prefix before the payload/segmentId. */
-    private static final int KEYED_PREFIX_SIZE = HEADER_SIZE + SCOPE_ID_SIZE + KEY_TERM_SIZE; // 16
+    private static final int GCM_TAG_SIZE = GCM_TAG_BITS / 8;
+    private static final int KEYED_PREFIX_SIZE = HEADER_SIZE + SCOPE_ID_SIZE + KEY_TERM_SIZE;
     /** header(8) + scopeId(4) + keyTerm(4) + segmentId(16) + nonce(12) = the AAD-covered prefix. */
     private static final int ENC_PREFIX_SIZE =
-            KEYED_PREFIX_SIZE + AtRestKeys.SEGMENT_ID_LEN + AtRestKeys.NONCE_LEN; // 44
-    private static final int ENC_MIN_SIZE = ENC_PREFIX_SIZE + GCM_TAG_SIZE + CRC_SIZE;         // 64
+            KEYED_PREFIX_SIZE + AtRestKeys.SEGMENT_ID_LEN + AtRestKeys.NONCE_LEN;
+    private static final int ENC_MIN_SIZE = ENC_PREFIX_SIZE + GCM_TAG_SIZE + CRC_SIZE;
 
     /** One {@link Cipher} per thread - GCM is stateful per op; each group's owner thread reuses its own. */
     private static final ThreadLocal<Cipher> GCM_CIPHER = ThreadLocal.withInitial(() -> {
@@ -137,13 +122,10 @@ public final class IntegrityEnvelope {
         }
     });
 
-    /** The write posture (which algId this envelope emits and how it selects keys). */
     private enum Mode { KEYLESS, HMAC_SINGLE, HMAC_KEYRING, HMAC_TERMED, GCM }
 
     private final Mode mode;
-    /** The single HMAC key for {@link Mode#HMAC_SINGLE} / {@link Mode#HMAC_KEYRING}; else null. */
     private final SecretKey singleKey;
-    /** The term-versioned key source for {@link Mode#HMAC_TERMED} / {@link Mode#GCM}; else null. */
     private final AtRestKeys keys;
     /** GCM only: when true, refuse to read a legacy {@code algId=HMAC} record (post-migration lockdown). */
     private final boolean requireEncrypted;
@@ -155,12 +137,6 @@ public final class IntegrityEnvelope {
         this.requireEncrypted = requireEncrypted;
     }
 
-    /**
-     * Creates a single-key HMAC envelope (fixed {@code keyTerm=1}). Kept for fixed-key call sites and
-     * tests; production at-rest integrity uses {@link #hmac(AtRestKeys)} (term-versioned).
-     *
-     * @param key the HMAC-SHA-256 key, or {@code null} for keyless (Layer A only)
-     */
     public IntegrityEnvelope(SecretKey key) {
         this(key == null ? Mode.KEYLESS : Mode.HMAC_SINGLE, key, null, false);
     }
@@ -189,7 +165,6 @@ public final class IntegrityEnvelope {
         return new IntegrityEnvelope(Mode.HMAC_TERMED, null, Objects.requireNonNull(keys, "keys"), false);
     }
 
-    /** An encrypting envelope (Layer C): writes AES-256-GCM ciphertext; reads GCM + term-versioned HMAC. */
     public static IntegrityEnvelope encrypting(AtRestKeys keys) {
         return encrypting(keys, false);
     }
@@ -203,26 +178,18 @@ public final class IntegrityEnvelope {
         return new IntegrityEnvelope(Mode.GCM, null, Objects.requireNonNull(keys, "keys"), requireEncrypted);
     }
 
-    /** Whether this envelope carries an HMAC-writing key (single, keyring, or termed). */
     public boolean isKeyed() {
         return mode == Mode.HMAC_SINGLE || mode == Mode.HMAC_KEYRING || mode == Mode.HMAC_TERMED;
     }
 
-    /** Whether this envelope encrypts on write (Layer C, AES-256-GCM). */
     public boolean isEncrypting() {
         return mode == Mode.GCM;
     }
 
-    /** Whether this reader refuses unauthenticated / absent-under-key bytes (any keyed or encrypting). */
     private boolean isAuthenticated() {
         return mode != Mode.KEYLESS;
     }
 
-    /**
-     * Wraps {@code payload} in an integrity envelope for {@code (magic, scopeId)} in this envelope's
-     * posture. The {@code keyTerm} is chosen by the posture (0 for the keyring, activeTerm for a
-     * term-versioned envelope, 1 for a single-key one) and authenticated by the MAC/tag.
-     */
     public byte[] wrap(int magic, int scopeId, byte[] payload) {
         Objects.requireNonNull(payload, "payload");
         switch (mode) {
@@ -322,11 +289,6 @@ public final class IntegrityEnvelope {
         return out;
     }
 
-    /**
-     * Unwraps a structurally-present envelope, returning the payload, or throws
-     * {@link IntegrityException} on any verification failure. For absent-tolerant call sites use
-     * {@link #unwrapOrNull}.
-     */
     public byte[] unwrap(int expectedMagic, int expectedScopeId, byte[] enveloped) {
         byte[] payload = unwrapOrNull(expectedMagic, expectedScopeId, enveloped);
         if (payload == null) {

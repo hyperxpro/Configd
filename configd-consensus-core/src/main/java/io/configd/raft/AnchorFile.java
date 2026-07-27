@@ -13,35 +13,10 @@ import java.util.Objects;
 import static io.configd.raft.RaftArtifactMagic.ANCHOR_MAGIC;
 
 /**
- * The per-shard {@code raft-anchor}: a dual-slot, authenticated, anti-rollback anchor that carries
- * the Raft durability state ({@link AnchorRecord}) - formerly split across
- * {@code raft.persistent_state} and the bare {@code raft-log.snapshot-meta} - plus the durable-head
- * high-water mark ({@code lastDurableIndex}) that lets recovery detect a committed-and-acked entry
- * vanishing (the {@code W < A} refuse).
- *
- * <p><b>File layout (frozen).</b>
- * <pre>
- *   [ container header @ 0, 8 B ]  [ANCHOR_MAGIC:4][fileVersion:u8=1][flags:u8=0][reserved:u16=0]
- *   Slot 0 @ offset 8 ; Slot 1 @ offset 520.   File size = 8 + 2*512 = 1032 B (preallocated).
- *   Each slot: [recordLen:4][ envelopedAnchorRecord : recordLen ][ zero-pad to 512 ]
- *   envelopedAnchorRecord = integrity.wrap(ANCHOR_MAGIC, gid, AnchorRecord.encodePayload())
- * </pre>
- *
- * <p><b>Write protocol.</b> To update, the writer overwrites the slot holding the LOWER valid
- * {@code anchorSeq} (the stale one) with {@code anchorSeq = maxValid+1}, then {@code fdatasync}s.
- * Only one slot is ever mutated per update, so a torn/un-synced write damages only the stale slot
- * and the untouched live slot (still valid, one seq behind) survives. Recovery parses both slots
- * and takes the highest valid {@code anchorSeq}; atomicity is CRC/MAC detection + write-one-slot,
- * not sector-atomic hardware.
- *
- * <p><b>Fail-closed.</b> {@link #armSyncFailure} makes the next data-sync throw <em>before</em>
- * the barrier, and the in-memory {@link #current()} is advanced only <em>after</em> a clean sync,
- * so a throwing anchor sync never advances the durable record. The owning {@code RaftNode} turns
- * that throw into a process panic (the fsyncgate policy) - this class only guarantees no durable
- * advance on failure.
- *
- * <p>Not thread-safe: the anchor is written only by the group's single owner thread (the same
- * thread that owns the WAL it sits beside).
+ * Per-shard dual-slot, authenticated, anti-rollback anchor ({@link AnchorRecord}).
+ * Do not reorder: anchor must fsync before ack; fdatasync-failed writes must not advance
+ * in-memory state (panic required). Single slot mutated per update: torn write damages only
+ * stale slot; live slot survives via seq.
  */
 final class AnchorFile implements Closeable {
 
@@ -84,45 +59,30 @@ final class AnchorFile implements Closeable {
         }
     }
 
-    /** Opens the production anchor: a real {@code raft-anchor} file in the WAL's directory. */
     static AnchorFile openInDirectory(Path walDir, int gid, IntegrityEnvelope integrity) {
         return new AnchorFile(new FileAnchorIO(walDir), gid, integrity);
     }
 
-    /** Opens a crash-model anchor carried as a self-durable {@link Storage} value (durability tests). */
     static AnchorFile openOverStorage(Storage storage, int gid, IntegrityEnvelope integrity) {
         return new AnchorFile(new StorageAnchorIO(storage), gid, integrity);
     }
 
-    /** Opens an anchor over an explicit {@link AnchorIO} (test seam for the sync-fault backend). */
     static AnchorFile openOverIO(AnchorIO io, int gid, IntegrityEnvelope integrity) {
         return new AnchorFile(io, gid, integrity);
     }
 
-    /** Whether the anchor artifact was present at open time. */
     boolean existedAtOpen() {
         return existedAtOpen;
     }
 
-    /**
-     * Whether open found at least one valid slot. When {@link #existedAtOpen()} is true but this is
-     * false, the file is present with both slots invalid - a tamper the caller must REFUSE (distinct
-     * from a FRESH node, which has no file at all).
-     */
     boolean hasValidRecord() {
         return current != null;
     }
 
-    /** The current durable anchor record (highest valid slot, or the bootstrapped record). */
     AnchorRecord current() {
         return current;
     }
 
-    /**
-     * Lays down a fresh preallocated anchor (header + both 512-B slots + one durable sync) with the
-     * bootstrap record in slot 0 and a zero (invalid) slot 1. Called only on the FRESH-node path,
-     * after the presence gate has confirmed no file + an empty shard dir.
-     */
     void bootstrapFresh() {
         if (existedAtOpen) {
             throw new IllegalStateException("refusing to bootstrap over an existing anchor for gid " + gid);
@@ -137,18 +97,10 @@ final class AnchorFile implements Closeable {
         this.liveSlot = 0;
     }
 
-    // --- typed writes (each is one dual-slot write + one data-sync barrier) ---
-
-    /** Term/vote persist-before-memory write: new term/vote, durable head unchanged. */
     void writeTermVote(long term, int votedForId) {
         write(current.withTermVote(term, votedForId));
     }
 
-    /**
-     * Advance (or lower) the durable head to {@code (index, term)}. A no-op when the head is already
-     * there (avoids seq churn on an empty flush); a genuine move - including a re-append that lands
-     * the same index at a NEW term - writes and syncs.
-     */
     void writeDurableHead(long index, long term) {
         if (current.lastDurableIndex() == index && current.lastDurableTerm() == term) {
             return; // head unchanged - already anchored, nothing to advance
@@ -156,12 +108,10 @@ final class AnchorFile implements Closeable {
         write(current.withDurable(index, term));
     }
 
-    /** Advance the snapshot boundary and durable head together (compaction, anchor LAST). */
     void writeSnapshot(long snapshotIndex, long snapshotTerm, long durableIndex, long durableTerm) {
         write(current.withSnapshot(snapshotIndex, snapshotTerm, durableIndex, durableTerm));
     }
 
-    /** Arms the next {@code n} anchor data-syncs to throw (fail-closed cell; mirrors failNextSyncs). */
     void armSyncFailure(int n) {
         this.armedSyncFailures = n;
     }
@@ -194,8 +144,6 @@ final class AnchorFile implements Closeable {
         encodeSlotInto(slotBytes, 0, toWrite);
         io.writeAt(targetOffset, slotBytes);
 
-        // Fail-closed: a throwing sync must abort BEFORE the durable barrier, so nothing is durable
-        // and current/liveSlot are not advanced (RaftNode turns the throw into a process panic).
         if (armedSyncFailures > 0) {
             armedSyncFailures--;
             syncFaultsFired++;
@@ -208,7 +156,6 @@ final class AnchorFile implements Closeable {
         this.liveSlot = targetSlot;
     }
 
-    /** Reads both slots at open, taking the higher valid {@code anchorSeq}; a bad container header REFUSEs. */
     private void parseExisting() {
         byte[] image = io.readImage();
         if (image == null || image.length < CONTAINER_HEADER_SIZE) {
@@ -231,7 +178,6 @@ final class AnchorFile implements Closeable {
         }
     }
 
-    /** Parses one slot to an {@link AnchorRecord}, or null if the slot is torn / tampered / zeroed. */
     private AnchorRecord parseSlot(byte[] image, int slotOffset) {
         if (image.length < slotOffset + SLOT_STRIDE) {
             return null; // truncated file - this slot is not fully present
@@ -250,8 +196,6 @@ final class AnchorFile implements Closeable {
             }
             return AnchorRecord.decode(payload);
         } catch (IntegrityException e) {
-            // A torn or tampered slot: treat it as invalid so the OTHER slot wins. If BOTH slots
-            // fail this way the file is present-but-invalid and the caller REFUSEs (tamper).
             return null;
         }
     }
@@ -265,15 +209,14 @@ final class AnchorFile implements Closeable {
         ByteBuffer buf = ByteBuffer.wrap(dst, offset, SLOT_STRIDE);
         buf.putInt(env.length);
         buf.put(env);
-        // the remainder of the 512-B slot stays zero (the dst region was zero-initialized)
     }
 
     private static byte[] containerHeader() {
         ByteBuffer buf = ByteBuffer.allocate(CONTAINER_HEADER_SIZE);
         buf.putInt(ANCHOR_MAGIC);
         buf.put(FILE_VERSION);
-        buf.put((byte) 0);       // flags MBZ
-        buf.putShort((short) 0); // reserved MBZ
+        buf.put((byte) 0);
+        buf.putShort((short) 0);
         return buf.array();
     }
 

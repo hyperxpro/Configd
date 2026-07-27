@@ -93,10 +93,8 @@ class ShardedRoutingTest {
             if (shard != firstShard) {
                 sawMultipleShards = true;
             }
-            // The key lands in its owning shard's store...
             assertTrue(fx.runtimes.get(shard).configStore().get(key).found(),
                     "key '" + key + "' must be applied to its owning shard " + shard);
-            // ...and in no other shard's store (cross-shard isolation).
             for (int g = 0; g < n; g++) {
                 if (g != shard) {
                     assertFalse(fx.runtimes.get(g).configStore().get(key).found(),

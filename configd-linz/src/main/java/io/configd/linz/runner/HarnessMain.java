@@ -21,23 +21,9 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Brings up a real {@code n}-node cluster, drives a seeded concurrent workload over a
- * small keyspace while a seeded fault schedule runs, records a faithful client-side
- * history, and checks it with the trusted Porcupine checker.
- *
- * <pre>
- *   HarnessMain --seed S --nodes N [--clients C] [--keys K] [--duration MS]
- *               [--mode sequential|adversarial] [--max-concurrent M]
- *               [--auth-token T] [--encrypt-at-rest true] [--clock-skew SECS --faketime-lib PATH]
- *               --jar path/to/configd-server.jar [--base-raft 9300] [--base-api 8300] [--out DIR]
- * </pre>
- *
- * <p><b>Fault execution.</b> Every fault is scheduled independently: its apply action fires at
- * {@code offsetMs} and its heal action at {@code offsetMs + durationMs}. In the SEQUENTIAL
- * schedule the offsets never overlap, so this reproduces the original one-at-a-time behavior; in
- * the ADVERSARIAL schedule faults overlap, producing genuine combination nemeses (a paused leader
- * while a follower is isolated and a third node drops packets) that can break quorum in bursts.
- *
+ * Real n-node cluster harness: seeded workload + seeded fault schedule, checked via Porcupine.
+ * Faults scheduled independently (apply at offsetMs, heal at offsetMs+durationMs).
+ * SEQUENTIAL: non-overlapping (one-at-a-time), ADVERSARIAL: overlapping bursts (quorum-breaking).
  * Exit: 0 LINEARIZABLE, 1 NON-LINEARIZABLE, 2 INDETERMINATE/error.
  */
 public final class HarnessMain {
@@ -60,7 +46,6 @@ public final class HarnessMain {
         Path outDir = Path.of(a.getOrDefault("out", "configd-linz/runs"));
         Files.createDirectories(outDir);
 
-        // Posture (uniform across the cluster, except clock skew which targets node 1 only).
         String authToken = a.getOrDefault("auth-token", null);
         boolean encryptAtRest = Boolean.parseBoolean(a.getOrDefault("encrypt-at-rest", "false"));
         long clockSkew = Long.parseLong(a.getOrDefault("clock-skew", "0"));
@@ -84,8 +69,7 @@ public final class HarnessMain {
         System.out.println("[harness] schedule -> " + schedFile + " (" + schedule.faults.size()
                 + " faults, " + totalOps + " planned ops)");
 
-        // Reproducibility proof: just (deterministically) generate + write the schedule and exit;
-        // two runs of the same seed must produce a byte-identical schedule file.
+        // Schedule-only: deterministic generation proves reproducibility (byte-identical files on same seed)
         if (Boolean.parseBoolean(a.getOrDefault("schedule-only", "false"))) {
             System.exit(0);
         }
@@ -112,7 +96,6 @@ public final class HarnessMain {
 
             long t0 = System.nanoTime();
 
-            // workload threads
             List<Thread> workers = new ArrayList<>();
             for (int c = 0; c < clients; c++) {
                 final int clientId = c;
@@ -122,7 +105,6 @@ public final class HarnessMain {
                 workers.add(t);
             }
 
-            // concurrent fault scheduler: each fault applies at its offset and heals at offset+duration
             ScheduledExecutorService faultPool = Executors.newScheduledThreadPool(Math.max(4, nodes + 2));
             scheduleFaults(schedule.faults, cluster, faults, faultPool, t0, authToken);
 
@@ -131,13 +113,13 @@ public final class HarnessMain {
                 t.join();
             }
 
-            // stop scheduling new faults, then settle: resume any paused node, heal all partitions/loss,
-            // restart any dead node, and let the cluster quiesce so a final read backbone is possible.
+            // Settle: stop scheduling faults, resume paused nodes, heal partitions/loss, restart dead nodes,
+            // let cluster quiesce for final read backbone.
             faultPool.shutdownNow();
             faultPool.awaitTermination(10, TimeUnit.SECONDS);
             faults.healAll();
             for (ClusterNode n : cluster.nodes()) {
-                n.resume();               // idempotent: SIGCONT on a running process is harmless
+                n.resume();
                 if (!n.isAlive()) {
                     n.restart();
                 }
@@ -196,9 +178,8 @@ public final class HarnessMain {
     }
 
     /**
-     * Schedules every fault as an independent apply-at-offset / heal-at-offset+duration pair on the
-     * pool, so overlapping (combination) faults run concurrently. {@code *_LEADER} kinds resolve the
-     * target to the current leader at apply time and pin it so the matching heal targets the same node.
+     * Schedules each fault independently (apply at offset, heal at offset+duration), allowing overlapping.
+     * *_LEADER kinds resolve to current leader at apply time and pin it for heal.
      */
     private static void scheduleFaults(List<Schedule.FaultEvent> events, Cluster cluster,
                                        FaultInjector faults, ScheduledExecutorService pool,
@@ -213,15 +194,15 @@ public final class HarnessMain {
     private static void applyFault(Schedule.FaultEvent f, Cluster cluster, FaultInjector faults,
                                    ConfigClient probe, ScheduledExecutorService pool) {
         int targetId = f.nodeId();
-        if (targetId < 0) { // *_LEADER: resolve at apply time
+        if (targetId < 0) {
+            // *_LEADER: resolve to current leader at apply time
             targetId = probe.probeLeader(cluster.nodes());
             if (targetId < 0) {
-                return; // no leader right now; skip this fault instance
+                return;
             }
         }
         final ClusterNode node = cluster.node(clamp(targetId, cluster.size()));
-        // The heal is a SEPARATE scheduled task (never blocks a pool thread for the fault duration).
-        // If the pool is shut down before it fires, the final settle sweeps the leftover.
+        // Heal: separate scheduled task (doesn't block pool thread). Leftover on pool shutdown is swept by final settle.
         try {
             switch (f.kind()) {
                 case ISOLATE_LEADER, ISOLATE_NODE -> {
@@ -260,7 +241,6 @@ public final class HarnessMain {
                 }
             }, durationMs, TimeUnit.MILLISECONDS);
         } catch (java.util.concurrent.RejectedExecutionException e) {
-            // pool already shutting down: the final settle heals what is left
         }
     }
 

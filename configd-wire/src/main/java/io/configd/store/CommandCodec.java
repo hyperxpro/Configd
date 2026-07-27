@@ -38,26 +38,16 @@ import java.util.Objects;
  */
 public final class CommandCodec {
 
-    /** Command type byte for PUT. */
     static final byte TYPE_PUT = 0x01;
 
-    /** Command type byte for DELETE. */
     static final byte TYPE_DELETE = 0x02;
 
-    /** Command type byte for BATCH. */
     static final byte TYPE_BATCH = 0x03;
 
     private CommandCodec() {
-        // utility class - no instances
     }
 
-    /**
-     * Encodes a PUT command.
-     *
-     * @param key   config key (non-null, non-blank)
-     * @param value raw config bytes (non-null)
-     * @return serialized command bytes
-     */
+    /** Encode PUT command. */
     public static byte[] encodePut(String key, byte[] value) {
         Objects.requireNonNull(key, "key must not be null");
         Objects.requireNonNull(value, "value must not be null");
@@ -73,17 +63,12 @@ public final class CommandCodec {
         return buf.array();
     }
 
-    /**
-     * Encodes a DELETE command.
-     *
-     * @param key config key (non-null, non-blank)
-     * @return serialized command bytes
-     */
+    /** Encode DELETE command. */
     public static byte[] encodeDelete(String key) {
         Objects.requireNonNull(key, "key must not be null");
 
         byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
-        // 1 (type) + 2 (key len) + key
+        // Wire: [type u8][keyLen u16][key]
         ByteBuffer buf = ByteBuffer.allocate(1 + 2 + keyBytes.length);
         buf.put(TYPE_DELETE);
         buf.putShort((short) keyBytes.length);
@@ -91,13 +76,7 @@ public final class CommandCodec {
         return buf.array();
     }
 
-    /**
-     * Encodes a BATCH command from a list of mutations.
-     *
-     * @param mutations list of mutations (non-null, non-empty)
-     * @return serialized command bytes
-     * @throws IllegalArgumentException if mutations is empty
-     */
+    /** Encode BATCH command from mutation list (non-empty). */
     public static byte[] encodeBatch(List<ConfigMutation> mutations) {
         Objects.requireNonNull(mutations, "mutations must not be null");
         if (mutations.isEmpty()) {

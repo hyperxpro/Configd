@@ -31,7 +31,6 @@ class CrossShardWriteGuardTest {
     @Test
     void coLocatedKeysReturnTheirSharedShard() {
         StaticShardMap map = new StaticShardMap(8);
-        // Deterministically find 3 keys that all resolve to the same shard.
         List<String> coLocated = keysOnSameShard(map, 3);
         int expected = map.shardFor(SCOPE, coLocated.get(0));
         assertTrue(CrossShardWriteGuard.isSingleShard(map, SCOPE, coLocated));
@@ -41,13 +40,11 @@ class CrossShardWriteGuardTest {
     @Test
     void crossShardBatchIsRejectedWithNamedKeys() {
         StaticShardMap map = new StaticShardMap(8);
-        // Deterministically find two keys on different shards.
         String[] pair = keysOnDifferentShards(map);
         List<String> keys = List.of(pair[0], pair[1]);
         assertFalse(CrossShardWriteGuard.isSingleShard(map, SCOPE, keys));
         CrossShardBatchException ex = assertThrows(CrossShardBatchException.class,
                 () -> CrossShardWriteGuard.requireSingleShard(map, SCOPE, keys));
-        // The error names both offending keys + their distinct shards.
         assertTrue(ex.getMessage().contains(pair[0]) && ex.getMessage().contains(pair[1]),
                 "rejection must name the offending keys: " + ex.getMessage());
         assertEquals(2, ex.keyToShard().size());
@@ -99,10 +96,7 @@ class CrossShardWriteGuardTest {
                 () -> CrossShardWriteGuard.requireSingleShard(map, SCOPE, null));
     }
 
-    // Deterministic helpers over the real StaticShardMap.
-
     private static List<String> keysOnSameShard(StaticShardMap map, int count) {
-        // Bucket generated keys by shard, return the first bucket that reaches `count`.
         java.util.Map<Integer, List<String>> byShard = new java.util.HashMap<>();
         for (int i = 0; i < 10_000; i++) {
             String key = "svc/cfg/key-" + i;

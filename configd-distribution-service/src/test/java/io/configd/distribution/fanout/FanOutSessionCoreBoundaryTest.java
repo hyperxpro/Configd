@@ -19,12 +19,6 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Boundary and decision-edge tests for {@link FanOutSessionCore} that pin the exact
- * thresholds the broader unit and property tests do not isolate: the SNAPSHOT_FIRST
- * backlog boundary, the byte-cap batch split, the ack-release boundary, and the
- * slow-consumer warn threshold.
- */
 class FanOutSessionCoreBoundaryTest {
 
     private final FakeClock clock = new FakeClock(1_000L);
@@ -49,15 +43,6 @@ class FanOutSessionCoreBoundaryTest {
         return new EdgeFrame.Subscribe(true, List.of(), resume, -1L, "e");
     }
 
-    /**
-     * The fresh-subscriber rule: a cursor-0 subscriber gets SNAPSHOT_FIRST whenever any
-     * data exists, and TAIL only on a truly empty ring. Rationale: tail-replaying history
-     * to a cache-less subscriber is rejected as a replay by the epoch floor of any
-     * restarted edge, wedging recovery behind the production ack-lag threshold, and a
-     * post-restart ring does not retain genesis. The old backlog boundary, TAIL when
-     * backlog equals queueFrames, is gone by design; this pin is the regression tripwire
-     * for it.
-     */
     @Test
     void freshBacklogBoundaryAtQueueFramesDecidesMode() {
         FanOutConfig cfg = new FanOutConfig(4, 80, 64, 262_144, 8_192L, 250L, 5L, 1_048_576);

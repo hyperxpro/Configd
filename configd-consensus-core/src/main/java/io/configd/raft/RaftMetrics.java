@@ -3,28 +3,8 @@ package io.configd.raft;
 import io.configd.common.NodeId;
 
 /**
- * Immutable snapshot of Raft node state for monitoring and diagnostics.
- * <p>
- * Captured via {@link RaftNode#metrics()} at a single point in time
- * from the Raft I/O thread. All fields reflect the node's state at
- * the moment of capture.
- *
- * @param nodeId           this node's identifier
- * @param role             current role (FOLLOWER, CANDIDATE, or LEADER)
- * @param currentTerm      the latest term this node has seen
- * @param leaderId         the known leader (null if unknown)
- * @param commitIndex      highest log index known to be committed
- * @param lastApplied      highest log index applied to the state machine
- * @param lastLogIndex     index of the last log entry
- * @param snapshotIndex    index of the last entry included in the most recent snapshot
- * @param logSize          number of entries currently stored in memory (excludes compacted)
- * @param replicationLagMax maximum replication lag across all peers (0 for non-leaders)
- * @param appendSendRejected          cumulative outbound AppendEntries frames dropped because the wire
- *                                    codec rejected them (oversized encode); monotonic since construction
- * @param snapshotChunkSendRejected   cumulative InstallSnapshot chunks dropped because the wire codec
- *                                    rejected a chunk exceeding the per-chunk cap; monotonic
- * @param snapshotReassemblyRefused   cumulative follower-side reassembly refusals (a chunked
- *                                    InstallSnapshot that would exceed the heap reassembly cap); monotonic
+ * Point-in-time snapshot of Raft node state (via RaftNode.metrics() from I/O thread).
+ * Rejection counters: appendSendRejected/snapshotChunkSendRejected (wire codec), snapshotReassemblyRefused (heap cap).
  */
 public record RaftMetrics(
         NodeId nodeId,

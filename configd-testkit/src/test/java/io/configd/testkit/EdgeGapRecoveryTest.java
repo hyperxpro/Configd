@@ -11,25 +11,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-/**
- * Gap recovery in the SIM, through the REAL {@code EdgeClientCore} directive path and
- * a REAL {@link C1StreamDriver} resubscribe (GAP->replay orchestration, both paths
- * tested under concurrent writes, at sim level):
- * <ul>
- *   <li><b>within the replay horizon</b> - a partitioned edge misses deltas; on heal the
- *       next NOTIFY gaps, the core queues {@code RECONNECT_RESUBSCRIBE(cursor)}, the
- *       resubscribe gets TAIL and REPLAYS the missed run from the boundary ring - no
- *       snapshot;</li>
- *   <li><b>beyond the replay horizon</b> - same wedge against a tiny ring that LAPS the
- *       edge's cursor: the resubscribe probe GAPs and the recovery is a snapshot+delta
- *       re-bootstrap;</li>
- *   <li><b>adversarial sweep</b> - full fault schedules (edge crash/partition/lag + CP
- *       workload) with recovery enabled on every edge: the recovery path must introduce
- *       ZERO safety violations and must actually fire (non-vacuity).</li>
- * </ul>
- * The ack-lag self-heal is DISABLED in the two scenario legs (ackLagDemoteSeqs huge)
- * so the recovery being tested is provably the resubscribe path, not the ack-lag demotion path.
- */
 class EdgeGapRecoveryTest {
 
     private static final int CP_NODES = 3;

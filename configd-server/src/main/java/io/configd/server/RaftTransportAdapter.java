@@ -16,68 +16,33 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
 
-/**
- * Adapts {@link TcpRaftTransport} (transport module, uses {@code Object} messages)
- * to the consensus-core {@link RaftTransport} interface (uses {@link RaftMessage}).
- * <p>
- * Outbound: serializes {@link RaftMessage} to {@link FrameCodec.Frame} via
- * {@link RaftMessageCodec}, then delegates to the TCP transport.
- * <p>
- * Inbound: registers a handler on the TCP transport that deserializes
- * incoming frames back to {@link RaftMessage} and dispatches them to
- * the configured message consumer.
- * <p>
- * This class resolves the interface mismatch between the
- * transport module's {@code RaftTransport} and consensus-core's
- * {@code RaftTransport}.
- */
+
 public final class RaftTransportAdapter implements RaftTransport {
 
     private static final Logger LOG = Logger.getLogger(RaftTransportAdapter.class.getName());
 
-    /**
-     * Min interval between throttled drop-log lines (ns), shared by every per-frame drop path an
-     * authenticated peer could otherwise flood (in-body-identity rejection and decode-drop). The metric
-     * behind each path is always incremented; only the log line is rate-limited.
-     */
+    
     private static final long LOG_THROTTLE_INTERVAL_NANOS = 1_000_000_000L; // 1/sec
 
     private final io.configd.transport.RaftTransport transport;
     private final int groupId;
-    /** Whether to enforce the in-body {@code leaderId}/{@code candidateId} binding. */
+    
     private final boolean enforceIdentity;
-    /** Security-event sink for in-body identity rejections and decode-drops. */
+    
     private final RaftTransportMetrics transportMetrics;
-    /** Throttle state for the in-body-rejection log (a dropped-frame path an authenticated peer could flood). */
+    
     private final AtomicLong identityLogLastNanos = new AtomicLong(0L);
     private final AtomicLong identityLogSuppressed = new AtomicLong(0L);
-    /** Throttle state for the decode-drop log: a dormant/undecodable type or a malformed payload. */
+    
     private final AtomicLong decodeDropLogLastNanos = new AtomicLong(0L);
     private final AtomicLong decodeDropLogSuppressed = new AtomicLong(0L);
 
-    /**
-     * Creates an adapter with in-body identity binding disabled (legacy behaviour). Delegates to the
-     * fuller constructor; kept so existing single-arg-plus-group call sites (and tests) are unchanged.
-     *
-     * @param transport the underlying transport-module transport - the JDK {@link TcpRaftTransport}
-     *                  or the Netty {@code NettyRaftTransport}
-     * @param groupId   the Raft group ID to use in frame headers
-     */
+    
     public RaftTransportAdapter(io.configd.transport.RaftTransport transport, int groupId) {
         this(transport, groupId, false, RaftTransportMetrics.NOOP);
     }
 
-    /**
-     * Creates an adapter with an explicit in-body identity-binding gate. When
-     * {@code enforceIdentity} is true, a decoded {@link AppendEntriesRequest}/{@link
-     * InstallSnapshotRequest}/{@link TimeoutNowRequest} {@code leaderId} or {@link RequestVoteRequest}
-     * {@code candidateId} that differs from the transport-authenticated sender is dropped and counted
-     * (Layer 2 has already bound the sender to its cert identity). The witness and coalesced-heartbeat
-     * paths already derive the sender from the authenticated {@code from}, so they need no extra check.
-     *
-     * @param enforceIdentity  whether the peer-identity allow-list is active
-     * @param transportMetrics security-event sink (never null; pass {@link RaftTransportMetrics#NOOP})
-     */
+    
     public RaftTransportAdapter(io.configd.transport.RaftTransport transport, int groupId,
                                 boolean enforceIdentity, RaftTransportMetrics transportMetrics) {
         this.transport = transport;
@@ -86,12 +51,7 @@ public final class RaftTransportAdapter implements RaftTransport {
         this.transportMetrics = java.util.Objects.requireNonNull(transportMetrics, "transportMetrics");
     }
 
-    /**
-     * The routing-significant in-body identity of a request ({@code leaderId} for AppendEntries /
-     * InstallSnapshot / TimeoutNow, {@code candidateId} for RequestVote / PreVote), or {@code null}
-     * for messages that carry no such field (responses carry a {@code from} that equals the sender on
-     * their own connection). Used to bind the in-body id to the authenticated transport sender.
-     */
+    
     private static NodeId inBodyRoutingId(RaftMessage message) {
         return switch (message) {
             case AppendEntriesRequest r -> r.leaderId();
@@ -102,14 +62,7 @@ public final class RaftTransportAdapter implements RaftTransport {
         };
     }
 
-    /**
-     * Emits {@code message.apply(suppressedSinceLastLine)} as a WARN at most once per
-     * {@link #LOG_THROTTLE_INTERVAL_NANOS}, incrementing {@code suppressed} instead when throttled. The
-     * {@code suppressed} count is handed to the message factory (and reset) on the line that DOES emit,
-     * so an operator sees how many similar lines were elided. Shared by every per-frame drop path a
-     * misbehaving-but-authenticated peer could flood (in-body-identity rejection, decode-drop); the
-     * caller increments the backing metric on every event, so throttling never loses the count.
-     */
+    
     private void logThrottled(AtomicLong lastNanos, AtomicLong suppressed,
                               java.util.function.LongFunction<String> message) {
         long now = System.nanoTime();
@@ -122,12 +75,7 @@ public final class RaftTransportAdapter implements RaftTransport {
         }
     }
 
-    /**
-     * Logs an in-body identity rejection (throttled). Unlike a senderId mismatch (which drops the
-     * connection, so it is one line per drop), an in-body mismatch drops only the FRAME and keeps the
-     * connection, so an authenticated-but-misbehaving peer could otherwise flood the log. The metric
-     * is incremented on every rejection by the caller regardless of throttling.
-     */
+    
     private void logInBodyRejectionThrottled(NodeId from, NodeId bodyId, MessageType type) {
         logThrottled(identityLogLastNanos, identityLogSuppressed, suppressed ->
                 "In-body id " + bodyId + " from authenticated sender " + from + " (" + type
@@ -135,13 +83,7 @@ public final class RaftTransportAdapter implements RaftTransport {
                         + (suppressed > 0 ? " (" + suppressed + " similar suppressed since last log)" : ""));
     }
 
-    /**
-     * Logs an inbound frame dropped at the decode boundary (throttled): a dormant/undecodable
-     * {@link MessageType} with no consensus codec ({@code PLUMTREE_*}/{@code HYPARVIEW_*}/{@code
-     * HEARTBEAT}) or a structurally-malformed payload. The frame is discarded and the connection kept, so
-     * a hostile peer could otherwise emit one log line per frame - the same unbounded-flood vector as the
-     * in-body path. The backing metric is incremented on every drop by the caller regardless of throttling.
-     */
+    
     private void logDecodeDropThrottled(NodeId from, MessageType type, Exception cause) {
         logThrottled(decodeDropLogLastNanos, decodeDropLogSuppressed, suppressed ->
                 "Dropped undecodable inbound frame from " + from + " (type " + type + "): "
@@ -162,34 +104,14 @@ public final class RaftTransportAdapter implements RaftTransport {
         transport.send(target, frame);
     }
 
-    /**
-     * A consumer of a decoded inbound Raft message together with the Raft group it belongs to.
-     *
-     * <p>The {@code groupId} carried in every frame header (offset 6, no
-     * wire-format change) is delivered to the handler so the server can DEMULTIPLEX inbound traffic to the
-     * correct group ({@code driver.routeMessage(groupId, msg)} on {@code ownerExecutor(groupId)}), instead
-     * of collapsing every frame onto a single captured group. At {@code N=1} only group 0 exists, so the
-     * delivered {@code groupId} is always 0 and behaviour is byte-identical to the prior single-group path.
-     */
+    
     @FunctionalInterface
     public interface InboundHandler {
-        /**
-         * @param from    the sender node
-         * @param groupId the Raft group the frame was stamped with ({@code frame.groupId()})
-         * @param message the decoded Raft message
-         */
+        
         void accept(NodeId from, int groupId, RaftMessage message);
     }
 
-    /**
-     * Registers a handler for inbound Raft messages on the TCP transport.
-     * Incoming {@link FrameCodec.Frame} objects are decoded to
-     * {@link RaftMessage} via {@link RaftMessageCodec} and dispatched
-     * to the given handler together with the frame's {@code groupId}, so a multi-group server can route
-     * each message to its own group (the groupId is already in the frame header).
-     *
-     * @param handler handler of decoded inbound messages, keyed by group id
-     */
+    
     public void registerInboundHandler(InboundHandler handler) {
         transport.registerHandler((from, rawMessage) -> {
             if (rawMessage instanceof FrameCodec.Frame frame) {

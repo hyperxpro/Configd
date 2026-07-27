@@ -46,28 +46,10 @@ public final class ConfigReadService {
         }
     }
 
-    /**
-     * Confirms that this node is still the leader (ReadIndex protocol).
-     */
     @FunctionalInterface
     public interface LeadershipConfirmer {
-        /**
-         * Confirms leadership of the Raft group that owns {@code (scope, key)} by verifying quorum
-         * contact (ReadIndex). Keyed and scoped so the confirmation runs on the shard that owns
-         * {@code (scope, key)} = {@code shardFor(scope, key)} - the SAME shard the write of
-         * {@code (scope, key)} used (a scopeless confirm would verify the wrong shard's leadership at
-         * N&gt;1). At {@code N=1} every {@code (scope, key)} resolves to group 0.
-         *
-         * @param scope the read's configuration scope (folded into the shard hash)
-         * @param key   the key being read (selects the shard)
-         * @return true if this node is confirmed as the current leader of that shard
-         */
         boolean confirmLeadership(ConfigScope scope, String key);
 
-        /**
-         * Confirms leadership in the {@code GLOBAL} scope for the legacy key-only path.
-         * Delegates to {@link #confirmLeadership(ConfigScope, String)}.
-         */
         default boolean confirmLeadership(String key) {
             return confirmLeadership(ConfigScope.GLOBAL, key);
         }

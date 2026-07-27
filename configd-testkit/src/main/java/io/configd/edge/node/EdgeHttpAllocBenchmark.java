@@ -20,37 +20,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Edge read-serving API ({@code configd-edge-node} - {@link EdgeHttpServer}, JDK
- * {@code com.sun.net.httpserver}). Measures the end-to-end per-request allocation of a real
- * edge read over a real loopback connection, with {@code -prof gc} (metric
- * {@code gc.alloc.rate.norm}, B/op).
- *
- * <p>Declared in {@code io.configd.edge.node} (not {@code io.configd.bench}) so it can wire
- * the package-private {@link EdgeNodeMetrics}, exactly as {@code EdgeHttpServerTest} does;
- * JMH discovers benchmarks by annotation, so the package is irrelevant.
- *
- * <p>Mirrors {@code EdgeHttpServerTest}'s wiring: a deterministically clocked
- * {@link EdgeClientCore} fed deltas directly (no fan-out socket). The fixed clock never
- * advances, so the core stays {@code CURRENT} and the read is served (200) - the
- * steady-state hot read.
- *
- * <h2>Method (the same control as the admin baseline)</h2>
- * <ul>
- *   <li>{@code healthLive} - {@code GET /health/live}, trivial constant body: the JDK
- *       {@code HttpExchange} + client round-trip floor (the per-request garbage the
- *       {@code EdgeHttpServer} Javadoc itself flags as out of scope of the zero-alloc law).</li>
- *   <li>{@code configGet} - {@code GET /v1/config/{key}} -> 200 + value, hitting the real
- *       lock-free {@link EdgeClientCore} read (the 32-B/op in-process path) wrapped in the
- *       HTTP shell. The marginal over {@code healthLive} is the read path; the shared term
- *       is the shell.</li>
- * </ul>
- *
- * <pre>
- *   java --enable-preview -jar configd-testkit/target/benchmarks.jar \
- *       EdgeHttpAllocBenchmark -prof gc -f 2 -wi 3 -i 4
- * </pre>
- */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 @State(Scope.Benchmark)

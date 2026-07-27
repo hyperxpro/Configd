@@ -13,23 +13,10 @@ import java.nio.file.Path;
 import java.util.Map;
 
 /**
- * LOST ACKED WRITE discrimination scenario.
- *
- * <p>Schedule: PUT k=T_new -> ack -> a linearizable read-back <b>confirms</b> T_new ->
- * {@code kill -9} the WHOLE cluster -> restart from the same data-dirs -> linearizable
- * read k again. On a correct build the confirmed value survives (GREEN); on a build
- * whose durability is a no-op the value vanishes (404) after being confirmed (RED).
- *
- * <p>Why a full-cluster crash and why the no-op mutation must be a <i>non-write</i>
- * (not merely a no-op {@code force}): on a real box {@code kill -9} does not drop the
- * OS page cache, so an unfsynced-but-written byte survives a process kill - only true
- * power loss drops it. The durability mutation therefore makes the WAL append a
- * genuine no-op (the bytes are never written), so a full-cluster restart loses the
- * committed entry from every node's persisted log; the confirming read pins that it
- * had committed.
- *
- * <p>Run against the unmutated jar for the GREEN control; the run-discrimination.sh
- * driver rebuilds a mutated jar for the RED. Exit: 0 GREEN, 1 RED, 2 INDETERMINATE.
+ * LOST ACKED WRITE scenario: PUT->ack->confirm T_new->kill -9 all->restart->read again.
+ * Correct: value survives (GREEN). Broken durability: value vanishes post-confirm (RED).
+ * Full-cluster crash needed (not just process kill) because page cache masks unfsynced writes.
+ * Exit: 0 GREEN, 1 RED, 2 INDETERMINATE.
  */
 public final class LostWriteScenario {
 
@@ -59,13 +46,6 @@ public final class LostWriteScenario {
             }
             System.out.println("[lostwrite/" + label + "] leader=node" + leader);
 
-            // 1. PUT T_new (retry until COMMITTED - a 200 is returned only after quorum-commit;
-            //    a fresh leader can transiently 503 before its term no-op commits) and confirm
-            //    it. A committed write is itself a real linearization point, so if the flaky
-            //    linearizable read-back (150ms ReadIndex confirm timeout) won't return OK, we
-            //    record the backbone from the committed PUT and additionally require the value is
-            //    durably applied via the reliable default-GET - so the post-restart absence
-            //    still pins a real loss.
             ConfigClient.OpResult put = putCommitted(client, cluster, leader, key, token, 8);
             recorder.recordPut(0, key, token, put.status(), put.callNs(), put.retNs());
             if (put.status() != Op.Status.OK) {
@@ -80,13 +60,11 @@ public final class LostWriteScenario {
             if (confirm.status() == Op.Status.OK && token.equals(confirm.value())) {
                 recorder.recordRead(0, key, confirm.value(), confirm.status(), confirm.callNs(), confirm.retNs());
             } else {
-                // linearizable read-back flaky; the PUT committed + applied, so the
-                // committed PUT's interval is a sound OK backbone for the confirming read.
+                // Flaky lin-read; committed PUT is a sound OK backbone for confirming read
                 recorder.recordRead(0, key, token, Op.Status.OK, put.callNs(), put.retNs());
             }
             System.out.println("[lostwrite/" + label + "] confirmed T_new (committed + applied)");
 
-            // 2. kill -9 the WHOLE cluster, then restart from the same data-dirs.
             System.out.println("[lostwrite/" + label + "] kill -9 all nodes");
             for (ClusterNode n : cluster.nodes()) {
                 n.kill9();
@@ -101,18 +79,14 @@ public final class LostWriteScenario {
                 exit(2, "no leader after restart");
             }
 
-            // 3. read k again - does the confirmed value survive? A correct build still
-            //    has T_new (OK of token); a build whose WAL append is a no-op lost it on
-            //    restart (OK of "" / absent). Prefer a linearizable read; if it stays flaky
-            //    we fall back to a reliable default-GET poll on the leader so that a genuine
-            //    loss is still recorded as a definite OK absence (the load-bearing RED).
             ClusterNode l2 = cluster.node(leader2);
             ConfigClient.OpResult post = client.linReadConfirm(l2, key, 40);
             if (post.status() == Op.Status.OK) {
                 recorder.recordRead(0, key, post.value(), post.status(), post.callNs(), post.retNs());
             } else {
+                // Flaky lin-read; fall back to default-GET for definite absence (load-bearing RED)
                 long c = System.nanoTime();
-                String got = client.defaultGet(l2, key); // null on 404/absent
+                String got = client.defaultGet(l2, key);
                 long r = System.nanoTime();
                 recorder.recordRead(0, key, got == null ? "" : got, Op.Status.OK, c, r);
                 post = new ConfigClient.OpResult(Op.Status.OK, got == null ? "" : got, c, r);
@@ -127,10 +101,8 @@ public final class LostWriteScenario {
     }
 
     /**
-     * Writes {@code value} and retries until the write COMMITS (OK - a 200 means
-     * quorum-committed). A fresh leader can transiently 503 before its term no-op commits -
-     * expected during stabilization, not the bug under test - so we re-probe the leader
-     * and retry. Returns the committing attempt's result, or the last attempt.
+     * Retries PUT until it COMMITS (OK = 200 quorum-committed). Fresh leader may transiently 503
+     * before term no-op commits (expected stabilization, not the bug). Returns committing attempt or last.
      */
     private static ConfigClient.OpResult putCommitted(ConfigClient client, Cluster cluster,
             int leaderHint, String key, String value, int attempts) throws InterruptedException {

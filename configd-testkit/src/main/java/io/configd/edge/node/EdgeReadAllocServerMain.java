@@ -22,31 +22,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
- * Edge-read HTTP head-to-head - the <b>server side</b>, isolating the contested server-side
- * per-request allocation that the JMH benchmark could not measure (its {@code -prof gc} was
- * JVM-wide = client + server, an upper bound only).
- *
- * <h2>How server-side allocation is isolated (the apples-to-apples fix)</h2>
- * <ol>
- *   <li>The load client runs in a <b>separate JVM</b> ({@link EdgeReadLoadClientMain}), so all
- *       client allocation (the JDK {@code HttpClient}, which the baseline run flagged as plausibly the
- *       larger half of the roughly 36 KB floor) is excluded <em>by construction</em>.</li>
- *   <li>This server JVM self-measures {@code com.sun.management.ThreadMXBean
- *       .getTotalThreadAllocatedBytes()} - the exact (not sampled) sum of heap bytes allocated
- *       across all threads, including terminated ones and the carrier threads that back virtual
- *       threads. The delta across a request window / request count = server-side B/request.</li>
- *   <li>A plain control socket delimits the window precisely: client sends {@code START <n>},
- *       drives <i>n</i> keep-alive requests, then sends {@code STOP}; the server snapshots the
- *       counter at START and STOP. An {@code IDLE <ms>} command measures the background-thread
- *       allocation floor (GC/JIT housekeeping) so the reader sees the noise vs the signal.</li>
- * </ol>
- * The same harness drives both servers - the production JDK {@link EdgeHttpServer} (the best-JDK
- * HTTP form: its per-request shell - {@code HttpExchange}, header maps, streams - is irreducible
- * in place, per the baseline measurement; there is no into-buffer lever the codecs had) and the
- * {@link NettyEdgeReadServer} (the strongest-Netty form). Only the transport shell differs, so
- * the B/request delta is the transport-attributable allocation - the number the edge-read
- * verdict turns on.
- *
  * <pre>
  *   java --enable-preview -cp benchmarks.jar io.configd.edge.node.EdgeReadAllocServerMain \
  *        &lt;jdk|netty&gt; &lt;httpPort&gt; &lt;controlPort&gt; &lt;keyCount&gt; &lt;valueBytes&gt;

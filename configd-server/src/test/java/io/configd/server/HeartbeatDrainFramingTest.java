@@ -12,15 +12,6 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-/**
- * The send-side drain framing decision
- * ({@link ConfigdServer#frameHeartbeatDrain}). The dormant-at-N=1 contract:
- * <ul>
- *   <li>exactly one group for the peer (ALWAYS the case at N=1) -> a normal {@code APPEND_ENTRIES}
- *       frame stamped with that group's id - the wire is byte-for-byte unchanged;</li>
- *   <li>more than one group (only reachable at N&gt;1) -> ONE {@code RAFT_COALESCED_HEARTBEAT} frame.</li>
- * </ul>
- */
 class HeartbeatDrainFramingTest {
 
     private static final NodeId LEADER = NodeId.of(1);

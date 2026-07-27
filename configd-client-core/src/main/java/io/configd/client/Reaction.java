@@ -17,19 +17,15 @@ package io.configd.client;
 public sealed interface Reaction
         permits Reaction.Fatal, Reaction.PerWatch, Reaction.CatchUp, Reaction.CancelAck {
 
-    /** Connection-fatal: raise {@link #exception()} and tear the connection down. */
     record Fatal(ConfigdException exception) implements Reaction {
     }
 
-    /** Per-watch terminal: {@link #exception()} ends one watch; the connection survives. */
     record PerWatch(ConfigdException exception) implements Reaction {
     }
 
-    /** Non-fatal catch-up demotion — the session continues in snapshot/catch-up mode. */
     record CatchUp() implements Reaction {
     }
 
-    /** The expected acknowledgement of a client-initiated {@code WATCH_CANCEL}; not an error. */
     record CancelAck() implements Reaction {
     }
 }

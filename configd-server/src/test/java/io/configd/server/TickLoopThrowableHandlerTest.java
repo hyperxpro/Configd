@@ -132,9 +132,6 @@ class TickLoopThrowableHandlerTest {
         MetricsRegistry registry = new MetricsRegistry();
         ConfigdMetrics metrics = new ConfigdMetrics(registry, () -> 0L);
 
-        // Defensive: a null throwable should not crash the tick loop - the failure mode being
-        // guarded against is "the tick loop dies on any unhandled throwable", and the handler
-        // itself must not be a new source of throws.
         assertDoesNotThrow(() -> ConfigdServer.handleTickLoopThrowable(null, metrics));
     }
 }

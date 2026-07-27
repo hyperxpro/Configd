@@ -74,27 +74,17 @@ final class EdgeFanOutSim {
     private final EdgeFaultSchedule edgeFaults;
     private final StreamDriver streamDriver;
 
-    /** Per-CP-node fan-out buffer (the source the StreamDriver reads). */
     private final List<FanOutBuffer> fanOutBuffers = new ArrayList<>();
-    /** Per-CP-node replay source (the GAP recovery seam). */
     private final List<ReplaySource> replaySources = new ArrayList<>();
 
     private final List<EdgeActor> edges = new ArrayList<>();
     private final EdgeActivity activity = new EdgeActivity();
     private final EdgeInvariants invariants;
 
-    /** Active CP->edge partitions, by edgeId - connected() consults this. */
     private final Set<Integer> partitionedEdges = new HashSet<>();
 
-    /** Per-cpNode seqs already turned into a liveness obligation (dedup). */
     private final Map<Integer, Set<Long>> recordedPublications = new HashMap<>();
 
-    /**
-     * Observer-only propagation probe. Null until {@link #attachProbe} is called. When
-     * attached it samples {@code recordPublished} at the FanOutBuffer publish site and
-     * {@code recordVisible} at each edge's apply moment. Strictly observer-only: it reads
-     * already-computed values and never perturbs the determinism digest ({@code ProbeMechanismTest}).
-     */
     private PropagationProbe probe;
 
     private long currentTimeMs;
@@ -107,16 +97,6 @@ final class EdgeFanOutSim {
                 AdversarialSchedule.defaultIntensity(), EdgeInvariants.BOUND_MS);
     }
 
-    /**
-     * @param seed         master seed (shared with the CP sim)
-     * @param cpNodeCount  CP node count (ids 0..n-1)
-     * @param edgeCount    edge count (ids 100..100+edgeCount-1)
-     * @param totalTicks   run length
-     * @param edgeFaults   whether to schedule edge faults
-     * @param streamDriver the server-side streaming seam (default {@link StreamDriver#NONE})
-     * @param intensity    CP fault/op intensity (kept identical to plain AdversarialSim by default)
-     * @param boundMs      eventual-delivery bound
-     */
     EdgeFanOutSim(long seed, int cpNodeCount, int edgeCount, int totalTicks,
             boolean edgeFaults, StreamDriver streamDriver,
             AdversarialSchedule.Intensity intensity, long boundMs) {
@@ -124,12 +104,6 @@ final class EdgeFanOutSim {
                 boundMs, FanOutBuffer_CAPACITY);
     }
 
-    /**
-     * Full constructor with an explicit per-CP-node fan-out ring capacity (some tests
-     * shrink it so the replay horizon is crossable at sim scale; production and the gate
-     * path stay at {@link #FanOutBuffer_CAPACITY}. The delegating constructors are
-     * unchanged, so existing seeds stay byte-identical).
-     */
     EdgeFanOutSim(long seed, int cpNodeCount, int edgeCount, int totalTicks,
             boolean edgeFaults, StreamDriver streamDriver,
             AdversarialSchedule.Intensity intensity, long boundMs, int fanOutBufferCapacity) {

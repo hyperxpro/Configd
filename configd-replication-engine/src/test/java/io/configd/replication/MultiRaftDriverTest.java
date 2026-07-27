@@ -22,10 +22,6 @@ import java.util.random.RandomGenerator;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link MultiRaftDriver} - multi-group management,
- * tick propagation, and message routing.
- */
 class MultiRaftDriverTest {
 
     static final class TestTransport implements RaftTransport {
@@ -62,7 +58,6 @@ class MultiRaftDriverTest {
     private TestClock clock;
     private MultiRaftDriver driver;
 
-    /** Creates a single-node RaftNode (no peers) that becomes leader immediately. */
     private RaftNode createSingleNodeRaft(NodeId id) {
         RaftConfig config = RaftConfig.of(id, Set.of());
         RaftLog log = new RaftLog();
@@ -72,7 +67,6 @@ class MultiRaftDriverTest {
         return new RaftNode(config, log, transport, sm, rng);
     }
 
-    /** Creates a RaftNode with the given peers. */
     private RaftNode createRaftWithPeers(NodeId id, Set<NodeId> peers) {
         RaftConfig config = RaftConfig.of(id, peers);
         RaftLog log = new RaftLog();

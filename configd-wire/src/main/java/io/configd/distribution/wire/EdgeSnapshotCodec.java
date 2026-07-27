@@ -9,55 +9,27 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Serializes a {@link ConfigSnapshot} to the <b>durable snapshot byte format</b> and
- * splits it into wire chunks for the {@code SNAPSHOT_BEGIN / SNAPSHOT_CHUNK* /
- * SNAPSHOT_END} flow.
- *
- * <h2>Why this and not {@code ConfigStateMachine.snapshot()}</h2>
- * {@code ConfigStateMachine.snapshot()} reads from a live state machine's store and
- * appends a TLV trailer carrying {@code signingEpoch}. The {@code ReplaySource} here
- * hands the session a plain {@link ConfigSnapshot} (the HAMT + version), not a state
- * machine, and the edge has no use for the leader's signing epoch (it verifies per-delta
- * signatures, not the snapshot). So we emit exactly the snapshot <b>body</b> -
- * {@code [8B seq][4B entryCount][ (4B keyLen, key, 4B valLen, val)* ]} in
- * {@code HamtMap.forEach} order - which is a valid no-trailer snapshot that
- * {@code ConfigStateMachine.restoreSnapshot} explicitly accepts. This reuses the same
- * layout as the durable snapshot store and the InstallSnapshot RPC, round-trip-verified
- * against {@code ConfigStateMachine.restoreSnapshot} in {@code EdgeSnapshotCodecTest}.
- *
- * <h2>Bounds</h2>
- * Per-entry key and value are each capped at {@link #MAX_ENTRY_FIELD_BYTES} (1 MiB,
- * matching {@code CommandCodec.MAX_VALUE_SIZE} and the state machine's snapshot caps),
- * so a pathological snapshot cannot produce an entry the receiver would reject.
- *
- * <h2>Carrier-versioned</h2>
- * The snapshot body carries no format version of its own; it is versioned by the
- * enclosing edge frame version (the {@code SNAPSHOT_BEGIN / SNAPSHOT_CHUNK* /
- * SNAPSHOT_END} frames are self-versioned). The body's leading {@code u64} is the
- * snapshot's DATA sequence ({@code ConfigSnapshot.version()}), NOT a format version -
- * it identifies which snapshot this is, not how to parse it. The body is intentionally
- * trailer-less: the edge decodes it via {@link #deserialize} (which needs no trailer),
- * distinct from the durable state-machine snapshot, which appends a mandatory
- * magic-TLV trailer that {@code ConfigStateMachine.restoreSnapshot} requires.
+ * Serializes ConfigSnapshot to durable snapshot byte format and splits into wire chunks
+ * (SNAPSHOT_BEGIN/CHUNK/END flow).
+ * <p>
+ * Emits snapshot body only ([seq u64][entryCount u32][(keyLen u32, key, valLen u32, val)*]
+ * in HamtMap.forEach order), interchangeable with durable form, round-trip-verified vs.
+ * ConfigStateMachine.restoreSnapshot.
+ * <p>
+ * Key/value each capped at MAX_ENTRY_FIELD_BYTES (1 MiB, matching CommandCodec.MAX_VALUE_SIZE
+ * and state machine snapshot caps). Body carries no format version; versioned by enclosing
+ * edge frame version. Leading u64 is DATA sequence (which snapshot), not format version.
+ * Trailer-less by design (edge decodes via deserialize(), unlike durable state-machine
+ * snapshot which appends magic-TLV trailer).
  */
 public final class EdgeSnapshotCodec {
 
-    /** Per-entry key/value byte cap (1 MiB, matching CommandCodec.MAX_VALUE_SIZE). */
     public static final int MAX_ENTRY_FIELD_BYTES = 1_048_576;
 
     private EdgeSnapshotCodec() {
-        // utility class
     }
 
-    /**
-     * Serializes a snapshot to body bytes (no trailer). Entries are emitted in
-     * {@code HamtMap.forEach} order - the same order {@code ConfigStateMachine.snapshot()}
-     * uses, so the bytes are interchangeable with the durable form for a trailer-less snapshot.
-     *
-     * @param snapshot the snapshot to serialize
-     * @return the snapshot body bytes
-     * @throws IllegalArgumentException if any key/value exceeds {@link #MAX_ENTRY_FIELD_BYTES}
-     */
+    /** Serializes snapshot to body bytes (no trailer) in HamtMap.forEach order. */
     public static byte[] serialize(ConfigSnapshot snapshot) {
         if (snapshot == null) {
             throw new IllegalArgumentException("snapshot must not be null");

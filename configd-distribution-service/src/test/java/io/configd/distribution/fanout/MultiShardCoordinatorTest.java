@@ -28,17 +28,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * The multi-shard fan-out/fan-in coordinator proofs. Drives {@link FanOutConnectionDriver}
- * over N in-memory {@link FanOutBuffer}s + a frame-capturing {@link RecordingTransportSink}, sweeping
- * ticks (the same deterministic, thread-free harness as {@code FanOutSessionCoreGapClassificationTest}
- * generalized to N shards). These tests exercise the coordinator directly, never booting an edge server.
- *
- * <p>Coverage rule for the test {@link ShardResolver}: a KEY target {@code /sX/...} covers shard X;
- * a PREFIX / FULL target scatters across every shard (the target sets coverage, never the cursor).
- * The real hash-routed completeness proof (a key that {@code shardFor}s to a non-zero shard) lives in
- * the server module, over the real {@code StaticShardMap}.
- */
 class MultiShardCoordinatorTest {
 
     private static final WatchAuthorizer ALLOW = (p, r, t) -> true;
@@ -72,9 +61,6 @@ class MultiShardCoordinatorTest {
             gids[g] = g;
         }
         int[] allGids = gids;
-        // Mirror the production ShardMapResolver: a match-all target (FULL, or any kind carrying
-        // full_chain_verify) scatters to every shard - checked BEFORE the KEY branch so a
-        // KEY+full_chain_verify target covers all shards, not just the one its path names.
         ShardResolver resolver = t -> t.isMatchAll() ? allGids.clone()
                 : (t.targetKind() == EdgeFrame.WATCH_TARGET_KEY
                         ? new int[]{shardOf(t.path())}
@@ -87,7 +73,6 @@ class MultiShardCoordinatorTest {
                 (c, m) -> teardowns.add(c), auth);
     }
 
-    /** "/s2/host" -> shard 2 (the test coverage convention for KEY targets). */
     private static int shardOf(String path) {
         int slash = path.indexOf('/', 1);
         String seg = path.substring(1, slash < 0 ? path.length() : slash);
@@ -110,18 +95,15 @@ class MultiShardCoordinatorTest {
 
     @Test
     void nEquals1IsFrameIdenticalToTheReferenceTranslator() {
-        // Drive the SAME subscribe + publishes + ticks through (A) the N=1 coordinator and
-        // (B) an independent re-implementation of the single-shard translation. If the
-        // frame lists match, the N=1 coalescer is byte-identical to the incumbent veneer.
         WatchTarget full = new WatchTarget(0, EdgeFrame.WATCH_TARGET_FULL, "", false);
 
         setup(1, ALLOW);
         feed(fullCreate(1, WatchCursor.fromNow()));
         buffers[0].publish(put(1, "/k/a", "va"));
         buffers[0].publish(put(2, "/k/b", "vb"));
-        sweepAt(1_000L);                 // NOTIFY -> WATCH_EVENT x2
-        sweepAt(1_000L);                 // anchor the heartbeat cadence
-        sweepAt(1_000L + hb());          // idle -> HEARTBEAT -> coalesced WATCH_PROGRESS
+        sweepAt(1_000L);
+        sweepAt(1_000L);
+        sweepAt(1_000L + hb());
         feed(new EdgeFrame.WatchCancel(1L));
         List<EdgeFrame> coordinatorFrames = List.copyOf(out.sent());
 
@@ -144,7 +126,6 @@ class MultiShardCoordinatorTest {
 
         assertEquals(referenceFrames, coordinatorFrames,
                 "the N=1 coordinator emits frames identical to the independent single-shard translator");
-        // The exact shape: one WATCH_CREATED naming shard 0, two WATCH_EVENT frames on gid 0.
         assertEquals(1, out.sentOfType(EdgeFrame.WatchCreated.class).size());
         assertEquals(1, out.sentOfType(EdgeFrame.WatchCreated.class).get(0).shards().size());
         assertEquals(0, out.sentOfType(EdgeFrame.WatchCreated.class).get(0).shards().get(0).gid());
@@ -155,8 +136,8 @@ class MultiShardCoordinatorTest {
     @Test
     void aChangeOnANonZeroShardIsDeliveredTaggedWithThatGid() {
         setup(3, ALLOW);
-        feed(fullCreate(1, WatchCursor.fromNow())); // FULL scatters to all 3 shards
-        buffers[2].publish(put(1, "/anything", "v")); // a commit ONLY on shard 2
+        feed(fullCreate(1, WatchCursor.fromNow()));
+        buffers[2].publish(put(1, "/anything", "v"));
         sweep();
 
         List<EdgeFrame.WatchEvent> events = eventsFor(1L);
@@ -168,7 +149,7 @@ class MultiShardCoordinatorTest {
     @Test
     void emptyShardLegIsMaterializedAndDeliversWhenDataArrives() {
         setup(3, ALLOW);
-        buffers[0].publish(put(1, "/x0", "v")); // shards 0 non-empty; shard 1 EMPTY; shard 2 non-empty
+        buffers[0].publish(put(1, "/x0", "v"));
         buffers[2].publish(put(1, "/x2", "v"));
         feed(fullCreate(1, WatchCursor.fromNow()));
 
@@ -177,7 +158,6 @@ class MultiShardCoordinatorTest {
         assertTrue(created.shards().stream().anyMatch(s -> s.gid() == 1),
                 "the not-ready shard leg is present, never omitted");
 
-        // A late write to the previously-empty shard 1 is delivered (the leg was live all along).
         buffers[1].publish(put(1, "/x1", "v"));
         sweep();
         assertTrue(eventsFor(1L).stream().anyMatch(e -> e.gid() == 1),
@@ -188,9 +168,8 @@ class MultiShardCoordinatorTest {
     void laggingShardComponentFreezesWhileServerNowAdvancesAndSiblingsDeliver() {
         setup(2, ALLOW);
         feed(fullCreate(1, WatchCursor.fromNow()));
-        sweepAt(1_000L); // anchor cadence (both idle)
+        sweepAt(1_000L);
 
-        // Shard 0 advances; shard 1 is frozen (no commits ever). Drive two heartbeat windows.
         buffers[0].publish(put(1, "/a", "v1"));
         sweepAt(1_000L + hb());
         WatchCursor first = progressFor(1L).get(progressFor(1L).size() - 1).cursor();
@@ -207,10 +186,8 @@ class MultiShardCoordinatorTest {
         assertTrue(s0Last > s0First, "the healthy shard-0 component advances (" + s0First + " -> " + s0Last + ")");
         assertEquals(s1First, s1Last, "the lagging shard-1 component FREEZES (never truncated, never faked)");
         assertEquals(0L, s1Last, "shard 1 never committed, so its frontier stays at 0");
-        // server_now advanced across the frozen window => quiet distinguishable from lagging.
         assertTrue(progress.get(progress.size() - 1).serverNowMillis()
                 > progress.get(0).serverNowMillis(), "server_now advances while shard 1 is frozen");
-        // Shard-0 events delivered; shard 1 delivered nothing but was never dropped/truncated.
         assertTrue(eventsFor(1L).stream().allMatch(e -> e.gid() == 0));
         assertFalse(teardowns.contains(ErrorCode.GAP_UNRECOVERABLE), "a frozen shard is never a truncation");
     }
@@ -218,8 +195,7 @@ class MultiShardCoordinatorTest {
     @Test
     void eachPerShardSubstreamIsContiguousAscendingInS() {
         setup(2, ALLOW);
-        feed(prefixCreate(1, "/app/", WatchCursor.fromNow())); // PREFIX scatters to all shards
-        // Interleave publishes across two shards; per-shard S sequences are independent.
+        feed(prefixCreate(1, "/app/", WatchCursor.fromNow()));
         buffers[0].publish(put(1, "/app/a", "a1"));
         buffers[1].publish(put(1, "/app/b", "b1"));
         buffers[0].publish(put(2, "/app/a", "a2"));
@@ -238,12 +214,10 @@ class MultiShardCoordinatorTest {
         setup(2, ALLOW);
         feed(prefixCreate(1, "/app/", WatchCursor.fromNow()));
         buffers[0].publish(put(1, "/app/a", "a1"));
-        buffers[1].publish(put(1, "/app/b", "b1")); // SAME S=1 on a different shard = unrelated commit
+        buffers[1].publish(put(1, "/app/b", "b1"));
         sweep();
 
         List<EdgeFrame.WatchEvent> events = eventsFor(1L);
-        // Both shards produced an S=1 event: the (gid, S) tag is the only discriminator - S alone is
-        // not a cross-shard order (shard-0 S=1 and shard-1 S=1 name unrelated commits).
         assertEquals(2, events.size());
         assertTrue(events.stream().anyMatch(e -> e.gid() == 0 && e.s() == 1L));
         assertTrue(events.stream().anyMatch(e -> e.gid() == 1 && e.s() == 1L));
@@ -253,17 +227,14 @@ class MultiShardCoordinatorTest {
 
     @Test
     void resumeWithPartialVectorMixesTailAndSnapshotPerShard() {
-        setup(2, ALLOW, "edge-1", 4); // tiny buffers so shard 0 can evict
-        // Shard 0: 1..10 published into a cap-4 buffer => early seqs evicted; resume (0,2) will GAP.
+        setup(2, ALLOW, "edge-1", 4);
         for (long i = 1; i <= 10; i++) {
             buffers[0].publish(put(i, "/app/a", "v" + i));
         }
-        snaps[0].set(10, "/app/a", "v10"); // shard-0 replay floor at seq 10
-        // Shard 1: 1..3 retained (cap 4); resume (1,1) is in-window => TAIL from 1.
+        snaps[0].set(10, "/app/a", "v10");
         for (long i = 1; i <= 3; i++) {
             buffers[1].publish(put(i, "/app/b", "w" + i));
         }
-        // Resume vector names both shards: (0,2) behind-buffer, (1,1) in-window.
         WatchCursor resume = new WatchCursor(List.of(
                 new WatchCursor.Component(0, 2), new WatchCursor.Component(1, 1)));
         feed(prefixCreate(1, "/app/", resume));
@@ -272,7 +243,7 @@ class MultiShardCoordinatorTest {
         assertEquals(EdgeFrame.Mode.SNAPSHOT_FIRST, shardMode(created, 0).mode(), "shard 0 behind-buffer => SNAPSHOT_FIRST");
         assertEquals(EdgeFrame.Mode.TAIL, shardMode(created, 1).mode(), "shard 1 in-window => TAIL");
 
-        sweep(); // shard 0 performs its per-(watch,gid) snapshot; shard 1 tails
+        sweep();
         assertEquals(0, out.sentOfType(EdgeFrame.WatchSnapshotBegin.class).get(0).gid(),
                 "only shard 0 emits a catch-up snapshot substream");
         List<Long> shard1 = eventsFor(1L).stream().filter(e -> e.gid() == 1).map(EdgeFrame.WatchEvent::s).toList();
@@ -282,7 +253,6 @@ class MultiShardCoordinatorTest {
     @Test
     void deniedWatchLeaksZeroFramesFromAnyShard() {
         setup(3, DENY);
-        // Data exists on EVERY shard - a leaking leg would emit a WATCH_EVENT / WATCH_SNAPSHOT.
         buffers[0].publish(put(1, "/x0", "v"));
         buffers[1].publish(put(1, "/x1", "v"));
         buffers[2].publish(put(1, "/x2", "v"));
@@ -301,7 +271,6 @@ class MultiShardCoordinatorTest {
     @Test
     void cursorNamingAnOutOfRangeShardIsRejectedBadSubscribe() {
         setup(2, ALLOW);
-        // A cursor component naming gid 5 on a 2-shard cluster is unroutable (a foreign deployment).
         WatchCursor spoof = new WatchCursor(List.of(new WatchCursor.Component(5, 1)));
         feed(fullCreate(1, spoof));
         assertEquals(1, out.sent().size());
@@ -312,8 +281,6 @@ class MultiShardCoordinatorTest {
     @Test
     void inRangeButIrrelevantCursorComponentIsIgnoredNotMaterialized() {
         setup(3, ALLOW);
-        // A KEY watch on shard 1, but the cursor carries an extra (in-range) component for shard 2.
-        // The TARGET sets coverage: the watch covers ONLY shard 1; shard 2's component is ignored.
         WatchCursor extra = new WatchCursor(List.of(
                 new WatchCursor.Component(1, 0), new WatchCursor.Component(2, 5)));
         feed(keyCreate(1, "/s1/key", extra));
@@ -325,9 +292,6 @@ class MultiShardCoordinatorTest {
     @Test
     void keyTargetCarryingFullChainVerifyCoversAllShardsAndDeliversFromEach() {
         setup(3, ALLOW);
-        // A KEY target with the full_chain_verify flag matches every key and is root-authorized, so
-        // it must cover ALL shards - the coverage vector agrees with matches(), not with the literal
-        // path (the coverage/completeness inconsistency this gate prevents).
         feed(new EdgeFrame.WatchCreate(1, 0, EdgeFrame.WATCH_TARGET_KEY,
                 "/s1/key".getBytes(StandardCharsets.UTF_8), WatchCursor.fromNow(),
                 EdgeFrame.WATCH_FLAG_FULL_CHAIN_VERIFY));
@@ -335,7 +299,6 @@ class MultiShardCoordinatorTest {
         assertArrayEquals(new int[]{0, 1, 2},
                 created.shards().stream().mapToInt(EdgeFrame.ShardMode::gid).toArray(),
                 "KEY+full_chain_verify seeds and advertises every shard, not just the one its path names");
-        // A change on a shard the literal KEY path does not name is still delivered (match-all).
         buffers[2].publish(put(1, "/unrelated/on/shard2", "v"));
         sweep();
         assertTrue(eventsFor(1L).stream().anyMatch(e -> e.gid() == 2),
@@ -345,9 +308,6 @@ class MultiShardCoordinatorTest {
     @Test
     void staleEpochCursorRejectedWithReHydrate() {
         setup(2, ALLOW);
-        // The coordinator starts at the initial topology epoch (1). A WATCH_CREATE whose cursor binds a
-        // superseded epoch (2) is refused STALE_TOPOLOGY (WATCH_CANCELED) - the etcd ErrCompacted model -
-        // so the client drops the cursor and re-hydrates. No shard leg is created; zero data frames.
         feed(fullCreate(1, WatchCursor.fromNow(2L)));
         assertEquals(1, out.sent().size());
         EdgeFrame.WatchCanceled cancel = (EdgeFrame.WatchCanceled) out.sent().get(0);
@@ -359,8 +319,6 @@ class MultiShardCoordinatorTest {
     @Test
     void matchingEpochCursorResumesNormally() {
         setup(2, ALLOW);
-        // The initial epoch (1) matches the coordinator's epoch, so a resume cursor is admitted and the
-        // watch is created (the STALE_TOPOLOGY gate never fires at a single static epoch).
         feed(fullCreate(1, WatchCursor.of(WatchCursor.INITIAL_TOPOLOGY_EPOCH, 0, 1)));
         assertEquals(2, created(1L).shards().size(), "a matching-epoch cursor resumes across both shards");
         assertTrue(out.sentOfType(EdgeFrame.WatchCanceled.class).isEmpty(), "no STALE_TOPOLOGY reject");
@@ -369,10 +327,6 @@ class MultiShardCoordinatorTest {
     @Test
     void staleEpochWinsOverGidSpoofReject() {
         setup(2, ALLOW);
-        // A resharding negative: a cursor from the old topology (epoch 2) whose components also name a
-        // gid outside the new shard set (gid 5 on a 2-shard cluster). The epoch gate is checked before
-        // the gid-spoof guard, so this is STALE_TOPOLOGY (re-hydrate), not the BAD_SUBSCRIBE gid-spoof
-        // reject - the client must re-resolve the whole topology, not patch one component.
         WatchCursor stale = new WatchCursor(2L, List.of(new WatchCursor.Component(5, 1)));
         feed(fullCreate(1, stale));
         assertEquals(ErrorCode.STALE_TOPOLOGY, ((EdgeFrame.WatchCanceled) out.sent().get(0)).code());
@@ -380,11 +334,10 @@ class MultiShardCoordinatorTest {
 
     @Test
     void resumeWithAValidCursorStillPassesTheGateAndIsDeniedIfRevoked() {
-        setup(2, DENY); // the "revoked" state: the authorizer now denies
+        setup(2, DENY);
         buffers[0].publish(put(1, "/app/a", "v"));
         buffers[1].publish(put(1, "/app/b", "v"));
-        // A resume with a perfectly valid old cursor is STILL a create for authz (the cursor is data,
-        // never an authz token) - it is denied and leaks nothing.
+        // Cursor is data, never an authorization token; resume still gated, denied if revoked.
         WatchCursor resume = new WatchCursor(List.of(
                 new WatchCursor.Component(0, 0), new WatchCursor.Component(1, 0)));
         feed(prefixCreate(1, "/app/", resume));
@@ -397,22 +350,20 @@ class MultiShardCoordinatorTest {
     void revocationCutsAllShardLegsAtomically() {
         RevocableAuthorizer auth = new RevocableAuthorizer();
         setup(3, auth);
-        feed(fullCreate(1, WatchCursor.fromNow())); // covers all 3 shards
+        feed(fullCreate(1, WatchCursor.fromNow()));
         buffers[0].publish(put(1, "/x0", "v"));
         buffers[2].publish(put(1, "/x2", "v"));
         sweep();
         assertFalse(eventsFor(1L).isEmpty(), "the watch streams before revocation");
         out.clear();
 
-        auth.revoke(); // policy version advances AND the verdict flips to deny
+        auth.revoke();
         driver.maybeReauthorizeWatches();
 
-        // ONE logical re-check cut the whole watch: a single WATCH_CANCELED(NOT_AUTHORIZED), not N.
         List<EdgeFrame.WatchCanceled> cancels = out.sentOfType(EdgeFrame.WatchCanceled.class);
         assertEquals(1, cancels.size(), "one whole-watch cancel (all N legs share one registry entry)");
         assertEquals(ErrorCode.NOT_AUTHORIZED, cancels.get(0).code());
 
-        // And no shard leg keeps delivering after the cut.
         out.clear();
         buffers[1].publish(put(1, "/x1", "v"));
         sweep();
@@ -421,21 +372,18 @@ class MultiShardCoordinatorTest {
 
     @Test
     void midStreamGapOnOneShardResnapshotsOnlyThatShard() {
-        setup(2, ALLOW, "edge-1", 4); // tiny buffers
-        feed(fullCreate(1, WatchCursor.fromNow())); // both TAIL from now (empty)
-        sweep(); // caught up, nothing to deliver
+        setup(2, ALLOW, "edge-1", 4);
+        feed(fullCreate(1, WatchCursor.fromNow()));
+        sweep();
 
-        // Shard 0: publish 10 into the cap-4 buffer WITHOUT a sweep in between => the watch's core-0
-        // cursor (0) falls behind eviction => the next sweep GAPs and re-snapshots shard 0 only.
         for (long i = 1; i <= 10; i++) {
             buffers[0].publish(put(i, "/a", "v" + i));
         }
         snaps[0].set(10, "/a", "v10");
-        // Shard 1: a couple of in-window commits that must keep tailing uninterrupted.
         buffers[1].publish(put(1, "/b", "w1"));
         buffers[1].publish(put(2, "/b", "w2"));
         sweep();
-        sweep(); // let the paced snapshot transfer complete
+        sweep();
 
         assertFalse(out.sentOfType(EdgeFrame.WatchSnapshotBegin.class).isEmpty(), "shard 0 re-snapshots");
         assertTrue(out.sentOfType(EdgeFrame.WatchSnapshotBegin.class).stream().allMatch(b -> b.gid() == 0),
@@ -446,10 +394,7 @@ class MultiShardCoordinatorTest {
 
     @Test
     void watchProgressComponentIsTheDrainedCursorNotTheRawTip() {
-        // Shard 0's source runs its latestSeq (10) ahead of what readSince delivers (5). The progress
-        // component must carry the drained cursor (5), never the raw tip (10): the coordinator reads
-        // core.cursor(), not the source's latestSeq, so a fast-arriving commit is never advertised as
-        // delivered before the edge has actually drained it.
+        // Progress must report the drained cursor, not latestSeq, so clients don't see data delivered before it's drained.
         this.n = 1;
         this.buffers = new FanOutBuffer[1];
         this.snaps = new MutableSnapshot[]{new MutableSnapshot()};
@@ -460,9 +405,9 @@ class MultiShardCoordinatorTest {
         this.driver = new FanOutConnectionDriver(sources, replays, new int[]{0},
                 t -> new int[]{0}, WatchCursor.INITIAL_TOPOLOGY_EPOCH, out, FanOutConfig.defaults(),
                 FanOutSessionMetrics.NOOP, clock, gov, "edge-1", (c, m) -> teardowns.add(c), ALLOW);
-        feed(fullCreate(1, WatchCursor.of(0, 1))); // resume at 1 => TAIL
-        sweepAt(2_000L);                            // drains 2..5 => cursor 5 (latestSeq stays 10)
-        sweepAt(2_000L + hb());                     // idle => heartbeat => coalesced WATCH_PROGRESS
+        feed(fullCreate(1, WatchCursor.of(0, 1)));
+        sweepAt(2_000L);
+        sweepAt(2_000L + hb());
 
         EdgeFrame.WatchProgress p = progressFor(1L).get(0);
         assertEquals(1, p.cursor().components().size());
@@ -516,7 +461,6 @@ class MultiShardCoordinatorTest {
                 List.of(new ConfigMutation.Put(key, val.getBytes(StandardCharsets.UTF_8)))));
     }
 
-    /** A mutable per-shard snapshot supplier (the replay floor for a shard's catch-up). */
     private static final class MutableSnapshot implements Supplier<ConfigSnapshot> {
         private ConfigSnapshot snap = new ConfigSnapshot(HamtMap.empty(), 0L, 0L);
 
@@ -535,7 +479,6 @@ class MultiShardCoordinatorTest {
         }
     }
 
-    /** An authorizer whose verdict flips to deny and whose policy version advances on {@link #revoke}. */
     private static final class RevocableAuthorizer implements WatchAuthorizer {
         private volatile boolean allowed = true;
         private volatile long version = 1L;
@@ -556,7 +499,6 @@ class MultiShardCoordinatorTest {
         }
     }
 
-    /** A source whose {@code latestSeq()} deliberately runs ahead of what {@code readSince} delivers. */
     private static final class AheadOfDrainSource implements CommitNotificationSource {
         private final long latest;
         private final long drainTo;
@@ -591,13 +533,6 @@ class MultiShardCoordinatorTest {
         }
     }
 
-    /**
-     * An independent re-implementation of the single-shard {@link WatchMultiplexSink}
-     * translation for ONE drain-owner watch - the differential-oracle reference. It codes the old
-     * contract from scratch (SUBSCRIBE_OK -> WATCH_CREATED[ShardMode(0,..)], NOTIFY -> filtered
-     * WATCH_EVENT(gid 0), HEARTBEAT -> WATCH_PROGRESS[(0, drainedCursor)], SNAPSHOT_* -> gid 0), so a
-     * frame-equality against the N=1 coordinator proves byte-identity against a distinct codepath.
-     */
     private static final class ReferenceSink implements TransportSink {
         private final RecordingTransportSink out;
         private final long watchId;

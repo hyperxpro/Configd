@@ -18,11 +18,9 @@ import java.util.Optional;
 import java.util.zip.CRC32C;
 
 /**
- * A durable, crash-atomic {@link CursorStore}: one file per key under a data directory, holding the resume
- * {@link WatchCursor} so a client can re-{@code SUBSCRIBE} at its last-applied position across a restart.
- * The record is the frozen cursor wire shape plus a CRC:
- * {@code [8B epoch][4B count]( 4B gid, 8B S )*[4B CRC32C]}. A missing / wrong-size / CRC-mismatched file reads
- * as absent (fail-open — the client re-hydrates from scratch); writes go through a temp file + atomic rename.
+ * Durable, crash-atomic CursorStore: one file per key. Format: [8B epoch][4B count]([4B gid][8B S])*[4B CRC32C].
+ * Missing/wrong-size/CRC-mismatched file reads as absent (fail-open, re-hydrate from scratch).
+ * Writes via temp file + atomic rename.
  */
 public final class FileCursorStore implements CursorStore {
 
@@ -71,7 +69,7 @@ public final class FileCursorStore implements CursorStore {
         }
         try {
             byte[] data = Files.readAllBytes(target);
-            if (data.length < 16) { // epoch(8)+count(4)+crc(4)
+            if (data.length < 16) {
                 return Optional.empty();
             }
             int crcOffset = data.length - 4;
@@ -95,14 +93,14 @@ public final class FileCursorStore implements CursorStore {
             }
             return Optional.of(new WatchCursor(epoch, components));
         } catch (IOException | RuntimeException e) {
-            // Any read/parse failure (including an out-of-order-gid or negative-S record failing the
-            // WatchCursor invariant) is treated as absent — the client re-hydrates rather than trusting
-            // a corrupt cursor.
+            // Any read/parse failure treats as absent — re-hydrate rather than trust corrupt cursor.
             return Optional.empty();
         }
     }
 
-    /** A safe per-key filename: base64url of the UTF-8 key (no path separators, stable across runs). */
+    /**
+     * Safe per-key filename: base64url of UTF-8 key (no path separators, stable across runs).
+     */
     private Path fileFor(String key) {
         String encoded = Base64.getUrlEncoder().withoutPadding()
                 .encodeToString(key.getBytes(StandardCharsets.UTF_8));

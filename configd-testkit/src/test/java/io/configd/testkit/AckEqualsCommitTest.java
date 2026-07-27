@@ -19,48 +19,6 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Discriminating safety test: <b>ack must equal commit</b>.
- * <p>
- * The defect: an HTTP-200 "acknowledged" write was produced the instant the
- * leader appended the entry to its <em>local</em> log, pre-quorum
- * ({@code RaftNode.propose} returning ACCEPTED -> {@code WriteResult.Accepted} ->
- * 200). If the leader was then killed / isolated / starved in the window
- * <em>between local append and quorum commit</em>, a new leader could win with a
- * log that never contained the un-replicated entry, overwrite the slot, and the
- * acknowledged write vanished.
- * <p>
- * This test drives the deterministic simulator (see
- * {@link RaftSimulation#electionRandom} and {@link SimulationDeterminismTest})
- * with randomized leader-kill points placed precisely in the append->commit
- * window, across many seeds and all three fault shapes (leader crash, leader
- * network isolation, slow-follower quorum delay).
- * <p>
- * <b>The "ack" boundary is the same one the HTTP write path uses.</b> The fix
- * moves acknowledgement from local-append to commit-confirmation, so this test
- * observes acknowledgement at the boundary that is live <em>in this tree</em>:
- * <ul>
- *   <li><b>Post-fix:</b> the {@code RaftNode.whenCommitOutcome} seam - the exact
- *       seam {@code ConfigWriteService} blocks on. A write is "acknowledged"
- *       (i.e. the client would receive a 200) <em>only</em> when the seam
- *       reports {@code COMMITTED}. {@code LOST} / {@code INDETERMINATE_LOCALLY}
- *       are 503/504, not acks.</li>
- *   <li><b>Pre-fix:</b> the seam does not exist; the HTTP ack was the bare
- *       {@code propose()} acceptance at local append, so that is the ack
- *       boundary.</li>
- * </ul>
- * The invariant asserted is exactly the contract promise: <b>every write
- * acknowledged as successful is present in the post-failover committed log</b>.
- * <p>
- * Pre-fix (ack-at-local-append) this MUST fail: a kill in the append->commit
- * window acknowledges writes the surviving quorum never saw. Post-fix
- * (ack-after-quorum-commit) it MUST pass: a write killed in that window resolves
- * as LOST/INDETERMINATE (correctly NOT acknowledged), and a write reported
- * COMMITTED is - by construction - already durable, so it always survives. A
- * non-vacuity guard additionally requires that the sweep genuinely commits and
- * survives writes (so "no acked write lost" is not passing because nothing was
- * ever acked).
- */
 class AckEqualsCommitTest {
 
     /** Cluster size - 5 nodes tolerates a single leader failure with a 3-node quorum. */
@@ -99,7 +57,6 @@ class AckEqualsCommitTest {
 
     private enum FaultShape { LEADER_CRASH, LEADER_ISOLATION, SLOW_FOLLOWER_QUORUM_DELAY }
 
-    /** Aggregate sweep outcome over all seeds for one fault shape. */
     private record SweepResult(int violations, int acked, int notAcked, int inconclusive,
                                int ackedAndSurvived) {
         @Override public String toString() {
@@ -131,7 +88,6 @@ class AckEqualsCommitTest {
 
     private enum Outcome { VIOLATION, ACKED_AND_PRESENT, NOT_ACKED, INCONCLUSIVE }
 
-    /** Per-seed result: the target-write outcome plus how many acked writes survived. */
     private record ScenarioResult(Outcome outcome, int ackedCommittedSurvivors) {}
 
     private ScenarioResult runOneScenario(long seed, FaultShape shape) {
@@ -238,33 +194,20 @@ class AckEqualsCommitTest {
         return z ^ (z >>> 31);
     }
 
-    // Ack observer: abstracts the ack boundary so the SAME test runs against
-    // both states of the tree (pre-fix: propose-accept; post-fix: commit seam).
-
-    /**
-     * Records whether a proposed write was ACKNOWLEDGED as committed at the HTTP
-     * ack boundary. Post-fix this is fed by {@code whenCommitOutcome} (COMMITTED
-     * only); pre-fix, where no commit seam exists, acceptance at local append IS
-     * the ack, so the harness marks it committed on propose-accept.
-     */
     private static final class AckObserver {
         private volatile boolean committed;
         boolean committed() { return committed; }
         void markCommitted() { committed = true; }
     }
 
-    // Self-contained deterministic harness with CRASH + commit-seam support.
-    // Modeled on ConsistencyPropertyTests.ClusterHarness; kept separate so the
-    // shared harness used by dozens of tests is untouched.
     private static final class Harness {
         private final RaftSimulation sim;
         private final List<RaftNode> nodes = new ArrayList<>();
         private final List<VersionedConfigStore> stores = new ArrayList<>();
         private final boolean[] crashed;
         private final int n;
-        /** Reflective handle to whenCommitOutcome(long,long,Consumer) when present (post-fix). */
         private final Method whenCommitOutcome;
-        private final Object committedKind; // CommitOutcome.Kind.COMMITTED, or null pre-fix
+        private final Object committedKind;
 
         Harness(long seed, int nodeCount) {
             this.sim = new RaftSimulation(seed, nodeCount);
@@ -369,12 +312,6 @@ class AckEqualsCommitTest {
             return -1;
         }
 
-        /**
-         * Propose a PUT on {@code idx}. Wires the ack observer to the live ack
-         * boundary: post-fix registers whenCommitOutcome (marks committed only on
-         * COMMITTED); pre-fix, acceptance at local append is the ack. Returns true
-         * iff the entry was appended (propose accepted).
-         */
         boolean propose(int idx, String key, String value, AckObserver obs) {
             byte[] cmd = CommandCodec.encodePut(key, value.getBytes(StandardCharsets.UTF_8));
             ProposeOutcome outcome = nodes.get(idx).propose(cmd);
@@ -407,7 +344,6 @@ class AckEqualsCommitTest {
             return true;
         }
 
-        /** Propose and tick until the store version advances (commit), or timeout. */
         long proposeAndAwaitAck(int idx, String key, String value, int maxTicks, AckObserver obs) {
             long prev = stores.get(idx).currentVersion();
             if (!propose(idx, key, value, obs)) return -1;

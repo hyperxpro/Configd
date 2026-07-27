@@ -30,13 +30,6 @@ final class EdgeActivity {
     /** Bound on the recorded violation list so a pathological seed cannot OOM. */
     static final int MAX_RECORDED_VIOLATIONS = 256;
 
-    /**
-     * A recorded eventual-delivery-bound miss (the propagation budget):
-     * notification {@code seq} published at sim time {@code publishedAtMs} on the
-     * edge's subscribed CP node was not observed by live edge {@code edgeId} within
-     * {@code BOUND_MS}; {@code latenessMs} is the overshoot at the moment it was
-     * recorded.
-     */
     record DeliveryViolation(long seq, int edgeId, long publishedAtMs, long latenessMs) {}
 
     private long deliveredCount;
@@ -47,17 +40,8 @@ final class EdgeActivity {
     private int gapsDetected;
     private int snapshotsApplied;
 
-    /**
-     * NOTE-1: publications excused EXACTLY at their deadline tick - a
-     * still-owing edge that was ineligible (crashed / lagging / partitioned) on the precise
-     * tick the deadline was evaluated, so it was excused rather than recorded as a
-     * violation. Exposed so excused-vs-delivered is observable: a reviewer can see whether
-     * excusals correlate with a fan-out bug (a high excused count under a SHOULD-deliver
-     * schedule is a smell), keeping the liveness checker honest without making it throw.
-     */
     private long excusedAtDeadline;
 
-    /** edgeId -> max lateness ms ever recorded for it (sorted for determinism). */
     private final Map<Integer, Long> perEdgeMaxLatenessMs = new TreeMap<>();
 
     void recordDelivered() {
@@ -101,7 +85,6 @@ final class EdgeActivity {
         snapshotsApplied += n;
     }
 
-    /** NOTE-1: an edge excused at the deadline tick (ineligible exactly when checked). */
     void recordExcusedAtDeadline() {
         excusedAtDeadline++;
     }
@@ -128,7 +111,6 @@ final class EdgeActivity {
 
     int snapshotsApplied() { return snapshotsApplied; }
 
-    /** NOTE-1: count of publications excused exactly at their deadline tick. */
     long excusedAtDeadline() { return excusedAtDeadline; }
 
     Map<Integer, Long> perEdgeMaxLatenessMs() {

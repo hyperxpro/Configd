@@ -52,26 +52,19 @@ class WriteAdmissionDefaultTest {
     @Test
     void defaultCapAdmitsAFullCapThenShedsBeyondIt() throws Exception {
         String saved = System.getProperty(OVERRIDE);
-        System.clearProperty(OVERRIDE); // exercise the default cap, not an override
+        System.clearProperty(OVERRIDE);
 
         final int cap = ConfigdServer.DEFAULT_MAX_INFLIGHT_PROPOSALS;
-        // Signalled once per admitted proposal (the holding executor receives the task only after a permit
-        // is acquired). Reaching zero means all `cap` permits are held.
         CountDownLatch admitted = new CountDownLatch(cap);
-        Executor holding = task -> admitted.countDown(); // acquire signalled; task dropped, so the future never completes
-        // Never actually invoked: the holding executor drops the task, so propose()/getGroup() are unreached.
+        Executor holding = task -> admitted.countDown();
         MultiRaftDriver driver = new MultiRaftDriver(NodeId.of(0), Clock.system());
         ConfigdMetrics metrics = new ConfigdMetrics(new MetricsRegistry(), () -> 0L);
-        // Long deadline so no held permit is released via timeout during the test window.
         long longCommitTimeoutMs = 60_000L;
         ConfigWriteService.RaftProposer proposer =
                 ConfigdServer.raftProposer(driver, 0, holding, longCommitTimeoutMs, metrics);
 
         ExecutorService occupiers = Executors.newVirtualThreadPerTaskExecutor();
         try {
-            // Fill the cap: exactly `cap` concurrent writes, each acquires a permit and then blocks on its
-            // outcome future (the task was dropped). None of these should shed - there are exactly `cap`
-            // permits - so all `cap` reach the executor and count down.
             for (int i = 0; i < cap; i++) {
                 occupiers.submit(() ->
                         proposer.propose(ConfigScope.GLOBAL, List.of("k"), new byte[]{1}));
@@ -79,15 +72,11 @@ class WriteAdmissionDefaultTest {
             assertTrue(admitted.await(30, TimeUnit.SECONDS),
                     "a full cap (" + cap + ") of concurrent writes must be admitted WITHOUT shedding");
 
-            // The cap is now full and no permit is released (tasks dropped, long deadline). The next write
-            // must shed as Overloaded (HTTP 429) on the calling thread, before any executor task.
             ConfigWriteService.ProposeCommitResult shed =
                     proposer.propose(ConfigScope.GLOBAL, List.of("k"), new byte[]{1});
             assertInstanceOf(ConfigWriteService.ProposeCommitResult.Overloaded.class, shed,
                     "beyond the default cap the write must shed as Overloaded (the store protects itself)");
         } finally {
-            // Interrupt the blocked occupiers so their outcome-future waits return and permits release,
-            // instead of parking for the full 60s deadline.
             occupiers.shutdownNow();
             occupiers.awaitTermination(15, TimeUnit.SECONDS);
             if (saved == null) {

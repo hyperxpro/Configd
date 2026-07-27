@@ -14,12 +14,6 @@ import java.util.random.RandomGenerator;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Comprehensive tests for the Raft consensus implementation.
- * <p>
- * Uses a deterministic in-memory transport and seeded random generator
- * for reproducible test runs.
- */
 class RaftNodeTest {
 
     static final class TestTransport implements RaftTransport {

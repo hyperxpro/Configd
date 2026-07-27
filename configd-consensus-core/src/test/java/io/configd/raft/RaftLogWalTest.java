@@ -9,11 +9,6 @@ import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * WAL recovery regression tests for {@link RaftLog}.
- * Uses {@link io.configd.common.FileStorage} with a temp directory to verify
- * that entries survive across RaftLog instances (simulating a process restart).
- */
 class RaftLogWalTest {
 
     @Test

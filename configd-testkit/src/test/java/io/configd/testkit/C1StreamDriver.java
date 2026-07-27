@@ -62,34 +62,19 @@ final class C1StreamDriver implements StreamDriver {
     private final FanOutConfig config;
     private final Clock clock;
 
-    /**
-     * Opt-in slow-consumer governor. Null (the default) preserves the historical behavior
-     * byte-for-byte: no admission, no demotion feed, no policy disconnects. With a governor:
-     * each session's demotions feed it, queue-pressure edges and ack progress are reported per
-     * tick, a QUARANTINED/UNHEALTHY verdict kicks the connection (dead sink + on-wire
-     * {@link EdgeStream.ErrorClose} code 8 - the real edge core reaction runs), and every
-     * (re)subscribe routes through {@code admit} - refusals are retried each tick, modelling the
-     * production edge's bounded reconnect loop.
-     */
     private final SlowConsumerGovernor governor;
 
-    /** One session per edge id, created lazily on first drive (deterministic order). */
     private final Map<Integer, FanOutSessionCore> sessions = new LinkedHashMap<>();
     private final Map<Integer, SimSink> sinks = new LinkedHashMap<>();
 
-    /** Fatal close events observed (e.g. GAP_UNRECOVERABLE) - exposed for tests. */
     private final List<String> fatalCloses = new ArrayList<>();
 
-    /** Reconnect recovery resubscribes performed (per test assertions). */
     private int resubscribes;
 
-    /** (re)subscribes refused by admission, retried each tick (deterministic order). */
     private final Map<Integer, PendingResubscribe> pendingResubscribes = new LinkedHashMap<>();
 
-    /** Edges whose queue is currently at/above the warn threshold (edge detection). */
     private final Set<Integer> aboveWarnEdges = new HashSet<>();
 
-    /** The nowMs of the current/most recent drive tick (the governor's time source). */
     private long lastDriveNowMs;
 
     private record PendingResubscribe(EdgeActor edge, long cursor) { }
@@ -168,22 +153,11 @@ final class C1StreamDriver implements StreamDriver {
         }
     }
 
-    /**
-     * Lazily creates + subscribes a session for {@code edge} on first sight. With the
-     * governor live the subscribe routes through admission (a refusal goes to the per-tick
-     * retry loop and this returns null) - the sim analogue of the production server
-     * refusing the SUBSCRIBE and the edge's connect loop retrying.
-     */
     private FanOutSessionCore subscribe(Context ctx, EdgeActor edge) {
         // SUBSCRIBE: full-store, fresh resume cursor 0 (a fresh edge cache bootstraps from 0).
         return subscribeWithAdmission(ctx, edge, 0L, false);
     }
 
-    /**
-     * The single (re)subscribe path: admission (when the governor is live), session + sink
-     * creation, ack-sink wiring, SUBSCRIBE. Returns null when admission refused (the
-     * attempt is parked in {@link #pendingResubscribes} and retried each tick).
-     */
     private FanOutSessionCore subscribeWithAdmission(Context ctx, EdgeActor edge,
                                                      long resumeCursor, boolean reconnect) {
         long cursor = resumeCursor;
@@ -253,15 +227,6 @@ final class C1StreamDriver implements StreamDriver {
         return resubscribes;
     }
 
-    /**
-     * Recovery seam: re-subscribes {@code edge} at {@code resumeCursor} - the sim analogue
-     * of the edge process tearing down its connection and re-subscribing. The old session is
-     * neutralized (its sink goes dead - frames from a torn-down connection never reach the
-     * edge) and a fresh {@link FanOutSessionCore} runs the server's already-tested
-     * TAIL/SNAPSHOT_FIRST decision for the carried cursor: the recovery path is the
-     * subscription path, with zero new wire surface. Deterministic: single sim thread,
-     * invoked from the edge's directive drain.
-     */
     void resubscribe(Context ctx, EdgeActor edge, long resumeCursor) {
         SimSink oldSink = sinks.get(edge.edgeId());
         if (oldSink != null) {
@@ -271,15 +236,6 @@ final class C1StreamDriver implements StreamDriver {
         subscribeWithAdmission(ctx, edge, resumeCursor, true);
     }
 
-    // Governor plumbing (all of it conditional on a non-null governor).
-
-    /**
-     * Demotion-listener seam (mirrors the FanOutServer connection): every demotion feeds
-     * the governor; a QUARANTINED/UNHEALTHY verdict disconnects the subscriber - the dead
-     * sink models the closed socket, and the on-wire {@link EdgeStream.ErrorClose}
-     * ({@code ErrorCode.QUARANTINED}, code 8) reaches the edge so the REAL core reaction
-     * (the reconnect directive) runs.
-     */
     private void onDemotion(Context ctx, EdgeActor edge, DemotionEvent event) {
         SlowConsumerGovernor.ConsumerState state =
                 governor.onDemotion(identity(edge), event, lastDriveNowMs);
@@ -302,7 +258,6 @@ final class C1StreamDriver implements StreamDriver {
                 "slow-consumer policy: " + state + " (" + event.reason() + ")"));
     }
 
-    /** Per-tick queue-pressure edge detection + the time-driven SLOW evaluation. */
     private void feedQueuePressure(EdgeActor edge, FanOutSessionCore session, long now) {
         int warnThreshold = config.queueWarnThresholdFrames();
         boolean above = warnThreshold > 0 && session.inFlightFrames() >= warnThreshold;
@@ -321,12 +276,6 @@ final class C1StreamDriver implements StreamDriver {
         }
     }
 
-    /**
-     * Retries admission-refused (re)subscribes once per tick - the sim analogue of the
-     * production edge's bounded reconnect loop hitting the SUBSCRIBE refusal until the
-     * cooldown readmits (each refusal is counted on
-     * {@code edge_fanout_reconnects_refused_total}).
-     */
     private void retryRefusedResubscribes(Context ctx) {
         if (pendingResubscribes.isEmpty()) {
             return;
@@ -343,19 +292,12 @@ final class C1StreamDriver implements StreamDriver {
         }
     }
 
-    /**
-     * Maps a session's outbound {@link EdgeFrame}s onto {@link EdgeStream} messages over the
-     * edge network. Snapshot chunks are buffered and reassembled into one
-     * {@link EdgeStream.Snapshot} at {@code SNAPSHOT_END}.
-     */
     private final class SimSink implements TransportSink {
         private final Context ctx;
         private final EdgeActor edge;
 
-        /** Set when the edge re-subscribed away from this session (old frames are dropped). */
         boolean dead;
 
-        // In-progress snapshot reassembly state.
         private final List<EdgeFrame.SnapshotChunk> pendingChunks = new ArrayList<>();
         private long pendingSnapshotSeq = -1;
         private boolean inSnapshot;

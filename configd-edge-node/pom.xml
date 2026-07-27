@@ -12,21 +12,6 @@
 
     <artifactId>configd-edge-node</artifactId>
 
-    <!--
-      The separately runnable edge node process.
-      Internal runtime deps: JDK sockets + TlsManager (configd-transport),
-      EdgeClientCore + edge cache (configd-edge-cache), the edge wire protocol
-      (configd-distribution-service), Ed25519 verification (configd-config-store,
-      via edge-cache), metrics/invariants (configd-observability).
-
-      NettyEdgeHttpServer serves the edge-read HTTP surface on Netty 4.2; EdgeHttpServer
-      remains as the JDK equivalence reference (see its class doc). The Netty selector and
-      the HTTP-transport dependency closure live in the shared configd-netty platform
-      module, shared with configd-server's own selector; this module depends on it and
-      gets the io_uring→Epoll→NIO transport + HTTP codec transitively — no direct
-      io.netty declarations here. Native binaries are linux-x86_64; non-Linux / sandboxed
-      runs fall through to NIO at runtime (netty42-api.md §1).
-    -->
     <dependencies>
         <dependency><groupId>io.configd</groupId><artifactId>configd-common</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-transport</artifactId><version>${project.version}</version></dependency>
@@ -37,12 +22,7 @@
         <dependency><groupId>io.configd</groupId><artifactId>configd-distribution-service</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-observability</artifactId><version>${project.version}</version></dependency>
 
-        <!--
-          TEST-ONLY: the process-level tests (EdgeNodeIntegrationTest, EdgeFailoverTest,
-          EdgeStrongReadFailClosedTest) drive a REAL single-node ConfigdServer + its
-          FanOutServer over loopback, exactly the FanOutServerIntegrationTest pattern.
-          Test scope only — the runnable edge artifact never depends on the server.
-        -->
+        <!-- Test-only: process-level tests drive a real server over loopback. -->
         <dependency>
             <groupId>io.configd</groupId>
             <artifactId>configd-server</artifactId>
@@ -75,7 +55,6 @@
                     </archive>
                 </configuration>
             </plugin>
-            <!-- Runnable shaded jar, mirroring configd-server's shade setup. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
@@ -108,43 +87,7 @@
     </build>
 
     <profiles>
-        <!--
-          Mutation profile: explicit targetClasses only, never a blanket glob (a glob would
-          sweep in the live-IO classes below, and per-mutant forking of those is unstable).
-          Activated with the parent -Pmutation.
-
-          targetClasses (held to 65):
-            EdgeNodeConfig  — CLI parsing/validation (pure decision logic);
-            EdgeReadHandler — the read-serving decision surface: cursor-behind
-                              refusal, strong-read fail-close, stale header, not-subscribed,
-                              health gating, the /metrics Bearer gate.
-                              The transport-agnostic logic both HTTP adapters delegate to;
-            EdgeHttpServer  — the thin JDK adapter: routing dispatch + the JdkSink;
-            EdgeNodeMetrics — series registration + delta-pump + the
-                              STALE-transition counter and the DISCONNECTED
-                              re-bootstrap trigger seam.
-
-          NettyEdgeHttpServer / NettyTransport are EXCLUDED for the same reason as EdgeStreamClient:
-          pure transport-IO orchestration (event loops, native transport selection, socket framing)
-          whose per-mutant run needs a live server/port, which destabilizes per-mutant
-          forking. Their decision content lives in EdgeReadHandler (covered above); their IO + the
-          slowloris/size hardening are pinned by NettyEdgeHttpServerTest + NettyEdgeHttpServerHardeningTest.
-
-          EXCLUDED (justified, pure-IO wiring — each would need a live socket /
-          TLS handshake / multi-thread process per mutant, which is exactly the
-          instability that destabilizes per-mutant forking):
-            EdgeStreamClient — connect/mTLS/reconnect virtual-thread shell; its
-                               logic is the EdgeClientCore directives (already
-                               mutation-tested in configd-edge-cache, including the
-                               PoisonPillPolicy ladder there too); the additions here
-                               (requestRebootstrap teardown, terminal-action invoke,
-                               poison resume-cursor derivation) are pure IO orchestration
-                               pinned by the process-level EdgeReBootstrapOnDisconnectTest
-                               and PoisonPillRebootstrapTest, which are too heavy
-                               (real server + Raft) for per-mutant runs;
-            EdgeNodeMain     — lifecycle orchestration (start/stop/wiring), no
-                               branching policy beyond what EdgeNodeConfig owns.
-        -->
+        <!-- Explicit targetClasses (not globs): EdgeNodeConfig, EdgeReadHandler, EdgeHttpServer, EdgeNodeMetrics (65). -->
         <profile>
             <id>mutation</id>
             <build>

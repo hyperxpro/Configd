@@ -5,40 +5,6 @@
 # gate-2 itself runs gate-1). Exits non-zero on ANY failure; no silent
 # placeholders.
 #
-# WHAT A GREEN GATE-3 PROVES:
-#   (a) gate2       gates 1+2 still green (cumulative; no regression of the
-#                   control-plane guarantees while the data plane was built).
-#   (b) map         the contract→test map's end state: ZERO failing-captured,
-#                   ZERO unimplemented rows, and the CONTRACT-MAP-SUMMARY line
-#                   exactly matches the committed expectation
-#                   (gates/gate3-map-expectation.txt — any map drift is LOUD,
-#                   and PARTIAL rows are tolerated only because each carries
-#                   an explicit owner).
-#   (c) edgeseeds   the committed 507-seed gate set with the full edge
-#                   invariant set (monotonicity, no-stale-overwrite, eventual
-#                   delivery, snapshot–delta equivalence): zero safety
-#                   violations (EdgeAdversarialGateSeedSweepTest) AND the
-#                   determinism-digest byte-identity pin (EdgeSeedCompatTest).
-#   (d) probe       the propagation probe runs in BOTH modes and emits
-#                   histograms (mechanism check, not perf targets):
-#                   sim mode (ProbeMechanismTest + the staleness-distribution
-#                   sim test) and live mode (LivePropagationProbeMain
-#                   --mode boundary AND --mode edge, each emitting
-#                   PROBE-HISTOGRAM: lines; edge mode drives a REAL in-process
-#                   EdgeNodeMain through the wire path).
-#   (e) walk        the slow-consumer state machine walk:
-#                   SlowConsumerStateMachineWalkTest — the full documented
-#                   machine in recorded order + byte-equal replay determinism.
-#   (f) e2e         the Compose E2E scenario (gates/e2e-compose-scenario.sh):
-#                   3 CP + 3 edges + bootstrap joiner, four adversarial phases,
-#                   throttle-robust, no sleeps-as-sync.
-#   (g) gc          the hot-path allocation law, mechanically: jmh-gc-check.sh
-#                   asserts gc.alloc.rate.norm == 0 B/op on the structurally-
-#                   zero edge read-path legs and saves the artifact.
-#   (h) mutation3   PIT floors (>= 65) for configd-edge-cache and
-#                   configd-edge-node (-Pmutation per-module poms;
-#                   configd-distribution-service's floor is enforced by
-#                   gate-2 step (e) and is not duplicated here).
 #
 # Environment knobs (CI must not set the skips on the nightly full run):
 #   GATE3_SKIP_MUTATION=1   skip step (h) — reported LOUDLY (~10-15 min)

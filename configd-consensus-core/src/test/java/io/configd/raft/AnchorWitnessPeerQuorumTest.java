@@ -353,8 +353,6 @@ class AnchorWitnessPeerQuorumTest {
         assertTrue(v.raft.votingClearedForTest(), "an advanced-past-peers node still clears");
     }
 
-    // 5. W4 - partition at boot: refuse-to-vote (no brick), then heals when the quorum returns.
-
     @Test
     void w4_partitionAtBoot_noBrick_thenHeals(@TempDir Path base) {
         Cluster c = new Cluster(base, false);
@@ -362,21 +360,17 @@ class AnchorWitnessPeerQuorumTest {
         Node x = c.add(X, Set.of(V, P));
         Node p = c.add(P, Set.of(V, X));
 
-        // Partition V from both peers at boot: its QUERYs reach no one.
         x.down = true;
         p.down = true;
         c.settle(6);
         assertNull(v.rollback, "a partition is not a rollback");
         assertFalse(v.raft.votingClearedForTest(), "V stays latched (refuse-to-vote) with no quorum - NOT bricked");
 
-        // Heal: peers return, the QUERY quorum forms, V clears - no operator action, no brick.
         x.down = false;
         p.down = false;
         c.settle(6);
         assertTrue(v.raft.votingClearedForTest(), "V clears the instant a quorum becomes reachable");
     }
-
-    // 6. W6 - torn higher slot on crash: dual-slot recovery picks the intact slot; the witness PASSES.
 
     @Test
     void w6_tornHigherSlot_recoversIntactAndPasses(@TempDir Path base) {
@@ -388,23 +382,19 @@ class AnchorWitnessPeerQuorumTest {
 
         long T = 1;
         v.raft.handleMessage(heartbeat(T, X));
-        v.raft.handleMessage(voteReq(T, X)); // writes the latest slot; peers witness this seq
+        v.raft.handleMessage(voteReq(T, X));
         long latest = v.anchorSeq();
         c.pump();
 
-        // Capture the current (intact) durable image, then simulate a torn NEXT write by rebooting from
-        // exactly these bytes: recovery reads the highest VALID slot = `latest`, which is what peers saw.
         Map<String, byte[]> intact = c.snapshotDisk(v);
         c.kill(v);
-        c.rollbackDisk(v, intact); // restore the intact image (models the torn write never landing)
+        c.rollbackDisk(v, intact);
         c.reboot(v);
         assertEquals(latest, v.anchorSeq(), "recovery picks the intact slot's seq");
         c.settle(6);
         assertNull(v.rollback, "a torn write that never lowered the recovered seq is not a rollback");
         assertTrue(v.raft.votingClearedForTest());
     }
-
-    // 7. W7 - legal conflict truncation / compaction only RAISES anchorSeq: the witness never trips.
 
     @Test
     void w7_truncationAndCompaction_onlyRaiseSeq_noTrip(@TempDir Path base) {
@@ -415,12 +405,9 @@ class AnchorWitnessPeerQuorumTest {
         c.settle(6);
 
         long before = v.anchorSeq();
-        // A follower conflict truncation (a legal Raft rewrite) followed by a compaction. Both write the
-        // anchor, so anchorSeq only ever RISES; the witness (which compares anchorSeq) cannot trip.
         v.raft.handleMessage(new AppendEntriesRequest(1, X, 0, 0,
                 List.of(new LogEntry(1, 1, "a".getBytes(StandardCharsets.UTF_8)),
                         new LogEntry(2, 1, "b".getBytes(StandardCharsets.UTF_8))), 2));
-        // conflicting suffix at index 2 - truncate + rewrite
         v.raft.handleMessage(new AppendEntriesRequest(1, X, 1, 1,
                 List.of(new LogEntry(2, 1, "b2".getBytes(StandardCharsets.UTF_8))), 2));
         long after = v.anchorSeq();
@@ -429,8 +416,6 @@ class AnchorWitnessPeerQuorumTest {
         assertNull(v.rollback, "a legal truncation/compaction never trips the witness");
         assertTrue(v.raft.votingClearedForTest());
     }
-
-    // 8. Strict mode - a granted vote is unusable until a peer-majority acks the announce.
 
     @Test
     void strictMode_voteDeferredUntilPeerMajorityAcks(@TempDir Path base) {
@@ -443,24 +428,18 @@ class AnchorWitnessPeerQuorumTest {
 
         long T = 1;
         v.raft.handleMessage(heartbeat(T, X));
-        // V decides to grant X, but strict mode must NOT send voteGranted before a peer-majority acks.
         v.raft.handleMessage(voteReq(T, X));
         assertEquals(X, v.raft.votedFor(), "the vote is persisted immediately (durability unchanged)");
         assertFalse(v.grantedVoteTo(X), "strict mode defers voteGranted until peers ack the announce");
 
-        // Deliver V's announce(s1) to the peers; they now witness V at s1.
         c.pump();
-        // ONE peer acks its witness back to V: a peer-majority (of 2 peers) needs BOTH, so one is not enough.
         x.raft.witnessAnnounce();
         c.pump();
         assertFalse(v.grantedVoteTo(X), "a single peer ack is below the peer-majority - still deferred");
-        // The second peer acks: now a peer-majority has witnessed s1, so the deferred voteGranted is sent.
         p.raft.witnessAnnounce();
         c.pump();
         assertTrue(v.grantedVoteTo(X), "once a peer-majority acked s1, the deferred voteGranted is released");
     }
-
-    // 9. N=1 - the gate is disabled (a single voter cannot split-brain); it self-elects normally.
 
     @Test
     void n1_gateDisabled_selfElectsNormally(@TempDir Path base) {
@@ -475,11 +454,6 @@ class AnchorWitnessPeerQuorumTest {
         assertEquals(RaftRole.LEADER, solo.raft.role(), "the single node still becomes leader (gate disabled)");
     }
 
-    // 9b. NO-FALSE-REFUSE (rolling restart): a HEALTHY node that CATCHES UP (replication advances its
-    //     anchorSeq) DURING its boot window - before the gate clears - must PASS, not brick. While
-    //     latched a node advertises its FROZEN bootAnchorSeq, so its own legitimate post-boot advance
-    //     is not reflected back by peers as a phantom rollback.
-
     @Test
     void catchUpDuringBoot_healthyNode_notFalseRefused(@TempDir Path base) {
         Cluster c = new Cluster(base, false);
@@ -487,27 +461,17 @@ class AnchorWitnessPeerQuorumTest {
         c.add(X, Set.of(V, P));
         c.add(P, Set.of(V, X));
 
-        // All three are latched at boot. BEFORE the gate clears, the leader replicates to V: a higher-term
-        // AppendEntries with an entry advances V's durable head, raising anchorSeq above bootAnchorSeq.
-        // This is ordinary catch-up, NOT a rollback.
         long boot = v.anchorSeq();
         v.raft.handleMessage(new AppendEntriesRequest(2, X, 0, 0,
                 List.of(new LogEntry(1, 2, "x".getBytes(StandardCharsets.UTF_8))), 1));
         long caughtUp = v.anchorSeq();
         assertTrue(caughtUp > boot, "catch-up advanced anchorSeq " + boot + " -> " + caughtUp);
 
-        // While latched, V advertises its FROZEN bootAnchorSeq (not the caught-up value), so peers do not
-        // witness it above bootAnchorSeq and reflect a phantom rollback. The peer-majority boot gate then
-        // clears cleanly.
         c.settle(6);
         assertNull(v.rollback, "a healthy node catching up during boot must NOT be flagged as a rollback");
         assertTrue(v.raft.votingClearedForTest(),
                 "the caught-up healthy node clears its boot gate (no brick on rolling restart)");
     }
-
-    // Default (fast-vote) failover: a running survivor grants a vote immediately with a peer down, so a
-    //     leader can be re-elected on a single fault. Strict-vote mode defers voteGranted until a
-    //     peer-majority ack, which would deadlock a failover with a peer down.
 
     @Test
     void defaultFastVote_survivorGrantsImmediatelyWithPeerDown_failoverWorks(@TempDir Path base) {
@@ -518,18 +482,12 @@ class AnchorWitnessPeerQuorumTest {
         c.settle(6);
         assertTrue(v.raft.votingClearedForTest(), "the running survivor cleared its boot gate while healthy");
 
-        // The leader P is killed. A survivor (X) campaigns at a new term; V must grant IMMEDIATELY even
-        // though P is down - fast-vote does NOT defer voteGranted, so failover is not blocked on the dead
-        // peer. (A running survivor's boot gate already cleared, so it is unaffected by the peer-majority
-        // BOOT rule.)
         p.down = true;
         v.sent.clear();
         v.raft.handleMessage(voteReq(5, X));
         assertTrue(v.grantedVoteTo(X),
                 "fast-vote default: a survivor grants immediately with a peer down (single-fault failover works)");
     }
-
-    // 10. DEFAULT handler halts fail-closed: it throws AnchorRollbackException with the right fields.
 
     @Test
     void defaultHandler_throwsAnchorRollbackException(@TempDir Path base) {
@@ -549,7 +507,6 @@ class AnchorWitnessPeerQuorumTest {
 
         c.kill(v);
         c.rollbackDisk(v, priorImage);
-        // Reboot WITHOUT the recording handler - use the production DEFAULT (throws).
         v.down = false;
         v.storage = Storage.file(v.dir);
         v.log = new RaftLog(v.storage, keyed(), 0);
@@ -557,9 +514,8 @@ class AnchorWitnessPeerQuorumTest {
         v.raft = new RaftNode(RaftConfig.of(v.id, v.peers),
                 v.log, transport, new NoopStateMachine(), new Random(99),
                 v.storage, RaftNode.InvariantChecker.NOOP, keyed());
-        v.raft.armAnchorWitness(false, null); // null handler keeps the DEFAULT (throws)
+        v.raft.armAnchorWitness(false, null);
 
-        // Drive a query round so a peer reports s1, then the next tick fires the DEFAULT handler.
         v.raft.tick();
         c.pump();
         RaftNode.AnchorRollbackException ex = assertThrows(RaftNode.AnchorRollbackException.class,

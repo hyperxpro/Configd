@@ -1,12 +1,8 @@
 package io.configd.client;
 
 /**
- * A <b>mutation whose outcome is unknown</b>: HTTP {@code 504} (write deadline expired), or a transport
- * timeout / dropped connection on a mutation. The write <b>MAY</b> have committed and MAY still commit later.
- *
- * <p><b>Reaction:</b> the outcome is <b>indeterminate</b> — an idempotent last-writer-wins mutation may
- * be retried to a definite result; a negative re-read is <b>not</b> proof of non-commit; a driver <b>MUST
- * NOT</b> perform a read-modify-write across it.
+ * Mutation outcome unknown: write MAY have committed. Reaction: outcome is indeterminate. Idempotent mutations
+ * may retry to definite result; negative re-read is not proof of non-commit; must not do read-modify-write.
  */
 public final class IndeterminateException extends ConfigdException {
 

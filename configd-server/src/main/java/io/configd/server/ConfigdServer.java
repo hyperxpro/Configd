@@ -101,23 +101,10 @@ import java.util.logging.Logger;
 import java.util.random.RandomGenerator;
 import java.util.random.RandomGeneratorFactory;
 
-/**
- * Main entry point for the Configd server.
- * <p>
- * Initializes all core subsystems (storage, Raft consensus, config state machine,
- * multi-raft driver, security, observability, HTTP API) and runs the tick loop
- * on a scheduled executor.
- * <p>
- * This is a thin orchestrator -- all domain logic lives in the respective modules.
- */
+
 public final class ConfigdServer {
 
-    /**
-     * Emits the SEVERE record produced by
-     * {@link #handleTickLoopThrowable(Throwable, ConfigdMetrics)}. Tests
-     * attach a {@link java.util.logging.Handler} to this logger to assert
-     * a tick-loop failure is logged through here rather than swallowed silently.
-     */
+    
     private static final Logger LOG = Logger.getLogger(ConfigdServer.class.getName());
 
     private static final int TICK_PERIOD_MS = 10;
@@ -130,26 +117,11 @@ public final class ConfigdServer {
     // literal the loader reserves and the gate validates - a rename can't silently break the un-carveable-
     // root guarantee, and write-time / reload-time reject the identical reserved set.
     private static final String ROOT_PRINCIPAL = AclConfigPolicyLoader.RESERVED_PRINCIPAL_ROOT;
-    /**
-     * Ceiling on the number of shards a single deploy may configure via {@code configd.raft.shardCount}.
-     * Around 10-11 leaders saturate a 16-vCPU node, so N<=16 across a few nodes is a sane upper bound
-     * without core overcommit. N is fixed at deploy; changing it requires a manual reshard. Default is
-     * {@code 1} (a single group, byte-identical to the single-shard path).
-     */
+    
     private static final int MAX_SHARD_COUNT = 16;
-    /**
-     * The authenticated, versioned topology descriptor file under the data dir. Holds the deploy-time
-     * shard count N (the fixed-at-deploy guard) and the topology epoch. Wrapped in the Raft integrity
-     * envelope - replacing a plaintext marker file - so the reshard guard and the epoch are
-     * tamper-evident under a key.
-     */
+    
     private static final String TOPOLOGY_DESCRIPTOR_FILE = "topology-descriptor.dat";
-    /**
-     * Per-group RNG seed stride (the SplitMix64 / golden-ratio increment). Each group's RaftNode RNG is
-     * seeded {@code nodeId*31 + gid*GID_RNG_STRIDE + nanoTime()} so the groups' election timeouts stagger
-     * (correlated-election-storm mitigation). At {@code gid == 0} the stride term is 0, so the
-     * seed formula is identical to the single-group seed.
-     */
+    
     private static final long GID_RNG_STRIDE = 0x9E3779B97F4A7C15L;
     private static final int COMPACTION_INTERVAL_TICKS = 1000;
     // Applied entries a Raft group may retain past its snapshot point before the tick
@@ -201,22 +173,17 @@ public final class ConfigdServer {
     private final ScheduledExecutorService readDispatchExecutor;
     private final ScheduledExecutorService tlsReloadExecutor;
     private final ScheduledExecutorService nodeAnchorExecutor;
-    /** The node-level durability anchor (topology + audit head + shard-liveness digest); closed on shutdown. */
+    
     private final NodeAnchorFile nodeAnchor;
-    /** AnchorWitness SPI realization (peer-quorum provider). The actual rollback-detection logic runs
-     *  per-node; this field is the SPI seam for an external-store composition. */
+    
     private final AnchorWitness anchorWitness;
     private final MultiRaftDriver driver;
     private final ConfigStateMachine stateMachine;
     private final NettyHttpApiServer httpApiServer; // admin API on Netty
     private final RaftTransportEndpoint tcpTransport; // Netty consensus transport; nullable when peer addresses not configured
-    /** Fan-out edge endpoint; null when {@code --edge-port} is absent. */
+    
     private final io.configd.server.fanout.FanOutEndpoint fanOutServer;
-    /**
-     * The config-policy loader ({@code null} when auth is disabled). Retained so {@link #shutdown()} can
-     * drain its worker thread; at N&gt;1 the loader owns a daemon {@code configd-acl-policy-loader} thread
-     * that would otherwise park for the process lifetime (a leak across repeated N&gt;1 start/stop cycles).
-     */
+    
     private final AclConfigPolicyLoader aclPolicyLoader;
 
     // Distribution layer
@@ -227,26 +194,13 @@ public final class ConfigdServer {
     private final HyParViewOverlay hyParViewOverlay;
     private final SubscriptionManager subscriptionManager;
     private final RolloutController rolloutController;
-    /** The live /metrics exporter - exposed via {@link #scrapeMetrics()} so a contract
-     *  test can assert the running server emits the SLO series with real data (not zero). */
+    
     private final io.configd.observability.PrometheusExporter prometheusExporter;
-    /** The decentralized leadership auto-balance loop; {@code null} at N=1 / single-node / when the kill
-     *  switch is off (see the wiring gate). Owns its own dedicated executor; closed on shutdown. */
+    
     private final LeaderBalanceLoop leaderBalanceLoop;
-    /**
-     * Drain flag. Flipped to {@code true} by {@link #shutdown()} BEFORE anything is closed, so the
-     * readiness check reports NOT-ready (HTTP 503) and an LB/orchestrator stops routing while in-flight
-     * work drains. Shared with the readiness lambda (captured at wiring time), so the two references are
-     * the same {@link java.util.concurrent.atomic.AtomicBoolean} instance. {@code /health/live} is
-     * unaffected: liveness is not readiness.
-     */
+    
     private final java.util.concurrent.atomic.AtomicBoolean draining;
-    /**
-     * Bounded quiet-period (milliseconds) {@link #shutdown()} pauses AFTER flipping {@link #draining} and
-     * BEFORE closing anything, giving an LB one readiness-probe interval to observe the 503 and stop
-     * routing. {@code 0} disables it (the default at N=1 and in tests); the pause is always bounded so
-     * shutdown never blocks unboundedly. Configurable via {@code configd.shutdown.drainQuietMs}.
-     */
+    
     private final long drainQuietMs;
 
     private ConfigdServer(ServerConfig config, MultiRaftDriver driver,
@@ -298,29 +252,12 @@ public final class ConfigdServer {
         this.drainQuietMs = drainQuietMs;
     }
 
-    /**
-     * Creates and starts a Configd server from the given configuration, resolving config against the
-     * ambient system-property + environment source (no YAML file). With no YAML layer this reads
-     * {@code -D} properties and env vars directly. {@link #main} uses the {@code ConfigSource}-taking
-     * overload to add the optional {@code --config} YAML layer.
-     *
-     * @param config the server configuration
-     * @return the running server instance
-     */
+    
     public static ConfigdServer start(ServerConfig config) {
         return start(config, ConfigSource.system());
     }
 
-    /**
-     * Creates and starts a Configd server, resolving all configuration through the supplied
-     * {@link ConfigSource}. The source layers system properties over the environment over an optional
-     * YAML file (see {@link #loadBootConfig}); with no YAML layer it is byte-identical to the ambient
-     * {@link ConfigSource#system()}.
-     *
-     * @param config the server configuration
-     * @param cfg    the resolved configuration source (highest-precedence first internally)
-     * @return the running server instance
-     */
+    
     public static ConfigdServer start(ServerConfig config, ConfigSource cfg) {
         // A fail-closed boot must not leave a half-started process alive. Long-lived resources (the
         // Netty consensus/API/edge transports, whose event loops are NON-daemon, plus the owner pool
@@ -1538,17 +1475,7 @@ public final class ConfigdServer {
         return server;
     }
 
-    /**
-     * Shuts down the server, stopping the HTTP API, owner pool, and releasing resources.
-     * <p>
-     * The readiness drain flag is flipped FIRST (before any close), then a bounded quiet-period lets
-     * an LB observe the 503 and stop routing, so in-flight work drains instead of being dropped on restart.
-     * <p>
-     * Shutdown order matters. We must drain {@code readDispatchExecutor} FIRST so no new
-     * read tasks are marshalled onto an owner thread. Then we shut the owner pool (each owner
-     * also owns its groups' ReadIndexState + per-owner tick) so any in-flight reads complete.
-     * Finally the {@code tlsReloadExecutor} is the slowest to drain and is stopped last.
-     */
+    
     public void shutdown() {
         // Drain-flip: report NOT-ready BEFORE closing anything so an LB/orchestrator sees 503 and stops
         // routing while in-flight work drains (no in-flight drop on restart). This MUST precede every close
@@ -1611,27 +1538,7 @@ public final class ConfigdServer {
         }
     }
 
-    /**
-     * Derives the keyed at-rest {@link io.configd.common.IntegrityEnvelope} for the Raft durability
-     * artifacts from the cluster signing key, and enforces the signing-key co-location requirement.
-     * <p>
-     * {@code K_integrity = HKDF-SHA256(IKM = signing private-key encoding,
-     * salt = keyId bytes, info = "configd/raft-at-rest-integrity/v2", len = 32)} -
-     * derived from the EXISTING cluster-shared signing key, so no new key file and no new
-     * key-distribution channel is introduced. The verify side runs the identical derivation.
-     * <p>
-     * <b>Fail-closed:</b> {@code K_integrity}'s secrecy depends on the signing key living OUTSIDE
-     * attacker-writable snapshot/WAL/backup storage. If the resolved {@code keyFile} is co-located
-     * inside {@code dataDir}, a storage-tampering attacker who can write the artifacts can also read
-     * the key and recompute a valid MAC. {@link #enforceSigningKeyNotColocated} therefore REFUSES TO
-     * START by default (the {@code configd.security.allowColocatedSigningKey} opt-out downgrades to a
-     * loud warning for dev/test/single-node only); production mounts the key on separate storage.
-     *
-     * @param keyStore the loaded cluster signing key store
-     * @param keyFile  the resolved signing-key file path
-     * @param dataDir  the Raft data directory (where artifacts live)
-     * @return a keyed, fail-closed integrity envelope
-     */
+    
     // Package-private (not private) so EncryptionAtRestWiringTest can assert the flag -> envelope
     // wiring directly, mirroring how enforceSigningKeyNotColocated is exercised by D1FailClosedTest.
     // The no-cfg overload resolves against the ambient system-property + environment source, keeping
@@ -1641,7 +1548,7 @@ public final class ConfigdServer {
         return deriveRaftIntegrityEnvelope(keyStore, keyFile, dataDir, ConfigSource.system());
     }
 
-    /** As the three-argument overload (ambient config), plus a {@link KeyringRotator} sink. */
+    
     static io.configd.common.IntegrityEnvelope deriveRaftIntegrityEnvelope(
             SigningKeyStore keyStore, Path keyFile, Path dataDir,
             java.util.function.Consumer<KeyringRotator> rotatorSink) {
@@ -1655,13 +1562,7 @@ public final class ConfigdServer {
         return deriveRaftIntegrityEnvelope(keyStore, keyFile, dataDir, cfg, rotator -> { });
     }
 
-    /**
-     * As the four-argument overload, plus a {@code rotatorSink} that receives the {@link KeyringRotator}
-     * capability derived alongside the envelope (data-dir, the derived keyring mac/wrap keys, node key id,
-     * key reference) so the online keyring-rotation endpoint can re-open the keyring at runtime. The sink is
-     * invoked only in the at-rest keyring posture (always, in the signing-key deployment this boots); it has
-     * NO effect on the envelope bytes or on any behaviour when the endpoint is unused.
-     */
+    
     static io.configd.common.IntegrityEnvelope deriveRaftIntegrityEnvelope(
             SigningKeyStore keyStore, Path keyFile, Path dataDir, ConfigSource cfg,
             java.util.function.Consumer<KeyringRotator> rotatorSink) {
@@ -1693,21 +1594,15 @@ public final class ConfigdServer {
         }
     }
 
-    /** True if at-rest encryption is enabled (system property, or the CI/docker-friendly env var). */
+    
     private static boolean encryptionAtRestEnabled(ConfigSource cfg) {
         return cfg.anyLayerTrue("configd.raft.encryption.enabled");
     }
 
-    /** System property that sets the edge fan-out server-side prefix-filtering posture. */
+    
     static final String EDGE_FILTER_PROP = "configd.edge.fanout.filter";
 
-    /**
-     * Resolves the {@value #EDGE_FILTER_PROP} posture: {@code on}/{@code off}, DEFAULT on for the
-     * co-located trusted deployment, fail-loud on any other value (mirroring the
-     * {@code NettyTransport.select} / KMS-provider posture flags - never a silent default). Set
-     * {@code off} to restore the full-chain feed when a separate/untrusted relay tier terminates
-     * the fan-out. This is a two-way door, not a one-way door.
-     */
+    
     static boolean resolveEdgeFilterPosture() {
         return resolveEdgeFilterPosture(ConfigSource.system());
     }
@@ -1722,36 +1617,7 @@ public final class ConfigdServer {
         };
     }
 
-    /**
-     * Builds the AES-256-GCM at-rest encryption envelope. Unseals a per-node root key through the
-     * configured {@link KmsProvider} ONCE at boot, then derives per-segment DEKs locally.
-     * <p>
-     * <b>Fail-closed:</b> naming a provider that is not built in is a startup error - NEVER a
-     * silent downgrade to no encryption or to a different provider (a silent downgrade is how a
-     * "data is encrypted at rest" claim becomes fiction). Only {@code local} (HKDF-from-signing-key)
-     * is built in; a cloud provider is added as a separate module that slots into this same seam.
-     *
-     * <b>requireEncrypted (post-migration hardening):</b> once the pre-encryption HMAC WAL prefix has
-     * been compacted away, an operator can set {@code configd.raft.encryption.requireEncrypted} so the
-     * reader REFUSES any legacy {@code algId=1} HMAC record. This defends against a rollback/replay of
-     * an old pre-encryption WAL segment. Default: keep reading them (the migration path).
-     *
-     * <b>The keyring:</b> the per-term at-rest roots are INDEPENDENT random 32-byte secrets persisted
-     * (wrapped) in the dual-slot {@code raft-keyring}, NOT re-derived from the signing key. This is what
-     * makes rotation non-destructive for BOTH postures: HMAC integrity keys ({@code K_integrity[term]})
-     * and GCM DEKs both derive from those roots, so rotating the signing key only rewraps the keyring
-     * (roots unchanged) and boot loads ALL retained terms so old-term data still verifies/decrypts.
-     * First boot (or the enable-encryption migration) mints a fresh {@code root[1]}; a
-     * present-but-unreadable keyring REFUSES (fail-closed). The active write term is always the
-     * keyring's {@code activeTerm} - boot never hardcodes term=1.
-     *
-     * @param ikm     the signing private-key encoding (the local KEK/mac IKM)
-     * @param salt    the signing keyId bytes (HKDF salt)
-     * @param keyId   the signing keyId (the loggable KEK reference / node id)
-     * @param dataDir the node data directory (where {@code raft-keyring} lives)
-     * @param cfg     the resolved configuration source (encryption enable / requireEncrypted / provider)
-     * @return a term-versioned {@link IntegrityEnvelope} (HMAC when encryption off, GCM when on)
-     */
+    
     private static io.configd.common.IntegrityEnvelope buildTermVersionedEnvelope(
             byte[] ikm, byte[] salt, java.util.UUID keyId, Path dataDir, ConfigSource cfg,
             java.util.function.Consumer<KeyringRotator> rotatorSink) {
@@ -1830,21 +1696,7 @@ public final class ConfigdServer {
         }
     }
 
-    /**
-     * Unseals the per-node keyring-custody secret through an EXTERNAL {@link io.configd.common.kms.KmsProvider}
-     * discovered by {@link io.configd.common.kms.KmsProviderFactory} (ServiceLoader). This is the genuine SPI
-     * boot seam for every non-{@code local} custodian.
-     * <p>
-     * Fail-loud: a selected provider whose module is not on the classpath is a startup error - never a
-     * silent downgrade. First boot / enable-encryption migration mints and seals a fresh secret and persists
-     * its {@link io.configd.common.kms.WrappedKey} beside the keyring (mirroring the keyring's own first-boot
-     * mint); every later boot reads that carrier and performs the ONE {@code unwrap} call. Fail-closed
-     * ({@link io.configd.common.kms.KmsUnavailableException}) if the backend is unreachable at boot - the node
-     * refuses to start. The provider is {@code close()}d (its token dropped) the instant the secret is
-     * recovered, so no live provider handle survives onto the data path.
-     *
-     * @return the freshly-unsealed custody secret; the CALLER owns and zeroes it after deriving the keyring keys
-     */
+    
     private static byte[] unsealKeyringCustodySecret(
             String providerName, Path dataDir, java.util.UUID keyId, ConfigSource cfg) {
         java.util.Map<String, io.configd.common.kms.KmsProviderFactory> factories =
@@ -1892,20 +1744,14 @@ public final class ConfigdServer {
         }
     }
 
-    /** HKDF info string for the keyring outer-MAC key {@code K_keyringMac}. */
+    
     private static final byte[] KEYRING_MAC_INFO =
             "configd/keyring-mac/v1".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-    /** HKDF info string for the keyring root-wrapping KEK {@code KEK_wrap}. */
+    
     private static final byte[] KEYRING_WRAP_INFO =
             "configd/keyring-wrap/v1".getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
-    /**
-     * Derives a 32-byte keyring key from the signing key via the SAME HKDF construction as
-     * {@link #deriveRaftIntegrityEnvelope} (IKM = signing private-key encoding, salt = keyId bytes)
-     * but with a distinct {@code info} string, so {@code K_keyringMac} and {@code KEK_wrap} are
-     * domain-separated from each other and from K_integrity / K_audit. The transient derived bytes
-     * are zeroed after the {@link javax.crypto.spec.SecretKeySpec} takes its own copy.
-     */
+    
     private static javax.crypto.SecretKey deriveKeyringKey(byte[] ikm, byte[] salt, byte[] info,
                                                            String algorithm) {
         byte[] k = io.configd.common.Hkdf.deriveKey(ikm, salt, info, 32);
@@ -1916,23 +1762,7 @@ public final class ConfigdServer {
         }
     }
 
-    /**
-     * Fail-closed co-location guard. The at-rest integrity key {@code K_integrity} is HKDF-derived
-     * from the cluster signing key, so that signing key MUST NOT live inside the data directory holding
-     * the snapshot/WAL/state it protects: a storage-tampering / full-host adversary who can write those
-     * artifacts could then ALSO read the co-located key and recompute a valid MAC, making the integrity
-     * layer worthless.
-     * <p>
-     * <b>Default behavior is to REFUSE TO START</b> ({@link SecurityException}). {@code allowColocated}
-     * - wired from the system property {@code configd.security.allowColocatedSigningKey} - downgrades
-     * this to a loud warning for dev/test/single-node ONLY; production must mount the signing key on
-     * separate storage (KMS/HSM/mounted secret) and leave the opt-out unset.
-     *
-     * @param keyFile        the resolved signing-key file path
-     * @param dataDir        the Raft data directory (where the protected artifacts live)
-     * @param allowColocated dev/test opt-out; when false (production default) co-location throws
-     * @throws SecurityException if the key is co-located inside the data dir and the opt-out is unset
-     */
+    
     static void enforceSigningKeyNotColocated(Path keyFile, Path dataDir, boolean allowColocated) {
         if (!isInsideDataDir(keyFile, dataDir)) {
             return; // key is on separate storage - the correct production layout
@@ -1966,31 +1796,7 @@ public final class ConfigdServer {
                 new Object[]{keyFile.toAbsolutePath(), dataDir.toAbsolutePath()});
     }
 
-    /**
-     * Fail-closed footgun guard against SILENTLY exposing an unauthenticated store on a public
-     * network interface - the Redis/etcd "default-open" compromise class. This is deliberately NOT
-     * "auth required by default": a no-auth deployment stays a legitimate workload choice. The one thing
-     * refused is doing it by ACCIDENT - binding a non-loopback interface with authentication off and no
-     * explicit acknowledgement.
-     * <p>
-     * Refuses only when ALL of: (1) authentication is off on the client-facing plane, AND (2) the bind is
-     * a non-loopback interface (0.0.0.0 / :: bind ALL interfaces incl. public, so they count as
-     * non-loopback), AND (3) the {@code configd.security.allowInsecurePublicBind} override is unset.
-     * When the override IS set the bind proceeds but a loud WARN is logged. An authenticated store, a
-     * loopback-only bind, or an unresolvable address that we cannot prove is loopback are handled up front.
-     * <p>
-     * Mirrors the {@link #enforceSigningKeyNotColocated} co-location guard: package-private and
-     * parameterized on plain values (no {@link ServerConfig}/{@link ConfigSource}) so
-     * {@code InsecurePublicBindFailClosedTest} can drive it directly, and its opt-out has the same
-     * "production fails closed, dev opts out" shape.
-     *
-     * @param bindAddress              the configured bind address ({@link ServerConfig#bindAddress()})
-     * @param authEnabled              whether the client-facing plane authenticates requests (the
-     *                                 {@code configd.auth.*} chain or the legacy {@code --auth-token})
-     * @param allowInsecurePublicBind  operator acknowledgement; when {@code false} (the production
-     *                                 default) a non-loopback bind with auth off refuses to start
-     * @throws SecurityException if auth is off, the bind is non-loopback, and the override is unset
-     */
+    
     static void enforceBindNotSilentlyPublic(
             String bindAddress, boolean authEnabled, boolean allowInsecurePublicBind) {
         if (authEnabled) {
@@ -2026,13 +1832,7 @@ public final class ConfigdServer {
                 bindAddress);
     }
 
-    /**
-     * True if {@code bindAddress} names an interface reachable off-box (non-loopback). The wildcard
-     * 0.0.0.0 / :: ({@link InetAddress#isAnyLocalAddress()}) binds ALL interfaces including public ones,
-     * so it counts as non-loopback; a genuine loopback literal/hostname (127.0.0.0/8, ::1, localhost)
-     * does not. An address that cannot be resolved is treated as non-loopback: we cannot prove it is
-     * loopback, so we fail closed rather than assume it is safe.
-     */
+    
     private static boolean isNonLoopbackBind(String bindAddress) {
         try {
             // getByName resolves a literal directly and a hostname via the name service; 0.0.0.0 / ::
@@ -2043,19 +1843,7 @@ public final class ConfigdServer {
         }
     }
 
-    /**
-     * Derives the audit-log chain MAC key {@code K_audit} from the cluster signing key using the
-     * SAME HKDF construction as {@link #deriveRaftIntegrityEnvelope} but with a DISTINCT
-     * {@code info} string - {@code "configd/audit-log-integrity/v1"} vs the Raft
-     * {@code "configd/raft-at-rest-integrity/v2"} - so the two derived keys are domain-separated and
-     * independent (compromise/analysis of one does not yield the other). Same IKM (signing private-key
-     * encoding) and salt (keyId bytes). Residual: an attacker who holds the cluster signing key can
-     * recompute {@code K_audit} and forge the chain (the co-location warning is emitted once by
-     * {@code deriveRaftIntegrityEnvelope}).
-     *
-     * @param keyStore the loaded cluster signing key store
-     * @return the HMAC-SHA256 audit-log key
-     */
+    
     private static javax.crypto.SecretKey deriveAuditLogKey(SigningKeyStore keyStore) {
         byte[] ikm = keyStore.keyPair().getPrivate().getEncoded();
         java.util.UUID keyId = keyStore.keyId();
@@ -2069,7 +1857,7 @@ public final class ConfigdServer {
         return new javax.crypto.spec.SecretKeySpec(k, "HmacSHA256");
     }
 
-    /** True if {@code keyFile} resolves to a path within {@code dataDir} (the co-location check). */
+    
     private static boolean isInsideDataDir(Path keyFile, Path dataDir) {
         try {
             Path kf = keyFile.toAbsolutePath().normalize();
@@ -2084,19 +1872,7 @@ public final class ConfigdServer {
         }
     }
 
-    /**
-     * Reads and range-validates the deploy-time shard count {@code N} from
-     * {@code configd.raft.shardCount} (default {@code 1} - a single group, byte-identical; a system
-     * property, consistent with the other {@code configd.raft.*} tunables). Validates
-     * {@code 1 <= N <= }{@link #MAX_SHARD_COUNT}; a clear error otherwise. The fixed-at-deploy
-     * enforcement + topology-epoch derivation is done separately by {@link #enforceTopologyDescriptor}
-     * once the Raft integrity envelope exists (the descriptor is authenticated with that same key).
-     *
-     * <p>Package-private static so {@code ShardCountConfigTest} can drive it directly.
-     *
-     * @return the validated shard count {@code N}
-     * @throws IllegalArgumentException if {@code N} is out of range
-     */
+    
     static int resolveShardCount() {
         return resolveShardCount(ConfigSource.system());
     }
@@ -2112,18 +1888,7 @@ public final class ConfigdServer {
         return shardCount;
     }
 
-    /**
-     * Builds the edge client-cert validity gate from config, fail-closed, emitting the loud operator
-     * warnings a misconfiguration deserves. Defaults reproduce today's behavior: revocation OFF +
-     * {@code enforceCertNotAfter} false yields {@link io.configd.server.fanout.EdgeCertGate#OFF}, which is
-     * byte-identical (no online lookup, no active cert expiry). This gate is threaded ONLY into the edge
-     * fan-out transport; the Raft interior never receives one, so the {@code exemptInterNode} invariant
-     * holds by construction regardless of this method's result.
-     *
-     * <p>No built-in OCSP/CRL responder ships: the {@code RevocationChecker} seam is left null, so a
-     * lookup returns {@code UNKNOWN} and the mode decides (lax fails open + alarms; strict fails closed).
-     * A real responder plugs into that seam as a follow-on.
-     */
+    
     private static io.configd.server.fanout.EdgeCertGate buildEdgeCertGate(
             ConfigSource cfg, io.configd.server.fanout.RegistryFanOutSessionMetrics metrics) {
         io.configd.common.auth.RevocationPolicy revocationPolicy =
@@ -2173,13 +1938,7 @@ public final class ConfigdServer {
                 metrics::onRevocationFailOpenAdmit);
     }
 
-    /**
-     * Whether authentication is enabled for the node-join gate's fail-closed default: the pluggable
-     * {@code configd.auth.*} chain is configured (and is not the explicit auth-disabled {@code none}
-     * posture), OR the legacy static {@code --auth-token} is set. Mirrors the auth-wiring predicate below
-     * ({@code configuredProviders} / {@code authEnabled}) so the boot gate and the request-path auth agree
-     * on what "authenticated" means.
-     */
+    
     private static boolean isAuthEnabled(ConfigSource cfg, ServerConfig config) {
         List<String> providers = AuthenticatorChain.configuredProviders(cfg);
         // configd.auth.mode=none explicitly disables auth: the noAuthMode boot branch wires NO chain,
@@ -2196,29 +1955,7 @@ public final class ConfigdServer {
         return spiAuthEnabled || config.authEnabled();
     }
 
-    /**
-     * Fixed-at-deploy guard + topology-epoch source. On first boot mints an authenticated,
-     * versioned {@link TopologyDescriptor} at N + {@link TopologyDescriptor#INITIAL_EPOCH} and writes it
-     * to {@value #TOPOLOGY_DESCRIPTOR_FILE}; on a later boot it verifies the persisted descriptor and
-     * REJECTS a different configured {@code N} (changing N on an existing deployment requires a manual
-     * reshard - static-N sharding does not support dynamic resharding). Wrapping the descriptor in the
-     * Raft integrity envelope makes the guard TAMPER-EVIDENT under a key: a corrupt, MAC-failing,
-     * rolled-version, or reserved-illegal-epoch descriptor is refused with the same fail-closed
-     * refuse-to-start class as a corrupt marker file. Idempotent: a matching descriptor is a read-only
-     * no-op. The first-boot write is crash-durable (temp + fsync, atomic rename, dir fsync - mirroring
-     * {@code FileStorage.put}) so a crash can neither leave a torn descriptor nor lose it.
-     *
-     * <p>Package-private static so {@code ShardCountConfigTest} can drive it directly without standing up
-     * a server.
-     *
-     * @param shardCount    the configured, range-validated shard count (1..{@link #MAX_SHARD_COUNT})
-     * @param dataDir       the data directory (holds {@value #TOPOLOGY_DESCRIPTOR_FILE})
-     * @param raftIntegrity the Raft integrity envelope (same {@code K_integrity}/posture as the WAL)
-     * @return the topology epoch to bind into {@code StaticShardMap.epoch()} and every edge resume token
-     * @throws IllegalStateException if the persisted descriptor records a different {@code N} (a reshard
-     *                               attempt), or is corrupt / tampered / malformed (refuse to start)
-     * @throws RuntimeException      if the descriptor cannot be read or written
-     */
+    
     static long enforceTopologyDescriptor(int shardCount, Path dataDir,
             io.configd.common.IntegrityEnvelope raftIntegrity) {
         Path descriptorFile = dataDir.resolve(TOPOLOGY_DESCRIPTOR_FILE);
@@ -2282,25 +2019,7 @@ public final class ConfigdServer {
         }
     }
 
-    /**
-     * The per-group consensus runtime bundle produced by {@link #buildRaftGroup}. Holds every object
-     * that is PER SHARD - its own durable log, store, state machine, node, and outbound transport.
-     * The node-level singletons (AuditLog, signing key, owner pool, driver, and the fan-out/read/write/
-     * HTTP wiring) are NOT here: they are shared across groups, and the not-yet-sharded ones are bound to
-     * the PRIMARY group in {@code start()}.
-     *
-     * @param groupId             the shard / Raft group id
-     * @param storage             this group's durable {@link Storage} (the node-level instance at N=1; a
-     *                            per-shard {@code dataDir/shard-<gid>} directory at N&gt;1)
-     * @param raftLog             this group's WAL/snapshot log over {@code storage}
-     * @param configStore         this group's versioned config store
-     * @param stateMachine        this group's config state machine
-     * @param raftNode            this group's consensus node
-     * @param adapter             this group's OUTBOUND transport adapter (stamps {@code groupId});
-     *                            {@code null} in single-node/test mode (no peers)
-     * @param coalescingTransport this group's heartbeat-coalescing decorator over {@code adapter};
-     *                            {@code null} in single-node/test mode
-     */
+    
     record RaftGroupRuntime(
             int groupId,
             Storage storage,
@@ -2312,32 +2031,8 @@ public final class ConfigdServer {
             CoalescingRaftTransport coalescingTransport) {
     }
 
-    /**
-     * Builds ONE group's consensus runtime. The single bring-up path used for EVERY shard, so the
-     * intricate storage/log/store/state-machine/node/transport/group-commit wiring is written once.
-     * Package-private static so {@code MultiGroupBringupTest} can drive the real bring-up for N&gt;1
-     * without standing up a whole server; the production loop in {@code start()} calls it once per shard.
-     *
-     * <p><b>N=1 byte-identity:</b> at {@code shardCount == 1} the group reuses the node-level
-     * {@code nodeStorage} instance (so its WAL/snapshot bytes and on-disk paths are unchanged), its
-     * outbound adapter stamps gid 0, and its group-commit dispatches on group 0. At {@code shardCount > 1}
-     * each group gets its own {@code dataDir/shard-<gid>} storage. The caller registers the returned node
-     * on the driver, binds its owner thread, and binds its coalescer.
-     *
-     * @return the fully-wired (but not-yet-registered, not-yet-owner-bound) group runtime
-     */
-    /**
-     * The anchor-witness VOTE mode. The BOOT gate is ALWAYS strict (peer-majority) and closes the
-     * grant-versus-witnessed race at N=3 out of the box, so it is not a toggle. This controls ONLY vote
-     * deferral:
-     * {@code -Dconfigd.raft.witnessStrict=true} opts into strict-VOTE (defer voteGranted until a
-     * peer-majority acks - the N&gt;=5 absolute close of the grant→witnessed race). It is opt-in, NOT
-     * the default, because deferring voteGranted breaks single-fault leader failover (operator ruling
-     * after the CI smoke test caught full-strict-default deadlocking a 3-node failover). Unset / any
-     * non-{@code true} value = the default fast-vote mode (voteGranted immediately after the announce;
-     * failover preserved). Only an explicit {@code true} enables deferral, so a typo cannot silently
-     * break failover. Package-private static so the production default is directly testable.
-     */
+    
+    
     static boolean witnessStrictEnabled() {
         return witnessStrictEnabled(ConfigSource.system());
     }
@@ -2450,22 +2145,7 @@ public final class ConfigdServer {
                 raftNode, adapter, coalescingTransport);
     }
 
-    /**
-     * The SHARD-AWARE {@link ConfigReadService.ConfigReader}. A point read resolves the shard that OWNS
-     * the key ({@code shardMap.shardFor(readScope, key)}) and reads THAT shard's {@code configStore}; a
-     * {@code getPrefix} SCATTER-GATHERS across all shards (a prefix's keys may hash to different shards)
-     * and merges; {@code currentVersion} is the max across shards (the per-key version still comes from
-     * {@code ReadResult.version()}, which is per-shard correct). At {@code N=1} every key resolves to
-     * group 0 -> the single store. Package-private static so {@code ShardedRoutingTest} can drive the
-     * real read routing.
-     *
-     * <p>The scope-aware {@code get(scope, key)} overrides route on the caller's <em>per-request</em>
-     * scope (read-your-writes - a GET of {@code (scope, key)} hits the same shard the write used). The
-     * legacy key-only {@code get(key)} overloads route on {@code readScope}.
-     *
-     * @param readScope the default scope for the legacy key-only {@code ConfigReader.get(String)}
-     *                  path (production: {@code GLOBAL}); the scope-aware overloads use the caller's scope
-     */
+    
     static ConfigReadService.ConfigReader shardedConfigReader(
             StaticShardMap shardMap, Map<Integer, RaftGroupRuntime> runtimesByGid,
             List<RaftGroupRuntime> runtimes, ConfigScope readScope) {
@@ -2508,46 +2188,11 @@ public final class ConfigdServer {
         };
     }
 
-    /**
-     * The per-shard fan-out runtime - one {@link FanOutBuffer} and one {@link Compactor} per shard,
-     * returned keyed by group id. The primary group's entries (gid {@link #DEFAULT_RAFT_GROUP}) are the
-     * home for the not-yet-sharded edge endpoint and the server's
-     * {@code fanOutBuffer()}/{@code compactor()}/{@code replaySource()} accessors.
-     *
-     * @param buffers    gid -&gt; that shard's {@link FanOutBuffer} (the {@link CommitNotificationSource})
-     * @param compactors gid -&gt; that shard's snapshot-retention {@link Compactor}
-     */
+    
     record ShardedFanOut(Map<Integer, FanOutBuffer> buffers, Map<Integer, Compactor> compactors) {
     }
 
-    /**
-     * Builds the PER-SHARD fan-out and registers each group's commit listener. For every shard it
-     * creates a {@link FanOutBuffer} (sharing the aggregate {@code fanout.buffer.dropped} counter) + a
-     * {@link Compactor}, and registers a {@link ConfigStateMachine.ConfigChangeListener} on THAT group's
-     * state machine that, on each mutating apply, builds the {@link ConfigDelta} (with the
-     * signature/epoch/nonce when present), publishes a {@link CommitNotification} (seq = the shard's
-     * applied-mutation version; commit timestamp = the leader wall clock captured on the apply thread)
-     * to THAT shard's buffer, and adds the shard's snapshot to THAT shard's compactor.
-     *
-     * <p><b>Thread-safety:</b> a group's apply -&gt; {@code notifyListeners} runs only on that group's
-     * owner thread, so each per-shard buffer/compactor has exactly ONE writer - the
-     * {@link FanOutBuffer} single-writer invariant holds per shard with NO lock, even when several
-     * groups share an owner thread (they write their distinct buffers serially on that one thread). The
-     * shared dropped counter is {@code LongAdder}-backed (thread-safe). The listener touches only its
-     * own group's state machine + store - no cross-group {@link RaftNode} access.
-     *
-     * <p><b>N=1 byte-identity:</b> at a single shard this builds exactly one buffer + compactor for the
-     * primary group and registers exactly the prior single fan-out listener.
-     *
-     * <p>Per-shard sequences + cursor vector; NO fabricated cross-shard global order. Package-private
-     * static so {@code ShardedFanOutTest} can drive it directly without standing up a whole server.
-     *
-     * @param runtimes       the per-shard runtimes (each supplies its group id, state machine, and store)
-     * @param clock          the wall clock for the commit timestamp
-     * @param droppedCounter the aggregate {@code fanout.buffer.dropped} counter (shared across shards)
-     * @param bufferCapacity the per-shard ring capacity ({@link #FANOUT_BUFFER_CAPACITY})
-     * @return the per-shard {@link ShardedFanOut} (buffers + compactors), keyed by group id
-     */
+    
     static ShardedFanOut registerShardedFanOut(
             List<RaftGroupRuntime> runtimes, Clock clock,
             MetricsRegistry.Counter droppedCounter, int bufferCapacity) {
@@ -2596,15 +2241,7 @@ public final class ConfigdServer {
                 java.util.Collections.unmodifiableMap(compactors));
     }
 
-    /**
-     * Registers the PER-SHARD health gauges. For every shard it publishes
-     * {@code raft.shard.{commit_index,last_applied,apply_lag,current_term,leader}.<gid>} plus the
-     * node-level {@code raft.node.leader_count}. Each gauge is pull-based and reads the group's
-     * {@link RaftNode#monitorView()} - a safe, never-torn, &lt;= one-tick-stale snapshot the Prometheus
-     * scrape thread reads off-owner. Null-safe: a removed/absent group reads {@code 0}. At {@code N=1}
-     * this registers exactly the group-0 series - purely additive (the existing series are untouched).
-     * Package-private static so {@code PerShardMetricsTest} can drive it directly.
-     */
+    
     static void registerPerShardMetrics(MetricsRegistry registry, MultiRaftDriver driver,
             List<RaftGroupRuntime> runtimes) {
         for (RaftGroupRuntime rt : runtimes) {
@@ -2642,22 +2279,7 @@ public final class ConfigdServer {
         });
     }
 
-    /**
-     * Evaluates shard-aware readiness. Package-private static so {@code ReadinessDrainTest} can drive
-     * the decision directly with a stub leader source and a draining flag - no server, no RaftNode.
-     *
-     * <p>Order matters: {@code draining} is checked FIRST, so once {@link #shutdown()} flips the flag the
-     * node reports NOT-ready regardless of shard state (an LB then stops routing while in-flight work
-     * drains). When not draining, the node is ready only if EVERY hosted group has a known leader; the
-     * first group without one (quorum lost, or no leader yet elected) makes the whole node NOT-ready and
-     * names the offending shard.
-     *
-     * @param draining     whether shutdown has begun draining (readiness must report NOT-ready)
-     * @param hostedGroups the group ids this node hosts (all N shards under static-N)
-     * @param leaderOf     resolves a group's known leader, or {@code null} if none (quorum lost/unknown)
-     * @return a healthy result named {@code raft-leader} when ready; otherwise an unhealthy result naming
-     *         {@code draining} or {@code raft-leader} with the reason
-     */
+    
     static HealthService.CheckResult evaluateReadiness(
             boolean draining, int[] hostedGroups, java.util.function.IntFunction<NodeId> leaderOf) {
         if (draining) {
@@ -2672,22 +2294,14 @@ public final class ConfigdServer {
         return HealthService.CheckResult.healthy("raft-leader");
     }
 
-    /**
-     * Registers the node-level consensus-transport saturation gauges - outbound {@code frames_dropped}
-     * (bounded-queue overflow / no-connection drop) and inbound {@code connections_refused} (admission
-     * cap) - as pull gauges over the endpoint's monotonic accessors. These are counted inside the
-     * transport (JDK or Netty) but were never exported. Registered only when a consensus transport is
-     * configured; the accessors are cheap volatile reads, safe on the scrape thread. Package-private
-     * static so {@code PerShardMetricsTest} can drive it directly with a stub endpoint.
-     */
+    
     static void registerTransportSaturationGauges(MetricsRegistry registry, RaftTransportEndpoint endpoint) {
         registry.gauge(ConfigdMetrics.NAME_RAFT_TRANSPORT_FRAMES_DROPPED, endpoint::framesDropped);
         registry.gauge(ConfigdMetrics.NAME_RAFT_TRANSPORT_INBOUND_CONNECTIONS_REFUSED,
                 endpoint::inboundConnectionsRefused);
     }
 
-    /** A null-safe per-shard gauge: reads {@code fn} off the group's {@link RaftNode#monitorView()}, or
-     *  {@code 0} if the group is absent. The monitorView read is the safe off-owner snapshot. */
+    
     private static java.util.function.LongSupplier shardGauge(
             MultiRaftDriver driver, int gid, java.util.function.ToLongFunction<RaftMetrics> fn) {
         return () -> {
@@ -2696,30 +2310,7 @@ public final class ConfigdServer {
         };
     }
 
-    /**
-     * Handles an unhandled throwable that escaped the tick loop body. Package-private static so the
-     * regression test ({@code TickLoopThrowableHandlerTest}) can drive it directly without standing up
-     * an entire {@link ConfigdServer} + scheduler - the catch block in {@code start()} is a one-line
-     * call into this method.
-     *
-     * <p>Two visible side-effects (both load-bearing for SRE alerting):
-     * <ol>
-     *   <li>Increments {@code configd_tick_loop_throwable_total{class}} via
-     *       {@link ConfigdMetrics#onTickLoopThrowable(String)}; the {@code class}
-     *       label is {@link SafeLog#cardinalityGuard cardinality-bounded} so a
-     *       hostile-input throwable family cannot blow up the series count.</li>
-     *   <li>Emits a SEVERE log record with the throwable attached so the JUL formatter prints the
-     *       stack trace, instead of a bare {@code printStackTrace(System.err)} that would be
-     *       invisible to centralized log aggregation.</li>
-     * </ol>
-     *
-     * <p>Defensive: a {@code null} throwable is treated as {@code class="unknown"} rather than NPE -
-     * the handler must NOT itself become a new tick-loop killer.
-     *
-     * @param t       the unhandled throwable (may be {@code null})
-     * @param metrics the metrics registry handle (may be {@code null} in
-     *                degenerate test paths; counter increment is skipped)
-     */
+    
     static void handleTickLoopThrowable(Throwable t, ConfigdMetrics metrics) {
         String simpleName;
         if (t == null) {
@@ -2736,29 +2327,13 @@ public final class ConfigdServer {
                 t);
     }
 
-    /**
-     * Builds the inbound Raft message handler that marshals routing onto the Raft executor, so
-     * {@code node.handleMessage} - and the {@code applyCommitted -> stateMachine.apply} it can trigger -
-     * never runs concurrently with {@code node.tick()} on the explicitly non-synchronized
-     * {@link io.configd.raft.RaftNode}.
-     * <p>
-     * Package-private static so the regression/stress test can exercise the real marshalling decision
-     * directly without standing up a whole server. Reverting this to a direct
-     * {@code driver.routeMessage(...)} call (dropping {@code raftExecutor.execute}) reintroduces the
-     * race and makes that test fail.
-     */
+    
     static java.util.function.BiConsumer<NodeId, RaftMessage> raftInboundHandler(
             MultiRaftDriver driver, int groupId, java.util.concurrent.Executor raftExecutor) {
         return raftInboundHandler(driver, groupId, raftExecutor, null);
     }
 
-    /**
-     * Same marshalling as above, but the routing task is wrapped so a Throwable escaping
-     * {@code driver.routeMessage} (e.g. a disk write failing during {@code applyCommitted -> apply} on a
-     * follower) is SURFACED via {@link #handleInboundRoutingThrowable} - a counter + structured SEVERE
-     * log - instead of being swallowed by the executor (which sends it to the worker's default uncaught
-     * handler / stderr, invisible to log aggregation, with no metric, and drops the message with no ack).
-     */
+    
     static java.util.function.BiConsumer<NodeId, RaftMessage> raftInboundHandler(
             MultiRaftDriver driver, int groupId, java.util.concurrent.Executor raftExecutor,
             ConfigdMetrics metrics) {
@@ -2771,18 +2346,7 @@ public final class ConfigdServer {
         });
     }
 
-    /**
-     * The N-group inbound DEMULTIPLEXER. Routes each decoded frame to ITS group - resolving the group's
-     * owner executor from {@code frame.groupId()} and delegating to the tested fixed-group marshalling
-     * primitive ({@link #raftInboundHandler}) - instead of collapsing every inbound message onto a
-     * single captured group. The owner executor is re-resolved PER MESSAGE
-     * ({@code driver.ownerExecutor(groupId)}), so it always targets the group's CURRENT owner. A frame
-     * for an unregistered group is dropped safely by {@code driver.routeMessage} (absent group -> no-op).
-     *
-     * <p>At {@code N=1} only group 0 is registered and every frame carries groupId 0, so this resolves to
-     * {@code raftInboundHandler(driver, 0, ownerExecutor(0), metrics)} on every message. Package-private
-     * static so {@code RaftInboundDemuxTest} can drive the real routing decision directly.
-     */
+    
     static RaftTransportAdapter.InboundHandler raftDemuxInboundHandler(
             MultiRaftDriver driver, ConfigdMetrics metrics) {
         return (from, groupId, message) -> {
@@ -2801,16 +2365,7 @@ public final class ConfigdServer {
         };
     }
 
-    /**
-     * Frames one owner's per-peer heartbeat drain. Exactly one group for the peer (ALWAYS the case at
-     * N=1) -> a normal {@link MessageType#APPEND_ENTRIES} frame, so the wire is byte-for-byte unchanged;
-     * more than one group (only at N&gt;1) -> ONE {@link MessageType#RAFT_COALESCED_HEARTBEAT} frame the
-     * receiver demuxes. Package-private static so {@code HeartbeatDrainFramingTest} can exercise both
-     * branches without standing up a server.
-     *
-     * @param groupHeartbeats the per-group {@code groupId -> empty AppendEntriesRequest} (&gt;=1 entry)
-     * @return the frame to send to the peer
-     */
+    
     static FrameCodec.Frame frameHeartbeatDrain(Map<Integer, AppendEntriesRequest> groupHeartbeats) {
         if (groupHeartbeats.size() == 1) {
             Map.Entry<Integer, AppendEntriesRequest> hb = groupHeartbeats.entrySet().iterator().next();
@@ -2819,17 +2374,7 @@ public final class ConfigdServer {
         return RaftMessageCodec.encodeCoalescedHeartbeat(groupHeartbeats);
     }
 
-    /**
-     * Handles a Throwable that escaped {@code driver.routeMessage} on the inbound-routing task.
-     * Mirrors {@link #handleTickLoopThrowable}: a cardinality-bounded
-     * {@code configd_inbound_routing_throwable_total{class}} counter increment plus a SEVERE log record
-     * with the throwable attached. Package-private static so the regression test
-     * ({@code InboundRoutingThrowableHandlerTest}) can drive it directly. Defensive against a null
-     * throwable / null metrics - the handler must never itself become a new failure source.
-     *
-     * @param t       the unhandled throwable (may be {@code null})
-     * @param metrics the metrics handle (may be {@code null}; counter increment skipped)
-     */
+    
     static void handleInboundRoutingThrowable(Throwable t, ConfigdMetrics metrics) {
         String simpleName;
         if (t == null) {
@@ -2849,26 +2394,7 @@ public final class ConfigdServer {
                 t);
     }
 
-    /**
-     * Builds the commit-confirmed write proposer.
-     * <p>
-     * A SINGLE marshalled tick task performs {@code driver.propose} AND, on acceptance, registers
-     * {@code whenCommitOutcome(index, term, cb)} on the owning {@link io.configd.raft.RaftNode} -
-     * atomically, in the same task, capturing {@code (index, term)} <em>inside</em> the task (a slow
-     * tick queue must not lose the position; the at-least-once append must not force Indeterminate when
-     * the entry actually appended). All node mutation (propose, the apply it may trigger, and the
-     * registration/firing) stays on the single tick thread; the tick thread never waits on the HTTP
-     * future (registration is fire-and-return, like {@code whenReadReady}).
-     * <p>
-     * The calling (HTTP write) thread blocks on ONE end-to-end {@code writeCommitTimeoutMs} deadline
-     * (real milliseconds, not a tick count). On commit it returns {@code Committed(seq)}; on definite
-     * loss {@code Lost}; on pre-append rejection {@code NotLeader}/{@code Overloaded}; on deadline
-     * expiry {@code Indeterminate}, after dispatching a tick-thread cleanup that cancels the
-     * now-abandoned one-shot callback (no map-entry leak; no double-complete).
-     * <p>
-     * Package-private static so the regression test can drive the real marshalling decision; reverting
-     * to a direct {@code driver.propose(...)} call reintroduces the write-vs-tick race.
-     */
+    
     static ConfigWriteService.RaftProposer raftProposer(
             MultiRaftDriver driver, int groupId,
             java.util.concurrent.Executor raftExecutor, long writeCommitTimeoutMs) {
@@ -2879,13 +2405,7 @@ public final class ConfigdServer {
                 new ConfigdMetrics(new MetricsRegistry(), () -> 0L));
     }
 
-    /**
-     * Fixed-group proposer (tests / single-group wiring): every write routes to {@code groupId} on
-     * {@code raftExecutor}, ignoring the keys for routing (one group = trivially single-shard, so the
-     * cross-shard guard never fires). Commit-confirmed semantics + write-commit metrics as the production
-     * overload. Package-private so the marshalling/commit regression tests can drive the real seam with
-     * their own executor.
-     */
+    
     static ConfigWriteService.RaftProposer raftProposer(
             MultiRaftDriver driver, int groupId,
             java.util.concurrent.Executor raftExecutor, long writeCommitTimeoutMs,
@@ -2894,14 +2414,7 @@ public final class ConfigdServer {
                 (scope, keys) -> new Routed(groupId, raftExecutor));
     }
 
-    /**
-     * The PRODUCTION shard-routing proposer. Each write is routed to the shard that owns its key(s) via
-     * {@link CrossShardWriteGuard#requireSingleShard} - ONE call that is both the router (single key ->
-     * {@code shardFor(scope, key)}) AND the DISCLAIM guard (multi-key keys spanning shards ->
-     * {@link ConfigWriteService.ProposeCommitResult.CrossShardRejected}, before any Raft work). The owner
-     * executor is re-resolved per write from the resolved gid ({@code driver.ownerExecutor(gid)} -
-     * rehoming-aware). At {@code N=1} every key resolves to group 0.
-     */
+    
     static ConfigWriteService.RaftProposer raftProposer(
             MultiRaftDriver driver, StaticShardMap shardMap, long writeCommitTimeoutMs,
             ConfigdMetrics metrics) {
@@ -2912,24 +2425,16 @@ public final class ConfigdServer {
                 });
     }
 
-    /** The (gid, owner-executor) a write was routed to. */
+    
     private record Routed(int gid, java.util.concurrent.Executor executor) {}
 
-    /** Resolves a write's owning shard + owner executor, or throws {@code CrossShardBatchException}. */
+    
     @FunctionalInterface
     private interface WriteRouter {
         Routed route(ConfigScope scope, List<String> keys);
     }
 
-    /**
-     * The commit-confirmed proposer core, parameterized by a {@link WriteRouter} (fixed-group for tests;
-     * shard-routing for production). A SINGLE marshalled task performs {@code driver.propose(gid, ...)}
-     * AND, on acceptance, registers {@code whenCommitOutcome(index, term, cb)} on the owning
-     * {@link io.configd.raft.RaftNode} - capturing {@code (index, term)} INSIDE the task. All node
-     * mutation stays on the group's owner thread; the HTTP write thread blocks on ONE end-to-end
-     * {@code writeCommitTimeoutMs} deadline and gets a commit-confirmed answer
-     * (Committed/Lost/NotLeader/Indeterminate/Overloaded/CrossShardRejected).
-     */
+    
     private static ConfigWriteService.RaftProposer buildProposer(
             MultiRaftDriver driver, long writeCommitTimeoutMs, ConfigdMetrics metrics,
             WriteRouter router) {
@@ -3054,11 +2559,7 @@ public final class ConfigdServer {
         };
     }
 
-    /**
-     * Records the end-to-end write outcome on the HTTP write thread. Latency is recorded ONLY for a
-     * confirmed commit (a failure/redirect would skew the latency histogram); the counters partition
-     * outcomes for the control-plane availability SLO and the sustained-429-rate alert.
-     */
+    
     private static void recordWriteOutcome(ConfigdMetrics metrics,
             ConfigWriteService.ProposeCommitResult result, long elapsedNanos) {
         switch (result) {
@@ -3091,12 +2592,7 @@ public final class ConfigdServer {
         }
     }
 
-    /**
-     * Best-effort teardown of the long-lived resources a partial boot created, run in reverse
-     * creation order (LIFO) when {@link #start(ServerConfig, ConfigSource)} fails. Each action
-     * swallows its own failure so one stuck close neither masks the others nor the original boot
-     * failure that triggered the teardown.
-     */
+    
     private static void closeBootResources(java.util.Deque<Runnable> bootTeardown) {
         while (!bootTeardown.isEmpty()) {
             try {
@@ -3111,14 +2607,7 @@ public final class ConfigdServer {
         return driver;
     }
 
-    /**
-     * Returns the underlying consensus transport (a {@link NettyRaftTransport}; the JDK
-     * {@link TcpRaftTransport} is the fast-revert) when peer addresses were configured, or
-     * {@code null} for single-node / test mode.
-     * <p>
-     * Exposed so integration tests can verify that the transport holds a non-null
-     * {@link TlsManager} when TLS is enabled.
-     */
+    
     public RaftTransportEndpoint tcpTransport() {
         return tcpTransport;
     }
@@ -3135,54 +2624,32 @@ public final class ConfigdServer {
         return watchService;
     }
 
-    /**
-     * Returns the fan-out buffer for delta distribution. At {@code N>1} this is the PRIMARY shard's
-     * buffer only; the per-shard sources (one buffer per shard) are the cursor-vector view the
-     * multi-shard-aware edge client consumes. At {@code N=1} it is the single buffer.
-     */
+    
     public FanOutBuffer fanOutBuffer() {
         return fanOutBuffer;
     }
 
-    /**
-     * The fan-out edge endpoint, or {@code null} when {@code --edge-port} is absent. Exposed for tests
-     * and operational checks.
-     */
+    
     public io.configd.server.fanout.FanOutEndpoint fanOutServer() {
         return fanOutServer;
     }
 
-    /** The actual bound HTTP API port (resolves an ephemeral {@code --api-port 0}). */
+    
     public int apiPort() {
         return httpApiServer.port();
     }
 
-    /**
-     * Renders the current Prometheus exposition text (identical content to the live {@code /metrics}
-     * endpoint, via the same exporter wired with the SLO histogram schedules). Exposed so a contract
-     * test can assert the running server emits the SLO series with REAL data.
-     */
+    
     String scrapeMetrics() {
         return prometheusExporter.export();
     }
 
-    /**
-     * The commit-notification boundary the data plane consumes. Backed by {@link #fanOutBuffer()} (the
-     * bounded hot-path cache); cursor-based, replayable, with the drop-oldest overflow contract. At
-     * {@code N>1} this is the PRIMARY shard only (per-shard sources are the cursor-vector view the
-     * multi-shard-aware client uses).
-     */
+    
     public CommitNotificationSource commitNotificationSource() {
         return fanOutBuffer;
     }
 
-    /**
-     * The authoritative recovery seam a consumer replays from on a
-     * {@link CommitNotificationSource#readSince(long)} GAP. A snapshot-equivalent replay over the live
-     * config store. At {@code N>1} this is the PRIMARY shard's store only; each shard's per-shard replay
-     * is derived on demand from its own {@code configStore()::snapshot} (the per-shard cursor vector the
-     * multi-shard-aware edge client uses).
-     */
+    
     public ReplaySource replaySource() {
         return new SnapshotReplaySource(stateMachine.store()::snapshot);
     }
@@ -3227,18 +2694,7 @@ public final class ConfigdServer {
         System.out.println();
     }
 
-    /**
-     * Resolves the optional YAML config file and builds the boot {@link ConfigSource}. The file is named
-     * by {@code --config <path>}, else the {@code configd.config.file} system property, else the
-     * {@code CONFIGD_CONFIG} environment variable. When none names a file the source is
-     * {@link ConfigSource#system()} (system properties over environment, NO YAML layer) - byte-identical
-     * to the behavior before configuration was unified. A named-but-unreadable / malformed file fails the
-     * boot ({@link ConfigException}). The YAML layer always sits BELOW system properties and the
-     * environment, so every {@code -D} and env override still wins.
-     *
-     * @param args the command-line arguments (scanned for {@code --config})
-     * @return the boot configuration source
-     */
+    
     static ConfigSource loadBootConfig(String[] args) {
         String path = null;
         for (int i = 0; i + 1 < args.length; i++) {

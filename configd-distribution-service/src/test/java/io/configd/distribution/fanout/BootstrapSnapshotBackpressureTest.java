@@ -28,46 +28,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Pins the bootstrap snapshot transfer against the bounded transport queue (the
- * {@code FanOutServer.Connection} model: a non-blocking {@code ArrayBlockingQueue.offer},
- * default 64 frames, drained by a writer thread).
- *
- * <p><b>The failure mode this guards against:</b> a snapshot transfer that emits BEGIN,
- * all chunks, and END in one burst inside a single {@code tick} silently drops chunks
- * mid-burst whenever the chunk count exceeds the free space in the transport queue. That
- * would mark the session closed ({@code transport_gone}) on the first refused chunk, then
- * resurrect it to STREAMING at the end of the transfer tail, and deliver a torn chunk
- * sequence to the edge, whose reassembly failure is routed through the poison ladder
- * (bounded retries, then quarantine, then a terminal process exit). The net effect: a
- * zero-state edge with a store larger than
- * {@code transportQueueFrames x snapshotChunkBytes} (about 64 MiB at production defaults,
- * proportionally less for any operator-tuned smaller chunk) could never bootstrap.
- *
- * <p><b>Pinned behavior:</b> a refused snapshot-frame offer is transport backpressure, not
- * transport death: the transfer pauses and resumes on the next tick exactly where it left
- * off (BEGIN, chunk index, or END), completing once the writer has drained queue space.
- * The cutover mutations (cursor moves to S, resume STREAMING) happen only at completion;
- * {@code lastAckedSeq} stays behind throughout as a self-healing discipline; nothing
- * interleaves inside the BEGIN through END envelope; writes committed during the paused
- * transfer are delivered afterwards as the contiguous tail with seq greater than S.
- *
- * <p>Deterministic, no threads: the test plays the role of the writer by draining the
- * bounded sink between ticks.
+ * Pins snapshot transfer backpressure handling: chunks must pause and resume on queue refusal,
+ * not silently drop (which would orphan edges). Failure: queue-exceeded chunks drop mid-burst,
+ * marking session CLOSED then resurrecting STREAMING, delivering torn sequences that poison the
+ * edge (bounded retries → quarantine → exit). Protection: refused offer is backpressure (pause+resume),
+ * and lastAckedSeq lags as self-healing; writes committed during pause deliver after completion.
  */
 class BootstrapSnapshotBackpressureTest {
 
-    /** Snapshot chunk size for the test: small chunks mean many chunks, giving a wide transfer. */
     private static final int CHUNK_BYTES = 1_024;
-    /** Transport queue capacity (frames) - far below the chunk count, like a slow writer. */
     private static final int QUEUE_CAPACITY = 8;
-    /** Store entries, about 1 KiB each, giving approximately STORE_KEYS chunks at CHUNK_BYTES. */
     private static final int STORE_KEYS = 48;
 
-    /**
-     * The {@code FanOutServer.Connection} transport model, deterministic: a bounded queue
-     * whose {@code offer} refuses when full, and an explicit {@link #drain} the test calls
-     * to play the role of the writer thread.
-     */
     private static final class BoundedDrainingSink implements TransportSink {
         final Deque<EdgeFrame> queued = new ArrayDeque<>();
         final List<EdgeFrame> deliveredToEdge = new ArrayList<>();

@@ -167,9 +167,6 @@ final class OidcIssuerConfig {
                 .rateLimited(s.rateLimitMillis())
                 .outageTolerant(s.outageToleranceMillis())
                 .retrying(true);
-        // Refresh-ahead keeps a request from ever paying the fetch, but nimbus requires
-        // refreshAhead + refreshTimeout < ttl. Enable it only when it fits (the common production case with a
-        // multi-minute TTL); a deployment with a very short TTL simply refreshes on demand instead of throwing.
         if (s.refreshAheadMillis() + s.refreshTimeoutMillis() < s.ttlMillis()) {
             builder.refreshAheadCache(s.refreshAheadMillis(), true);
         } else {

@@ -6,24 +6,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * A minimal, dependency-free JSON reader/writer sized to the two Vault endpoints this module speaks to.
- * The parser is a standard recursive-descent reader (RFC 8259 grammar: object, array, string with escapes
- * and {@code \\uXXXX}, number, {@code true}/{@code false}/{@code null}); the writer emits only the flat
- * request objects Vault expects (string/number/boolean values), escaping strings correctly.
- *
- * <p>It exists so the module stays free of any JSON library. It is deliberately small: it parses the handful
- * of fields Configd reads ({@code auth.client_token}, {@code data.plaintext}, {@code data.ciphertext},
- * {@code errors}) and is not a general-purpose serializer.
+ * Minimal dependency-free JSON reader/writer. Recursive-descent parser (RFC 8259);
+ * writer emits flat request objects for Vault. No JSON library needed.
  */
 final class Json {
 
     private Json() {
     }
 
-    /**
-     * Builds a flat JSON object from alternating key/value pairs. String values are JSON-escaped; Number and
-     * Boolean values are emitted bare; a {@code null} value is skipped (Vault treats absent == default).
-     */
     static String object(Object... keyValues) {
         if ((keyValues.length & 1) != 0) {
             throw new IllegalArgumentException("object() needs an even number of key/value args");
@@ -74,7 +64,6 @@ final class Json {
         sb.append('"');
     }
 
-    /** Parses a JSON document into Map/List/String/Double/Boolean/null. Throws on malformed input. */
     static Object parse(String text) {
         Parser p = new Parser(text);
         p.skipWs();
@@ -86,10 +75,6 @@ final class Json {
         return v;
     }
 
-    /**
-     * Navigates a dotted path through nested objects and returns the leaf {@code String}, or {@code null} if
-     * any segment is missing or the leaf is not a string. E.g. {@code string(root, "data.plaintext")}.
-     */
     @SuppressWarnings("unchecked")
     static String string(Object root, String dottedPath) {
         Object cur = root;
@@ -105,7 +90,6 @@ final class Json {
         return (cur instanceof String s) ? s : null;
     }
 
-    /** Thrown for malformed JSON (surfaces as a Vault-response error at the call site). */
     static final class JsonException extends RuntimeException {
         JsonException(String message) {
             super(message);

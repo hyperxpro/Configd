@@ -11,7 +11,6 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Claim-path resolution and value coercion for the {@link ClaimsRoleMapper} (per-IdP claim shapes). */
 final class ClaimsRoleMapperTest {
 
     @Test

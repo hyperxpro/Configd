@@ -12,14 +12,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * The {@link ConfigSource} SPI: each source in isolation, the layered precedence, the fail-closed typed
- * accessors, key enumeration, the systematic + legacy-alias environment mapping, and the OR-across-layers
- * {@link ConfigSource#anyLayerTrue} that reproduces the legacy "system-property OR env-alias" flags.
- */
 class ConfigSourceTest {
 
-    /** A tiny in-memory source, used to stand in for a YAML layer / a controlled lower layer in tests. */
     private static final class MapConfigSource implements ConfigSource {
         private final Map<String, String> map;
 
@@ -98,8 +92,6 @@ class ConfigSourceTest {
 
         @Test
         void legacyAliasOverridesSystematicOnCollision() {
-            // CONFIGD_ENCRYPTION_AT_REST (alias) and CONFIGD_RAFT_ENCRYPTION_ENABLED (systematic) both
-            // target configd.raft.encryption.enabled; the explicit alias wins.
             EnvConfigSource env = new EnvConfigSource(Map.of(
                     "CONFIGD_RAFT_ENCRYPTION_ENABLED", "false",
                     "CONFIGD_ENCRYPTION_AT_REST", "true"));
@@ -123,14 +115,11 @@ class ConfigSourceTest {
 
         @Test
         void systemPropertyBeatsEnvironmentBeatsYaml() {
-            // The concrete production ordering: -D over env over the YAML layer. A -D override still wins
-            // over a YAML file, so a deployment's existing overrides keep sitting on top.
             String key = "configd.test.prec." + System.nanoTime();
             EnvConfigSource env = new EnvConfigSource(Map.of("CONFIGD_TEST_PREC", "env"));
             ConfigSource yaml = new MapConfigSource(Map.of("configd.test.prec", "yaml", key, "yaml"));
             try {
                 System.setProperty(key, "sysprop");
-                // Map the env systematic key onto our synthetic key for the env-beats-yaml leg.
                 LayeredConfigSource full = LayeredConfigSource.of(new SystemPropertyConfigSource(), env, yaml);
                 assertEquals(Optional.of("sysprop"), full.getString(key), "system property beats the YAML layer");
                 assertEquals(Optional.of("env"), full.getString("configd.test.prec"),
@@ -236,7 +225,6 @@ class ConfigSourceTest {
                                 () -> "anyLayerTrue must equal the legacy OR expression for sp=" + sp + " env=" + ev);
                     }
                 }
-                // Spotlight the landmine explicitly.
                 System.setProperty(prop, "false");
                 LayeredConfigSource landmine = LayeredConfigSource.of(new SystemPropertyConfigSource(),
                         new EnvConfigSource(Map.of("CONFIGD_ALLOW_COLOCATED_SIGNING_KEY", "true")));

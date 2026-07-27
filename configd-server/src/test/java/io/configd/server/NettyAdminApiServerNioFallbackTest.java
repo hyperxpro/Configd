@@ -4,19 +4,6 @@ import io.configd.netty.NettyTransport;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-/**
- * CI-fallback proof: re-runs the <b>entire</b>
- * {@link AbstractAdminApiServerContract} on the Netty admin server with the transport <b>forced to the
- * pure-Java NIO tier</b> - the always-available floor a CI runner (or any sandbox) that lacks
- * io_uring/epoll falls back to. io_uring is a performance tier, never a correctness dependency; this
- * proves every security control (including the five path-normalization evasion vectors) holds on the
- * fallback transport, not just on the tier this box happens to pick. Forcing the tier in-process avoids
- * depending on surefire forwarding a {@code -D} to the test fork.
- *
- * <p>An epoll-forced equivalent isn't a separate class: the configd-netty {@code NettyTransportTest}
- * proves epoll resolves where available, and the auto-selected suite
- * ({@link NettyAdminApiServerContractTest}) already exercises the best available tier on this box.
- */
 class NettyAdminApiServerNioFallbackTest extends AbstractAdminApiServerContract {
 
     @Override

@@ -8,54 +8,18 @@ import java.util.Objects;
 import java.util.TreeMap;
 
 /**
- * The authenticated payload carried by a {@link NodeAnchorFile} slot: the node-level durability
- * anchor. It binds three node-wide facts so a boot can cross-check them fail-closed:
- *
- * <ul>
- *   <li>the topology descriptor's {@code (topologyEpoch, shardCount)} - a bound copy that catches a
- *       topology-descriptor rollback (swap for an older legitimately-MAC'd one);</li>
- *   <li>the security audit chain head {@code (auditRecordCount, auditHeadHash)} - anchored on a
- *       periodic cadence so a chain truncated below the anchored head is DETECTED;</li>
- *   <li>the {@code shardAnchorDigest} - SHA-256 over the sorted {@code (gid, lastDurableIndex)} pairs
- *       of every per-shard {@code raft-anchor}: a shard wiped to index 0 changes the digest, so a
- *       boot cross-check catches it.</li>
- * </ul>
- *
- * <p>Fixed 92-byte wire payload (big-endian), wrapped in the node-level
- * {@link io.configd.common.IntegrityEnvelope} under {@link RaftArtifactMagic#NODE_ANCHOR_MAGIC}
- * with {@code scopeId =} {@link io.configd.common.IntegrityEnvelope#NODE_SCOPE}:
- *
- * <pre>
- *   [nodeAnchorSeq:8]      strictly monotonic across every write - the anti-rollback index
- *   [topologyEpoch:8]      bound copy of the TopologyDescriptor epoch (rollback guard)
- *   [shardCount:4]         bound copy of N (deploy tamper/rollback guard)
- *   [auditRecordCount:8]   audit-log high-water at the last periodic anchor
- *   [auditHeadHash:32]     the last anchored audit record's recordHash (the chain head)
- *   [shardAnchorDigest:32] SHA-256 over the sorted (gid, lastDurableIndex) pairs
- * </pre>
- *
- * <p>Immutable value type. The two 32-byte fields are defensively cloned on construction and
- * returned by-reference (callers must not mutate the returned arrays - they only read/compare via
- * {@link MessageDigest#isEqual}); {@link NodeAnchorFile} assigns the {@code nodeAnchorSeq} (it owns
- * the monotonic counter), so callers pass whatever seq they hold and let the writer bump it.
+ * Node-level durability anchor payload: binds topology (epoch, shardCount), audit chain head,
+ * and per-shard liveness (shardAnchorDigest) for boot cross-check.
+ * Fixed 92-byte wire payload. Immutable; 32-byte fields defensively cloned.
  */
 public record NodeAnchorRecord(long nodeAnchorSeq, long topologyEpoch, int shardCount,
                                long auditRecordCount, byte[] auditHeadHash,
                                byte[] shardAnchorDigest) {
 
-    /** Length of both the audit-head hash and the shard-anchor digest (SHA-256 output). */
     public static final int HASH_LEN = 32;
-
-    /** Fixed on-wire payload size: seq(8) + epoch(8) + shardCount(4) + auditCount(8) + 2*32. */
     public static final int PAYLOAD_LEN = 8 + 8 + 4 + 8 + HASH_LEN + HASH_LEN; // 92
-
-    /** The all-zero 32-byte hash: the genesis audit head (no audit records anchored yet). */
     public static final byte[] ZERO_HASH = new byte[HASH_LEN];
 
-    /**
-     * Validates the fixed lengths and defensively clones the two hash fields so the record is a true
-     * immutable value (the caller cannot later mutate the array it passed in, nor the one it reads).
-     */
     public NodeAnchorRecord {
         Objects.requireNonNull(auditHeadHash, "auditHeadHash");
         Objects.requireNonNull(shardAnchorDigest, "shardAnchorDigest");

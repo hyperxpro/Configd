@@ -20,17 +20,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The HTTP control-plane reference client: unary {@link #get}/{@link #put}/{@link #delete} of a config entry,
- * plus the ADMIN-gated {@link #transferLeadership} control op. Every call routes through the {@link LeaderRouter}
- * (leader-follow + bounded backoff-retry, indeterminate-write handling, optional replay-guard stamping).
- * Distinct from -- and independent of -- the edge streaming plane ({@code ConfigdEdgeClient}); a pure-HTTP user
- * needs only this module plus core.
- *
- * <p>Async by default (each op returns a {@link CompletableFuture}); a blocking facade ({@link #blocking()})
- * serves the reference / conformance driver. Server reactions surface as a typed exception hierarchy
- * ({@code ForbiddenException} / {@code BadRequestException} / {@code AuthFailedException} /
- * {@code IndeterminateException} / {@code UnavailableException}); a {@code 404} is a definite result (an empty
- * {@link GetResult}), never an exception.
+ * HTTP control-plane client: get/put/delete, transferLeadership (ADMIN-gated).
+ * Routes through LeaderRouter (leader-follow + backoff-retry + indeterminate-write handling).
+ * Async (CompletableFuture); blocking facade for reference driver. 404 = empty GetResult, never exception.
  */
 public final class ConfigdHttpClient implements AutoCloseable {
 
@@ -50,29 +42,22 @@ public final class ConfigdHttpClient implements AutoCloseable {
         return new Builder();
     }
 
-    // async surface
-
-    /** Reads {@code key}. A {@code 404} yields an empty {@link GetResult} (definite absent, not an error). */
     public CompletableFuture<GetResult> get(String key, GetOptions options) {
         return CompletableFuture.supplyAsync(() -> doGet(key, options), executor);
     }
 
-    /** Writes {@code value} to {@code key}. Idempotent last-write-wins; safe to retry (the router does, to-definite). */
     public CompletableFuture<WriteOutcome> put(String key, byte[] value, WriteOptions options) {
         byte[] copy = value.clone();
         return CompletableFuture.supplyAsync(() -> doWrite("PUT", key, copy, options), executor);
     }
 
-    /** Deletes {@code key}. Idempotent tombstone; a {@code 200} with a seq even for an already-absent key. */
     public CompletableFuture<WriteOutcome> delete(String key, WriteOptions options) {
         return CompletableFuture.supplyAsync(() -> doWrite("DELETE", key, null, options), executor);
     }
 
     /**
-     * Requests that group {@code groupId}'s Raft leadership move to node {@code targetNodeId} (ADMIN-gated).
-     * Completes when the transfer is <b>initiated</b> (a {@code 200} -- asynchronous; confirm the move via a
-     * follow-up leader read), or fails ({@code 409} precondition / {@code 400} / {@code 503} unconfirmed-timeout
-     * as {@code UnavailableException} / {@code 403} without ADMIN).
+     * Requests leadership transfer (ADMIN-gated). Completes when transfer is initiated (200, asynchronous;
+     * confirm via follow-up leader read), or fails (409/400/503 as UnavailableException, 403 without ADMIN).
      */
     public CompletableFuture<Void> transferLeadership(int groupId, int targetNodeId) {
         return CompletableFuture.supplyAsync(() -> {
@@ -82,14 +67,10 @@ public final class ConfigdHttpClient implements AutoCloseable {
         }, executor);
     }
 
-    // blocking facade
-
-    /** A blocking view of the same operations (for the reference / conformance driver). */
     public Blocking blocking() {
         return new Blocking();
     }
 
-    /** Blocking wrappers; each throws the typed exception directly (no {@code CompletionException} wrap). */
     public final class Blocking {
         public GetResult get(String key, GetOptions options) {
             return doGet(key, options);
@@ -110,7 +91,7 @@ public final class ConfigdHttpClient implements AutoCloseable {
     }
 
     private GetResult doGet(String key, GetOptions options) {
-        PathGrammar.validateCanonical(key); // reject a non-canonical/illegal key client-side, before it reaches the wire
+        PathGrammar.validateCanonical(key);
         String path = "/v1/config/" + encodeKeyPath(key) + readQuery(options);
         HttpResponse<byte[]> resp = router.execute(new LeaderRouter.Request("GET", path, null, false, false));
         if (resp.statusCode() == 404) {
@@ -123,27 +104,23 @@ public final class ConfigdHttpClient implements AutoCloseable {
     }
 
     private WriteOutcome doWrite(String method, String key, byte[] body, WriteOptions options) {
-        PathGrammar.validateCanonical(key); // reject a non-canonical/illegal key client-side, before it reaches the wire
+        PathGrammar.validateCanonical(key);
         String path = "/v1/config/" + encodeKeyPath(key) + scopeQuery(options.scope());
         HttpResponse<byte[]> resp = router.execute(new LeaderRouter.Request(method, path, body, true, true));
         String text = new String(resp.body(), StandardCharsets.UTF_8);
         Matcher m = COMMITTED.matcher(text.trim());
         if (!m.matches()) {
-            // A 200 whose body is not "Committed: seq=<N>" is a contract violation.
             throw new ProtocolViolationException(
                     "write returned 200 but the body was not 'Committed: seq=<N>' (§04 D4-2)");
         }
         try {
             return new WriteOutcome(Long.parseLong(m.group(1)));
         } catch (NumberFormatException overflow) {
-            // The regex guarantees digits, but an out-of-range seq overflows a long: a hostile or broken server.
-            // Surface it as a typed protocol violation, never a raw NumberFormatException.
             throw new ProtocolViolationException(
                     "write returned 200 but the committed seq '" + m.group(1) + "' is not a valid long (§04 D4-2)");
         }
     }
 
-    /** Parse the {@code X-Config-Version} header, failing closed to a typed protocol violation on garbage. */
     private static long parseVersionHeader(String raw) {
         try {
             return Long.parseLong(raw);

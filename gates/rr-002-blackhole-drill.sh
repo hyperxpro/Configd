@@ -4,21 +4,6 @@
 # The LIVE discriminating test for a timeout-less, on-tick-thread connect/TLS
 # handshake to a black-holed peer freezing the whole node.
 #
-# WHAT IT PROVES (discriminating):
-#   - 3-node localhost cluster comes up; a leader commit-confirms writes.
-#   - We iptables `-j DROP` ONE FOLLOWER's raft port (a SYN black-hole — the
-#     exact production fault; REJECT would NOT reproduce it because RST returns
-#     immediately). The leader must keep replicating to the OTHER follower, so a
-#     quorum (leader + 1) still commits.
-#   - THROUGHOUT a DROP window (~DROP_WINDOW_S), every ~1s we probe the leader:
-#       PUT (commit), GET default, GET linearizable, GET /health/ready
-#     each with a per-op deadline (OP_DEADLINE_S). We record per-op latency.
-#   - POST-FIX  : every op stays under its deadline; commits keep advancing.
-#   - PRE-FIX   : once the leader tries to connect to the DROP'd follower, the
-#     tick thread parks in connect(); ops time out / commits stall within the
-#     window. The script reports STALL and exits non-zero. We do NOT wait out
-#     the ~127s OS SYN timeout — exceeding the deadlines IS the captured stall.
-#
 # SAFETY: iptables rules are ALWAYS torn down in an EXIT trap; the DROP count is
 #   asserted 0 before and after. Nodes are killed by TRACKED PID ONLY — we never
 #   pkill on the jar path (that would murder an invoking shell whose cmdline

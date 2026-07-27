@@ -4,11 +4,6 @@ import io.configd.edge.EdgeClientCore;
 import io.configd.edge.StrongReadKeyClass;
 import io.configd.observability.PrometheusExporter;
 
-/**
- * The edge read-serving contract on the JDK {@link EdgeHttpServer} transport (the equivalence
- * reference). All assertions live in {@link AbstractEdgeReadServerContract}; the Netty transport runs
- * the identical matrix in {@link NettyEdgeHttpServerTest}. This subclass only wires the JDK adapter.
- */
 class EdgeHttpServerTest extends AbstractEdgeReadServerContract {
 
     @Override

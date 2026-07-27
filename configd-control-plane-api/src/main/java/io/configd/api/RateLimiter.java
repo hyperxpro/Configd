@@ -5,28 +5,12 @@ import io.configd.common.Clock;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 
-/**
- * Lock-free token-bucket rate limiter for write request throttling.
- * <p>
- * Uses a CAS-based approach to avoid the synchronized serialization
- * point that caused virtual thread pinning and throughput bottlenecks.
- * <p>
- * State is encoded into a single {@code AtomicLong} pair: stored permits
- * (as fixed-point long with 1000x scale) and last refill time. This
- * enables lock-free concurrent access via compare-and-swap.
- * <p>
- * Thread safety: fully lock-free. Safe for concurrent access from
- * virtual threads without carrier thread pinning.
- */
 public final class RateLimiter {
 
     private final Clock clock;
     private final double permitsPerSecond;
     private final double maxPermits;
 
-    /**
-     * Stored permits scaled by 1000 for fixed-point arithmetic in AtomicLong.
-     */
     private final AtomicLong storedPermitsScaled;
     private final AtomicLong lastRefillNanos;
 
@@ -61,15 +45,10 @@ public final class RateLimiter {
         this(Clock.system(), permitsPerSecond, burstPermits);
     }
 
-    /** @return true if the permit was granted, false if rate limited */
     public boolean tryAcquire() {
         return tryAcquire(1);
     }
 
-    /**
-     * @param permits number of permits to acquire
-     * @return true if all permits were granted
-     */
     public boolean tryAcquire(int permits) {
         if (permits <= 0) {
             throw new IllegalArgumentException("permits must be positive: " + permits);
@@ -80,17 +59,12 @@ public final class RateLimiter {
         while (true) {
             long now = clock.nanoTime();
 
-            // Refill: try to advance the refill timestamp
             long lastRefill = lastRefillNanos.get();
             long elapsedNanos = now - lastRefill;
             long newPermitsScaled = 0;
             if (elapsedNanos > 0) {
                 newPermitsScaled = (long) (elapsedNanos * permitsPerSecond / 1_000_000_000.0 * SCALE);
                 if (newPermitsScaled > 0) {
-                    // Try to claim this refill window. If another thread already
-                    // advanced the clock, discard our computed permits - they were
-                    // already credited by the winning thread. Without this guard,
-                    // concurrent losers double-count the same time window.
                     if (!lastRefillNanos.compareAndSet(lastRefill, now)) {
                         newPermitsScaled = 0;
                     }
@@ -102,8 +76,6 @@ public final class RateLimiter {
             long availableScaled = Math.min(maxScaled, currentScaled + newPermitsScaled);
 
             if (availableScaled < requiredScaled) {
-                // Not enough permits even after refill
-                // Still try to credit the refill so other threads benefit
                 if (newPermitsScaled > 0 && availableScaled > currentScaled) {
                     storedPermitsScaled.compareAndSet(currentScaled, availableScaled);
                 }
@@ -114,13 +86,9 @@ public final class RateLimiter {
             if (storedPermitsScaled.compareAndSet(currentScaled, afterAcquire)) {
                 return true;
             }
-            // CAS failed - another thread modified the state; retry
         }
     }
 
-    /**
-     * Returns the current number of available permits (approximate).
-     */
     public double availablePermits() {
         long now = clock.nanoTime();
         long lastRefill = lastRefillNanos.get();

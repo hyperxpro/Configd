@@ -68,7 +68,6 @@ final class BalanceTestSupport {
             }
         }
 
-        /** Places every group {@code [0, groupCount)} on a single leader (the skewed starting point). */
         void placeAllOn(int groupCount, NodeId leader) {
             for (int g = 0; g < groupCount; g++) {
                 leaderOf.put(g, leader);
@@ -76,7 +75,6 @@ final class BalanceTestSupport {
             }
         }
 
-        /** Assigns one group's leader (term seeded to 1 if new). */
         void place(int group, NodeId leader) {
             leaderOf.put(group, leader);
             termOf.putIfAbsent(group, 1L);

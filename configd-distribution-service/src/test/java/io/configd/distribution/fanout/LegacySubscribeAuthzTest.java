@@ -22,19 +22,8 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * The legacy full-store SUBSCRIBE authorization matrix driven through {@link
- * FanOutConnectionDriver}. A full-store SUBSCRIBE is a streaming read of the whole store,
- * so it is gated at admission on a whole-store READ cover via the {@link WatchAuthorizer}
- * SPI. The gate is fail-closed with one asymmetry from the watch path: a {@code null}
- * authorizer admits the feed, since an auth-off deployment has no principal model to
- * evaluate. Uses a real {@link FanOutBuffer} and {@link SnapshotReplaySource}, a recording
- * {@link RecordingTransportSink}, a {@link FakeClock}, and lambda and small named
- * authorizers, no threads, no I/O.
- */
 class LegacySubscribeAuthzTest {
 
-    /** An authorizer that grants SUBSCRIBE iff the principal is listed; every watch is denied. */
     private static WatchAuthorizer subscribeGrant(String... allowed) {
         Set<String> ok = Set.of(allowed);
         return new WatchAuthorizer() {
@@ -78,7 +67,6 @@ class LegacySubscribeAuthzTest {
                 FanOutSessionMetrics.NOOP, clock, gov, identity, (c, m) -> teardowns.add(c), auth);
     }
 
-    /** Posts a frame and runs the resulting session command on the test (session) thread. */
     private void feed(EdgeFrame frame) {
         driver.onInboundFrame(frame);
         driver.drainInboundCommands();
@@ -90,9 +78,9 @@ class LegacySubscribeAuthzTest {
 
     @Test
     void denyingAuthorizerTearsDownNotAuthorizedWithZeroDataFrames() {
-        setup(subscribeGrant(), "edge-1"); // grants no one, so edge-1 is denied
+        setup(subscribeGrant(), "edge-1");
         feed(subscribe("edge-1"));
-        tick(); // prove no data frame ever materializes, even after a tick
+        tick();
 
         assertEquals(List.of(ErrorCode.NOT_AUTHORIZED), teardowns,
                 "a denied SUBSCRIBE tears down NOT_AUTHORIZED");
@@ -105,7 +93,6 @@ class LegacySubscribeAuthzTest {
         setup(subscribeGrant("edge-1"), "edge-1");
         feed(subscribe("edge-1"));
 
-        // onSubscribe emits SUBSCRIBE_OK synchronously; the feed then streams commits verbatim.
         assertEquals(1, out.sentOfType(EdgeFrame.SubscribeOk.class).size(),
                 "a granted SUBSCRIBE is acknowledged with SUBSCRIBE_OK");
         assertTrue(teardowns.isEmpty(), "no teardown on a granted feed");
@@ -138,10 +125,6 @@ class LegacySubscribeAuthzTest {
 
     @Test
     void wireEdgeIdCannotSelfAuthorizeOverMtls() {
-        // The cert principal is attacker; the authorizer grants only admin. The attacker
-        // puts the authorized id admin in the wire frame, but bindIdentity overrides it
-        // with the cert principal, so the gate evaluates attacker and denies. The
-        // wire-asserted edgeId is ignored.
         setup(subscribeGrant("admin"), "attacker");
         feed(subscribe("admin"));
         tick();
@@ -153,8 +136,6 @@ class LegacySubscribeAuthzTest {
 
     @Test
     void certPrincipalIsAuthorizedRegardlessOfWireEdgeId() {
-        // The dual of the negative case: the cert principal admin is granted, so the feed
-        // is admitted even though the wire frame carries a different, irrelevant edgeId.
         setup(subscribeGrant("admin"), "admin");
         feed(subscribe("ignored-wire-id"));
 

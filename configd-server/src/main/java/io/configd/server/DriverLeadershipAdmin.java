@@ -15,24 +15,10 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-/**
- * Backs the ADMIN-gated leadership-transfer endpoint with the {@link MultiRaftDriver}: resolves a group's
- * {@link RaftNode} and drives {@link RaftNode#transferLeadership} through the built {@link AdminService}
- * guard, returning its {@link AdminService.AdminResult}. One {@code AdminService} is constructed per call
- * over tiny per-group adapters - the built guard (is-leader check, NotLeader result, Success/Failure
- * shaping) stays the single source of truth, and there is no shared mutable state to reason about.
- *
- * <p><b>Owner-thread confinement is load-bearing.</b> {@link RaftNode#transferLeadership} mutates consensus
- * state and asserts it runs on the group's single owner thread, so it is posted to
- * {@link MultiRaftDriver#ownerExecutor(int)} and awaited under a bounded deadline - never called from the
- * HTTP thread. The leader/role reads used by the guard are the volatile, off-owner-safe accessors
- * ({@link RaftNode#leaderId()} / {@link RaftNode#role()}). If the owner does not confirm within the bound
- * (a wedged or overloaded owner), a {@link AdminApiHandler.LeadershipTransferTimeout} is raised (mapped to
- * 503) rather than blocking the HTTP thread indefinitely or reporting a false negative.
- */
+
 final class DriverLeadershipAdmin implements AdminApiHandler.LeadershipAdmin {
 
-    /** Default bounded wait for the owner thread to run the transfer; expiry -> 503 (unknown, retryable). */
+    
     static final long DEFAULT_AWAIT_MILLIS = 5_000L;
 
     private final MultiRaftDriver driver;
@@ -70,13 +56,7 @@ final class DriverLeadershipAdmin implements AdminApiHandler.LeadershipAdmin {
         return adminService.transferLeadership(target);
     }
 
-    /**
-     * Reads a group's leader/role for the transfer guard using ONLY the volatile, off-owner-safe
-     * {@link RaftNode} accessors. The cluster-status methods are deliberately unimplemented: this adapter
-     * backs the leadership-transfer surface, which never calls {@link AdminService#clusterStatus()}. A
-     * future status endpoint must resolve term/commit/nodes via owner-confined reads, not off-owner here -
-     * throwing keeps that requirement loud rather than silently returning a possibly-torn value.
-     */
+    
     private static final class GroupStateProvider implements AdminService.ClusterStateProvider {
         private final RaftNode node;
 
@@ -115,11 +95,7 @@ final class DriverLeadershipAdmin implements AdminApiHandler.LeadershipAdmin {
         }
     }
 
-    /**
-     * Marshals {@link RaftNode#transferLeadership} onto the group's owner thread and awaits the boolean
-     * under a bounded deadline. {@code addNode}/{@code removeNode} are intentionally unexposed (this gate
-     * exposes leadership transfer only); invoking them is a wiring error.
-     */
+    
     private static final class OwnerThreadTransferChanger implements AdminService.MembershipChanger {
         private final int groupId;
         private final RaftNode node;

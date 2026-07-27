@@ -7,21 +7,6 @@ import org.junit.jupiter.api.Timeout;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * The dangerous proof: coalesced heartbeats do NOT cause spurious leadership elections.
- * <p>
- * The cross-node sim ({@link ConsistencyPropertyTests.ClusterHarness}) wires the coalesce->drain pipeline
- * into every node's heartbeat path, so these tests exercise it under sustained write load with real
- * election timers across nodes - the only surface where heartbeat starvation (the stall family)
- * turns into a spurious election.
- * <ul>
- *   <li><b>The proof:</b> with the real coalescing drain, a stable leader stays leader at a fixed term
- *       under continuous proposes - no spurious election.</li>
- *   <li><b>Test-the-tester (non-vacuity):</b> a deliberately broken drain MUST destabilize leadership - 
- *       DROP (heartbeats lost) prevents any stable leader; DELAY past the election timeout forces at
- *       least one spurious election. If these did NOT churn, the proof above would be vacuous.</li>
- * </ul>
- */
 @Timeout(300) // CI hygiene on the 2-vCPU box: fail loudly rather than hang the nightly
 class CoalescedHeartbeatLivenessTest {
 
@@ -33,7 +18,6 @@ class CoalescedHeartbeatLivenessTest {
     private static final ConsistencyPropertyTests.ClusterHarness.HeartbeatFault DELAY =
             ConsistencyPropertyTests.ClusterHarness.HeartbeatFault.DELAY;
 
-    // THE PROOF - no spurious election under sustained load (coalescing active)
 
     @Test
     void noSpuriousElectionUnderSustainedLoad() {
@@ -100,7 +84,6 @@ class CoalescedHeartbeatLivenessTest {
                 "vacuity: only " + reached + "/" + seeds + " seeds reached the idle assertion");
     }
 
-    // TEST-THE-TESTER - a broken drain MUST churn (else the proof is vacuous)
 
     @Test
     void droppedCoalescedHeartbeat_preventsStableLeadership() {
@@ -238,9 +221,6 @@ class CoalescedHeartbeatLivenessTest {
                         + starved + "/" + reached + "; otherwise this test is vacuous.");
     }
 
-    // helpers
-
-    /** Drive until one node is leader for 120 consecutive ticks (stable); return it, or -1 within budget. */
     private static int electStableLeader(ConsistencyPropertyTests.ClusterHarness c, int maxTicks) {
         int candidate = -1;
         int stable = 0;
@@ -259,7 +239,6 @@ class CoalescedHeartbeatLivenessTest {
         return -1;
     }
 
-    /** The maximum currentTerm across all nodes (a spurious election shows up as a rise in this). */
     private static long maxTerm(ConsistencyPropertyTests.ClusterHarness c) {
         long max = 0;
         for (int i = 0; i < NODES; i++) {

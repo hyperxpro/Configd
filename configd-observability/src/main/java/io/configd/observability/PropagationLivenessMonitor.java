@@ -38,10 +38,6 @@ public final class PropagationLivenessMonitor {
         edgeAppliedVersions.remove(edgeId);
     }
 
-    /**
-     * Checks all edges for propagation lag violations.
-     * @return number of edges that are lagging beyond threshold
-     */
     public int checkAll() {
         long commit = leaderCommitIndex.get();
         int violations = 0;

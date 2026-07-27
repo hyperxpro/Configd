@@ -15,12 +15,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Tests the secure-by-config wiring: the {@code configd.raft.encryption.enabled} flag toggles
- * {@link ConfigdServer#deriveRaftIntegrityEnvelope} between the byte-identical keyed HMAC envelope
- * (OFF, the default) and an AES-256-GCM encrypting envelope (ON), and an unknown KMS provider fails
- * closed. Mirrors D1FailClosedTest's direct-call approach (no full server boot needed).
- */
 class EncryptionAtRestWiringTest {
 
     private static final String ENABLE = "configd.raft.encryption.enabled";

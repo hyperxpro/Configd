@@ -18,54 +18,25 @@ import java.nio.file.StandardOpenOption;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * Persists the sealed {@link WrappedKey} that an EXTERNAL KMS provider (e.g. {@code vault-transit}) hands
- * back for the per-node keyring-custody secret. This is the one on-disk artifact the external posture adds:
- * the boot path reads it first, calls {@link io.configd.common.kms.KmsProvider#unwrap(WrappedKey)} to recover
- * the custody secret, then derives the keyring-wrapping keys from it.
- *
- * <h2>What this is NOT</h2>
- * The {@code local} posture has NO such file: its custody secret is the cluster signing key, always
- * re-derivable, so nothing new appears on disk and byte-identity is preserved. The stored bytes are the
- * provider's OPAQUE sealed ciphertext (e.g. Vault's {@code vault:vN:...} blob) plus its self-describing
- * {@link KeyId} and AAD context - NOT key material. It is safe to persist and (redacted) to log.
- *
- * <h2>Integrity</h2>
- * The file carries no keyring-derived MAC (that key is itself derived from the secret this file seals -
- * circular). Its integrity rides on the provider's own AEAD: a tampered/relocated ciphertext fails the
- * backend's authenticated decrypt, which surfaces as {@code KmsUnavailableException} at boot and the node
- * FAILS CLOSED. A truncated/garbled file likewise fails to parse and refuses the boot - never a silent
- * re-provision that would seal a NEW secret and orphan the existing encrypted data.
- *
- * <h2>Layout</h2>
- * <pre>
- *   magic:int (RKMS) | formatVersion:short | providerType:UTF | reference:UTF | keyVersion:int
- *   | contextCount:short | contextCount * (key:UTF, value:UTF) | ciphertextLen:int | ciphertext
- * </pre>
- * Written crash-atomically: staged to a sibling {@code .tmp}, fsync'd, {@code ATOMIC_MOVE}d over the final
- * name, then the directory is fsync'd so the rename is durable (mirrors the keyring / anchor writers).
- */
+
 final class KmsSealedRootStore {
 
-    /** The sealed-root file name in {@code dataDir} (beside {@code raft-keyring}). */
+    
     static final String FILE_NAME = "raft-kms-root";
 
-    /** {@code "RKMS"} - distinct, non-zero magic; sibling to the RaftArtifactMagic family. */
+    
     private static final int MAGIC = 0x524B_4D53;
     private static final short FORMAT_VERSION = 1;
 
     private KmsSealedRootStore() {
     }
 
-    /** True if the sealed-root file already exists (an external-posture node that has provisioned once). */
+    
     static boolean exists(Path file) {
         return Files.isRegularFile(file);
     }
 
-    /**
-     * Serialises {@code wrapped} and writes it crash-atomically to {@code file}. Called ONCE, at the first
-     * boot of an external-posture node (mirrors the keyring's first-boot mint).
-     */
+    
     static void write(Path file, WrappedKey wrapped) {
         byte[] body = encode(wrapped);
         Path dir = file.toAbsolutePath().getParent();
@@ -88,7 +59,7 @@ final class KmsSealedRootStore {
         }
     }
 
-    /** Reads and parses the sealed-root file. Any corruption/truncation throws (fail-closed boot). */
+    
     static WrappedKey read(Path file) {
         byte[] bytes;
         try {

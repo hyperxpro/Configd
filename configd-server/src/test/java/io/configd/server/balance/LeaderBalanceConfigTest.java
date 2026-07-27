@@ -78,7 +78,6 @@ class LeaderBalanceConfigTest {
 
     @Test
     void malformedNumber_failsClosed() {
-        // A typo in a numeric knob must fail the boot via the ConfigSource, not silently fall back.
         assertThrows(ConfigException.class, () -> LeaderBalanceConfig.fromConfig(
                 source(Map.of("configd.raft.autobalance.intervalMs", "not-a-number"))));
     }

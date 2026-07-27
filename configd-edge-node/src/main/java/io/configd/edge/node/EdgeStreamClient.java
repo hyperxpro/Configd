@@ -29,82 +29,20 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * The edge node's socket shell: owns connect / mTLS / reconnect on virtual threads, encodes
- * and decodes {@link EdgeFrameCodec} frames, feeds inbound frames to
- * {@link EdgeClientCore#onFrame}, drains the core's {@link EdgeClientCore.FrameSink}
- * (outbound CURSOR_ACKs) and {@link EdgeClientCore.ConnectionDirective} queue. No protocol
- * logic lives here — the core owns the policy; this shell owns the sockets.
- *
- * <h2>Transport stack</h2>
- * JDK sockets via the SAME {@link TlsManager} the control plane uses (mTLS by construction:
- * the client presents its certificate, verifies the server against the trust store, and
- * enforces HTTPS endpoint identification). Connect and handshake are bounded
- * ({@value #CONNECT_TIMEOUT_MS} / {@value #HANDSHAKE_TIMEOUT_MS} ms, mirroring
- * {@code TcpRaftTransport}); no TLS = plaintext (test / single-node), matching the server's
- * policy.
- *
- * <h2>Per-connection threading (mirrors FanOutServer's 3-thread shape)</h2>
- * <ul>
- *   <li><b>session</b> (one long-lived virtual thread, the core's single writer): runs the
- *       connect/subscribe/reconnect state machine, drains inbound frames into
- *       {@code core.onFrame}, drives {@code core.tick}, pumps metrics, and obeys
- *       {@code ReconnectNextEndpoint} directives;</li>
- *   <li><b>reader</b> (per connection): blocking decode with the peekLength
- *       bounds-before-allocation discipline; posts frames to a bounded inbound queue
- *       (a full queue blocks the reader — natural TCP backpressure toward the server,
- *       whose bounded per-subscriber queue then demotes us);</li>
- *   <li><b>writer</b> (per connection): drains a bounded outbound queue to the socket.
- *       {@link EdgeClientCore.FrameSink#offer} is a non-blocking {@code queue.offer};
- *       a refused CURSOR_ACK is retried by the core's next tick (acks are idempotent).</li>
- * </ul>
- *
- * <h2>Failover</h2>
- * On any connection end — socket EOF/error, decode corruption, the core's heartbeat-silence
- * {@code ReconnectNextEndpoint} directive, or the shell's own transport-silence guard — the
- * client advances to the NEXT configured endpoint (round-robin) and re-SUBSCRIBEs carrying
- * the resume cursor ({@code resumeCursor = core.cursor()}; {@code failoverResumeCursor} set
- * once a previous endpoint had been reached). Reads keep refusing cursor-behind during
- * catch-up — consistent refusal, enforced by {@link EdgeHttpServer}, never by blocking here.
- * Backoff between attempts is bounded and jittered ({@code edge.reconnect.backoffMs} base,
- * doubling to {@value #MAX_BACKOFF_MS} ms cap, +/-50% jitter).
- *
- * <h2>Poison pill</h2>
- * Apply/snapshot failures never escape {@code core.onFrame}: the core's
- * {@link io.configd.edge.PoisonPillPolicy} converts them into directives — bounded retries
- * (resubscribe-at-cursor), then a forced snapshot re-bootstrap (resubscribe at cursor 0), then
- * {@link EdgeClientCore.ConnectionDirective.TerminalFailure}: this shell logs the structured
- * SEVERE event, stops, and runs the injected {@code terminalAction} ({@code EdgeNodeMain} wires
- * {@code System.exit} non-zero — never an infinite hot loop, never a lying green health check).
- * The resume cursor is derived from core state at SUBSCRIBE time (quarantined = 0, else
- * core.cursor()) so a connect failure mid-recovery cannot lose the forced re-bootstrap. The
- * {@code RuntimeException} catch in the session loop remains only as a backstop for non-apply
- * protocol-state defects.
- *
- * <h2>DISCONNECTED re-bootstrap</h2>
- * {@link #requestRebootstrap(String)} is the real orchestration seam: on each transition INTO
- * DISCONNECTED (detected by {@link EdgeNodeMetrics#syncFromCore} — also while no connection
- * exists), the live connection (if any) is torn down and any backoff in progress is cut short,
- * so the client re-SUBSCRIBEs immediately at its current cursor and the server's
- * TAIL/SNAPSHOT_FIRST decision resolves replay vs re-bootstrap.
+ * Socket shell: owns connect/mTLS/reconnect on virtual threads, frames to/from
+ * {@link EdgeClientCore}. No protocol logic here — the core owns the policy.
  */
 public final class EdgeStreamClient implements AutoCloseable {
 
     private static final Logger LOG = Logger.getLogger(EdgeStreamClient.class.getName());
 
-    /** Bounded connect timeout (ms), mirroring {@code TcpRaftTransport.CONNECT_TIMEOUT_MS}. */
     static final int CONNECT_TIMEOUT_MS = 1_000;
-    /** Bounded TLS handshake timeout (ms), mirroring {@code TcpRaftTransport}. */
     static final int HANDSHAKE_TIMEOUT_MS = 2_000;
-    /** Reconnect backoff cap (ms): the bound on the doubling of {@code edge.reconnect.backoffMs}. */
     static final long MAX_BACKOFF_MS = 10_000;
-    /** Bounded outbound (edge-to-server) queue depth in frames; CURSOR_ACK-only traffic. */
     static final int OUTBOUND_QUEUE_FRAMES = 64;
-    /** Bounded inbound (server-to-edge) queue depth in frames (full = TCP backpressure). */
     static final int INBOUND_QUEUE_FRAMES = 256;
-    /** Session-loop poll cadence (ms): the core tick / directive-drain period. */
     static final long TICK_POLL_MS = 50;
 
-    /** {@code tokenExpiresAtMillis} sentinel for a credential with no active expiry (static token / cert / none). */
     static final long NO_EXPIRY = Long.MAX_VALUE;
 
     /** Sentinel posted by the reader when the connection ended. */
@@ -115,30 +53,10 @@ public final class EdgeStreamClient implements AutoCloseable {
     private final List<InetSocketAddress> endpoints;
     private final String edgeId;
     private final List<String> prefixes;
-    /**
-     * The outbound edge wire version for this client: {@code 0x03} when the operator opted this
-     * prefix-scoped edge into server-side filtering, else {@code 0x01} (byte-identical legacy).
-     * EVERY outbound frame - SUBSCRIBE and CURSOR_ACK - is stamped with it, because the server
-     * pins the inbound version from the connection's first frame and fails a later frame stamped
-     * otherwise closed.
-     */
     private final byte wireVersion;
     private final boolean acceptFiltered;
-    /**
-     * The credential presented in an {@code AUTH} frame at connect (bearer / basic token auth), or
-     * {@code null} for an mTLS-only / plaintext edge, which sends no AUTH frame and stays
-     * byte-identical. Additive: a certificate-only edge configures none.
-     */
     private final Credential authCredential;
-    /**
-     * Optional proactive token refresh: renew a re-presentable credential AHEAD of its expiry so a
-     * long-lived edge stream is never cut off at the server's hard-expiry close. Dormant unless
-     * supplied - a static token (no {@code exp}) or an mTLS-only edge sets {@code null}, which is
-     * byte-identical (no proactive {@code REFRESH_AUTH} on the wire). A cert cannot refresh
-     * in-band, so this is token-only, and only wired once a token carries an OIDC {@code exp}.
-     */
     private final ProactiveRefresh proactiveRefresh;
-    /** The current credential's absolute expiry (ms), advanced on each proactive refresh. Session-thread-only. */
     private long tokenExpiresAtMillis;
     private final TlsManager tlsManager; // null = plaintext (test / single-node)
     private final long backoffBaseMs;
@@ -155,24 +73,6 @@ public final class EdgeStreamClient implements AutoCloseable {
     private volatile Thread sessionThread;
     private EdgeClientCore core; // set in start(); touched only by the session thread after that
 
-    /**
-     * @param endpoints       ordered fan-out endpoints (non-empty)
-     * @param edgeId          the SUBSCRIBE identity (must match the mTLS cert DN; the server
-     *                        binds the cert principal authoritatively)
-     * @param prefixes        subscription prefixes (empty = full store)
-     * @param tlsManager      the mTLS context, or null for plaintext (test / single-node)
-     * @param backoffBaseMs   {@code edge.reconnect.backoffMs} (bounded + jittered here)
-     * @param silenceFactor   {@code edge.heartbeat.silenceFactor} - also bounds the shell's
-     *                        transport-silence guard (no frame at all since subscribe)
-     * @param clock           the wall clock (the core's tick clock)
-     * @param metrics         the process metric series
-     * @param rebootstrapHook an ADDITIONAL observer invoked on each DISCONNECTED entry
-     *                        (tests inject recorders; may be null). The re-bootstrap
-     *                        orchestration ({@link #requestRebootstrap}) ALWAYS runs first
-     *                        - the hook composes, it does not replace.
-     * @param terminalAction  the terminal fail-loud action (non-null; {@code EdgeNodeMain}
-     *                        wires a non-zero {@code System.exit}, tests inject recorders)
-     */
     public EdgeStreamClient(List<InetSocketAddress> endpoints, String edgeId,
                             List<String> prefixes, TlsManager tlsManager,
                             long backoffBaseMs, int silenceFactor,
@@ -182,14 +82,6 @@ public final class EdgeStreamClient implements AutoCloseable {
                 metrics, rebootstrapHook, terminalAction, false);
     }
 
-    /**
-     * @param acceptFiltered opt this edge into server-side prefix filtering. When true
-     *                       AND the subscription is prefix-scoped (non-empty prefixes), the client
-     *                       negotiates the {@code 0x03} wire and advertises {@code acceptsFiltered}
-     *                       on SUBSCRIBE; a full-store edge always negotiates {@code 0x01}. The
-     *                       explicit opt-in (not automatic-by-version) keeps an unconfigured edge
-     *                       byte-identical.
-     */
     public EdgeStreamClient(List<InetSocketAddress> endpoints, String edgeId,
                             List<String> prefixes, TlsManager tlsManager,
                             long backoffBaseMs, int silenceFactor,
@@ -199,13 +91,6 @@ public final class EdgeStreamClient implements AutoCloseable {
                 metrics, rebootstrapHook, terminalAction, acceptFiltered, null);
     }
 
-    /**
-     * @param authCredential the credential to present in an {@code AUTH} frame at connect (a
-     *                       {@link Credential.BearerToken} or {@link Credential.BasicCredential}), or
-     *                       {@code null} for an mTLS-only / plaintext edge (no AUTH frame,
-     *                       byte-identical). The frame is written synchronously before the SUBSCRIBE, so
-     *                       the server authenticates the connection before the first business frame.
-     */
     public EdgeStreamClient(List<InetSocketAddress> endpoints, String edgeId,
                             List<String> prefixes, TlsManager tlsManager,
                             long backoffBaseMs, int silenceFactor,
@@ -215,12 +100,6 @@ public final class EdgeStreamClient implements AutoCloseable {
                 rebootstrapHook, terminalAction, acceptFiltered, authCredential, null);
     }
 
-    /**
-     * @param proactiveRefresh optional lead-time token refresh: renew a re-presentable credential
-     *                         ahead of its expiry via {@code REFRESH_AUTH}, so a long-lived stream is not
-     *                         cut off at the server's hard-expiry close. {@code null} (a static token /
-     *                         cert / no-auth edge) sends no proactive {@code REFRESH_AUTH} - byte-identical.
-     */
     public EdgeStreamClient(List<InetSocketAddress> endpoints, String edgeId,
                             List<String> prefixes, TlsManager tlsManager,
                             long backoffBaseMs, int silenceFactor,
@@ -237,8 +116,6 @@ public final class EdgeStreamClient implements AutoCloseable {
         }
         this.edgeId = Objects.requireNonNull(edgeId, "edgeId");
         this.prefixes = List.copyOf(Objects.requireNonNull(prefixes, "prefixes"));
-        // 0x03 only when the operator opted in AND the edge is prefix-scoped (a full-store edge
-        // wants the whole chain, so it stays on the byte-identical 0x01 wire).
         this.acceptFiltered = acceptFiltered && !this.prefixes.isEmpty();
         this.wireVersion = this.acceptFiltered
                 ? EdgeFrameCodec.EDGE_WIRE_VERSION_V3 : EdgeFrameCodec.EDGE_WIRE_VERSION;
@@ -254,8 +131,6 @@ public final class EdgeStreamClient implements AutoCloseable {
         this.clock = Objects.requireNonNull(clock, "clock");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.terminalAction = Objects.requireNonNull(terminalAction, "terminalAction");
-        // The re-bootstrap orchestration always runs on a DISCONNECTED entry;
-        // an injected hook (test recorder) composes after it.
         Runnable injected = rebootstrapHook != null ? rebootstrapHook : () -> { };
         this.rebootstrapHook = () -> {
             requestRebootstrap("disconnected-transition");
@@ -263,17 +138,7 @@ public final class EdgeStreamClient implements AutoCloseable {
         };
     }
 
-    /**
-     * Forces a full re-subscribe NOW: tears down the live connection (if any) so the
-     * session loop cycles, and cuts any backoff in progress short. Invoked on each
-     * transition INTO DISCONNECTED (the {@code edge_rebootstrap_triggered_total} seam);
-     * idempotent and safe from the session thread. While no connection exists the reconnect
-     * machinery is already running — this only removes the remaining backoff delay. The
-     * re-SUBSCRIBE carries the CURRENT cursor (never 0 — the server decides TAIL vs
-     * SNAPSHOT_FIRST; cursor 0 is reserved for the poison-pill forced re-bootstrap path).
-     *
-     * @param reason diagnostic (structured log)
-     */
+    // Cuts backoff short and tears down live connection; safe from session thread.
     void requestRebootstrap(String reason) {
         rebootstrapRequested = true;
         Connection conn = current;
@@ -283,22 +148,14 @@ public final class EdgeStreamClient implements AutoCloseable {
         }
     }
 
-    /** TEST-ONLY: the composed re-bootstrap hook handed to the metrics pump. */
     Runnable rebootstrapHookForTest() {
         return rebootstrapHook;
     }
 
-    /** TEST-ONLY: whether a re-bootstrap request is pending (cuts the next backoff). */
     boolean rebootstrapRequestedForTest() {
         return rebootstrapRequested;
     }
 
-    /**
-     * The outbound seam handed to {@link EdgeClientCore}'s constructor (the client is
-     * created before the core; the sink delegates to whatever connection is live).
-     * {@code offer} returns false when disconnected or the bounded queue is full — the
-     * core retries idempotent CURSOR_ACKs on its next tick.
-     */
     public EdgeClientCore.FrameSink sink() {
         return frame -> {
             Connection conn = current;
@@ -306,7 +163,6 @@ public final class EdgeStreamClient implements AutoCloseable {
         };
     }
 
-    /** Starts the session loop on a virtual thread. The core must use {@link #sink()}. */
     public void start(EdgeClientCore core) {
         this.core = Objects.requireNonNull(core, "core");
         if (!running.compareAndSet(false, true)) {
@@ -316,7 +172,6 @@ public final class EdgeStreamClient implements AutoCloseable {
                 .start(this::sessionLoop);
     }
 
-    /** Stops the client: ends the session loop and closes any live connection. */
     @Override
     public void close() {
         if (!running.compareAndSet(true, false)) {
@@ -336,8 +191,6 @@ public final class EdgeStreamClient implements AutoCloseable {
             }
         }
     }
-
-    // ---- Session loop (the core's single writer) ----
 
     private void sessionLoop() {
         int endpointIdx = 0;
@@ -360,10 +213,6 @@ public final class EdgeStreamClient implements AutoCloseable {
             } catch (IOException e) {
                 LOG.fine(() -> "edge connect/subscribe to " + endpoint + " failed: " + e.getMessage());
             } catch (RuntimeException e) {
-                // Protocol-state / decode / apply defect surfaced by the core. Connection-
-                // fatal; resubscribe-at-cursor heals transient cases. The poison-pill
-                // policy (bounded retry to forced snapshot to terminal fail-loud) replaces
-                // this catch site.
                 LOG.log(Level.WARNING, "edge session error on " + endpoint + " — reconnecting", e);
             } finally {
                 current = null;
@@ -375,13 +224,7 @@ public final class EdgeStreamClient implements AutoCloseable {
             if (!running.get()) {
                 return;
             }
-            // Staleness transitions keep happening WHILE disconnected (that is when
-            // DISCONNECTED is reached) — pump them between connections too, or the
-            // staleness-violation counter and the re-bootstrap trigger would only fire
-            // on a live stream.
             metrics.syncFromCore(core, rebootstrapHook);
-            // Reconnect cycle: count it, advance to the NEXT endpoint (round-robin
-            // failover), back off bounded + jittered.
             metrics.onReconnect();
             endpointIdx++;
             if (!sawInbound) {
@@ -391,10 +234,6 @@ public final class EdgeStreamClient implements AutoCloseable {
         }
     }
 
-    /**
-     * Runs one live connection until it ends. Returns true if at least one inbound frame
-     * was observed (used to reset the backoff and mark the endpoint as reached).
-     */
     private boolean runConnection(Connection conn) {
         boolean sawInbound = false;
         long lastInboundAt = clock.currentTimeMillis();
@@ -406,11 +245,10 @@ public final class EdgeStreamClient implements AutoCloseable {
                 Thread.currentThread().interrupt();
                 return sawInbound;
             }
-            // Drain the batch that is already queued, then tick once.
             Object obj = first;
             while (obj != null) {
                 if (obj == CLOSED) {
-                    return sawInbound; // transport ended (EOF / IO error / corrupt frame)
+                    return sawInbound;
                 }
                 core.onFrame((EdgeFrame) obj);
                 sawInbound = true;
@@ -423,9 +261,6 @@ public final class EdgeStreamClient implements AutoCloseable {
             metrics.syncFromCore(core, rebootstrapHook);
             maybeProactiveRefresh(conn, now);
 
-            // The core's recovery policy: resubscribe directives (heartbeat silence,
-            // fatal ERROR_CLOSE, gap/DISCONNECTED/poison retries) end the connection
-            // cycle; a TerminalFailure ends the PROCESS.
             if (core.hasDirective()) {
                 EdgeClientCore.ConnectionDirective directive;
                 String reason = "directive";
@@ -443,9 +278,6 @@ public final class EdgeStreamClient implements AutoCloseable {
                 LOG.fine(() -> "edge reconnect directive: " + r);
                 return sawInbound;
             }
-            // Transport-silence guard: the core's silence detector arms only after the
-            // first heartbeat; this guard covers a connection that never delivers ANY
-            // frame after subscribe (dead endpoint behind an accepted TCP connect).
             long silentFor = now - lastInboundAt;
             if (silentFor > silenceWindowMs) {
                 LOG.fine(() -> "edge transport silence (" + silentFor + "ms) — reconnecting");
@@ -455,13 +287,6 @@ public final class EdgeStreamClient implements AutoCloseable {
         return sawInbound;
     }
 
-    /**
-     * Terminal fail-loud: the structured SEVERE event (the policy already logged the cause),
-     * a final metrics pump (so {@code configd_edge_poison_pill_terminal} is scrape-visible),
-     * then stop and run the injected terminal action — in production a non-zero
-     * {@code System.exit}; an edge that can neither advance nor re-bootstrap must die
-     * visibly, never idle behind a green health check and never hot-loop reconnects.
-     */
     private void onTerminalFailure(EdgeClientCore.ConnectionDirective.TerminalFailure t) {
         LOG.severe("EDGE TERMINAL (ADR-0040): " + t.reason()
                 + " — edgeId=" + edgeId + " cursor=" + core.cursor()
@@ -471,12 +296,6 @@ public final class EdgeStreamClient implements AutoCloseable {
         terminalAction.run();
     }
 
-    /**
-     * Bounded + jittered backoff: base doubling per consecutive failure up to
-     * {@value #MAX_BACKOFF_MS} ms, +/-50% jitter. Slept in at most 1s slices with a
-     * staleness pump per slice so a long backoff cannot delay DISCONNECTED detection by
-     * the whole backoff window.
-     */
     private void backoff(int consecutiveFailures) {
         long raw = Math.min(MAX_BACKOFF_MS, backoffBaseMs << Math.min(consecutiveFailures, 10));
         long delay = Math.max(1, (long) (raw * (0.5 + ThreadLocalRandom.current().nextDouble())));

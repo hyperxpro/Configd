@@ -8,9 +8,6 @@ import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link Compactor}.
- */
 class CompactorTest {
 
     private static byte[] bytes(String s) {

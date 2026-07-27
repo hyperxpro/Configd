@@ -17,38 +17,11 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * The public node-keyring facade: load / mint / unseal / rotate the persisted, versioned
- * {@code raft-keyring} (layout frozen in {@code docs/architecture/frozen-format-v1.md}). It exists only in the at-rest ENCRYPTION posture
- * (the GCM path); the keyring holds the independent random per-term roots that decouple encryption
- * from the signing key, so rotating either the term or the signing key is non-destructive by
- * construction.
- *
- * <p>The boot caller ({@code ConfigdServer.buildEncryptingEnvelope}) supplies the two signing-key-
- * derived keys - {@code K_keyringMac} (authenticates the whole keyring file) and {@code KEK_wrap}
- * (AES-GCM-wraps each root) - plus a non-secret {@code nodeKeyId} bound into each root's AAD; this
- * facade never sees the signing key itself. It hides the dual-slot {@link KeyringFile} and the
- * {@link KeyringCodec} crypto behind a narrow, public surface.
- *
- * <h2>Boot</h2>
- * <ul>
- *   <li>no file ⇒ first boot / enable-encryption migration ⇒ mint a fresh random {@code root[1]};</li>
- *   <li>file present, ≥1 valid slot ⇒ load the highest {@code keyringSeq};</li>
- *   <li>file present, BOTH slots invalid ⇒ REFUSE ({@link IntegrityException}) - tamper OR a keyring
- *       sealed under a prior signing key (finish the rotation or restore the prior key). Never a
- *       silent re-mint that would orphan the old encrypted data.</li>
- * </ul>
- *
- * <h2>Rotation (crash-atomic, non-destructive)</h2>
- * <ul>
- *   <li>{@link #rotateTerm()} appends a fresh random {@code root[activeTerm+1]}, retains every old
- *       term, and persists via the dual-slot writer; new writes stamp the new term, old data still
- *       decrypts under its retained root.</li>
- *   <li>{@link #rewrapForNewSigningKey} rewraps every root under the new signing key's KEK and writes
- *       the new slot BEFORE the operator swaps {@code signing-key.bin} - roots unchanged, so all prior
- *       data still verifies; a crash on either side of the swap boots on the matching slot.</li>
- * </ul>
- *
- * <p>Not thread-safe (single boot thread; an admin rotation is a serialized operator action).
+ * Public node-keyring facade: load/mint/unseal/rotate persisted versioned raft-keyring
+ * (layout frozen in docs/architecture/frozen-format-v1.md). Exists only in at-rest ENCRYPTION posture;
+ * holds independent random per-term roots decoupling encryption from signing key (non-destructive rotation).
+ * Boot: no file => mint fresh; file + ≥1 valid slot => load highest; both slots invalid => REFUSE (tamper or prior-KEK).
+ * Single-threaded (boot thread + serialized admin rotations).
  */
 public final class NodeKeyring implements Closeable {
 

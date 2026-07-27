@@ -9,17 +9,6 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Discriminating tests for {@link RaftNode}'s public-API entry points
- * {@code propose} and {@code transferLeadership} - the validation and
- * precondition guards a single-node leader exercises synchronously.
- * <p>
- * These guards (null/empty/oversized/RCFG-magic command rejection, NOT_LEADER /
- * TRANSFER_IN_PROGRESS / OVERLOADED outcomes, and the transfer
- * self/non-voter/pending-reconfig preconditions) had untested boundaries. Each
- * test pins one guard's observable outcome. Single-node and deterministic; no
- * sleeps.
- */
 class RaftNodeApiUnitTest {
 
     private static final NodeId N1 = NodeId.of(1);

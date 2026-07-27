@@ -14,52 +14,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-/**
- * The adversarial proof: a ZERO-STATE edge joins a
- * running system under SUSTAINED CONCURRENT WRITES (writes flowing BEFORE, DURING and
- * AFTER its snapshot transfer) and must converge with no gap and no
- * duplicate-application divergence. The mechanism under proof is the production chain
- * already running on every fresh subscribe ({@code decideMode} cursor-0 =>
- * SNAPSHOT_FIRST; {@code performSnapshotTransfer} exact cutover at S; the edge core's
- * atomic cutover + tail from S+1) - this test builds no machinery, it joins a fresh
- * {@link EdgeActor} mid-run via {@link EdgeFanOutSim#joinEdge} and lets the REAL code run,
- * with the reconnect recovery loop live ({@link EdgeFanOutSim#enableEdgeRecovery}).
- *
- * <h2>The judge</h2>
- * The snapshot-delta equivalence machinery, not a parallel judge:
- * <ul>
- *   <li>per-tick THROWING safety invariants ({@link EdgeInvariants}: per-edge version
- *       monotonicity, no stale overwrite) run inside every {@code sim.tick()};</li>
- *   <li>{@link EdgeFanOutSim#finalCheck()} - every edge's store byte-equals the CP
- *       leader's authoritative store (effect equality, handoff spec exactly-once-over-effect);
- *       a skipped seq (missing effect) or a duplicate application with different effect
- *       (a unique-valued older write resurrecting) both fail it;</li>
- *   <li>scenario 1 states the equivalence claim directly: the snapshot-bootstrapped
- *       joiner is judged against a PURE-STREAM control edge (subscribed before genesis;
- *       hard-asserted zero snapshots - possible there because the ack-lag heal is
- *       disabled and the only recovery is the resubscribe path) by the SAME
- *       {@link EdgeInvariants#finalCheck} code.</li>
- * </ul>
- *
- * <h2>Non-vacuity (HARD asserts)</h2>
- * Every scenario hard-asserts its adversity actually happened: at least 1 write committed during
- * the transfer window (the cutover straddle - the window is widened deterministically by
- * lagging the joiner, the slow-consumer-during-its-own-bootstrap reality; the literal
- * big-store/small-chunks widening is the process test's lever), the joiner genuinely
- * bootstrapped via a snapshot, a faulted-channel transfer was genuinely lost mid-flight,
- * and the dup-channel scenario counts &gt;0 duplicated frames across the bootstrap
- * window. The writes carry per-write-unique values, so any duplicate application with
- * different effect (an old write resurrecting over a newer one) diverges the final
- * byte-equality.
- *
- * <h2>End-of-run discipline</h2>
- * Each scenario judges only after (1) the seed-scheduled workload is exhausted (settling
- * mid-schedule lets ops fire during the settle and the judge race a mid-replication
- * leader), (2) fence writes convert any in-flight final-delta strand into an arriving
- * gap the live recovery loop heals, (3) the CP is settled level, and (4) a bounded
- * tick loop has driven every edge to its source's version. Tick-driven throughout - no
- * sleeps.
- */
 class EdgeBootstrapUnderSustainedWritesTest {
 
     private static final int CP_NODES = 3;

@@ -31,12 +31,6 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * The OIDC resource-server validation matrix: accept RS256/ES256; reject {@code alg:none}, the RS/HS
- * algorithm-confusion token, wrong issuer, wrong audience, expired, not-yet-valid, bad signature, unknown
- * kid; JWKS rotation (overlap refetch + old-key age-out); rate-limited unknown-kid refetch; JWKS outage ->
- * Unavailable; and the exp seam (the token's own exp is carried on the Authenticated result).
- */
 final class OidcAuthenticatorTest {
 
     private static final Set<JWSAlgorithm> ALGS = Set.of(JWSAlgorithm.RS256, JWSAlgorithm.ES256);
@@ -60,7 +54,6 @@ final class OidcAuthenticatorTest {
         return new ImmutableJWKSet<>(OidcTestSupport.publicJwks(rsa, ec));
     }
 
-    // ---------------------------------------------------------------- accept
 
     @Test
     void rs256AccessTokenIsAccepted() throws Exception {
@@ -91,7 +84,6 @@ final class OidcAuthenticatorTest {
         assertInstanceOf(AuthResult.Authenticated.class, resolve(auth, token));
     }
 
-    // ---------------------------------------------------------------- reject (security)
 
     @Test
     void algNoneIsRejected() throws Exception {
@@ -152,7 +144,6 @@ final class OidcAuthenticatorTest {
     void badSignatureIsRejected() throws Exception {
         RSAKey serving = OidcTestSupport.rsaKey("kA");
         ECKey ec = OidcTestSupport.ecKey("eA");
-        // Sign with a DIFFERENT key that shares the served kid: signature will not verify.
         RSAKey forger = new com.nimbusds.jose.jwk.gen.RSAKeyGenerator(2048).keyID("kA").generate();
         OidcAuthenticator auth = authenticatorFor(immutable(serving, ec), true, noRoles());
 
@@ -164,14 +155,13 @@ final class OidcAuthenticatorTest {
     void unknownKidIsRejected() throws Exception {
         RSAKey serving = OidcTestSupport.rsaKey("kA");
         ECKey ec = OidcTestSupport.ecKey("eA");
-        RSAKey other = OidcTestSupport.rsaKey("kZ"); // not in the served JWKS
+        RSAKey other = OidcTestSupport.rsaKey("kZ");
         OidcAuthenticator auth = authenticatorFor(immutable(serving, ec), true, noRoles());
 
         String token = OidcTestSupport.signRs256(other, OidcTestSupport.claims("svc-1").build());
         assertDenied(resolve(auth, token), DenyReason.INVALID_CREDENTIAL);
     }
 
-    // ---------------------------------------------------------------- dispatch (not-this)
 
     @Test
     void tokenForForeignIssuerIsNotThisAuthenticator() throws Exception {
@@ -193,7 +183,6 @@ final class OidcAuthenticatorTest {
         assertDenied(resolve(auth, "an-opaque-non-jwt-token"), DenyReason.NOT_THIS_AUTHENTICATOR);
     }
 
-    // ---------------------------------------------------------------- typ policy
 
     @Test
     void missingTypIsRejectedWhenStrictButAcceptedWhenRelaxed() throws Exception {
@@ -207,7 +196,6 @@ final class OidcAuthenticatorTest {
                 resolve(authenticatorFor(immutable(rsa, ec), false, noRoles()), token));
     }
 
-    // ---------------------------------------------------------------- claims -> roles
 
     @Test
     void nestedArrayRolesClaimIsMapped() throws Exception {
@@ -238,7 +226,6 @@ final class OidcAuthenticatorTest {
         assertEquals(Set.of("scope:read", "scope:write", "scope:configd.admin"), authed.principal().roles());
     }
 
-    // ---------------------------------------------------------------- JWKS rotation
 
     @Test
     void unknownNewKidTriggersRefetchAndOldKidStillValidatesDuringOverlap() throws Exception {
@@ -248,18 +235,15 @@ final class OidcAuthenticatorTest {
                 new OidcTestSupport.CountingJWKSetSource(OidcTestSupport.publicJwks(keyA));
         OidcAuthenticator auth = authenticatorFor(policySource(source, 300_000L, 1L), true, noRoles());
 
-        // kidA validates and populates the cache.
         assertInstanceOf(AuthResult.Authenticated.class,
                 resolve(auth, OidcTestSupport.signRs256(keyA, OidcTestSupport.claims("a").build())));
         int afterA = source.fetchCount();
 
-        // Rotation overlap: the IdP now serves BOTH keys; a token under the new kidB forces a refetch.
         source.setJwks(OidcTestSupport.publicJwks(keyA, keyB));
         assertInstanceOf(AuthResult.Authenticated.class,
                 resolve(auth, OidcTestSupport.signRs256(keyB, OidcTestSupport.claims("b").build())));
         assertTrue(source.fetchCount() > afterA, "an unknown kid must force a JWKS refetch");
 
-        // During the overlap window an old-kidA token still validates.
         assertInstanceOf(AuthResult.Authenticated.class,
                 resolve(auth, OidcTestSupport.signRs256(keyA, OidcTestSupport.claims("a2").build())));
     }
@@ -270,15 +254,13 @@ final class OidcAuthenticatorTest {
         RSAKey keyB = OidcTestSupport.rsaKey("kB");
         OidcTestSupport.CountingJWKSetSource source =
                 new OidcTestSupport.CountingJWKSetSource(OidcTestSupport.publicJwks(keyA));
-        // Short TTL so the retired key ages out of the cache: eviction follows the TTL, not the
-        // rotation event, so an overlapping old key stays valid until it actually expires.
         OidcAuthenticator auth = authenticatorFor(policySource(source, 300L, 1L), true, noRoles());
 
         assertInstanceOf(AuthResult.Authenticated.class,
                 resolve(auth, OidcTestSupport.signRs256(keyA, OidcTestSupport.claims("a").build())));
 
-        source.setJwks(OidcTestSupport.publicJwks(keyB)); // kidA retired
-        Thread.sleep(600L); // past the TTL: the next access refreshes the cache to {kidB}
+        source.setJwks(OidcTestSupport.publicJwks(keyB));
+        Thread.sleep(600L);
 
         assertInstanceOf(AuthResult.Authenticated.class,
                 resolve(auth, OidcTestSupport.signRs256(keyB, OidcTestSupport.claims("b").build())));
@@ -291,10 +273,8 @@ final class OidcAuthenticatorTest {
         RSAKey keyA = OidcTestSupport.rsaKey("kA");
         OidcTestSupport.CountingJWKSetSource source =
                 new OidcTestSupport.CountingJWKSetSource(OidcTestSupport.publicJwks(keyA));
-        // A long rate-limit interval: forced refetches are throttled hard.
         OidcAuthenticator auth = authenticatorFor(policySource(source, 300_000L, 30_000L), true, noRoles());
 
-        // Warm the cache.
         resolve(auth, OidcTestSupport.signRs256(keyA, OidcTestSupport.claims("a").build()));
         int afterWarm = source.fetchCount();
 
@@ -308,7 +288,6 @@ final class OidcAuthenticatorTest {
                 "a burst of 8 unknown kids must not cause one refetch each; got " + forcedRefetches);
     }
 
-    // ---------------------------------------------------------------- outage -> Unavailable
 
     @Test
     void jwksOutageWithColdCacheYieldsUnavailable() throws Exception {

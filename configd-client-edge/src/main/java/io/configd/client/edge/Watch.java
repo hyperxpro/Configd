@@ -14,21 +14,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
- * A live watch handle. Consume it reactively — {@code watch.subscribe(Flow.Subscriber<WatchEvent>)} with
- * {@code request(n)} backpressure — or with the blocking facade ({@link #awaitCreated} + {@link #poll}) for the
- * reference / conformance driver. Each watch runs on its <b>own</b> dedicated connection, one connection per
- * independently-resumed watch, so a per-watch terminal (e.g. a {@code NOT_AUTHORIZED}
- * {@code WATCH_CANCELED}) tears down this watch without affecting any other.
- *
- * <p>The emitted {@link WatchEvent}s are <b>per-key/per-shard-ordered only</b> — never a cross-shard order
- * (see {@link WatchEvent}). {@link #cursor()} is the live per-shard resume vector.
+ * Watch handle (reactive or blocking). Each watch runs on its own dedicated connection; per-watch terminal
+ * tears down this watch alone. Events are per-key/per-shard-ordered only (never cross-shard).
  */
 public final class Watch implements Flow.Publisher<WatchEvent>, AutoCloseable {
 
     private final WatchSession session;
     private final EdgeSession edgeSession;
     private final boolean fromNow;
-    /** Non-null once this watch's connection is shared by a multiplex; null while dedicated. */
     private volatile WatchMultiplexHandler multiplex;
 
     Watch(WatchSession session, EdgeSession edgeSession, WatchMultiplexHandler multiplex, boolean fromNow) {
@@ -38,7 +31,6 @@ public final class Watch implements Flow.Publisher<WatchEvent>, AutoCloseable {
         this.fromNow = fromNow;
     }
 
-    // Package-private accessors for the share (multiplex) wiring in ConfigdEdgeClient.
     WatchSession session() {
         return session;
     }
@@ -64,7 +56,6 @@ public final class Watch implements Flow.Publisher<WatchEvent>, AutoCloseable {
         session.subscribe(subscriber);
     }
 
-    /** Blocks until the watch is authorized and live ({@code WATCH_CREATED}), or throws its terminal cause. */
     public void awaitCreated(Duration timeout) throws InterruptedException, TimeoutException {
         try {
             session.created().get(timeout.toMillis(), TimeUnit.MILLISECONDS);
@@ -76,43 +67,35 @@ public final class Watch implements Flow.Publisher<WatchEvent>, AutoCloseable {
         }
     }
 
-    /** Blocks up to {@code timeout} for the next event via the blocking facade, or null if none arrives. */
     public WatchEvent poll(Duration timeout) throws InterruptedException {
         return session.poll(timeout.toMillis());
     }
 
-    /** The live per-shard resume cursor vector. */
     public WatchCursor cursor() {
         return session.cursorVector();
     }
 
-    /** The current wire {@code watch_id} (a fresh one is minted per (re)create). */
     public long watchId() {
         return session.watchId();
     }
 
-    /**
-     * Completes exceptionally when THIS watch permanently ends — a non-retryable per-watch terminal (e.g. a
-     * {@code NOT_AUTHORIZED} reject) or, for a dedicated watch, its connection giving up — and normally on
-     * {@link #close()}. On a shared connection this fires for this watch alone; the siblings keep streaming.
-     */
+    /** On shared connection: fires for this watch alone; siblings keep streaming. */
     public CompletableFuture<Void> terminalFuture() {
         return session.watchTerminal();
     }
 
-    /** Cancels the watch ({@code WATCH_CANCEL}) and closes its connection. Idempotent. */
     public void cancel() {
         close();
     }
 
     @Override
     public void close() {
-        session.close(); // best-effort WATCH_CANCEL for this watch
+        session.close();
         WatchMultiplexHandler mux = multiplex;
         if (mux == null) {
-            edgeSession.close(); // dedicated: close the connection
+            edgeSession.close();
         } else {
-            mux.remove(session); // shared: drop only this watch; the connection + siblings survive
+            mux.remove(session);
         }
     }
 }

@@ -10,9 +10,6 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link ServerConfig} argument parsing and default values.
- */
 class ServerConfigTest {
 
     @TempDir
@@ -157,9 +154,6 @@ class ServerConfigTest {
 
         @Test
         void defaultBindAddressIsLoopback() {
-            // The default bind is loopback, not the wildcard 0.0.0.0: binding an unauthenticated store
-            // to a public interface by default is the classic "default-open" footgun (as seen in early
-            // Redis/etcd defaults); a real cluster sets --bind-address to a routable address on purpose.
             String[] args = {
                 "--node-id", "1",
                 "--data-dir", tempDir.toString(),

@@ -33,24 +33,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Coalesced-heartbeat proofs.
- * <ul>
- *   <li><b>Flat-in-N (proof 1):</b> heartbeat message count per peer per tick is independent of the
- *       group count G - one coalesced message per peer regardless of G, with the un-coalesced baseline
- *       asserted to scale with G (the test-the-tester de-regression proof).</li>
- *   <li><b>Decorator behaviour:</b> only an EMPTY AppendEntries inside the tick window is coalesced;
- *       non-empty AppendEntries (real replication), votes, and any out-of-window heartbeat pass straight
- *       through.</li>
- *   <li><b>Demux round-trip (proof 3):</b> {@link MultiRaftDriver#routeCoalescedHeartbeat} delivers each
- *       group's AppendEntries to its group (observed via a higher-term step-down), and a dropped group is
- *       NOT delivered (neuter / test-the-tester).</li>
- *   <li><b>Driver orchestration:</b> {@code tickOwner} with coalescing enabled is correctly inert for a
- *       peerless leader (no heartbeats to coalesce) and never fires the net.</li>
- * </ul>
- * The real-leader end-to-end (many groups sharing a peer - one coalesced message, and no spurious
- * election) is carried by the cross-node sim (SeedSweepTest) and the load sweep.
- */
 class HeartbeatCoalescingTest {
 
     private static final NodeId LOCAL = NodeId.of(1);
@@ -65,7 +47,6 @@ class HeartbeatCoalescingTest {
         return new AppendEntriesRequest(term, LOCAL, 0L, 0L, List.of(LogEntry.noop(1L, term)), 0L);
     }
 
-    /** Counts how many coalesced messages (sendCoalesced calls) each peer receives, and the group count. */
     private static final class CountingDrain implements CoalescedHeartbeatTransport {
         final Map<NodeId, Integer> calls = new LinkedHashMap<>();
         final Map<NodeId, Integer> lastGroupCount = new LinkedHashMap<>();
@@ -81,7 +62,6 @@ class HeartbeatCoalescingTest {
         }
     }
 
-    /** Counts direct (un-coalesced) sends per peer - the de-regression baseline. */
     private static final class RecordingTransport implements RaftTransport {
         final AtomicInteger total = new AtomicInteger();
         final Map<NodeId, Integer> perPeer = new ConcurrentHashMap<>();
@@ -99,7 +79,6 @@ class HeartbeatCoalescingTest {
         @Override public void restoreSnapshot(byte[] snapshot) { }
     }
 
-    /** Drives the owner's drain exactly as {@link MultiRaftDriver#tickOwner}'s finally does. */
     private static void drainLike(HeartbeatCoalescer hc, CoalescedHeartbeatTransport drain) {
         for (Map.Entry<NodeId, Map<Integer, AppendEntriesRequest>> e : hc.drainAndEndTick().entrySet()) {
             drain.sendCoalesced(e.getKey(), e.getValue());
@@ -166,23 +145,17 @@ class HeartbeatCoalescingTest {
         CoalescingRaftTransport dec = new CoalescingRaftTransport(delegate, 0);
         dec.bindCoalescer(() -> hc);
 
-        // (1) OUT of window: even an empty heartbeat passes straight through (never delayed outside a window).
         dec.send(PEER_A, emptyHeartbeat(1));
         assertEquals(1, delegate.total.get());
 
         hc.beginTick();
-        // (2) IN window: a non-empty AppendEntries (real replication) is NEVER coalesced.
         dec.send(PEER_A, entryCarrying(1));
         assertEquals(2, delegate.total.get(), "entry-carrying AppendEntries must not be coalesced");
-        // (3) IN window: a vote is not an AppendEntries - passes through.
         dec.send(PEER_A, new RequestVoteRequest(1L, LOCAL, 0L, 0L, false));
         assertEquals(3, delegate.total.get(), "votes must not be coalesced");
-        // (4) IN window: an empty heartbeat IS buffered (not sent now).
         dec.send(PEER_A, emptyHeartbeat(1));
         assertEquals(3, delegate.total.get(), "in-window empty heartbeat is buffered");
         assertTrue(hc.pendingPeers().contains(PEER_A));
-
-        // (5) Unbound decorator passes everything through (legacy / additive).
         CoalescingRaftTransport unbound = new CoalescingRaftTransport(delegate, 0);
         unbound.send(PEER_A, emptyHeartbeat(1));
         assertEquals(4, delegate.total.get());

@@ -8,35 +8,6 @@
 # silent placeholders; every step asserts a real result and FAILS if its
 # summary line is absent (non-vacuity).
 #
-# WHAT A GREEN GATE-5 PROVES (locks in the performance wins so later work
-# cannot silently erode them):
-#   (a) gate4       gates 1+2+3+4 still green (cumulative; perf work didn't
-#                   regress correctness/chaos). In CI via the job dependency.
-#   (b) alloc       read-path ZERO steady-state allocation (gates/jmh-gc-check.sh:
-#                   getMiss + getIntoHit < 1 B/op) — the read-path allocation
-#                   law, mechanical.
-#   (c) read-tail   read-path p99/p999 latency REGRESSION thresholds (JMH
-#                   SampleTime / HdrHistogram). Measured: getHitWithCursor@100k
-#                   p99=0.92us, p999=22us. Gate bounds are generous (p99<20us,
-#                   p999<500us) — comfortably above measured (no throttle flake)
-#                   but far below a real regression (a lock/alloc on the read path
-#                   would push these to ms). This is the durable lock-in.
-#   (d) throughput  a SHORT throughput SMOKE (not the sustained run — that's the
-#                   nightly/perf lane): RaftCommitBenchmark in-memory must execute
-#                   and sustain a floor (>= 50k commits/s; measured ~815k) — proves
-#                   the harness runs and the consensus mechanism is not broken.
-#   (e) backpressure  the as-built write bound: RaftConfig default
-#                   maxPendingProposals == 1024 (the real bounded-proposal-queue
-#                   threshold). Locks the documented bound.
-#   (f) co-check    coordinated-omission self-check: the read-tail step uses
-#                   `-bm sample` (SampleTime, not AverageTime), and the CO-correct
-#                   load/contention harnesses are present. A tail measured by
-#                   AverageTime would be a CO/averaging violation — refused here.
-#
-# NOT IN GATE-5 (the perf/soak nightly lane, captured, not blocking): the full
-# sustained 10k/s + 100k/s burst runs (ENV-BLOCKED end-to-end on the 2-vCPU box),
-# the 24h soak, the live Compose staleness run, the GC bake-off. Those live in
-# the perf nightly lane, not the fast gate.
 #
 # Environment knobs (CI must not set the skips on a full local run):
 #   GATE5_SKIP_GATE4=1   skip step (a) — reported LOUDLY (CI runs gate-4 as its

@@ -13,20 +13,6 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Discriminating tests for the Raft joint-consensus reconfiguration path
- * (Raft section 6) that target the cases the broader scenario tests in
- * {@link ReconfigurationTest} did not pin: the static codec helpers
- * ({@link RaftNode#isConfigChangeEntry}, {@link RaftNode#deserializeConfigChange}),
- * the {@code proposeConfigChange} preconditions, and the exact membership
- * boundary of {@code deserializeConfigChange}'s voter-count validation.
- * <p>
- * {@link ReconfigurationTest} already drives the
- * full multi-node joint->final lifecycle; this class adds the cheap,
- * line-discriminating cases that the lifecycle tests leave green when mutated
- * (a magic-length boundary, a rejected precondition, a voter-count guard). All
- * in-process and deterministic; no sleeps.
- */
 class ReconfigPathUnitTest {
 
     private static final NodeId N1 = NodeId.of(1);

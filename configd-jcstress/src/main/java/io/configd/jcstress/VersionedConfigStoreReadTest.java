@@ -34,7 +34,6 @@ public final class VersionedConfigStoreReadTest {
 
     private static final String KEY = "k";
 
-    /** Encodes a version into an 8-byte big-endian value, so the read can self-check. */
     static byte[] encode(long version) {
         byte[] b = new byte[8];
         for (int i = 0; i < 8; i++) {
@@ -51,10 +50,8 @@ public final class VersionedConfigStoreReadTest {
         return v;
     }
 
-    // Single writer advances the version; reader observes (value, version).
-    // r1 = the version stamped on the ReadResult; r2 = the version DECODED from
-    // the value bytes. They MUST be equal (a consistent snapshot). They differ
-    // only on a torn MVCC read, which the single-volatile-read design forbids.
+    // r1 = stamped version; r2 = version decoded from value bytes. Must be equal (consistent snapshot).
+    // Differ only on torn MVCC read, which single-volatile-read design forbids.
     @JCStressTest
     @State
     @Description("VersionedConfigStore: read-while-write must return a consistent (value,version)")
@@ -82,14 +79,9 @@ public final class VersionedConfigStoreReadTest {
         }
     }
 
-    // ReadResult hands out the live internal byte[] (valueUnsafe aliasing). Is that
-    // array ever observed mid-mutation cross-thread? The VersionedValue defensively
-    // COPIES on construction and is immutable, and the writer publishes a NEW
-    // VersionedValue (never mutates the old array) - so the reader's aliased array is
-    // effectively frozen. This test fails (FORBIDDEN) if a reader ever decodes a
-    // version from the bytes that does not match a version the writer actually
-    // published (a torn/visibility hazard). A clean run is the safe-by-construction
-    // evidence.
+    // ReadResult hands out internal byte[] (aliased). VersionedValue is immutable; writer publishes NEW
+    // VersionedValue (never mutates old array), so aliased array is effectively frozen. Test fails if
+    // reader decodes a version not actually published (torn/visibility hazard).
     @JCStressTest
     @State
     @Description("CF-31: aliased internal byte[] must never be observed torn under concurrent overwrite")
@@ -111,10 +103,9 @@ public final class VersionedConfigStoreReadTest {
 
         @Actor
         public void reader(J_Result r) {
-            // Grab the (aliased) internal array and decode it. Only 1 or 2 are
-            // legal published versions; any other decoded long proves a torn array.
+            // Only 1 or 2 are published versions; any other proves torn array.
             long v = decode(store.get(KEY).value());
-            r.r1 = (v == 1L || v == 2L) ? v : 99L; // 99 surfaces as a forbidden outcome
+            r.r1 = (v == 1L || v == 2L) ? v : 99L; // 99 = forbidden
         }
     }
 }

@@ -12,40 +12,14 @@
 
     <artifactId>configd-netty</artifactId>
 
-    <!--
-      The Netty transport-platform module.
-
-      Single source of truth for two things shared by every migrated network surface:
-        1. NettyTransport - the runtime tiered io_uring/Epoll/NIO selector, transport-agnostic (no
-           edge/server coupling), so the admin API (configd-server) reuses the SAME selector
-           rather than duplicating it.
-        2. The Netty HTTP-transport dependency closure (compile scope to transitive), declared
-           ONCE here. Migrated surfaces depend on configd-netty and declare NO direct io.netty deps.
-
-      Footprint containment: Netty enters the build ONLY through this module and the modules that
-      depend on it (configd-edge-node, configd-server). It is deliberately NOT placed in
-      configd-transport/configd-common - those are depended on by the consensus/replication
-      algorithm modules, and pulling Netty there would leak it (and its CVE surface) into them. A
-      smaller closure is a smaller CVE surface.
-
-      This module also depends on configd-transport - never the reverse direction - so
-      configd-transport (and thus configd-consensus-core / configd-replication-engine) stays
-      Netty-free while NettyRaftTransport can reuse the shared FrameCodec / TlsManager /
-      RaftWireProtocol / RaftTransportEndpoint. No cycle: configd-transport does not depend on
-      configd-netty.
-
-      Versions are pinned in the root pom <dependencyManagement> (<netty.version>).
-    -->
+    <!-- Netty transport platform: shared selector + HTTP closure. Netty stays in this module only (not in consensus/replication modules) to limit CVE surface. -->
     <dependencies>
-        <!-- The Netty-free consensus-wire core (FrameCodec, TlsManager, RaftWireProtocol,
-             the RaftTransport/RaftTransportEndpoint interfaces, InboundMessage) NettyRaftTransport reuses.
-             configd-transport pulls configd-common (NodeId, Clock) transitively. -->
+        <!-- configd-transport (Netty-free): FrameCodec, TlsManager, RaftWireProtocol, etc. -->
         <dependency>
             <groupId>io.configd</groupId>
             <artifactId>configd-transport</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <!-- Transport core + buffers (NIO tier 3 lives in netty-transport; no extra artifact). -->
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-transport</artifactId>
@@ -54,17 +28,15 @@
             <groupId>io.netty</groupId>
             <artifactId>netty-buffer</artifactId>
         </dependency>
-        <!-- HTTP/1.1 codec for the edge-read and admin HTTP surfaces. -->
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-codec-http</artifactId>
         </dependency>
-        <!-- IdleStateHandler (slowloris/idle reaping) + SslHandler (admin server-side TLS). -->
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-handler</artifactId>
         </dependency>
-        <!-- Tier 2: Epoll (Linux). Classes (portable) + native binary (linux-x86_64). -->
+        <!-- Tier 2: Epoll (Linux, classes + native binary). -->
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-transport-classes-epoll</artifactId>
@@ -74,7 +46,7 @@
             <artifactId>netty-transport-native-epoll</artifactId>
             <classifier>linux-x86_64</classifier>
         </dependency>
-        <!-- Tier 1: io_uring (Linux 5.9+). Classes (portable) + native binary (linux-x86_64). -->
+        <!-- Tier 1: io_uring (Linux 5.9+, classes + native binary). -->
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-transport-classes-io_uring</artifactId>

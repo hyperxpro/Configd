@@ -1,21 +1,7 @@
 #!/usr/bin/env bash
-# 14-day shadow-traffic harness.
-#
-# Runs production-shaped traffic against a candidate Configd cluster
-# while replaying the same traffic against a control cluster (the
-# previous GA build). Asserts:
-#   • candidate's read responses are byte-identical to control's
-#   • candidate's commit ordering matches control's (modulo timestamps)
-#   • no SLO regression vs. control on write commit / edge read /
-#     propagation
-#   • no new ERROR-class log lines in candidate that don't appear in
-#     control
-#
-# Calendar-bounded — this reports status=YELLOW until two real clusters
-# have been brought up and a 14-day window has actually elapsed. The
-# harness always emits a measured-elapsed line recording the actual run
-# duration — never edit it to claim a longer duration than was actually
-# executed.
+# 14-day shadow-traffic harness: compare candidate vs control (previous GA).
+# Asserts: read byte-identical, commit ordering matches, no SLO regression, no new ERROR logs.
+# Calendar-bounded; emits measured_elapsed_sec honestly.
 #
 # Usage:
 #   perf/shadow-14d.sh [--duration=<seconds>] [--seed=<int>] [--out=<dir>]
@@ -48,21 +34,6 @@ echo "  seed=$SEED" >> "$RESULT_FILE"
 echo "  start_utc=$(date -u +%FT%TZ)" >> "$RESULT_FILE"
 
 t_start=$(date +%s)
-
-# Real harness body would:
-#   1. Bring up two clusters (control = previous GA, candidate = HEAD).
-#   2. Mirror real traffic via TrafficSplitter (operator-supplied
-#      mirroring proxy in front of both write and read paths).
-#   3. Diff every read response between control and candidate;
-#      record any divergence with the diverging request.
-#   4. Sample SLO histograms from both clusters every 30s; assert
-#      candidate p99 ≤ control p99 × 1.05 (5% slack).
-#   5. Tail logs from both; alert on ERROR lines in candidate not
-#      present in control.
-#   6. Teardown and emit pass/fail.
-# Until the bring-up is wired (operator action — needs two real
-# clusters, not local), this harness honours the duration contract
-# and emits measured elapsed.
 
 sleep_remaining() {
   local end=$(( t_start + DURATION_SEC ))

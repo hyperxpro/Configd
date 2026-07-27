@@ -9,14 +9,6 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
-/**
- * An in-process fake of the Vault Transit API for the provider's unit tests: no Docker required. It models the
- * AEAD associated-data contract faithfully - a {@code transit/decrypt} whose {@code associated_data} differs
- * from what {@code transit/encrypt} sealed FAILS with HTTP 400 (the relocation defence) - and a bearer token
- * requirement on transit calls. The seal is a reversible container {@code vault:vN:urlb64(aad "." plaintext)}
- * so a round-trip returns the exact bytes. The real cryptographic proof is the Testcontainers IT; this exercises
- * the client/JSON/error-mapping paths deterministically and offline.
- */
 final class FakeVaultTransit implements AutoCloseable {
 
     private final HttpServer server;

@@ -6,8 +6,7 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Nightly full path at 03:17 UTC. GitHub fires `schedule` only from the
-    # default branch; use workflow_dispatch below to run it on demand.
+    # GitHub fires `schedule` only from the default branch; use workflow_dispatch to run it on demand.
     - cron: '17 3 * * *'
   workflow_dispatch:
     inputs:
@@ -16,19 +15,14 @@ on:
         type: boolean
         default: false
 
-# Least-privilege read-only default; the release workflow requests write scopes per job.
 permissions:
   contents: read
 
-# Cancel superseded PR runs; scoped to pull_request only so push-to-main and the
-# nightly schedule always run to completion.
+# Scoped to pull_request only so push-to-main and the nightly schedule always run to completion.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Verification jobs fan out in parallel with no serial chain. The cumulative
-# "all passed" guarantee is the ci-success job at the bottom — make that the
-# single required status check in branch protection.
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
@@ -90,24 +84,14 @@ jobs:
         timeout-minutes: 30
 
   gate:
-    # Matrixed verification gates: each leg runs its own gates/gate-*.sh. FLAGS
-    # (below) selects the fast subset on push/PR and the full path on nightly.
-    # security-and-supply-chain and multiraft-merge-seal are kept out of this
-    # matrix because they need extra setup (gitleaks/NVD, git history).
-    #
-    # A nightly_flags that differs from fast_flags must be non-empty: an empty
-    # string is falsy in the `cond && A || B` selection and silently falls back
-    # to fast_flags (a coverage downgrade). Empty flags are correct only where
-    # fast and nightly are identical (verify-and-selftest).
+    # A nightly_flags that differs from fast_flags must be non-empty: an empty string is falsy in the
+    # `cond && A || B` selection below and silently falls back to fast_flags, downgrading coverage.
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     strategy:
-      # Each gate is an independent signal — don't cancel siblings when one fails.
       fail-fast: false
       matrix:
         include:
-          # Clean build/verify, linearizability-checker self-tests, JMH and TLC
-          # smoke, and a 3-node failover smoke. Same work on every event.
           - name: verify-and-selftest
             script: gates/gate-1.sh
             log_env: GATE1_LOG_DIR
@@ -116,8 +100,6 @@ jobs:
             nightly_flags: ''
             timeout_fast: 45
             timeout_nightly: 45
-          # Discriminating consensus tests, the adversarial seed sweep,
-          # linearizability, jcstress, and (nightly) the PIT mutation thresholds.
           - name: consensus-correctness
             script: gates/gate-2.sh
             log_env: GATE2_LOG_DIR
@@ -126,8 +108,6 @@ jobs:
             nightly_flags: 'GATE2_SKIP_GATE1=1'
             timeout_fast: 90
             timeout_nightly: 180
-          # Edge data plane: contract map, edge seed sweep, propagation probe,
-          # slow-consumer walk, Compose end-to-end, and (nightly) new-module PIT.
           - name: edge-data-plane
             script: gates/gate-3.sh
             log_env: GATE3_LOG_DIR
@@ -136,9 +116,6 @@ jobs:
             nightly_flags: 'GATE3_SKIP_GATE2=1'
             timeout_fast: 120
             timeout_nightly: 180
-          # Durability, recovery, and chaos. The fast subset runs the liveness,
-          # reconfiguration, durability, edge-chaos, partition, and overload
-          # cells; the heavy integrated chaos sweeps run only on the nightly path.
           - name: durability-and-chaos
             script: gates/gate-4.sh
             log_env: GATE4_LOG_DIR
@@ -147,8 +124,6 @@ jobs:
             nightly_flags: 'GATE4_SKIP_GATE3=1'
             timeout_fast: 60
             timeout_nightly: 120
-          # Performance regression gate (allocation, tail-latency, throughput
-          # smoke, backpressure bound). Identical work on every event.
           - name: performance
             script: gates/gate-5.sh
             log_env: GATE5_LOG_DIR
@@ -157,8 +132,6 @@ jobs:
             nightly_flags: 'GATE5_SKIP_GATE4=1'
             timeout_fast: 60
             timeout_nightly: 60
-          # Operability: metric/alert emission contract, promtool alert tests,
-          # wire byte-stability, cold start, backup/restore, and a game-day drill.
           - name: operability
             script: gates/gate-6.sh
             log_env: GATE6_LOG_DIR
@@ -167,8 +140,6 @@ jobs:
             nightly_flags: 'GATE6_SKIP_GATE5=1'
             timeout_fast: 30
             timeout_nightly: 30
-          # Per-group owner-thread re-threading and the group-rehoming hazard
-          # closure. The heavy 20k-seed deterministic sim runs on the nightly path.
           - name: raft-owner-threading
             script: gates/gate-phase0.sh
             log_env: GATE_PHASE0_LOG_DIR
@@ -177,8 +148,6 @@ jobs:
             nightly_flags: 'GATE_PHASE0_SKIP_GATE7=1'
             timeout_fast: 45
             timeout_nightly: 60
-          # Static-N sharding layer and its multi-shard simulator invariants.
-          # Fast runs a 200-seed sweep; the nightly path runs the 10k-seed sweep.
           - name: sharding
             script: gates/gate-phase1.sh
             log_env: GATE_PHASE1_LOG_DIR
@@ -187,10 +156,6 @@ jobs:
             nightly_flags: 'GATE_PHASE1_SKIP_CHAIN=1 GATE_PHASE1_SWEEP_COUNT=10000'
             timeout_fast: 30
             timeout_nightly: 45
-          # Multi-shard client-facing WATCH seal: the aggregating fan-out/fan-in
-          # coordinator, the shard-complete _acl/ authz plane, the guard-flip
-          # legacy-SUBSCRIBE split, and edge wire byte-stability. Same work
-          # on every event (targeted, fast); no chain.
           - name: multi-shard-watch
             script: gates/gate-mswatch.sh
             log_env: GATE_MSWATCH_LOG_DIR
@@ -223,8 +188,6 @@ jobs:
           SCRIPT: ${{ matrix.script }}
           LOG_ENV: ${{ matrix.log_env }}
           LOG_DIR: ${{ runner.temp }}/gate-logs
-          # Fast subset on push/PR; full path on nightly/manual. See the
-          # empty-string caveat above.
           FLAGS: ${{ (github.event_name == 'schedule' || github.event.inputs.run_full_nightly == 'true') && matrix.nightly_flags || matrix.fast_flags }}
         # `env ${FLAGS} ...` (not a bare `${FLAGS} ...`) because the shell only
         # recognizes VAR=val assignment prefixes at parse time; assignments that
@@ -243,10 +206,7 @@ jobs:
           retention-days: 7
 
   security-and-supply-chain:
-    # Security/supply-chain gate, proven by negative tests (attack performed,
-    # refusal asserted): at-rest integrity, mTLS both planes, wire fuzzing, API
-    # authn/authz, replay, keyed-HMAC audit, SBOM match, reproducible-build. Its
-    # own job because the nightly path adds a gitleaks install and NVD CVE scan.
+    # Its own job, not a matrix leg, because the nightly path adds a gitleaks install and NVD CVE scan.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4.3.1
@@ -294,10 +254,8 @@ jobs:
           retention-days: 7
 
   multiraft-merge-seal:
-    # Non-vacuity seal: asserts the multi-Raft artifacts (contracts, gates,
-    # coalescing classes) still exist, so a deletion fails the build instead of
-    # silently passing. SKIP_CHAIN because the other jobs supply the test chain,
-    # so this is a fast check needing no JDK.
+    # Asserts the multi-Raft artifacts still exist, so deleting one fails the build instead of
+    # silently passing a vacuous suite. SKIP_CHAIN because the other jobs supply the test chain.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4.3.1
@@ -309,9 +267,7 @@ jobs:
         timeout-minutes: 5
 
   wire-compat:
-    # Fails the build if the golden wire fixtures changed without a matching
-    # bump to FrameCodec.WIRE_VERSION. Golden bytes are stored as hex constants
-    # in GoldenFixtures.java, so diffs stay human-readable.
+    # Fails the build if the golden wire fixtures changed without a matching FrameCodec.WIRE_VERSION bump.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4.3.1
@@ -324,9 +280,6 @@ jobs:
           FIXTURE_PATH="configd-transport/src/test/java/io/configd/transport/wirecompat/GoldenFixtures.java"
           CODEC_PATH="configd-transport/src/main/java/io/configd/transport/FrameCodec.java"
 
-          # Pick the base reference to diff against:
-          #   - PR:  merge-base(base_ref, HEAD) via three-dot
-          #   - push: use before SHA if it still exists; fall back to HEAD~1
           if [[ -n "${{ github.base_ref }}" ]]; then
             BASE_REF="origin/${{ github.base_ref }}"
             DIFF_RANGE="$BASE_REF...HEAD"
@@ -345,12 +298,10 @@ jobs:
             echo "GoldenFixtures.java changed in $DIFF_RANGE:"
             git diff --stat "$DIFF_RANGE" -- "$FIXTURE_PATH"
 
-            # An additive change (a golden entry for a NEW MessageType, no existing golden bytes
-            # touched) needs no WIRE_VERSION bump: the frame layout is unchanged and every existing
-            # fixture is byte-identical (ADR-0029 §8.10; the raft witness types 0x12/0x13). Only a
-            # change/removal of an EXISTING golden line is a silent wire-byte change and must be
-            # paired with a bump. A removed content line (^- but not the ^--- header) means an
-            # existing fixture was touched; zero removed = a pure addition.
+            # A pure addition (a golden entry for a new MessageType) needs no WIRE_VERSION bump: every
+            # existing fixture stays byte-identical. Only changing or removing an EXISTING golden line
+            # is a silent wire-byte change. Hence the test: a removed content line (^- but not the ^---
+            # header) means an existing fixture was touched; zero removed means it was purely additive.
             REMOVED_LINES="$(git diff "$DIFF_RANGE" -- "$FIXTURE_PATH" | grep -E '^-' | grep -vcE '^---' || true)"
             if [[ "$REMOVED_LINES" -eq 0 ]]; then
               echo "OK: GoldenFixtures.java change is purely additive (new fixture entries only, no existing golden bytes modified) — an additive MessageType within the frozen frame; no WIRE_VERSION bump required."
@@ -366,16 +317,8 @@ jobs:
           fi
 
   linearizability-under-fault:
-    # Live faulted-linearizability matrix (run-matrix.sh via gate-2.sh linzgate):
-    # the unmodified server is driven through combination nemeses (kill/isolate/
-    # SIGSTOP/packet-loss) that break quorum on 3- and 5-node clusters; every
-    # recorded history must check linearizable. CI runs a bounded but adversarial
-    # subset; the full encryption/auth/clock-skew matrix lives under
-    # docs/measurement/e1-faulted-linz-*.
-    #
-    # Needs a privileged runner: the fault injector shells out to `sudo -n
-    # iptables` and the multi-node clusters want more than 2 vCPUs (swap runs-on
-    # for a larger runner if available). Scheduled/manual only and excluded from
+    # Needs a privileged runner: the fault injector shells out to `sudo -n iptables`, and the
+    # multi-node clusters want more than 2 vCPUs. Scheduled/manual only and excluded from
     # ci-success, so it can never block a PR.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -410,18 +353,11 @@ jobs:
           retention-days: 14
 
   container-integration:
-    # Real-Vault / real-Keycloak container integration tests. These boot actual
-    # HashiCorp Vault and Keycloak containers via Testcontainers, so they are
-    # guarded on -Dconfigd.it.containers=true and skip themselves in the normal
-    # reactor (no gate or per-PR job sets that property). This job is the only
-    # place that sets it, so it is where they get a standing signal. Named
-    # explicitly with -Dtest because they are *IT classes surefire does not pick
-    # up by name pattern; failIfNoSpecifiedTests=false lets the same selector run
-    # across the three modules without failing where a given IT is absent.
-    #
-    # ubuntu-latest runners ship a working Docker daemon, which Testcontainers
-    # uses to pull and run the images. Scheduled/manual only and excluded from
-    # ci-success, so a slow image pull or registry hiccup can never block a PR.
+    # These ITs are guarded on -Dconfigd.it.containers=true and skip themselves everywhere else, so
+    # this job is the only place they get a signal. Named explicitly with -Dtest because surefire does
+    # not pick up *IT classes by name pattern; failIfNoSpecifiedTests=false lets one selector span the
+    # three modules where a given IT may be absent. Excluded from ci-success so a slow image pull or
+    # registry hiccup can never block a PR.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
@@ -455,12 +391,9 @@ jobs:
           retention-days: 7
 
   ci-success:
-    # Required-check seal: depends on every PR-gating job and fails unless all
-    # succeeded — make THIS the sole required status check in branch protection.
-    # Omits linearizability-under-fault (nightly/manual only; must never block a
-    # PR). `if: always()` so a failed/cancelled upstream still yields a red
-    # result — a skipped aggregator reads as "no result" and could let a broken
-    # build merge.
+    # Make THIS the sole required status check in branch protection. `if: always()` so a failed or
+    # cancelled upstream still yields a red result: a skipped aggregator reads as "no result" to
+    # branch protection and could let a broken build merge.
     name: CI Success (all gates green)
     if: always()
     needs:

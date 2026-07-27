@@ -4,26 +4,8 @@ import java.util.Arrays;
 import java.util.Objects;
 
 /**
- * Tracks the state of a snapshot available for transfer to lagging followers.
- * <p>
- * Created when the leader takes a snapshot via {@link StateMachine#snapshot()}.
- * Contains the serialized state machine data, the log position at which
- * the snapshot was taken, and the cluster configuration at that point.
- * <p>
- * The cluster config is included so that after log compaction (where config
- * entries may be discarded), the node can still recover its cluster config.
- * Without this, a node that restarts with a fully compacted log would
- * silently revert to the initial static configuration.
- * <p>
- * This implementation uses a single contiguous byte array. For large
- * snapshots, chunked transfer can be layered on top by reading slices
- * from {@link #data()} at the appropriate offset.
- *
- * @param data              the serialized snapshot bytes from the state machine
- * @param lastIncludedIndex the index of the last log entry included in this snapshot
- * @param lastIncludedTerm  the term of the last log entry included in this snapshot
- * @param clusterConfigData serialized cluster config at snapshot point (may be null
- *                          for snapshots taken before this field was added)
+ * Snapshot state for transfer to lagging followers. Includes cluster config so fully compacted logs
+ * can recover config (prevent silent revert to initial static configuration).
  */
 public record SnapshotState(
         byte[] data,
@@ -42,17 +24,10 @@ public record SnapshotState(
         }
     }
 
-    /**
-     * Convenience constructor for snapshots without cluster config metadata.
-     * Used in tests and for backward compatibility.
-     */
     public SnapshotState(byte[] data, long lastIncludedIndex, long lastIncludedTerm) {
         this(data, lastIncludedIndex, lastIncludedTerm, null);
     }
 
-    /**
-     * Returns the total size of the snapshot data in bytes.
-     */
     public int size() {
         return data.length;
     }

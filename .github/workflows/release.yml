@@ -1,12 +1,7 @@
 name: Release
 
-# Tag-driven release pipeline: a `vX.Y.Z` tag push builds, signs, attests, and
-# publishes the container image + SBOM.
-#
-# Paging is not wired here — connect your paging service to ops/alerts/ separately.
-#
-# Actions are pinned to full commit SHAs (not tags) because this workflow signs
-# and publishes artifacts.
+# Actions are pinned to full commit SHAs, not tags, because this workflow signs and publishes
+# artifacts. Paging is not wired here; connect a paging service to ops/alerts/ separately.
 
 on:
   push:
@@ -50,9 +45,8 @@ jobs:
       - name: Full reactor verify
         run: ./mvnw clean verify --no-transfer-progress
 
-      # Run over the full reactor, not `-N`: with `-N` (non-recursive)
-      # makeAggregateBom only sees the root POM and emits a 0-component SBOM;
-      # the full reactor aggregates every module's dependency graph.
+      # Full reactor, not `-N`: under `-N` makeAggregateBom sees only the root POM and emits a
+      # 0-component SBOM.
       - name: Generate CycloneDX SBOM
         run: ./mvnw --no-transfer-progress org.cyclonedx:cyclonedx-maven-plugin:2.9.0:makeAggregateBom
 
@@ -84,17 +78,15 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Reproducible build - pin SOURCE_DATE_EPOCH to the commit timestamp.
+          # Reproducible build: pin SOURCE_DATE_EPOCH to the commit timestamp.
           build-args: |
             SOURCE_DATE_EPOCH=${{ github.event.head_commit.timestamp }}
           provenance: true
           sbom: true
 
-      # Scan the just-built runtime image before signing: CI only scans the
-      # source filesystem, so without this a CVE in a base-image layer would be
-      # signed and attested as "released" without ever being inspected. Does NOT
-      # set ignore-unfixed: true — that would mask CVEs whose only mitigation is
-      # a base-image rebuild.
+      # Scan the built image before signing: CI only scans the source filesystem, so without this a
+      # CVE in a base-image layer would be signed and attested unexamined. Do not add
+      # ignore-unfixed: true — it would mask CVEs whose only fix is a base-image rebuild.
       - name: Trivy runtime image scan
         uses: aquasecurity/trivy-action@b2933f565dbc598b29947660e66259e3c7bc8561 # v0.20.0
         with:
@@ -149,10 +141,8 @@ jobs:
 
             See `ops/runbooks/release.md` for the full release verification protocol.
 
-  # Consumer-side re-verification: re-pull the published image and re-run the
-  # exact verify commands the runbook documents. A green publish job does not
-  # prove the signature/provenance actually verify, so this must run green
-  # against a real tag push before those claims can be trusted.
+  # A green publish job does not prove the signature and provenance actually verify, so this re-pulls
+  # the published image and re-runs the exact commands the runbook gives to consumers.
   verify-published:
     needs: build-and-publish
     runs-on: ubuntu-latest

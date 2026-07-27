@@ -3,38 +3,25 @@ package io.configd.client;
 import io.configd.distribution.wire.ErrorCode;
 
 /**
- * Maps a binary-edge terminal signal — an {@link ErrorCode} together with its {@link Carrier} frame — to the
- * normative {@link Reaction}. This is the single place the client encodes the "each type IS its reaction"
- * rule: the code names the <b>reason</b>, the carrier names the <b>scope</b>, and several codes
- * (4, 6, 7, 9, 11, 12) are scope-overloaded so a pure code-byte switch is insufficient.
- *
- * <p>The untrusted server diagnostic is sanitized before it is attached to the raised exception; a caller
- * branches on the exception <b>type</b>, never on the text.
+ * Maps binary-edge terminal signal (ErrorCode + Carrier frame) to normative Reaction. Single place that
+ * encodes "each type IS its reaction": code names reason, carrier names scope. Several codes are
+ * scope-overloaded so pure code-byte switch insufficient. Server diagnostic sanitized before attachment.
  */
 public final class ErrorClassifier {
 
     private ErrorClassifier() {
     }
 
-    /**
-     * Classifies a terminal edge signal.
-     *
-     * @param code             the wire {@link ErrorCode}
-     * @param carrier          the frame that carried it ({@code ERROR_CLOSE} or {@code WATCH_CANCELED})
-     * @param rawServerMessage the untrusted server diagnostic (sanitized here; never machine-parsed)
-     * @return the reaction
-     */
     public static Reaction classify(ErrorCode code, Carrier carrier, String rawServerMessage) {
         String msg = Sanitize.message(rawServerMessage);
 
-        // DEMOTED_TO_CATCHUP is the sole non-fatal code: it rides an ERROR_CLOSE frame but does NOT close
-        // (§07 E3-2). It is a mode switch, not an exception, regardless of carrier.
+        // DEMOTED_TO_CATCHUP is the sole non-fatal code: rides ERROR_CLOSE but does NOT close. Mode switch, not exception.
         if (code == ErrorCode.DEMOTED_TO_CATCHUP) {
             return new Reaction.CatchUp();
         }
 
-        // SERVER_SHUTDOWN on a WATCH_CANCELED is the expected acknowledgement of the driver's own
-        // WATCH_CANCEL — do NOT reconnect. On an ERROR_CLOSE it is a genuine server-side close: reconnect.
+        // SERVER_SHUTDOWN on WATCH_CANCELED is cancel-ack from driver's own WATCH_CANCEL — do not reconnect.
+        // On ERROR_CLOSE it is genuine server-side close — reconnect.
         if (code == ErrorCode.SERVER_SHUTDOWN) {
             return carrier == Carrier.WATCH_CANCELED
                     ? new Reaction.CancelAck()
@@ -47,7 +34,6 @@ public final class ErrorClassifier {
         return carrier == Carrier.WATCH_CANCELED ? new Reaction.PerWatch(ex) : new Reaction.Fatal(ex);
     }
 
-    /** The exception type that IS the reaction for {@code code}; the sanitized diagnostic rides along. */
     private static ConfigdException exceptionFor(ErrorCode code, String sanitizedMessage) {
         return switch (code) {
             case BAD_WIRE_VERSION, FRAME_TOO_LARGE, FRAME_CORRUPT, PROTOCOL_VIOLATION ->

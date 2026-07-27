@@ -6,40 +6,15 @@ import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 
 /**
- * Exports the Ed25519 public verify key from a {@link SigningKeyStore} file
- * ({@code signing-key.bin}) as X.509/SubjectPublicKeyInfo DER. The control-plane operator
- * runs this against the leader's signing key file and ships the output to edges as
- * {@code --verify-key}.
- * <p>
- * The output is the JDK's {@code PublicKey.getEncoded()} form, interoperable with
- * standard tooling ({@code openssl pkey -pubin -inform DER -text}).
- * <p>
- * Usage (the signing key file format is Configd-private, so keytool/openssl cannot read
- * it directly - this utility is the supported path):
- * <pre>
- *   java -cp configd-server.jar io.configd.store.VerifyKeyExporter \
- *       &lt;signing-key.bin&gt; &lt;verify-key.der&gt;
- * </pre>
- * Fails (exit 1) if the signing key file does not exist - exporting would otherwise
- * silently generate a FRESH key pair ({@link SigningKeyStore#loadOrCreate}), yielding a
- * verify key that matches nothing.
+ * Exports public key from SigningKeyStore (Configd-private format) as X.509/SPKI DER.
+ * Operator runs against leader's signing-key.bin, ships result to edges as --verify-key.
+ * Fails (exit 1) on missing signing key file (refuses fresh generation).
  */
 public final class VerifyKeyExporter {
 
     private VerifyKeyExporter() {
     }
 
-    /**
-     * Exports the public key from {@code signingKeyFile} to {@code verifyKeyOut}
-     * (X.509/SPKI DER). Refuses a missing signing key file.
-     *
-     * @param signingKeyFile the {@link SigningKeyStore} file (must exist)
-     * @param verifyKeyOut   the DER output path (parent directories created)
-     * @return the number of DER bytes written
-     * @throws IOException              if the signing key file is missing/unreadable or
-     *                                  the output cannot be written
-     * @throws GeneralSecurityException if the key material cannot be decoded
-     */
     public static int export(Path signingKeyFile, Path verifyKeyOut)
             throws IOException, GeneralSecurityException {
         if (!Files.exists(signingKeyFile)) {

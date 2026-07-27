@@ -42,7 +42,6 @@ class WalContainerRedteamTest {
         return dir.resolve(LOG + ".wal");
     }
 
-    // The exhaustive header-tamper proof: every single-bit flip in the 8-byte header fails closed.
 
     @Test
     void everySingleBitHeaderFlipFailsClosedAndNeverParses() throws Exception {
@@ -50,7 +49,6 @@ class WalContainerRedteamTest {
         Path dir = wal.getParent();
         byte[] pristine = Files.readAllBytes(wal);
 
-        // Sanity: the pristine file loads its three frames.
         assertEquals(3, Storage.file(dir).readLog(LOG).size(), "precondition: pristine WAL replays");
 
         for (int off = 0; off < WalContainer.HEADER_SIZE; off++) {
@@ -59,9 +57,6 @@ class WalContainerRedteamTest {
                 tampered[off] ^= (byte) (1 << bit);
                 Files.write(wal, tampered);
 
-                // Every header field is magic, fileVersion, MBZ-flags, or MBZ-reserved - there is no
-                // header-derived offset, so a single-bit flip can only turn a load into a refusal.
-                // A fresh Storage each iteration avoids any cached channel; readLog opens the file anew.
                 assertThrows(UncheckedIOException.class, () -> Storage.file(dir).readLog(LOG),
                         "header bit-flip at byte " + off + " bit " + bit
                                 + " must fail closed (never parse, never OOB)");
@@ -71,7 +66,6 @@ class WalContainerRedteamTest {
 
     @Test
     void fileVersionZeroRejected() throws Exception {
-        // version 0 is reserved-illegal ("unset/torn"), distinct from the higher-version case the
         // builder covers. Set the fileVersion byte (offset 4) to 0 and confirm the refusal.
         Path wal = writeRealWal("verzero", "entry");
         byte[] b = Files.readAllBytes(wal);
@@ -83,7 +77,6 @@ class WalContainerRedteamTest {
 
     @Test
     void reservedHighAndLowBytesRejectedSeparately() throws Exception {
-        // The builder's MBZ test flips the flags byte (offset 5). Cover the two reserved bytes
         // (offsets 6 and 7) individually so every MBZ byte is proven, not just the first.
         for (int off : new int[]{6, 7}) {
             Path wal = writeRealWal("mbz-" + off, "entry");
@@ -95,8 +88,6 @@ class WalContainerRedteamTest {
         }
     }
 
-    // Sub-header files are fresh (torn or first-boot), not a refusal. The builder covers the 0
-    // and 8 byte cases; this covers the whole 1 to 7 gap.
 
     @Test
     void subHeaderFilesAreFreshNotRefused() throws Exception {

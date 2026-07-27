@@ -32,7 +32,6 @@ final class AdversarialNetwork {
 
     private static final int TAG_NET = 2_001;
 
-    /** A queued message; {@code seq} gives a deterministic same-tick tie-break. */
     record Pending(long deliverAtMs, long seq, NodeId from, NodeId to, Object message)
             implements Comparable<Pending> {
         @Override
@@ -58,9 +57,6 @@ final class AdversarialNetwork {
     private int spikeTo = -1;
     private int spikeExtraMs;
 
-    // Duplication probability (seed-derived per run); a duplicated message is
-    // re-enqueued once at deliverAt + a small delay. Raft RPCs are idempotent, so
-    // a dup that changes state-machine output is a RED caught by SimInvariants.
     private double dupRate;
 
     private BiConsumer<NodeId, Object> deliveryHandler;
@@ -112,17 +108,14 @@ final class AdversarialNetwork {
         partitions.clear();
     }
 
-    /** Current base drop rate (diagnosis seam - read the end-of-run network state). */
     double dropRateForTest() {
         return dropRate;
     }
 
-    /** Number of active directed partition edges (diagnosis seam). */
     int activePartitionsForTest() {
         return partitions.size();
     }
 
-    /** Send with simulated latency, possible drop, delay-spike, and duplication. */
     void send(NodeId from, NodeId to, Object message, long nowMs) {
         if (partitions.contains(encode(from, to))) {
             return;
@@ -137,7 +130,6 @@ final class AdversarialNetwork {
         }
         enqueue(from, to, message, nowMs + latency);
 
-        // Duplication: re-enqueue the same message a little later.
         if (rng.nextDouble() < dupRate) {
             int dupDelay = 1 + rng.nextInt(maxLatencyMs);
             enqueue(from, to, message, nowMs + latency + dupDelay);
@@ -145,10 +137,6 @@ final class AdversarialNetwork {
         }
     }
 
-    /**
-     * Lifetime count of duplicated sends (diagnostic; proves the duplication path actually
-     * fires). Counting only - never consumes an RNG draw, so digests are untouched.
-     */
     long dupCount() {
         return dupCount;
     }
@@ -159,7 +147,6 @@ final class AdversarialNetwork {
         queue.add(new Pending(deliverAt, seqCounter++, from, to, message));
     }
 
-    /** Deliver all messages due at or before {@code nowMs}; returns count delivered. */
     int deliverDue(long nowMs) {
         int count = 0;
         while (!queue.isEmpty() && queue.peek().deliverAtMs() <= nowMs) {

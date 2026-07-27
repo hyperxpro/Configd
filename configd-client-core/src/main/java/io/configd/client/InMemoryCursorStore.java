@@ -6,8 +6,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * The default {@link CursorStore}: a process-local {@link ConcurrentHashMap}. Cursors do not survive a
- * restart; a durable deployment supplies its own implementation. Thread-safe.
+ * Default CursorStore: process-local, does not survive restart. Thread-safe.
  */
 public final class InMemoryCursorStore implements CursorStore {
 

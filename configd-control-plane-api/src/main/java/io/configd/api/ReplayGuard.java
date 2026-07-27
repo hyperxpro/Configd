@@ -6,43 +6,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * Replay protection for mutating control-plane requests. A client
- * stamps each request with {@code X-Configd-Timestamp} (epoch ms) and a unique
- * {@code X-Configd-Nonce}; the guard rejects a request whose timestamp is outside
- * a {@code ±window} of server time (a stale capture or a clock-skewed/forged
- * future stamp) and rejects a nonce it has already seen inside the window (a
- * verbatim capture-and-replay).
- *
- * <h2>Trust model (honesty requirement)</h2>
- * This defends against a <b>passive</b> attacker who captures a legitimate
- * request and re-sends it verbatim. It does <b>NOT</b> stop a holder of the
- * bearer token from minting a <em>fresh</em> request (new nonce + current
- * timestamp): that is the bearer token's trust model, not the replay guard's.
- * For per-request integrity against an active token-holder, content signing
- * (SigV4-style HMAC over method+path+body+timestamp+nonce) is required - that
- * is out of scope here.
- *
- * <h2>Bounding (anti-DoS)</h2>
- * The seen-nonce store is bounded two ways so it cannot be turned into a
- * memory-exhaustion lever by an attacker who floods unique nonces:
- * <ul>
- *   <li><b>TTL eviction</b>: a nonce is only retained for {@code window} (its
- *       replay-relevance lifetime); expired entries are evicted lazily on each
- *       call and opportunistically at insert. A nonce older than the window
- *       could not be replayed successfully anyway (its timestamp would be
- *       stale), so dropping it loses no protection.</li>
- *   <li><b>Hard size cap</b> {@code maxNonces} (default
- *       {@link #DEFAULT_MAX_NONCES}): an LRU eviction order bounds the map even
- *       under a same-instant flood. Evicting the oldest nonce can only ever
- *       <em>weaken</em> replay detection for that one already-accepted request
- *       within its window - it can never cause a false reject - so the cap is a
- *       safe, bounded trade.</li>
- * </ul>
- *
- * <h2>Thread safety</h2>
- * {@link #check} is synchronized on this instance.
- */
 public final class ReplayGuard {
 
     /** Default acceptance window in milliseconds (±5 minutes). */
@@ -73,11 +36,8 @@ public final class ReplayGuard {
     private final long windowMs;
     private final int maxNonces;
 
-    // nonce -> expiry epoch-ms (the timestamp at which it leaves the window).
-    // accessOrder=true makes this an LRU so the size cap evicts the oldest.
     private final LinkedHashMap<String, Long> seen;
 
-    /** Creates a guard with the default ±5-minute window and default cap. */
     public ReplayGuard(Clock clock) {
         this(clock, DEFAULT_WINDOW_MS, DEFAULT_MAX_NONCES);
     }
@@ -127,33 +87,22 @@ public final class ReplayGuard {
         long now = clock.currentTimeMillis();
         evictExpired(now);
 
-        // Reject both stale (too old) and future-skewed (too far ahead) stamps.
         if (Math.abs(now - timestampMs) > windowMs) {
             return Decision.STALE;
         }
 
-        // A stale/expired prior sighting has already been evicted above, so a hit
-        // here is a genuine in-window replay.
         if (seen.containsKey(nonce)) {
             return Decision.REPLAY;
         }
 
-        // Record with an expiry one window past NOW (its replay-relevance horizon).
         seen.put(nonce, now + windowMs);
         return Decision.ACCEPTED;
     }
 
-    /** Current number of retained nonces (for tests/observability). */
     public synchronized int trackedNonces() {
         return seen.size();
     }
 
-    /**
-     * Lazily evicts every nonce whose expiry has passed (expiry &le; now). Runs
-     * on every {@link #check}, so the store self-trims to at most the nonces seen
-     * within the last {@code window}; combined with the {@code maxNonces} LRU cap
-     * this keeps the store bounded under any input.
-     */
     private void evictExpired(long now) {
         seen.values().removeIf(expiry -> expiry <= now);
     }

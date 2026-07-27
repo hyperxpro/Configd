@@ -7,31 +7,13 @@ import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
 
 /**
- * E2E-compose secrets helper -- runs in java source-file mode at setup time only
- * (never inside a container, never a runtime dependency):
- *
- * <pre>
- *   java [-cp configd-server-shaded.jar] SecretsTool.java &lt;subcommand&gt; args...
- * </pre>
+ * Setup time only; Java source-file mode, never in containers.
  *
  * Subcommands:
  * <ul>
- *   <li>{@code repack <in.p12> <out.p12> <password>} -- re-writes a keytool-built PKCS12
- *       (keytool refuses store passwords shorter than 6 chars) into an empty-password
- *       PKCS12, which is what the production CLI TLS path expects: {@code TlsConfig.mtls}
- *       hard-codes an empty store password. Key entries are re-protected with the empty
- *       password too ({@code TlsManager} uses one password for store and key).</li>
- *   <li>{@code truststore <out.p12> <alias=cert.pem>...} -- builds an empty-password
- *       PKCS12 trust store from PEM certificates (avoids keytool's password minimum
- *       entirely on the trust side).</li>
- *   <li>{@code signing-key <signing-key.bin> <verify-key.der>} -- mints (or loads) the
- *       cluster's shared Ed25519 signing key via the production
- *       {@code SigningKeyStore.loadOrCreate} and exports the verify key via the
- *       production {@code VerifyKeyExporter} (requires the server shaded jar on the
- *       classpath). Generating it once at setup and mounting the same file into all
- *       three CP nodes is required: each node signs its own fan-out stream at apply
- *       time, so a per-node key would break edge verification at the first leader
- *       failover.</li>
+ *   <li>{@code repack} — empty-password PKCS12 (required by TlsConfig.mtls and TlsManager).
+ *   <li>{@code truststore} — empty-password trust store from PEM (avoids keytool 6-char minimum).
+ *   <li>{@code signing-key} — shared Ed25519 key for all three CP nodes; per-node breaks edge verification at failover.
  * </ul>
  */
 public class SecretsTool {
@@ -108,7 +90,7 @@ public class SecretsTool {
         }
     }
 
-    /** The whole point: prove the artifact loads exactly the way TlsManager will load it. */
+    /** Verify artifact loads as TlsManager will (empty password). */
     private static void verifyLoadsEmpty(Path p) throws Exception {
         KeyStore check = KeyStore.getInstance("PKCS12");
         try (InputStream is = Files.newInputStream(p)) {

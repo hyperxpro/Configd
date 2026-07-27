@@ -7,10 +7,6 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link FlowController} - credit acquisition, release,
- * throttling, and boundary conditions.
- */
 class FlowControllerTest {
 
     private static final int INITIAL_CREDITS = 10;

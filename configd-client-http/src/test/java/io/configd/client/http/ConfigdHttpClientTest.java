@@ -24,19 +24,10 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Tests the HTTP control-plane client against the scriptable {@link MockControlPlane}: the get/put/delete happy
- * paths (seq-from-body, version-from-header), every status reaction, leader-following (hint follow-once /
- * hintless N=1 loop / unresolvable-hint / anti-SSRF), the indeterminate-write contract, the replay guard, the
- * strong-read fail-close, the query composition (the {@code consistency=linearizable} loose-substring literal /
- * exact {@code scope=}), branch-on-code-not-body, and the transfer-leadership route.
- */
 @Timeout(30)
 class ConfigdHttpClientTest {
 
     private static final RetryPolicy FAST = new RetryPolicy(Duration.ofMillis(2), Duration.ofMillis(10), 4);
-
-    // happy paths
 
     @Test
     void getReturnsValueAndVersionFromHeader() throws Exception {

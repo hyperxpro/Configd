@@ -847,28 +847,26 @@ public sealed interface EdgeFrame
             }
         }
 
-        /** A PUT change with the given (possibly empty) value. */
         public static WatchChange put(String key, byte[] value) {
             return new WatchChange(key, CHANGE_KIND_PUT, value);
         }
 
-        /** A DELETE change for the given key. */
         public static WatchChange delete(String key) {
             return new WatchChange(key, CHANGE_KIND_DELETE, null);
         }
 
-        /** Returns a defensive copy of the value bytes, or {@code null} for a DELETE. */
+        /** Returns defensive copy, or null for DELETE. */
         @Override
         public byte[] value() {
             return value == null ? null : value.clone();
         }
 
-        /** Internal zero-copy accessor for the codec (callers MUST NOT mutate). */
+        /** Unsafe zero-copy accessor for codec use; callers MUST NOT mutate. */
         byte[] valueUnsafe() {
             return value;
         }
 
-        /** True iff this is a DELETE (no value; val_len == -1 on the wire). */
+        /** True iff DELETE (val_len == -1 on wire). */
         public boolean isDelete() {
             return kind == CHANGE_KIND_DELETE;
         }

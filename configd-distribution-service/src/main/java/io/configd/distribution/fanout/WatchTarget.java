@@ -49,32 +49,14 @@ public record WatchTarget(int scope, int targetKind, String path, boolean fullCh
         }
     }
 
-    /** True iff this is a FULL (whole-scope / root) target. */
     public boolean isFull() {
         return targetKind == EdgeFrame.WATCH_TARGET_FULL;
     }
 
-    /**
-     * True iff this target matches <b>every</b> key - FULL or {@code full_chain_verify} -
-     * so a catch-up snapshot needs <b>no</b> filtering (it was gated by a root-scope grant).
-     * Mirrors the {@link #matches(String)} short-circuit; lets {@link FilteringReplaySource} skip
-     * the snapshot rebuild for a whole-store-authorized watch.
-     */
     public boolean isMatchAll() {
         return fullChainVerify || isFull();
     }
 
-    /**
-     * The per-watch routing filter - true iff a mutation on {@code key} belongs to
-     * this target. This is <b>routing, not authorization</b> (the gate already authorized
-     * the whole target):
-     * <ul>
-     *   <li>{@code full_chain_verify} or FULL => every key matches (the root-gated full stream);</li>
-     *   <li>KEY => exact literal equality;</li>
-     *   <li>PREFIX => literal {@code startsWith} (the subtree form {@code /a/} matches
-     *       {@code /a/b}; the same literal model as {@code PolicyRule.matches}).</li>
-     * </ul>
-     */
     public boolean matches(String key) {
         if (fullChainVerify || isFull()) {
             return true;

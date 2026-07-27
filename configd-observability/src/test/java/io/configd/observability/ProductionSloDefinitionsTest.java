@@ -6,9 +6,6 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link ProductionSloDefinitions} - verifies all production SLOs are registered.
- */
 class ProductionSloDefinitionsTest {
 
     @Test

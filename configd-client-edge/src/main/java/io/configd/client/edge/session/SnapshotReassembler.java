@@ -11,22 +11,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Reassembles a {@code SNAPSHOT_BEGIN → SNAPSHOT_CHUNK* → SNAPSHOT_END} transfer into a {@link ConfigSnapshot},
- * hardened against a hostile server (the client mirror of {@code EdgeClientCore}'s snapshot machinery). Two
- * failure classes:
- *
- * <ul>
- *   <li><b>Caps breach ⇒ {@link ProtocolViolationException} (fail-closed).</b> A {@code SNAPSHOT_BEGIN}
- *       declaring more than the client's hard ceilings ({@code maxSnapshotChunks} / {@code maxSnapshotTotalBytes}),
- *       a {@code (chunkCount+1)}-th chunk, accumulated bytes past the declared {@code totalBytes} or the hard
- *       ceiling, or a chunk with no preceding {@code BEGIN} — all rejected <b>before</b> unbounded
- *       accumulation. An honest server never declares over the frozen ceilings; this is a hostile/buggy peer.</li>
- *   <li><b>Truncation / mismatch ⇒ {@link GapUnrecoverableException} (re-bootstrap).</b> At {@code END}, fewer
- *       chunks than declared, a reassembled length ≠ {@code totalBytes}, or a body that fails to deserialize —
- *       the snapshot is incomplete, so it is <b>discarded and re-subscribed</b>, never applied partially.</li>
- * </ul>
- *
- * <p>Not thread-safe: driven from the single reader thread.
+ * Reassembles SNAPSHOT_BEGIN → SNAPSHOT_CHUNK* → SNAPSHOT_END. Hardened against hostile server: caps breach
+ * (fail-closed) or truncation/mismatch (re-bootstrap). Single-threaded: reader thread only.
  */
 public final class SnapshotReassembler {
 
@@ -49,12 +35,10 @@ public final class SnapshotReassembler {
         return inProgress;
     }
 
-    /** The seq the in-progress (or just-ended) snapshot encodes. */
     public long snapshotSeq() {
         return snapshotSeq;
     }
 
-    /** Begins a transfer; rejects a header that already declares over the hard ceilings (fail-closed). */
     public void begin(EdgeFrame.SnapshotBegin b) {
         if (b.chunkCount() > maxChunks) {
             throw new ProtocolViolationException("SNAPSHOT_BEGIN chunkCount " + b.chunkCount()
@@ -72,7 +56,6 @@ public final class SnapshotReassembler {
         accumulatedBytes = 0L;
     }
 
-    /** Accepts one chunk; rejects a chunk outside a transfer, an over-count chunk, or over-accumulation. */
     public void chunk(EdgeFrame.SnapshotChunk c) {
         if (!inProgress) {
             throw new ProtocolViolationException("SNAPSHOT_CHUNK received outside a snapshot transfer");
@@ -91,14 +74,7 @@ public final class SnapshotReassembler {
         chunks.add(c);
     }
 
-    /**
-     * Ends a transfer and returns the reassembled snapshot. Verifies it received <b>exactly</b> the declared
-     * chunk count and byte length; a shortfall discards and re-bootstraps rather than applying a partial
-     * snapshot.
-     *
-     * @throws GapUnrecoverableException on a truncated / mismatched / undecodable snapshot (re-bootstrap)
-     * @throws ProtocolViolationException on an END outside a transfer
-     */
+    /** Ends transfer. Rejects truncation/mismatch (discards, re-bootstraps). */
     public ConfigSnapshot end(EdgeFrame.SnapshotEnd e) {
         if (!inProgress) {
             throw new ProtocolViolationException("SNAPSHOT_END received outside a snapshot transfer");
@@ -128,7 +104,6 @@ public final class SnapshotReassembler {
         }
     }
 
-    /** Discards any in-progress transfer state (on error, cutover, or re-subscribe). */
     public void reset() {
         inProgress = false;
         chunks.clear();

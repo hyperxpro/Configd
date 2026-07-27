@@ -1,28 +1,12 @@
 #!/usr/bin/env bash
-# dr-drill.sh — disaster-recovery / durability drills on a live bare 3-node
-#               Configd cluster (the durability and availability claims, on metal).
+# dr-drill.sh — 3-node disaster-recovery drills: leader loss, node recovery (WAL replay), snapshot catch-up, wipe-rejoin safety.
+# Results and per-drill timings -> $OUT/dr-results.txt
 #
-# ops/scripts/restore-snapshot.sh is Kubernetes-only (kubectl + StatefulSet); this
-# drives the same 3-co-located-node Java cluster the perf harnesses use, directly.
-#
-# Drills (each timed; results -> $OUT/dr-results.txt):
-#   A) Leader loss under load: seed known keys, drive load, kill -9 the leader,
-#      measure the write-availability gap (t_first_200 - t_kill), confirm the
-#      election settles (bounded, no spurious re-elections), and confirm no
-#      committed-write loss (every seeded key reads back intact). The durability
-#      contract is fsync-before-ack/no-early-ack (ADR-0033) — a key that returned
-#      200 before the kill must survive the kill.
-#   B) Node recovery via WAL replay: kill -9 a follower, restart it from its own
-#      data dir; measure RTO = time to /health/ready and commit-index convergence
-#      with the leader (it replays its persisted snapshot + WAL). No loss.
-#   C) Node recovery via wipe + InstallSnapshot: kill a follower, wipe its data
-#      dir, restart empty; the leader streams a snapshot + log to catch it up.
-#      RTO to convergence. No loss.
-#
-#   Usage:  perf/dr-drill.sh [outdir]
-#   Env:    DR_BASE (default /mnt/nvme/run/dr-<pid>)   DR_SEED_KEYS (default 2000)
-#           DR_LOAD_RATE (default 300)   DR_HEAP (default "-Xmx4g -Xms4g")
-#           DR_DRYRUN (default 0)        CONFIGD_JAR / CONFIGD_BENCH
+# Usage:  perf/dr-drill.sh [outdir]
+# Env:    DR_BASE (default /mnt/nvme/run/dr-<pid>)   DR_SEED_KEYS (default 2000)
+#         DR_LOAD_RATE (default 300)   DR_HEAP (default "-Xmx4g -Xms4g")
+#         DR_DRYRUN (default 0)        CONFIGD_JAR / CONFIGD_BENCH
+
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JAR="${CONFIGD_JAR:-$(ls "$ROOT"/configd-server/target/configd-server-*.jar 2>/dev/null | grep -v original- | head -1)}"

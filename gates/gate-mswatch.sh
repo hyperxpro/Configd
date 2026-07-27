@@ -9,22 +9,6 @@
 # coordinator seam is present in source (a refactor that deletes the
 # multi-shard path FAILS this gate rather than silently passing).
 #
-# WHAT A GREEN gate-mswatch PROVES:
-#   (a) coordinator  the fan-out/fan-in coordinator + per-shard completeness are green
-#                    non-vacuously: MultiShardCoordinatorTest, RealHashCompletenessTest,
-#                    ShardMapResolverTest, WatchMultiplexSinkTest.
-#   (b) authz        the shard-complete _acl/ policy plane rejects a DENY that hashes to
-#                    a NON-primary shard (the property that makes lifting the boot guard
-#                    authz-safe): AclConfigPolicyLoaderMultiShardTest, incl. the explicit
-#                    regression method tB6_multiShard_appliesNonPrimaryShardDeny_watchRejected.
-#   (c) guard-flip   the split: N>1 + edge BOOTS serving multi-shard WATCH, the legacy
-#                    whole-store SUBSCRIBE is refused per-connection unless the opt-in
-#                    (LegacySubscribePartialShardViewTest), and the real server boots at
-#                    N>1+edge (NGreaterThanOneBootSmokeTest).
-#   (d) wire-stable  the v1/v2/v3 edge golden-fixture tests ran (the whole gate rests on
-#                    "zero wire change" — the fixtures stay byte-stable).
-#   (e) seam-present the coordinator seam EXISTS in source (non-vacuity: a deletion FAILS
-#                    this gate, never a silent pass).
 #
 # Environment knobs:
 #   GATE_MSWATCH_SKIP_BUILD=1  reuse already-installed module jars (local convenience;

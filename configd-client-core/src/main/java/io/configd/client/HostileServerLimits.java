@@ -3,26 +3,9 @@ package io.configd.client;
 import io.configd.distribution.wire.EdgeFrameCodec;
 
 /**
- * The inbound bounds the client enforces on <b>server</b> frames — the mirror of the server's hostile-client
- * hardening. Because the client shares {@link EdgeFrameCodec}, the per-frame bounds (length-before-alloc, CRC
- * before interpret, version pin, type↔version legality, strict-end, every inner length/count) are enforced by
- * the same code the server runs; this record adds the <b>client-side policy</b> bounds the state machine
- * layers on top: connection/handshake/idle deadlines and the cross-frame snapshot accumulation caps.
- *
- * <p>All values are configurable; the defaults are safe and track the RFC.
- *
- * @param maxFrameBytes         the per-frame ceiling; a declared length above it is a bounded reject before
- *                              any allocation ({@link EdgeFrameCodec#MAX_EDGE_FRAME_SIZE} = 2 MiB — the frozen
- *                              wire constant; a driver MAY lower it but never raise it above the codec cap)
- * @param connectTimeoutMs      the TCP connect timeout (a stalled connect must not hang)
- * @param handshakeTimeoutMs    the TLS handshake deadline (a slow-loris that never completes the handshake
- *                              times out rather than parking the reader)
- * @param readIdleDeadlineMs    the HEARTBEAT-silence read-idle deadline once streaming: reconnect if no
- *                              server frame arrives within it. It is <b>not</b> armed before the first
- *                              business frame, since a fan-out subscriber is idle by design until it
- *                              subscribes
- * @param maxSnapshotTotalBytes the cross-frame snapshot accumulation ceiling (see {@code SnapshotReassembler})
- * @param maxSnapshotChunks     the cross-frame snapshot chunk-count ceiling (see {@code SnapshotReassembler})
+ * Inbound bounds enforced on server frames: mirror of server's hostile-client hardening. Codec enforces
+ * per-frame bounds; this adds policy bounds (deadlines, snapshot caps). All configurable; defaults are safe.
+ * readIdleDeadlineMs is NOT armed before first business frame (fan-out subscriber idle by design until subscribe).
  */
 public record HostileServerLimits(
         int maxFrameBytes,
@@ -50,11 +33,6 @@ public record HostileServerLimits(
         }
     }
 
-    /**
-     * The RFC-tracking defaults: the 2 MiB frozen frame cap, a 2 s connect and 2 s handshake deadline, a 2 s
-     * HEARTBEAT-silence read-idle deadline (8 × the 250 ms heartbeat cadence), and the 512 MiB / 65536-chunk
-     * snapshot accumulation caps.
-     */
     public static HostileServerLimits defaults() {
         return new HostileServerLimits(
                 EdgeFrameCodec.MAX_EDGE_FRAME_SIZE,

@@ -21,18 +21,9 @@ import java.util.Optional;
 import java.util.function.Function;
 
 /**
- * The unary control-plane routing and retry engine. It sends one logical request, following the advisory
- * {@code X-Leader-Hint} (follow-once, {@code hop < 2}, then back off), backing off and retrying a hintless
- * {@code 503} (the election loop that is required even at N=1), honoring {@code Retry-After} on a {@code 429},
- * and classifying {@code 504} / mutation-timeout / other-mutation-5xx as <b>indeterminate</b> (retry-to-definite;
- * on budget exhaustion it surfaces {@link IndeterminateException}, never a false definite failure). Anti-SSRF: a
- * hint is a bare numeric {@code NodeId} resolved <b>only</b> through the operator {@link NodeEndpoints} map; an
- * unresolvable hint degrades to hintless (never a wire-supplied address). The credential (and, when enabled, a
- * <b>fresh</b> replay stamp per attempt) is (re)applied on every send, including a followed hop, always over the
- * same TLS/mTLS.
- *
- * <p>Synchronous/blocking by design -- the {@link ConfigdHttpClient} runs it on an executor for its
- * {@code CompletableFuture} surface and calls it directly for the blocking facade.
+ * Unary routing and retry engine: follows X-Leader-Hint (once, hop<2), backs off on hintless 503, honors Retry-After,
+ * treats 504/mutation-timeout/other-5xx as indeterminate (retry-to-definite). Anti-SSRF: hint is bare NodeId
+ * resolved only through operator NodeEndpoints map. Fresh replay stamp per attempt (load-bearing for retry).
  */
 final class LeaderRouter {
 
@@ -57,20 +48,9 @@ final class LeaderRouter {
         this.requestTimeout = requestTimeout;
     }
 
-    /**
-     * One request spec. {@code isMutation} governs the indeterminate/5xx and replay-401 handling;
-     * {@code configMutation} (a config PUT/DELETE, not the transfer route) governs the 409 branch -- replayed
-     * nonce vs. the transfer route's precondition conflict.
-     */
     record Request(String method, String pathAndQuery, byte[] body, boolean isMutation, boolean configMutation) {
     }
 
-    /**
-     * Executes the request under the retry contract; returns the raw response for a {@code 200}/{@code 404}
-     * (the caller parses it), or throws the typed reaction ({@link AuthFailedException} /
-     * {@link ForbiddenException} / {@link BadRequestException} / {@link IndeterminateException} /
-     * {@link UnavailableException}).
-     */
     HttpResponse<byte[]> execute(Request request) {
         int maxAttempts = retryPolicy.maxAttempts();
         int entryIdx = 0;
@@ -87,9 +67,6 @@ final class LeaderRouter {
                 if (e instanceof InterruptedException) {
                     Thread.currentThread().interrupt();
                 }
-                // A transport failure (connection refused, dropped, or timed out). On a mutation it is
-                // indeterminate (the write may have landed); on a read it is just a re-read. Either way,
-                // retry within budget.
                 if (request.isMutation()) {
                     sawIndeterminate = true;
                 }

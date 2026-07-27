@@ -65,7 +65,6 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public final class SegmentKeyManager implements AtRestKeys {
 
-    /** HKDF info string for per-segment DEK derivation (distinct from the KEK/root info). */
     static final byte[] DEK_INFO =
             "configd/raft-at-rest-encryption/dek/v1".getBytes(StandardCharsets.UTF_8);
 
@@ -86,30 +85,23 @@ public final class SegmentKeyManager implements AtRestKeys {
     static final long REKEY_LIMIT = 1L << 32;
 
     private static final String DEK_ALG = "AES";
-    private static final int DEK_LEN = 32; // AES-256
+    private static final int DEK_LEN = 32;
     private static final String MAC_ALG = "HmacSHA256";
-    private static final int MAC_LEN = 32; // HMAC-SHA-256
+    private static final int MAC_LEN = 32;
 
     /** term -> root key. Old terms retained so old-term data still decrypts after rotation. */
     private final Map<Integer, RootKey> roots = new ConcurrentHashMap<>();
     private volatile int currentTerm;
 
     private final SecureRandom rng;
-    /** HKDF salt for the term-versioned integrity MAC key (the non-secret node/signing-key id). */
     private final byte[] nodeKeyId;
 
-    /** Per-magic current write segment (the artifact's active DEK + nonce counter). */
     private final ConcurrentHashMap<Integer, AtomicReference<WriteSegment>> writeSegments =
             new ConcurrentHashMap<>();
 
-    /** Read-side DEK cache: (keyTerm, hex(segmentId)) -> DEK. Recovery derives each once. */
     private final ConcurrentHashMap<String, SecretKey> readDekCache = new ConcurrentHashMap<>();
-    /** Read-side HMAC integrity-key cache: keyTerm -> K_integrity[term]. */
     private final ConcurrentHashMap<Integer, SecretKey> macKeyCache = new ConcurrentHashMap<>();
 
-    /**
-     * @param initialRoot the root key for the initial (current) keyring term
-     */
     public SegmentKeyManager(RootKey initialRoot) {
         this(initialRoot, new SecureRandom());
     }
@@ -141,11 +133,6 @@ public final class SegmentKeyManager implements AtRestKeys {
         return overTerms(roots, activeTerm, new byte[0]);
     }
 
-    /**
-     * Builds a manager over all retained terms with an explicit {@code nodeKeyId} (the HKDF salt for
-     * the term-versioned HMAC integrity keys). Production passes the signing keyId bytes so
-     * {@code K_integrity[term]} is node-bound; tests may pass an empty id.
-     */
     public static SegmentKeyManager overTerms(java.util.Collection<RootKey> roots, int activeTerm,
                                               byte[] nodeKeyId) {
         return new SegmentKeyManager(roots, activeTerm, new SecureRandom(), nodeKeyId);
@@ -232,7 +219,6 @@ public final class SegmentKeyManager implements AtRestKeys {
                 k -> {
                     RootKey root = roots.get(keyTerm);
                     if (root == null) {
-                        // Fail-closed: an unknown term cannot be authentically decrypted.
                         throw new IntegrityException(
                                 "unknown at-rest encryption key term " + keyTerm
                                         + " (not in keyring; refusing to decrypt)");
@@ -251,7 +237,6 @@ public final class SegmentKeyManager implements AtRestKeys {
         return macKeyCache.computeIfAbsent(keyTerm, kt -> {
             RootKey root = roots.get(kt);
             if (root == null) {
-                // Fail-closed: an unknown/forged term has no retained root, so it cannot be verified.
                 throw new IntegrityException(
                         "unknown at-rest integrity key term " + kt
                                 + " (not in keyring; refusing to verify)");
@@ -260,7 +245,6 @@ public final class SegmentKeyManager implements AtRestKeys {
         });
     }
 
-    /** K_integrity[term] = HKDF(IKM = root material, salt = nodeKeyId, info = INTEGRITY_INFO, 32). */
     private SecretKey deriveMacKey(RootKey root) {
         byte[] macBytes = root.withMaterial(m -> Hkdf.deriveKey(m, nodeKeyId, INTEGRITY_INFO, MAC_LEN));
         try {
@@ -279,7 +263,6 @@ public final class SegmentKeyManager implements AtRestKeys {
         return new WriteSegment(term, segmentId, dek, new AtomicLong(0));
     }
 
-    /** DEK = HKDF(IKM = root material, salt = segmentId, info = DEK_INFO, 32). */
     private static SecretKey deriveDek(RootKey root, byte[] segmentId) {
         byte[] dekBytes = root.withMaterial(m -> Hkdf.deriveKey(m, segmentId, DEK_INFO, DEK_LEN));
         try {
@@ -300,6 +283,5 @@ public final class SegmentKeyManager implements AtRestKeys {
         return nonce;
     }
 
-    /** An artifact's active write segment: a fixed (term, segmentId, DEK) and a monotonic nonce counter. */
     private record WriteSegment(int keyTerm, byte[] segmentId, SecretKey dek, AtomicLong counter) {}
 }

@@ -9,20 +9,9 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * The operator-provided {@code NodeId -> HTTP api-endpoint} map. There is <b>no</b> wire topology discovery: a
- * driver is configured with the nodes it may be redirected to, resolving each hinted numeric {@code NodeId} to
- * that node's control-plane HTTP base URI (the {@code --api-port}, default 8080 -- not the Raft
- * {@code --bind-port}). This map is the redirect <b>trust boundary</b>: it must contain only same-trust-domain
- * nodes, and it is the <b>anti-SSRF</b> invariant -- a {@code X-Leader-Hint} is a bare {@code NodeId} resolved
- * only through this map, so a forged hint can never steer the client to an attacker-chosen address. A hint the
- * map does not contain degrades to a <b>hintless</b> {@code 503}: back off and retry the known entries, never
- * chase an unknown id.
- *
- * <p>Two shapes: {@link #of} (bare entry URIs, no id map -- every hint is unresolvable, so it is always
- * hintless; correct for a single-node / single-entry client at N=1) and {@link #ofMap} (a full
- * {@code NodeId -> URI} map, so hints resolve and the client follows leaders at N &gt; 1). Base URIs are
- * normalized to end at the origin (scheme + authority); the {@code /v1/config/...} path is appended per
- * request.
+ * Operator-provided NodeId -> HTTP api-endpoint map (no wire topology discovery). No wire topology discovery.
+ * This is the anti-SSRF trust boundary: X-Leader-Hint is bare NodeId resolved only through this map,
+ * so a forged hint cannot steer the client to attacker-chosen address. Unresolvable hint = hintless 503.
  */
 public final class NodeEndpoints {
 
@@ -34,7 +23,6 @@ public final class NodeEndpoints {
         this.entries = entries;
     }
 
-    /** Entry base URIs with no id map: hints never resolve (always hintless), the correct shape for a single node. */
     public static NodeEndpoints of(URI... entries) {
         if (entries.length == 0) {
             throw new IllegalArgumentException("at least one endpoint is required");
@@ -46,7 +34,6 @@ public final class NodeEndpoints {
         return new NodeEndpoints(Map.of(), List.copyOf(normalized));
     }
 
-    /** A full {@code NodeId -> base URI} map: hints resolve, so the client follows per-shard leaders. */
     public static NodeEndpoints ofMap(Map<Integer, URI> nodes) {
         Objects.requireNonNull(nodes, "nodes");
         if (nodes.isEmpty()) {
@@ -62,17 +49,14 @@ public final class NodeEndpoints {
         return new NodeEndpoints(Map.copyOf(copy), List.copyOf(entryList));
     }
 
-    /** Resolves a hinted {@code NodeId} to its base URI, or empty when the map does not contain it (hintless). */
     public Optional<URI> resolve(int nodeId) {
         return Optional.ofNullable(byNodeId.get(nodeId));
     }
 
-    /** The configured entry base URIs (round-robin start points; a hintless {@code 503} retries among these). */
     public List<URI> entries() {
         return entries;
     }
 
-    /** Normalizes a URI to its origin (scheme://authority), dropping any path/query/fragment. */
     private static URI origin(URI uri) {
         Objects.requireNonNull(uri, "uri");
         if (uri.getScheme() == null || uri.getHost() == null) {

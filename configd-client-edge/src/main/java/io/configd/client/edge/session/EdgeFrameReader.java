@@ -9,34 +9,15 @@ import java.io.EOFException;
 import java.io.IOException;
 
 /**
- * Reads one length-prefixed {@link EdgeFrame} from a stream with the same bounds-before-allocation discipline
- * the server's {@code ByteToEdgeFrameDecoder} uses — the client mirror of the hostile-peer framing hardening.
- * It is a static, socket-free routine so it can be fuzzed directly (feed a {@code ByteArrayInputStream}) and
- * proven to only ever return a frame, signal a clean end, or throw a mapped
- * {@link EdgeFrameCodec.CodecException} — never hang, OOM, or throw anything else.
- *
- * <p>Order: read the 4-byte length prefix → {@link EdgeFrameCodec#peekLength} bounds it to
- * {@code [10, MAX_EDGE_FRAME_SIZE]} <b>and</b> the client's (possibly tighter) {@code maxFrameBytes}
- * <b>before</b> allocating → read exactly {@code length} bytes → {@link EdgeFrameCodec#decode} (CRC before
- * version/type, strict-end). A lying length prefix cannot induce a giant allocation; a truncated frame is
- * corruption, not a silent partial read.
+ * Reads one frame: length-prefixed with bounds-before-allocation. Static, socket-free for fuzzing.
+ * Provably returns frame, clean end, or throws CodecException only—never hangs, OOMs, or other throws.
  */
 public final class EdgeFrameReader {
 
     private EdgeFrameReader() {
     }
 
-    /**
-     * Reads one complete frame.
-     *
-     * @param in            the stream (SO_TIMEOUT governs how long a partial read blocks)
-     * @param pinnedVersion the connection's pinned business version, or {@code null} to accept any business
-     *                      version (the pre-pin phase never pins, so it passes {@code null})
-     * @param maxFrameBytes the client's frame ceiling (≤ the codec's 2 MiB cap)
-     * @return the decoded frame, or {@code null} on a clean end-of-stream at a frame boundary
-     * @throws EdgeFrameCodec.CodecException on any malformed / oversize / truncated / bad-CRC frame
-     * @throws IOException                   on a genuine transport error (reset, read timeout)
-     */
+    /** Reads one frame: null on clean EOF, throws CodecException or IOException on error. */
     public static EdgeFrame readFrame(DataInputStream in, Byte pinnedVersion, int maxFrameBytes)
             throws IOException {
         int first = in.read();
@@ -62,11 +43,7 @@ public final class EdgeFrameReader {
                 : EdgeFrameCodec.decode(frame, pinnedVersion);
     }
 
-    /**
-     * Fills {@code buf[off, off+len)} exactly, mapping a mid-frame end-of-stream to {@code FRAME_CORRUPT}: a
-     * well-behaved server never truncates a frame, so a partial read is corruption (or a hostile drip), not a
-     * clean close. A read timeout / reset propagates as its own {@link IOException} (not an {@code EOFException}).
-     */
+    /** Fills buf[off,off+len), mapping mid-frame EOF to FRAME_CORRUPT (truncation is corruption). */
     private static void readFullyOrCorrupt(DataInputStream in, byte[] buf, int off, int len, String what)
             throws IOException {
         try {

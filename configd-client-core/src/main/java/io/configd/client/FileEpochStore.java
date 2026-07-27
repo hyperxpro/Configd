@@ -11,17 +11,12 @@ import java.util.Objects;
 import java.util.zip.CRC32C;
 
 /**
- * A durable, crash-atomic {@link EpochStore} — the client mirror of the reference {@code DeltaApplier}'s
- * {@code epoch.lock} sidecar. The file is exactly {@value #EPOCH_LOCK_BYTES} bytes:
- * {@code [8B big-endian epoch][4B big-endian CRC32C(epoch)]}. On read, any anomaly — missing, wrong size, CRC
- * mismatch, or a negative value — is treated as "no record" and demoted to {@code 0} (fail-open first-boot);
- * the next successful {@link #save(long)} rewrites a valid record. Writes go through a temp file + atomic
- * rename so a crash mid-write cannot leave a torn high-water that would let an older leader-signed delta
- * replay past the restart.
+ * Durable, crash-atomic EpochStore: 12-byte file [8B epoch][4B CRC32C]. Read anomalies (missing, wrong size,
+ * CRC mismatch, negative value) demote to 0 (fail-open first-boot). Writes via temp + atomic rename to prevent
+ * torn high-water.
  */
 public final class FileEpochStore implements EpochStore {
 
-    /** Sidecar filename inside the client data directory. */
     public static final String EPOCH_LOCK_FILENAME = "epoch.lock";
     private static final int EPOCH_LOCK_BYTES = 12;
 
@@ -40,7 +35,7 @@ public final class FileEpochStore implements EpochStore {
         try {
             byte[] data = Files.readAllBytes(path);
             if (data.length != EPOCH_LOCK_BYTES) {
-                return 0L; // torn / legacy / unexpected size — treat as absent
+                return 0L;
             }
             ByteBuffer buf = ByteBuffer.wrap(data);
             long epoch = buf.getLong();
@@ -48,11 +43,11 @@ public final class FileEpochStore implements EpochStore {
             CRC32C crc = new CRC32C();
             crc.update(data, 0, 8);
             if (storedCrc != (int) crc.getValue() || epoch < 0) {
-                return 0L; // corruption or a negative value — fail-open
+                return 0L;
             }
             return epoch;
         } catch (IOException e) {
-            return 0L; // unreadable — treat as absent; the next save rewrites it
+            return 0L;
         }
     }
 

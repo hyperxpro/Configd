@@ -3,15 +3,9 @@ package io.configd.store;
 import java.util.Objects;
 
 /**
- * An immutable point-in-time snapshot of the config store.
- * <p>
- * The underlying {@link HamtMap} is persistent and thread-safe for concurrent
- * reads. A snapshot can be shared across threads without synchronization.
- *
- * @param data      the immutable HAMT containing all config key-value pairs
- * @param version   monotonic sequence number
- * @param timestamp the applying node's local wall-clock millis (freshness only, not a
- *                  cross-shard HLC or a global order; non-deterministic across replicas)
+ * Immutable point-in-time config store snapshot. Underlying HamtMap is persistent
+ * and thread-safe for concurrent reads; snapshot is shareable across threads.
+ * Timestamp is freshness-only (node-local wall-clock, not cross-shard HLC or global order).
  */
 public record ConfigSnapshot(
         HamtMap<String, VersionedValue> data,
@@ -19,7 +13,6 @@ public record ConfigSnapshot(
         long timestamp
 ) {
 
-    /** Empty snapshot at version 0. */
     public static final ConfigSnapshot EMPTY =
             new ConfigSnapshot(HamtMap.empty(), 0, 0);
 
@@ -34,22 +27,18 @@ public record ConfigSnapshot(
     }
 
     /**
-     * Returns the raw config bytes for the given key, or {@code null} if absent.
-     * <p>
-     * This returns the internal byte array without copying for zero-allocation
-     * reads. Callers MUST NOT mutate the returned array.
+     * Get raw config bytes (zero-copy, no defensive copy). Callers MUST NOT mutate
+     * returned array. Returns null if absent.
      */
     public byte[] get(String key) {
         VersionedValue vv = data.get(key);
         return (vv == null) ? null : vv.valueUnsafe();
     }
 
-    /** True if the snapshot contains a mapping for the given key. */
     public boolean containsKey(String key) {
         return data.containsKey(key);
     }
 
-    /** Number of config entries in this snapshot. */
     public int size() {
         return data.size();
     }

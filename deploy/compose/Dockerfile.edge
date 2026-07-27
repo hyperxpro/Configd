@@ -1,5 +1,4 @@
-# Edge-node image: a slim JRE layer over the host-built shaded jar.
-# See Dockerfile.server for the rationale (host builds, staged context, slim layer).
+# Edge-node image: slim JRE layer over host-built shaded jar.
 FROM eclipse-temurin:25-jre-noble
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl \

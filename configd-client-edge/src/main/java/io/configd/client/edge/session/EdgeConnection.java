@@ -25,25 +25,14 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * One physical edge connection and its state machine over a blocking {@link Socket}/{@code SSLSocket} with a
- * single owner <b>reader thread</b> — the reference-client counterpart to the server's per-connection Netty
- * pipeline. The reader thread is the demultiplexer: {@code read → bounds → decode → dispatch}. Application
- * writes ({@code AUTH}/{@code REFRESH_AUTH}, {@code SUBSCRIBE}/{@code CURSOR_ACK}/{@code WATCH_*}) are
- * serialized under a single write lock, so the socket has exactly one reader and one writer and no frame
- * interleaving.
- *
- * <p>A connection advances monotonically {@code CONNECTING → TLS_HANDSHAKE → AUTHENTICATING → AUTHENTICATED →
- * CLOSING → CLOSED} and never re-opens — a reconnect is a fresh {@code EdgeConnection}. It is
- * hostile-server-hardened by construction: every inbound frame goes through {@link EdgeFrameReader} (bounds
- * before allocation, CRC before interpret, strict-end via the shared codec); handshake / connect / read-idle
- * deadlines bound every blocking step; a decode failure or terminal frame closes cleanly with a classified
- * exception and never hot-loops, hangs, or OOMs; the untrusted server diagnostic is sanitized before it
- * reaches a log or exception (via {@link ErrorClassifier}).
+ * Physical edge connection: single reader thread (demux: read → bounds → decode → dispatch); serialized
+ * writes under one lock (one reader, one writer, no frame interleaving). Hostile-server-hardened: bounds
+ * before allocation, CRC before decode, deadlines on all blocking steps, clean exception on any failure.
  */
 public final class EdgeConnection {
 
     private final ServerAddress address;
-    private final ClientTls tls; // null = a test-only plaintext connection
+    private final ClientTls tls;
     private final HostileServerLimits limits;
     private final InboundFrameHandler handler;
     private final String readerThreadName;
@@ -59,12 +48,9 @@ public final class EdgeConnection {
     private volatile Thread reader;
     private volatile boolean closing;
 
-    /** The pinned business version for inbound decode; {@code null} until a business frame pins it. */
     private volatile Byte pinnedVersion;
-    /** Whether a HEARTBEAT-silence read-idle timeout is fatal; disarmed until streaming begins. */
     private volatile boolean idleDeadlineArmed;
 
-    /** Gate that lets the handler pause reads (reactive backpressure): the reader parks when it has no demand. */
     private final java.util.concurrent.locks.ReentrantLock readGate =
             new java.util.concurrent.locks.ReentrantLock();
     private final java.util.concurrent.locks.Condition readable = readGate.newCondition();
@@ -78,16 +64,7 @@ public final class EdgeConnection {
         this.readerThreadName = readerThreadName;
     }
 
-    /**
-     * Connects (TCP + TLS handshake) and starts the reader thread. Blocking. On success the connection is in
-     * {@link EdgeConnectionState#AUTHENTICATING} (for mTLS the handshake already authenticated; the caller's
-     * auth lifecycle advances it to {@link EdgeConnectionState#AUTHENTICATED}).
-     *
-     * @throws AuthFailedException   if the TLS/mTLS handshake fails (a rejected client cert, or an
-     *                               unverifiable server endpoint)
-     * @throws UnavailableException  if the TCP connect is refused or times out (a capacity/transport
-     *                               condition — retry with backoff)
-     */
+    /** Blocking: TCP + TLS connect then starts reader thread. Reaches AUTHENTICATING state. */
     public void connect() {
         closing = false;
         state = EdgeConnectionState.CONNECTING;

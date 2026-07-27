@@ -37,12 +37,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/**
- * The per-shard observability proof. Drives the real
- * {@link ConfigdServer#registerPerShardMetrics} over N bring-up groups and asserts the registry exposes
- * each shard's health (leader/term/commit-index/apply-lag) plus the per-node leader count - no longer
- * group-0-only. N=1 registers exactly the group-0 series (purely additive).
- */
 class PerShardMetricsTest {
 
     private static final NodeId NODE = NodeId.of(1);

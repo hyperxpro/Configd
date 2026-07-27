@@ -45,8 +45,6 @@ final class WitnessStrictDefaultTest {
 
     @Test
     void anyNonTrueValueIsFastVote_typoCannotBreakFailover() {
-        // Only an explicit 'true' enables deferral, so a typo/garbage value stays on the failover-safe
-        // default rather than silently deferring votes and deadlocking a small-cluster failover.
         System.setProperty(PROP, "yes");
         assertFalse(ConfigdServer.witnessStrictEnabled(), "only an explicit 'true' opts in; anything else is fast-vote");
         System.setProperty(PROP, "");

@@ -28,26 +28,12 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Verifies that {@link FanOutSessionCore} distinguishes a genuine fall-behind gap, where
- * the data the consumer needs was evicted and it must demote, from a transient
- * lock-free-read-race gap, where the data is still retained and it should just retry next
- * tick, using the {@code oldestRetainedSeq} the {@link Result.Gap} carries.
- *
- * <p>The behavior these tests pin reproduced under sustained writes (a single edge at 50
- * writes per second, on an otherwise near-idle box, not CPU contention): once the ring is
- * full and writes continue, a fully caught-up edge hits the Lamport verify-after-read
- * fallbacks of the buffer on nearly every boundary read. Treating each such gap as a
- * demotion let {@code gapDemoteLimit} (10 within 60 s) walk a healthy edge straight to
- * QUARANTINED (about a 28 minute cooldown) and freeze its frontier.
- *
- * <p>Most tests drive the session against a {@link ScriptedSource} that returns a chosen
- * transient-or-genuine gap deterministically (no threads, no timing), and wire the
- * demotion listener of the session to a real {@link SlowConsumerGovernor} exactly as
- * {@code FanOutConnectionDriver.onDemotionEvent} does, so the proof is end-to-end into the
- * quarantine ladder. Two further tests drive the real {@link FanOutBuffer} (no mock) so
- * the load-bearing eviction invariant, that {@code oldestRetainedSeq} is always at least
- * {@code lastEvictedSeq + 1}, that the classifier rests on is locked against a future
- * eviction refactor.
+ * Verifies gap classification: genuine fall-behind (data evicted, must demote) vs. transient
+ * lock-free-read-race (data retained, just retry). Pins the fix for an eviction bug where
+ * healthy edges caught-up to buffer boundaries hit verify-after-read races on nearly every
+ * boundary read, causing gapDemoteLimit (10 within 60s) to walk them to QUARANTINED (28m cooldown).
+ * Tests use ScriptedSource for deterministic gap injection into SlowConsumerGovernor,
+ * and real FanOutBuffer for eviction invariant: oldestRetainedSeq >= lastEvictedSeq + 1.
  */
 class FanOutSessionCoreGapClassificationTest {
 
@@ -58,9 +44,7 @@ class FanOutSessionCoreGapClassificationTest {
     private final SlowConsumerGovernor governor =
             new SlowConsumerGovernor(SlowConsumerPolicyConfig.defaults(), FanOutSessionMetrics.NOOP);
 
-    /** A programmable {@link CommitNotificationSource} whose {@link #behavior} computes the Result returned by readSince. */
     private static final class ScriptedSource implements CommitNotificationSource {
-        /** Swap this to change readSince behavior mid-test; the argument is the cursor of the caller. */
         volatile LongFunction<Result> behavior = c -> Result.ok(List.of());
         volatile long latest = -1L;
         volatile long oldest = -1L;
@@ -75,14 +59,13 @@ class FanOutSessionCoreGapClassificationTest {
         @Override public long droppedTotal() { return 0L; }
     }
 
-    /** A replay that returns an empty snapshot at a fixed seq (a clean resume point). */
     private static ReplaySource replayAt(long seq) {
         ConfigSnapshot snap = new ConfigSnapshot(HamtMap.empty(), seq, 0L);
         return () -> new ReplaySource.Replay(snap, seq);
     }
 
     private FanOutSessionCore session(ScriptedSource src, ReplaySource replay) {
-        // Wire the demotion listener to the governor exactly as FanOutConnectionDriver does.
+        // Demotion listener wired to governor as FanOutConnectionDriver does (production code path).
         Consumer<DemotionEvent> toGovernor =
                 ev -> governor.onDemotion(IDENTITY, ev, clock.currentTimeMillis());
         return new FanOutSessionCore(src, replay, sink, FanOutConfig.defaults(),
@@ -93,7 +76,7 @@ class FanOutSessionCoreGapClassificationTest {
         return new EdgeFrame.Subscribe(true, List.of(), resume, -1L, IDENTITY);
     }
 
-    /** A commit notification with a contiguous, strictly-ascending seq (worst case for the boundary). */
+    /** Contiguous strictly-ascending seqs: boundary condition that exposes lock-free races. */
     private static CommitNotification note(long seq) {
         return new CommitNotification(seq, 1_000L + seq,
                 new ConfigDelta(seq - 1, seq,

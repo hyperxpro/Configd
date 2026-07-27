@@ -28,14 +28,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Proves the add-server mechanism against the REAL {@link MultiRaftDriver}: the joint-consensus membership
- * proposal is marshalled onto the group's owner thread (never the calling thread), a real leader actually
- * moves node 2 into its new voter set, an already-a-voter add is a clear precondition failure, and a
- * follower yields NotLeader without touching the owner. Wiring mirrors {@link DriverLeadershipAdminOwnerThreadTest}:
- * a production-mode {@link InvariantMonitor} makes an off-owner {@code RaftNode} touch increment the
- * {@code invariant.violation.raft_owner_thread} counter, so we can assert the proposal ran on-owner.
- */
 class DriverRaftClusterAdminAddServerTest {
 
     private static final int GROUP = 0;
@@ -62,11 +54,6 @@ class DriverRaftClusterAdminAddServerTest {
         return registry.counter(VIOLATION_METRIC).get();
     }
 
-    /**
-     * A real single-node leader: add-server for node 2 is proposed on the owner thread (the guard stays
-     * silent), returns Success, and an owner-confined read shows the joint config now carries node 2 in its
-     * new voter set - the mechanism genuinely added the voter, not just returned a status.
-     */
     @Test
     @Timeout(30)
     void addServerProposesOnOwnerThreadAndActuallyAddsTheVoter() throws Exception {

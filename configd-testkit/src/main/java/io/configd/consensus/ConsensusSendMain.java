@@ -14,21 +14,6 @@ import io.netty.channel.MultiThreadIoEventLoopGroup;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
-/**
- * Consensus brief-confirm - the <b>sender</b>. Opens one peer link (synchronous
- * connect) with the forced transport tier ({@link NettyTransport#select()} honouring
- * {@code -Dconfigd.netty.transport}) and sends Raft frames through the <b>production</b>
- * {@link NettyConsensusFrameEncoder} (the in-pipeline near-zero-allocation event-loop encoder).
- * The receiver is the byte-draining {@link io.configd.jdkvsnetty.ConsensusDrainServerMain} (untraced
- * and identical across tiers), so straceing this sender is a clean io_uring-vs-epoll comparison at a
- * single connection - the consensus wire's actual connection scale (N-1 peers), where io_uring is
- * expected to show little benefit.
- *
- * <pre>
- *   java --enable-preview -Dconfigd.netty.transport=io_uring -cp benchmarks.jar \
- *        io.configd.consensus.ConsensusSendMain &lt;recvHost&gt; &lt;recvPort&gt; &lt;payloadBytes&gt; &lt;count&gt; &lt;ratePerSec&gt;
- * </pre>
- */
 public final class ConsensusSendMain {
 
     private ConsensusSendMain() {
@@ -65,15 +50,13 @@ public final class ConsensusSendMain {
             for (int i = 0; i < payloadBytes; i++) {
                 payload[i] = (byte) i;
             }
-            // Immutable frame reused - the encoder reads it in-pipeline (byte-identical encoding).
+            // Reused and byte-identical: encoder reads in-pipeline once per send.
             FrameCodec.Frame frame = new FrameCodec.Frame(type, 1, 42L, payload);
 
             long intervalNanos = rate > 0 ? (1_000_000_000L / rate) : 0L;
             long t0 = System.nanoTime();
             for (long i = 0; i < count; i++) {
-                // writeAndFlush from this thread hands the encode+write+flush to the event loop;
-                // one flush per frame is roughly one socket write - the un-coalesced single-link
-                // send pattern.
+                // One flush per frame = one socket write (un-coalesced single-link pattern).
                 ch.writeAndFlush(frame, ch.voidPromise());
                 if (intervalNanos > 0) {
                     long wait = (t0 + (i + 1) * intervalNanos) - System.nanoTime();

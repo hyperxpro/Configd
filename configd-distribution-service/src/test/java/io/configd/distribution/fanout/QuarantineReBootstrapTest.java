@@ -9,20 +9,13 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * SUBSCRIBEs from a QUARANTINED identity are REFUSED for {@code quarantineCooldownMs}
- * (each refusal counted on {@code edge_fanout_reconnects_refused_total}); after the cooldown
- * the identity is readmitted with {@code ALLOW_FORCE_SNAPSHOT} - the caller rebinds the
- * resume cursor to 0 so the cursor-0 rule in decideMode forces the snapshot re-bootstrap.
- * Operator reset is an ADDITIONAL exit, never the only one. Clock-driven, no sleeps.
- */
 class QuarantineReBootstrapTest {
 
     private static final String EDGE = "CN=edge-3,O=configd";
     private static final long T0 = 1_700_000_000_000L;
 
     private static SlowConsumerPolicyConfig config() {
-        return SlowConsumerPolicyConfig.defaults(); // quarantineCooldownMs is 60_000
+        return SlowConsumerPolicyConfig.defaults();
     }
 
     private static SlowConsumerGovernor quarantined(RecordingPolicyProbe probe) {
@@ -41,7 +34,7 @@ class QuarantineReBootstrapTest {
     void subscribeDuringTheCooldownIsRefusedAndCounted() {
         RecordingPolicyProbe probe = new RecordingPolicyProbe();
         SlowConsumerGovernor governor = quarantined(probe);
-        long quarantinedAt = T0 + 2_000; // the timestamp of the 3rd demotion
+        long quarantinedAt = T0 + 2_000;
 
         Admission first = governor.admit(EDGE, quarantinedAt + 1_000);
         assertEquals(AdmissionDecision.REFUSE, first.decision());
@@ -49,7 +42,6 @@ class QuarantineReBootstrapTest {
         assertEquals(59_000, first.cooldownRemainingMs(),
                 "the refusal must report the remaining cooldown");
 
-        // One millisecond before expiry: still refused (boundary exactness).
         Admission last = governor.admit(EDGE, quarantinedAt + 59_999);
         assertEquals(AdmissionDecision.REFUSE, last.decision());
 

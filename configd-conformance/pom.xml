@@ -12,20 +12,14 @@
 
     <artifactId>configd-conformance</artifactId>
 
-    <!--
-      The conformance / real-server E2E module: it is the one place that sees BOTH the thin reference client
-      (configd-client-*) and the real server (configd-server + the fan-out data plane), so it drives the client
-      against a live FanOutServer. This keeps the thin client's own test scope free of the server (the
-      thin-client thesis) while still proving real interop, and hosts the two-runner conformance suite
-      (client-conforms / server-obeys-RFC). Deps are compile-scope so the (test-only) sources see both sides.
-    -->
+    <!-- Conformance E2E: drives thin client against live FanOutServer; thin client stays free of server. -->
     <dependencies>
         <dependency>
             <groupId>io.configd</groupId>
             <artifactId>configd-client-edge</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <!-- Test-only: reuse MockEdgeServer + StreamFixtures for the edge (0x02 watch) client-conforms direction. -->
+        <!-- Test-jar: reuse MockEdgeServer + StreamFixtures. -->
         <dependency>
             <groupId>io.configd</groupId>
             <artifactId>configd-client-edge</artifactId>
@@ -38,7 +32,7 @@
             <artifactId>configd-client-http</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <!-- Test-only: reuse MockControlPlane for the HTTP client-conforms direction. -->
+        <!-- Test-jar: reuse MockControlPlane. -->
         <dependency>
             <groupId>io.configd</groupId>
             <artifactId>configd-client-http</artifactId>
@@ -76,7 +70,7 @@
             <artifactId>configd-wire</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <!-- Test-only: reuse EdgeFrameGoldenBytes (the pinned wire vectors) as the golden round-trip oracle. -->
+        <!-- Test-jar: reuse EdgeFrameGoldenBytes (pinned wire vectors). -->
         <dependency>
             <groupId>io.configd</groupId>
             <artifactId>configd-wire</artifactId>
@@ -84,7 +78,6 @@
             <type>test-jar</type>
             <scope>test</scope>
         </dependency>
-        <!-- Test-only: the JUnit Platform Launcher, for the coverage audit to discover clause tags. -->
         <dependency>
             <groupId>org.junit.platform</groupId>
             <artifactId>junit-platform-launcher</artifactId>
@@ -95,18 +88,7 @@
 
     <build>
         <plugins>
-            <!--
-              Failsafe runs the fuller live edge sweep (EncryptedFilteredSignedEdgeSweepIT) as part of the
-              integration-test/verify phase so it gets a standing signal on every build instead of only in
-              ad-hoc manual sessions. The sweep is self-contained: it boots a single ConfigdServer in-process
-              over loopback with ephemeral ports (empty peer list, so the node self-elects), so it needs no
-              Docker and no external cluster and runs on the ordinary GitHub-hosted runner as part of
-              `mvn install`. The include list
-              is pinned to just this one IT on purpose: the other *IT classes in this module boot a real
-              multi-node cluster (RealClusterFailoverIT) and are left out of the always-on path so a PR is not
-              newly gated on a heavier failover run. verify (not just integration-test) is bound so an IT
-              failure actually fails the build.
-            -->
+            <!-- Failsafe: include only EncryptedFilteredSignedEdgeSweepIT (RealClusterFailoverIT excluded to keep PRs fast). -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>

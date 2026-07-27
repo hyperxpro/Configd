@@ -91,27 +91,12 @@ public final class MultiRaftDriver {
      */
     private volatile CoalescedHeartbeatTransport heartbeatDrain;
 
-    /**
-     * Creates a new MultiRaftDriver.
-     *
-     * @param localNode the identifier of this node in the cluster
-     * @param clock     clock source for time-dependent operations
-     * @throws NullPointerException if any argument is null
-     */
     public MultiRaftDriver(NodeId localNode, Clock clock) {
         this.localNode = Objects.requireNonNull(localNode, "localNode");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.groups = new ConcurrentHashMap<>();
     }
 
-    /**
-     * Registers a Raft group with this driver.
-     *
-     * @param groupId the unique identifier for this Raft group
-     * @param node    the RaftNode instance driving the group's consensus
-     * @throws NullPointerException     if {@code node} is null
-     * @throws IllegalArgumentException if a group with the given ID is already registered
-     */
     public void addGroup(int groupId, RaftNode node) {
         Objects.requireNonNull(node, "node");
         if (groups.containsKey(groupId)) {
@@ -120,13 +105,6 @@ public final class MultiRaftDriver {
         groups.put(groupId, node);
     }
 
-    /**
-     * Removes a Raft group from this driver. After removal, the group
-     * will no longer be ticked and messages routed to it will be dropped.
-     *
-     * @param groupId the identifier of the group to remove
-     * @throws IllegalArgumentException if no group with the given ID is registered
-     */
     public void removeGroup(int groupId) {
         if (groups.remove(groupId) == null) {
             throw new IllegalArgumentException("Group not registered: " + groupId);
@@ -168,16 +146,10 @@ public final class MultiRaftDriver {
         }
     }
 
-    /**
-     * Binds the owner-executor pool. Called once by the server at wiring, before any owner is
-     * scheduled. After this, {@link #tickOwner}/{@link #ownerExecutor} are usable; the legacy
-     * {@link #tick()}/{@link #maybeCompact} remain for single-threaded test wiring.
-     */
     public void setOwnerPool(OwnerExecutorPool pool) {
         this.ownerPool = Objects.requireNonNull(pool, "pool");
     }
 
-    /** The owner-executor pool, or null if not set (legacy/test wiring). */
     public OwnerExecutorPool ownerPool() {
         return ownerPool;
     }
@@ -207,12 +179,6 @@ public final class MultiRaftDriver {
         this.heartbeatDrain = drain;
     }
 
-    /**
-     * The {@link HeartbeatCoalescer} for an owner, for binding that owner's groups'
-     * {@code CoalescingRaftTransport} decorators. Available only after {@link #enableHeartbeatCoalescing}.
-     *
-     * @throws IllegalStateException if coalescing has not been enabled
-     */
     public HeartbeatCoalescer heartbeatCoalescer(int ownerIndex) {
         HeartbeatCoalescer[] hcs = coalescers;
         if (hcs == null) {
@@ -275,11 +241,6 @@ public final class MultiRaftDriver {
         return override != null ? override : p.ownerIndexOf(groupId);
     }
 
-    /**
-     * Per-owner consensus tick: ticks every group bound to {@code ownerIndex}. MUST be invoked on that
-     * owner's thread (the per-owner scheduled task), so each {@code node.tick()} runs on its group's
-     * owner thread. At N=1 a single owner ticks every group, exactly reproducing the {@link #tick()} loop.
-     */
     public void tickOwner(int ownerIndex) {
         OwnerExecutorPool p = ownerPool;
         if (p == null) {
@@ -333,11 +294,6 @@ public final class MultiRaftDriver {
         }
     }
 
-    /**
-     * Per-owner threshold-gated Raft-log compaction: {@link RaftNode#maybeCompact(long)} for every
-     * group bound to {@code ownerIndex}. MUST run on that owner's thread (same contract as
-     * {@link #tickOwner}).
-     */
     public void maybeCompactOwner(int ownerIndex, long appliedSinceSnapshotThreshold) {
         OwnerExecutorPool p = ownerPool;
         if (p == null) {
@@ -482,17 +438,6 @@ public final class MultiRaftDriver {
         }
     }
 
-    /**
-     * Routes an incoming message to the correct Raft group.
-     * <p>
-     * If no group with the given ID is registered, the message is
-     * silently dropped. This can happen during group removal or
-     * when a stale message arrives for a group that has been
-     * decommissioned.
-     *
-     * @param groupId the target Raft group identifier
-     * @param message the Raft protocol message to deliver
-     */
     public void routeMessage(int groupId, RaftMessage message) {
         RaftNode node = groups.get(groupId);
         if (node == null) {
@@ -523,18 +468,6 @@ public final class MultiRaftDriver {
         node.handleMessage(message);
     }
 
-    /**
-     * Proposes a command to the specified Raft group. Only the leader
-     * of that group can accept proposals.
-     * <p>
-     * Returns a {@link ProposeOutcome} carrying the assigned {@code (index, term)} on acceptance
-     * so the caller can register a commit-outcome callback on the owning {@link RaftNode}.
-     *
-     * @param groupId the target Raft group identifier
-     * @param command the command bytes to replicate
-     * @return the proposal outcome; {@code rejected(NOT_LEADER)} if the group does
-     *         not exist or this node is not the leader
-     */
     public ProposeOutcome propose(int groupId, byte[] command) {
         RaftNode node = groups.get(groupId);
         if (node == null) {
@@ -609,49 +542,22 @@ public final class MultiRaftDriver {
         flush.run(); // on-owner and silent; wedged HANDOFF node fires the guard (loud, no spin)
     }
 
-    /**
-     * Returns the {@link RaftNode} for the given group, or {@code null}
-     * if no such group is registered.
-     *
-     * @param groupId the group identifier
-     * @return the RaftNode, or null
-     */
     public RaftNode getGroup(int groupId) {
         return groups.get(groupId);
     }
 
-    /**
-     * Returns an unmodifiable view of the currently registered group IDs.
-     *
-     * @return set of group IDs; never null
-     */
     public Set<Integer> groupIds() {
         return Collections.unmodifiableSet(groups.keySet());
     }
 
-    /**
-     * Returns the number of Raft groups currently registered.
-     *
-     * @return the group count
-     */
     public int groupCount() {
         return groups.size();
     }
 
-    /**
-     * Returns the local node identifier for this driver.
-     *
-     * @return the local node ID
-     */
     public NodeId localNode() {
         return localNode;
     }
 
-    /**
-     * Returns the clock used by this driver.
-     *
-     * @return the clock instance
-     */
     public Clock clock() {
         return clock;
     }

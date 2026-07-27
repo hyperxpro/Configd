@@ -132,13 +132,13 @@ public final class RaftOwnerThreadGuardTest {
         volatile Thread ownerThread;
         int consensusState;
 
-        /** Mirror of assertOwnerThread() + a guarded RMW, with NO bind (the guard is inert). */
+        /** Mirror of assertOwnerThread() + a guarded RMW, with NO bind (guard is inert). */
         private int guardedIncrement() {
             Thread owner = ownerThread;
             if (owner != null && owner != Thread.currentThread()) {
-                return -1;                  // would fire if bound - never taken here (unbound)
+                return -1;                  // never fires (unbound)
             }
-            return ++consensusState;        // non-atomic RMW reached through the inert guard
+            return ++consensusState;        // non-atomic RMW through inert guard
         }
 
         @Actor

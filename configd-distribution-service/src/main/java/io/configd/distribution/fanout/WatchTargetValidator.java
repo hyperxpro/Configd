@@ -41,10 +41,6 @@ final class WatchTargetValidator {
     private WatchTargetValidator() {
     }
 
-    /**
-     * @return {@code null} if the target is well-formed; otherwise a human-readable reason
-     *         the caller surfaces as {@code WATCH_CANCELED(BAD_SUBSCRIBE)}.
-     */
     static String validate(int scope, int targetKind, byte[] pathBytes, int flags) {
         // Fail closed on an unrecognized flag bit: a driver must not set a flag it
         // has not negotiated, so a bit outside the known mask is a malformed subscription.

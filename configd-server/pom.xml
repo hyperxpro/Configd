@@ -22,20 +22,12 @@
         <dependency><groupId>io.configd</groupId><artifactId>configd-control-plane-api</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-edge-cache</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-observability</artifactId><version>${project.version}</version></dependency>
-        <!-- Netty 4.2 platform (ADR-0043): the shared transport selector + the HTTP-transport
-             dep closure, used by the Netty admin-API adapter (NettyHttpApiServer). PRODUCTION scope. -->
+        <!-- Netty 4.2 platform: shared transport selector + HTTP-transport closure. -->
         <dependency><groupId>io.configd</groupId><artifactId>configd-netty</artifactId><version>${project.version}</version></dependency>
-        <!-- Config-as-SPI: YAML parser for the operator-facing config file. Confined to
-             configd-server (the YamlConfigSource lives here) so it never enters the lower modules. -->
+        <!-- YAML parser confined to configd-server (YamlConfigSource lives here). -->
         <dependency><groupId>org.yaml</groupId><artifactId>snakeyaml</artifactId></dependency>
 
-        <!-- Live E2E ONLY (EncryptedClusterVaultKmsIT): puts the optional Vault KMS module
-             (its VaultKmsProviderFactory + META-INF/services entry) and a real Vault container on the
-             TEST classpath so a full ConfigdServer cluster can seal/unseal its at-rest keyring through a
-             real Vault Transit. TEST SCOPE: the core still never compile-depends on configd-kms-vault, so
-             this changes nothing about the production classpath or the "no Vault client in core" property -
-             it only lets the end-to-end test exercise the ServiceLoader boot path the provider unit test
-             cannot. Testcontainers versions pinned locally, matching configd-kms-vault's own Vault IT. -->
+        <!-- Test-only: exercises Vault KMS provider via real Vault container (core never depends on configd-kms-vault). -->
         <dependency>
             <groupId>io.configd</groupId>
             <artifactId>configd-kms-vault</artifactId>
@@ -112,21 +104,7 @@
     </build>
 
     <profiles>
-        <!--
-          configd-server seam mutation MEASUREMENT. The primary before/after
-          evidence is JaCoCo coverage (parent `-Pmutation` wires prepare-agent +
-          report). This profile additionally measures mutation strength over the
-          correctness-bearing seam classes — the HTTP handler + auth gate, arg
-          parsing, the transport adapter, and the wire codec — so the new
-          HTTP-level / loopback tests can be shown to KILL mutants, not just
-          execute lines.
-
-          No hard mutationThreshold gate here: configd-server is NOT one of the
-          three gate-enforced bars (consensus-core 70/80, distribution-service
-          65), and a full-module ConfigdServer PIT run is heavy and starts
-          background sockets/executors. We scope to the seam classes and let
-          gate-2 enforce the consensus/distribution bars.
-        -->
+        <!-- Mutation measurement (seam classes only, no hard threshold). -->
         <profile>
             <id>mutation</id>
             <build>
@@ -136,13 +114,7 @@
                         <artifactId>pitest-maven</artifactId>
                         <configuration>
                             <targetClasses>
-                                <!-- The admin-API decision seam is AdminApiHandler — the shared
-                                     transport-agnostic logic both the JDK and Netty adapters delegate to.
-                                     NettyHttpApiServer (like NettyEdgeHttpServer in configd-edge-node) is
-                                     EXCLUDED: pure transport-IO orchestration whose per-mutant run needs a
-                                     live socket/event loop (per-mutant-fork instability); its decision
-                                     content lives in AdminApiHandler and its IO + the slowloris/size
-                                     hardening are pinned by the contract + hardening tests. -->
+                                <!-- AdminApiHandler: shared transport-agnostic logic; NettyHttpApiServer excluded (pure IO). -->
                                 <param>io.configd.server.AdminApiHandler*</param>
                                 <param>io.configd.server.HttpApiServer*</param>
                                 <param>io.configd.server.ServerConfig*</param>

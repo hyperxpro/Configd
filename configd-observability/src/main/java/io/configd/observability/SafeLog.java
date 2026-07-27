@@ -41,15 +41,6 @@ public final class SafeLog {
 
     private SafeLog() {}
 
-    /**
-     * Fingerprint a sensitive string for log emission. Returns the
-     * lowercase hex of the SHA-256 prefix (8 bytes = 16 hex chars).
-     * The fingerprint is stable across runs so log queries against it
-     * still group correctly, but the original value is not recoverable.
-     *
-     * @param value the sensitive string (must not be null)
-     * @return a 16-char hex fingerprint
-     */
     public static String redact(String value) {
         Objects.requireNonNull(value, "value");
         try {
@@ -66,15 +57,6 @@ public final class SafeLog {
         }
     }
 
-    /**
-     * Bucket a high-cardinality string into one of {@code buckets}
-     * indices. Used to safely turn an unbounded user input (config key,
-     * tenant id) into a bounded Prometheus label value.
-     *
-     * @param value   the input - may be null (returns "unknown")
-     * @param buckets number of buckets - must be positive
-     * @return string of the form {@code bucket-NN}
-     */
     public static String cardinalityGuard(String value, int buckets) {
         if (buckets <= 0) {
             throw new IllegalArgumentException("buckets must be positive: " + buckets);
@@ -86,17 +68,10 @@ public final class SafeLog {
         return "bucket-" + idx;
     }
 
-    /** Convenience overload using {@link #DEFAULT_CARDINALITY_BUCKETS}. */
     public static String cardinalityGuard(String value) {
         return cardinalityGuard(value, DEFAULT_CARDINALITY_BUCKETS);
     }
 
-    /**
-     * Returns true if the given string is safe to log verbatim - short,
-     * ASCII-printable, and within an allow-listed character class.
-     * Use this for quick assertions on caller-supplied identifiers
-     * before placing them in a log message.
-     */
     public static boolean isSafeForLog(String value) {
         return value != null && SAFE_LOG_VALUE.matcher(value).matches();
     }

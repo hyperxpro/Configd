@@ -95,7 +95,6 @@ class NettyConsensusFrameEncoderAllocationTest {
             assertTrue(eventLoop.submit(() -> Thread.currentThread() instanceof FastThreadLocalThread).get(),
                     "event-loop thread must be a FastThreadLocalThread (the production condition)");
 
-            // The headline contrast, across representative payload sizes.
             System.out.println();
             System.out.println("=== NettyConsensusFrameEncoder per-op heap allocation (getThreadAllocatedBytes) ===");
             System.out.printf("%-10s %24s %24s%n", "payload", "idiomatic(event-loop)", "naive-trap(plain-thread)");

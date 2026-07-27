@@ -5,19 +5,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Regression for the ReadIndex no-op gate (Raft dissertation section 6.4, step 1; Ongaro,
- * raft-dev 2015): a newly-elected leader MUST commit an entry from its CURRENT term before it may
- * serve a linearizable read. Without the gate, a fresh leader whose local {@code commitIndex} still
- * lags an already-committed-and-acked write captures {@code readIndex = commitIndex} below that
- * write's index; {@link RaftNode#isReadReady} then passes ({@code lastApplied >= readIndex}) and the
- * read is served from an applied state that is behind the committed write - a phantom-stale /
- * phantom-absent linearizable read.
- *
- * <p>A linearizable GET could return 404/absent for a committed-present key. The fix gates
- * {@link RaftNode#readIndex()} on the same {@code noopCommittedInCurrentTerm} signal that
- * {@code proposeConfigChange} already required ("Must commit no-op first").
- */
+/** Regression: fresh leader must commit a current-term no-op before serving linearizable reads (Raft 6.4). */
 final class ReadIndexNoOpBeforeServeTest {
 
     @Test

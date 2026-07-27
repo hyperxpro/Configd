@@ -34,10 +34,8 @@ public final class ReplicationPipeline {
     private final int maxBatchBytes;
     private final long maxBatchDelayNanos;
 
-    /** Buffered commands awaiting flush. */
     private final ArrayList<byte[]> pending;
 
-    /** Running total of bytes across all pending commands. */
     private long pendingBytes;
 
     /**
@@ -46,15 +44,6 @@ public final class ReplicationPipeline {
      */
     private long firstEntryNanos;
 
-    /**
-     * Creates a new ReplicationPipeline.
-     *
-     * @param maxBatchSize       maximum number of entries before a flush is triggered
-     * @param maxBatchBytes      maximum total bytes across all entries before a flush is triggered
-     * @param maxBatchDelayNanos maximum nanoseconds since the first buffered entry before a
-     *                           flush is triggered (e.g., 200_000 for 200us)
-     * @throws IllegalArgumentException if any parameter is not positive
-     */
     public ReplicationPipeline(int maxBatchSize, int maxBatchBytes, long maxBatchDelayNanos) {
         if (maxBatchSize <= 0) {
             throw new IllegalArgumentException("maxBatchSize must be positive: " + maxBatchSize);
@@ -90,47 +79,26 @@ public final class ReplicationPipeline {
         pendingBytes += command.length;
     }
 
-    /**
-     * Checks whether the current batch should be flushed based on
-     * size, byte, or time thresholds.
-     * <p>
-     * If this is the first check after a new entry was added to an
-     * empty batch, the batching timer is initialized to the provided
-     * {@code currentNanos}.
-     *
-     * @param currentNanos the current monotonic nanotime
-     * @return {@code true} if any flush threshold is met
-     */
     public boolean shouldFlush(long currentNanos) {
         if (pending.isEmpty()) {
             return false;
         }
 
-        // Initialize the batching timer on first check after offer
         if (firstEntryNanos == -1) {
             firstEntryNanos = currentNanos;
         }
 
-        // Check count threshold
         if (pending.size() >= maxBatchSize) {
             return true;
         }
 
-        // Check byte threshold
         if (pendingBytes >= maxBatchBytes) {
             return true;
         }
 
-        // Check time threshold
         return (currentNanos - firstEntryNanos) >= maxBatchDelayNanos;
     }
 
-    /**
-     * Returns the accumulated commands and resets the pipeline for the
-     * next batch. If no commands are pending, returns an empty list.
-     *
-     * @return an unmodifiable list of command byte arrays; never null
-     */
     public List<byte[]> flush() {
         if (pending.isEmpty()) {
             return Collections.emptyList();
@@ -142,20 +110,10 @@ public final class ReplicationPipeline {
         return batch;
     }
 
-    /**
-     * Returns the number of commands currently buffered.
-     *
-     * @return pending command count
-     */
     public int pendingCount() {
         return pending.size();
     }
 
-    /**
-     * Returns the total bytes across all currently buffered commands.
-     *
-     * @return pending byte total
-     */
     public long pendingBytes() {
         return pendingBytes;
     }

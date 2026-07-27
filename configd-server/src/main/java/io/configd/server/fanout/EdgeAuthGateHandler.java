@@ -23,54 +23,13 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
-/**
- * The edge token-authentication gate: a per-connection inbound handler installed after
- * {@link ByteToEdgeFrameDecoder} and before {@code FanOutConnection}, only when token/basic auth is
- * configured for the edge ({@link EdgeAuthConfig}). It admits exactly one authentication before any
- * business frame reaches the session, and it is the only writer/reader of the per-connection
- * {@link AuthState} channel attribute (all transitions run on the event loop, so no synchronization
- * is needed; the decoder reads the same attribute to size its pre-auth ceiling).
- *
- * <h2>Admission table</h2>
- * <ul>
- *   <li><b>Verified client certificate</b> (the connection ran {@code wantClientAuth} and the peer
- *       presented a trusted cert): authenticated at the handshake via the identity-only
- *       {@code MtlsAuthenticator}. No {@code AUTH} frame, no active expiry (byte-identical identity to
- *       the pre-token edge). An {@link EdgeAuthenticated} event is fired so the session starts.</li>
- *   <li><b>Certificate-less, UNAUTHENTICATED</b>: only an {@code AUTH} frame is admitted. It is
- *       resolved once against the shared chain - {@code Authenticated} installs the token session and
- *       arms the TTL expiry; {@code Denied}/{@code Unavailable} closes {@code AUTH_FAIL} (a single
- *       pre-auth attempt: a rejected {@code AUTH} closes the connection, so a retry costs a fresh
- *       handshake, which bounds the pre-auth verification cost). Any other frame before authentication
- *       is a {@code PROTOCOL_VIOLATION}.</li>
- *   <li><b>AUTHENTICATED</b>: business frames pass through to the session. A {@code REFRESH_AUTH}
- *       re-resolves the credential and re-arms the expiry ({@code CREDENTIAL_EXPIRED} on any
- *       non-acceptance); an {@code AUTH} on an already-authenticated connection is a
- *       {@code PROTOCOL_VIOLATION}.</li>
- * </ul>
- *
- * <p>The identity is not re-bound on {@code REFRESH_AUTH} - a refresh only extends the session
- * lifetime; the driver's identity is fixed at the first authentication.
- *
- * <p>A pre-auth first-frame deadline (the same {@code configd.edge.firstFrameDeadlineMs} window the
- * post-admission {@code FanOutConnection} uses for the pre-SUBSCRIBE window) reaps a certificate-less
- * peer that completes admission then never sends its {@code AUTH} frame - the analogue of the JDK
- * reader's absolute first-frame budget, so a token connection cannot park a slot as a slow-loris
- * before proving identity.
- */
+
 final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
 
-    /** CREDENTIAL_EXPIRED close reason for a token whose lifetime elapsed (re-authenticate to resume). */
+    
     private static final String TOKEN_EXPIRED_MESSAGE = "token credential expired";
 
-    /**
-     * The most frames a client may pipeline behind its {@code AUTH} before authentication resolves. A driver
-     * legitimately sends its {@code SUBSCRIBE} right behind the {@code AUTH} without waiting for an ack (there
-     * is no AUTH-OK frame), so one is the norm; a small margin tolerates a client that pipelines a couple
-     * more. Beyond this a pre-auth connection is flooding frames behind a deliberately slow credential
-     * verification, so it is closed. Each buffered frame is already bounded by the decoder's pre-auth frame
-     * ceiling, so the buffer is bounded in both count and per-frame size.
-     */
+    
     private static final int MAX_PENDING_PREAUTH_FRAMES = 8;
 
     private final EdgeAuthConfig auth;
@@ -78,34 +37,18 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
     private final RegistryFanOutSessionMetrics metrics;
     private final Clock clock;
     private final int firstFrameDeadlineMs;
-    /**
-     * Bounded off-loop pool for the (blocking, ~50-150ms PBKDF2) credential resolution. Never resolve a
-     * credential inline on the event loop - that stalls every other connection on this shared Netty
-     * worker. Nullable only as a can't-happen safety net (the gate is installed only when token auth is
-     * configured, and the server always supplies a pool then); a null pool falls back to inline resolution.
-     */
+    
     private final Executor authWorker;
 
-    /** The pre-auth first-frame reaper (armed once the connection awaits an AUTH frame). */
+    
     private ScheduledFuture<?> preAuthDeadline;
-    /** The token-TTL expiry one-shot (armed on token auth, re-armed on REFRESH_AUTH). */
+    
     private ScheduledFuture<?> expiry;
-    /** Event-loop-only: whether an {@link EdgeAuthenticated} has been fired (post-auth teardown routing). */
+    
     private boolean authenticated;
-    /**
-     * Event-loop-only single-flight guard: a credential resolution is dispatched to {@link #authWorker}
-     * and not yet resumed. Bounds each connection to one in-flight PBKDF2 - a second pre-auth AUTH frame
-     * fails closed and duplicate REFRESH_AUTH frames are dropped, so neither a stray frame nor
-     * REFRESH_AUTH spam can amplify verification work.
-     */
+    
     private boolean resolving;
-    /**
-     * Event-loop-only: business frames that arrived while the first authentication was still resolving off
-     * the event loop. A driver pipelines its {@code SUBSCRIBE} right behind its {@code AUTH} without waiting
-     * for an ack, so those frames are held here and replayed into the session once authentication succeeds -
-     * rejecting them as pre-auth violations would break that legitimate pipelining. Bounded by
-     * {@link #MAX_PENDING_PREAUTH_FRAMES}; null until the first frame is buffered.
-     */
+    
     private List<EdgeFrame> pendingPreAuthFrames;
 
     EdgeAuthGateHandler(EdgeAuthConfig auth, EdgeCertGate certGate,
@@ -207,7 +150,7 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
                 certDeadline == AuthState.NO_EXPIRY ? null : EdgeCertGate.CERT_EXPIRED_MESSAGE);
     }
 
-    /** The verified peer certificate chain, or {@code null} if the peer presented none (certless). */
+    
     private static List<X509Certificate> verifiedPeerChain(ChannelHandlerContext ctx) {
         SslHandler ssl = ctx.pipeline().get(SslHandler.class);
         if (ssl == null) {
@@ -274,11 +217,7 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
         }
     }
 
-    /**
-     * Buffers a business frame pipelined behind an {@code AUTH} while the first authentication resolves off
-     * the event loop. Bounded by {@link #MAX_PENDING_PREAUTH_FRAMES}: beyond it the connection is flooding
-     * frames behind a slow credential verification, so it is closed rather than buffered without bound.
-     */
+    
     private void bufferPendingFrame(ChannelHandlerContext ctx, EdgeFrame frame) {
         if (pendingPreAuthFrames != null && pendingPreAuthFrames.size() >= MAX_PENDING_PREAUTH_FRAMES) {
             closePreAuth(ctx, ErrorCode.PROTOCOL_VIOLATION,
@@ -291,14 +230,7 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
         pendingPreAuthFrames.add(frame);
     }
 
-    /**
-     * Re-dispatches the frames pipelined behind the {@code AUTH}, in arrival order, once authentication has
-     * succeeded (called from {@link #install} after the {@link EdgeAuthenticated} event so the session
-     * exists). Each frame is fed back through {@link #channelRead} - not forwarded straight downstream - so
-     * it takes the exact same post-auth admission path a frame arriving now would: a pipelined
-     * {@code REFRESH_AUTH} is handled by this gate (re-resolved), a {@code SUBSCRIBE} passes through to the
-     * session. This makes a pipelined connection behave identically to one where resolution was synchronous.
-     */
+    
     private void replayPendingFrames(ChannelHandlerContext ctx) {
         if (pendingPreAuthFrames == null) {
             return;
@@ -359,15 +291,7 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
         }
     }
 
-    /**
-     * Resolves a credential off the event loop on the bounded {@link #authWorker}, then resumes
-     * {@code resume} back on the event loop with the outcome. Basic verification is a deliberately
-     * expensive PBKDF2 (~50-150ms); running it inline would stall every other connection sharing this
-     * Netty worker. Sets the {@link #resolving} single-flight guard for the dispatch window so a second
-     * credential frame cannot spawn a concurrent PBKDF2 on the same connection. All state transitions
-     * in {@code resume} run on the event loop; {@code onOverload} runs on the event loop when the bounded
-     * worker queue is saturated (so the credential is never resolved inline, which would re-stall the loop).
-     */
+    
     private void resolveOffLoop(ChannelHandlerContext ctx, Credential credential,
                                Consumer<AuthResult> resume, Runnable onOverload) {
         if (authWorker == null) {
@@ -406,7 +330,7 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
         }
     }
 
-    /** Resolves a credential, mapping any verifier fault to a retryable {@code Unavailable} (never a hang). */
+    
     private AuthResult safeResolve(Credential credential) {
         try {
             return auth.resolveFrameCredential(credential);
@@ -417,13 +341,7 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
         }
     }
 
-    /**
-     * Installs the authenticated state, arms the expiry one-shot (unless {@code expiresAtMillis} is
-     * {@link AuthState#NO_EXPIRY}), and fires the session-start event exactly once.
-     *
-     * @param expiryReason the CREDENTIAL_EXPIRED close reason to use if the expiry fires (ignored when
-     *                     {@code expiresAtMillis == NO_EXPIRY})
-     */
+    
     private void install(ChannelHandlerContext ctx, Principal principal, long expiresAtMillis,
                          String expiryReason) {
         cancelPreAuthDeadline();
@@ -437,12 +355,7 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
         replayPendingFrames(ctx);
     }
 
-    /**
-     * Arms (or re-arms) the credential-expiry one-shot from the connection's {@link AuthState} close
-     * deadline. A {@link AuthState#NO_EXPIRY} deadline (a cert connection with {@code enforceCertNotAfter}
-     * off) arms nothing. The delay is {@code max(0, deadline - now)}, so a clock already past the deadline
-     * fires promptly rather than scheduling a negative delay.
-     */
+    
     private void armExpiry(ChannelHandlerContext ctx, String reason) {
         cancelExpiry();
         AuthState state = ctx.channel().attr(ByteToEdgeFrameDecoder.AUTH_STATE).get();
@@ -488,31 +401,19 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
         pendingPreAuthFrames = null; // drop any un-replayed pipelined frames (the connection is gone)
     }
 
-    /**
-     * Closes a connection that never authenticated. The downstream {@code FanOutConnection} never
-     * started a session for it, so this path owns the {@code sessions_closed} accounting (the
-     * subscriber-connected gauge was never incremented, so nothing decrements it).
-     */
+    
     private void closePreAuth(ChannelHandlerContext ctx, ErrorCode code, String message) {
         closePreAuthReason(ctx, code, code.name(), message);
     }
 
-    /**
-     * Pre-auth close with an explicit {@code metricReason} decoupled from the on-wire {@code code}, so
-     * an {@code Unavailable} (IdP/JWKS outage) can land in its own {@code AUTH_UNAVAILABLE} series while
-     * the wire still closes with the golden-pinned {@code AUTH_FAIL}.
-     */
+    
     private void closePreAuthReason(ChannelHandlerContext ctx, ErrorCode code, String metricReason,
                                     String message) {
         metrics.onSessionClosed(metricReason);
         close(ctx, code, message);
     }
 
-    /**
-     * Closes an authenticated connection (expiry / refresh reject / misuse). The session is running,
-     * so {@code FanOutConnection}'s channel-inactive teardown owns the accounting; this only writes
-     * the terminal frame and closes.
-     */
+    
     private void closePostAuth(ChannelHandlerContext ctx, ErrorCode code, String message) {
         close(ctx, code, message);
     }

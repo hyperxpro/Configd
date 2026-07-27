@@ -48,14 +48,13 @@ final class RaftFrameDecoder extends ByteToMessageDecoder {
         if (in.readableBytes() < prefix + frameLength) {
             return; // the full frame has not arrived yet
         }
-        in.skipBytes(prefix); // consume the sender id
+        in.skipBytes(prefix);
         byte[] frameBytes = new byte[frameLength];
-        in.readBytes(frameBytes); // the complete FrameCodec frame (length field through CRC trailer)
+        in.readBytes(frameBytes);
         FrameCodec.Frame frame;
         try {
             frame = FrameCodec.decode(frameBytes);
         } catch (FrameCodec.UnsupportedWireVersionException | IllegalArgumentException e) {
-            // CRC / version / type / length-mismatch: the stream is desynced - drop the connection.
             throw new CorruptedFrameException("frame decode failed: " + e.getMessage());
         }
         out.add(new InboundMessage(NodeId.of(senderId), frame));

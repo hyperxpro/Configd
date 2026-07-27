@@ -18,17 +18,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/**
- * Tests for the deploy-time shard-count selection ({@link ConfigdServer#resolveShardCount}) and the
- * fixed-at-deploy reshard guard + topology-epoch source ({@link ConfigdServer#enforceTopologyDescriptor}).
- *
- * <p>These drive the REAL helpers the production boot path calls, so they discriminate: the default is
- * {@code N=1} (byte-identical to today), {@code N} is range-checked, {@code N>1} BOOTS, and {@code N} is
- * FIXED AT DEPLOY (a later boot with a different {@code N} is rejected rather than silently mis-routing
- * keys). The topology descriptor ({@code topology-descriptor.dat}) is authenticated and versioned, so
- * the reshard guard and the topology epoch are tamper-evident under a key, not a plaintext value an
- * attacker could rewrite.
- */
 class ShardCountConfigTest {
 
     private static final String PROP = "configd.raft.shardCount";
@@ -109,9 +98,6 @@ class ShardCountConfigTest {
 
     @Test
     void nGreaterThanOneBootsAndReshardNChangeStillRefused() {
-        // N>1 boots and persists the descriptor; a later boot with a DIFFERENT in-range N on the same
-        // dir is a loud reshard rejection (not silent mis-routing). Covers the boundary N=2 and the
-        // ceiling N=16, each on its own fresh dir.
         IntegrityEnvelope env = keyedEnvelope();
         for (int n : new int[] {2, 4, 16}) {
             Path dir = dataDir.resolve("n" + n);
@@ -124,7 +110,6 @@ class ShardCountConfigTest {
                     () -> "N must boot and yield the initial epoch");
             assertTrue(Files.exists(dir.resolve(DESCRIPTOR)),
                     "N=" + n + " boot persists the fixed-at-deploy descriptor");
-            // Use n-1 (in [1,16], distinct from n) so the reshard guard fires (not the range check).
             IllegalStateException reshard = assertThrows(IllegalStateException.class,
                     () -> ConfigdServer.enforceTopologyDescriptor(n - 1, dir, env),
                     () -> "reshard from N=" + n + " must reject");
@@ -152,9 +137,6 @@ class ShardCountConfigTest {
         IntegrityEnvelope env = keyedEnvelope();
         ConfigdServer.enforceTopologyDescriptor(3, dataDir, env);
         Path file = dataDir.resolve(DESCRIPTOR);
-        // Flip a byte in the middle of the persisted descriptor (an attacker editing N/epoch). Under a
-        // key the envelope MAC/CRC catches it - the deploy guard is tamper-evident, not a plaintext int
-        // an attacker can rewrite to bypass the reshard refusal.
         byte[] bytes = Files.readAllBytes(file);
         bytes[bytes.length / 2] ^= 0x01;
         Files.write(file, bytes);
@@ -167,8 +149,6 @@ class ShardCountConfigTest {
 
     @Test
     void descriptorPersistsWithNoOtherFiles() throws Exception {
-        // A rejected range check never touches the disk (resolveShardCount does no I/O), so a
-        // range-rejected boot cannot leave a half-written descriptor.
         System.setProperty(PROP, "0");
         assertThrows(IllegalArgumentException.class, ConfigdServer::resolveShardCount);
         assertFalse(Files.exists(dataDir.resolve(DESCRIPTOR)),

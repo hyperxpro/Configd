@@ -18,8 +18,6 @@ class StrongReadPolicyTest {
 
     @Test
     void blankPrefixRejected() {
-        // A blank prefix would match every key and silently make everything a
-        // strong read; the policy must reject it.
         assertThrows(IllegalArgumentException.class,
                 () -> new StrongReadPolicy(Set.of("")));
     }

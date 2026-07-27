@@ -52,29 +52,13 @@ import java.util.Objects;
  */
 public final class PeerIdentityPolicy {
 
-    /** How the per-node marker is carried in the peer certificate. */
     public enum MarkerMode {
-        /** The marker is an RDN value of the Subject DN (default {@code CN}); the etcd/CRDB shared-CA model. */
         RDN,
-        /** The marker is a SAN URI (e.g. a SPIFFE id); the etcd {@code --peer-cert-allowed-hostname} analogue. */
         SAN_URI
     }
 
-    /** System/config property: the Subject-DN RDN type that carries the per-node identity. Default {@code CN}. */
     public static final String MARKER_PROP = "configd.raft.peerIdentity.marker";
-
-    /**
-     * System/config property: how the marker is carried - {@code rdn} (default, a Subject-DN RDN) or
-     * {@code san-uri} (a SAN URI / SPIFFE id). An unknown value fails closed at boot.
-     */
     public static final String MARKER_TYPE_PROP = "configd.raft.peerIdentity.markerType";
-
-    /**
-     * System/config property: the allowed peer identities as {@code identity=nodeId} pairs, comma-separated
-     * (e.g. {@code node-1=1,node-2=2,node-3=3}, or in SAN-URI mode
-     * {@code spiffe://configd/node-1=1,...}). Empty/unset leaves the policy unenforced (legacy
-     * CA-chain-only posture with a one-time warning).
-     */
     public static final String ALLOWED_NODES_PROP = "configd.raft.peerIdentity.allowedNodes";
 
     /**
@@ -86,13 +70,11 @@ public final class PeerIdentityPolicy {
      */
     public static final String TRUST_STORE_PROP = "configd.raft.peerIdentity.trustStore";
 
-    /** Config property (TLS wiring): the {@link #TRUST_STORE_PROP} password; defaults to the Raft store password. */
     public static final String TRUST_STORE_PASSWORD_PROP = "configd.raft.peerIdentity.trustStorePassword";
 
     private static final String DEFAULT_MARKER = "CN";
     private static final String MARKER_TYPE_RDN = "rdn";
     private static final String MARKER_TYPE_SAN_URI = "san-uri";
-    /** RFC 5280 {@code GeneralName} tag for {@code uniformResourceIdentifier} (SAN entry type 6). */
     private static final int SAN_URI_TYPE = 6;
 
     private final MarkerMode markerMode;
@@ -106,41 +88,18 @@ public final class PeerIdentityPolicy {
                 Objects.requireNonNull(allowedNodes, "allowedNodes")));
     }
 
-    /** The unenforced policy: legacy CA-chain-only admission with a one-time "unconfigured" warning. */
     public static PeerIdentityPolicy unenforced() {
         return new PeerIdentityPolicy(MarkerMode.RDN, DEFAULT_MARKER, Map.of());
     }
 
-    /**
-     * Builds an enforced RDN-marker policy from an explicit identity&rarr;NodeId map (test/programmatic
-     * wiring).
-     *
-     * @param nodeIdentityMarker the Subject-DN RDN type that carries the per-node identity (e.g. {@code CN})
-     * @param allowedNodes       the authorized {@code certificate-identity -> NodeId} map; empty = unenforced
-     */
     public static PeerIdentityPolicy of(String nodeIdentityMarker, Map<String, NodeId> allowedNodes) {
         return new PeerIdentityPolicy(MarkerMode.RDN, nodeIdentityMarker, allowedNodes);
     }
 
-    /**
-     * Builds an enforced SAN-URI-marker policy from an explicit {@code sanUri -> NodeId} map
-     * (test/programmatic wiring). The keys are matched by exact string against the peer certificate's SAN
-     * URI entries (SPIFFE-style).
-     */
     public static PeerIdentityPolicy ofSanUri(Map<String, NodeId> allowedNodes) {
         return new PeerIdentityPolicy(MarkerMode.SAN_URI, DEFAULT_MARKER, allowedNodes);
     }
 
-    /**
-     * Builds the policy from {@code cfg}: {@value #ALLOWED_NODES_PROP} (the allow-list),
-     * {@value #MARKER_TYPE_PROP} (rdn/san-uri), and {@value #MARKER_PROP} (the RDN type). An unset/blank
-     * allow-list yields {@link #unenforced()}; a malformed entry, a separator-only spec, or an unknown
-     * marker type is rejected loudly so a fat-fingered config fails closed at boot rather than silently
-     * disabling enforcement.
-     *
-     * @throws IllegalArgumentException if a pair is not {@code identity=intNodeId}, an id repeats, the spec
-     *                                  declares no identities, or the marker type is unknown
-     */
     public static PeerIdentityPolicy fromConfig(ConfigSource cfg) {
         Objects.requireNonNull(cfg, "cfg");
         MarkerMode mode = resolveMarkerMode(cfg);
@@ -156,12 +115,6 @@ public final class PeerIdentityPolicy {
         return new PeerIdentityPolicy(mode, marker, allowed);
     }
 
-    /**
-     * Builds the policy from the ambient system-property + environment source ({@link ConfigSource#system()}).
-     * Byte-identical to reading {@value #ALLOWED_NODES_PROP} / {@value #MARKER_PROP} as system properties.
-     * Retained for callers (and tests) that do not thread a {@link ConfigSource}; delegates to
-     * {@link #fromConfig(ConfigSource)}.
-     */
     public static PeerIdentityPolicy fromSystemProperties() {
         return fromConfig(ConfigSource.system());
     }
@@ -244,35 +197,22 @@ public final class PeerIdentityPolicy {
         }
     }
 
-    /** Whether identity binding is enforced (a non-empty allow-list was configured). */
     public boolean enforced() {
         return !allowedNodes.isEmpty();
     }
 
-    /** How the per-node marker is carried (RDN or SAN URI). */
     public MarkerMode markerMode() {
         return markerMode;
     }
 
-    /** Whether the marker is carried as a SAN URI (SPIFFE-style) rather than a Subject-DN RDN. */
     public boolean usesSanUriMarker() {
         return markerMode == MarkerMode.SAN_URI;
     }
 
-    /** The Subject-DN RDN type that carries the per-node identity (default {@code CN}); RDN mode only. */
     public String nodeIdentityMarker() {
         return nodeIdentityMarker;
     }
 
-    /**
-     * Resolves a peer's authorized {@link NodeId} from its certificate Subject DN (RDN mode), or
-     * {@code null} if the cert is not an authorized peer (marker absent, unparseable DN, or marker value
-     * not in the allow-list). Always {@code null} when {@link #enforced()} is false - callers must gate on
-     * {@link #enforced()} first. For {@link MarkerMode#SAN_URI} use {@link #resolveFromSanUris(X509Certificate)}.
-     *
-     * @param subjectDn the peer certificate Subject principal name (RFC 2253, e.g. {@code CN=node-1,O=configd})
-     * @return the authorized NodeId, or {@code null} if the identity is unauthorized/unresolvable
-     */
     public NodeId resolve(String subjectDn) {
         if (!enforced() || subjectDn == null) {
             return null;
@@ -284,15 +224,6 @@ public final class PeerIdentityPolicy {
         return allowedNodes.get(marker);
     }
 
-    /**
-     * Resolves a peer's authorized {@link NodeId} from its certificate's SAN URI entries (SAN-URI mode), or
-     * {@code null} if the cert is not an authorized peer (no SAN URI, unparseable SANs, or no SAN URI in the
-     * allow-list). Always {@code null} when {@link #enforced()} is false. The match is an exact string
-     * comparison against each SAN URI (no wildcards), mirroring the RDN path.
-     *
-     * @param cert the peer's end-entity certificate (nullable; a null cert is not an authorized peer)
-     * @return the authorized NodeId, or {@code null} if unauthorized/unresolvable
-     */
     public NodeId resolveFromSanUris(X509Certificate cert) {
         if (!enforced() || cert == null) {
             return null;

@@ -28,13 +28,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-/**
- * The auth-mode and connection-lifecycle contract over a plaintext loopback mock — the transport is
- * incidental to auth/framing logic, so these run fast without TLS; the TLS cases live in
- * {@link EdgeTlsTest}. Each test asserts the wire-visible behavior the RFC pins: exactly one pre-auth
- * {@code AUTH}, no hot-loop on rejection, {@code REFRESH_AUTH} renewal, and the {@code CREDENTIAL_EXPIRED}
- * reconnect.
- */
 @Timeout(30)
 class EdgeConnectionAuthTest {
 

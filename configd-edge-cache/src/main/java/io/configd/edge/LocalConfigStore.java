@@ -100,16 +100,6 @@ public final class LocalConfigStore {
         this(ConfigSnapshot.EMPTY, Clock.system());
     }
 
-    /**
-     * Reads the current value for a config key.
-     * <p>
-     * Returns {@link ReadResult#NOT_FOUND} (pre-allocated singleton) on miss.
-     * On hit, allocates a single {@link ReadResult} - unavoidable since each
-     * result carries the value's version.
-     *
-     * @param key config key (non-null)
-     * @return read result (never null)
-     */
     public ReadResult get(String key) {
         Objects.requireNonNull(key, "key must not be null");
         ConfigSnapshot snap = currentSnapshot; // single volatile read
@@ -120,18 +110,6 @@ public final class LocalConfigStore {
         return ReadResult.found(vv.valueUnsafe(), vv.version());
     }
 
-    /**
-     * Reads a value with monotonic read enforcement via a version cursor.
-     * <p>
-     * If the client's cursor version exceeds this store's current version,
-     * the store is stale relative to that client - returns
-     * {@link ReadResult#NOT_FOUND} to signal that the client should retry
-     * or fall back to a different edge node.
-     *
-     * @param key    config key (non-null)
-     * @param cursor the client's last-read cursor
-     * @return read result; NOT_FOUND if store is stale or key is absent
-     */
     public ReadResult get(String key, VersionCursor cursor) {
         Objects.requireNonNull(key, "key must not be null");
         Objects.requireNonNull(cursor, "cursor must not be null");
@@ -152,23 +130,7 @@ public final class LocalConfigStore {
         return ReadResult.found(vv.valueUnsafe(), vv.version());
     }
 
-    /**
-     * Primitive-friendly read that avoids allocating a {@link ReadResult}
-     * wrapper. Writes the value bytes into {@code dst} starting at offset 0
-     * and stores the version at {@code versionOut[0]}.
-     * <p>
-     * This API exists for throughput-critical internal callers (delta
-     * propagation, bulk replay) that want strict zero allocation on both hit
-     * and miss paths. External consumers should keep using
-     * {@link #get(String)} for ergonomics.
-     *
-     * @param key        the config key (non-null)
-     * @param dst        destination buffer; must be at least as large as the value
-     * @param versionOut one-element array that receives the version on a hit
-     * @return the value length on hit, {@code -1} on miss, {@code -N-1} if
-     *         {@code dst.length < N} (value length encoded as a negative so the
-     *         caller can resize and retry)
-     */
+    // Zero-allocation internal path (no ReadResult wrapper). Returns length; negative if too small.
     public int getInto(String key, byte[] dst, long[] versionOut) {
         Objects.requireNonNull(key, "key must not be null");
         Objects.requireNonNull(dst, "dst must not be null");
@@ -191,31 +153,14 @@ public final class LocalConfigStore {
         return n;
     }
 
-    /** Returns the current monotonic version. */
     public long currentVersion() {
         return currentSnapshot.version();
     }
 
-    /**
-     * Returns the current immutable snapshot. Safe to hold and traverse
-     * from any thread.
-     */
     public ConfigSnapshot snapshot() {
         return currentSnapshot;
     }
 
-    /**
-     * Applies a delta (set of mutations) to the current snapshot, producing
-     * a new snapshot via HAMT structural sharing and publishing it via
-     * volatile store.
-     * <p>
-     * The delta's {@code fromVersion} must match the store's current version.
-     * If it does not, the delta is rejected (gap detected - the caller must
-     * request a full snapshot sync).
-     *
-     * @param delta the delta to apply
-     * @throws IllegalArgumentException if delta.fromVersion != currentVersion
-     */
     public void applyDelta(ConfigDelta delta) {
         Objects.requireNonNull(delta, "delta must not be null");
 
@@ -246,12 +191,6 @@ public final class LocalConfigStore {
         currentSnapshot = new ConfigSnapshot(data, delta.toVersion(), timestamp);
     }
 
-    /**
-     * Replaces the entire store with a full snapshot. Used for initial sync
-     * or recovery after gap detection.
-     *
-     * @param snapshot the snapshot to load (must not be null)
-     */
     public void loadSnapshot(ConfigSnapshot snapshot) {
         Objects.requireNonNull(snapshot, "snapshot must not be null");
         currentSnapshot = snapshot;

@@ -25,19 +25,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 /**
- * One edge connection's lifecycle — connect + authenticate + bounded reconnect — driving one active
- * {@link InboundFrameHandler}. Extracted from {@code ConfigdEdgeClient} so that each independently-resumed
- * watch can own its <b>own</b> session (its own connection), which the single-shared-drain rule requires: a
- * driver that needs independent per-watch resume MUST use one connection per such watch. A
- * {@code ConfigdEdgeClient} owns a primary session (the single-connection surface) and one additional session
- * per independently-resumed watch.
- *
- * <p><b>Reconnect vs. hot-loop.</b> A recoverable terminal reconnects under the
- * {@link ConfigdClientConfig#retryPolicy()} backoff, capped by {@code maxAttempts}; a terminal one fails
- * closed on {@link #terminalFuture()}. <b>The reconnect budget resets only on a CONFIRMED-healthy positive
- * server frame</b> ({@code HEARTBEAT} or a business frame, via {@link #markHealthy()}) — never on optimistic
- * connect+auth success — so an always-rejecting server accrues to {@code maxAttempts} and gives up rather
- * than reconnecting forever.
+ * Connection lifecycle: connect + auth + bounded reconnect. Each independent watch gets its own session
+ * (single-shared-drain rule). Budget resets ONLY on confirmed-healthy positive frame, never on optimistic
+ * connect+auth, so hostile server can't loop forever.
  */
 public final class EdgeSession implements AutoCloseable {
 
@@ -51,15 +41,9 @@ public final class EdgeSession implements AutoCloseable {
     private final AtomicInteger reconnectAttempt = new AtomicInteger();
     private final AtomicInteger reconnects = new AtomicInteger();
     private final AtomicInteger endpointCursor = new AtomicInteger();
-    // Second, markHealthy-independent reconnect bound. The ordinary attempt budget (reconnectAttempt) is reset
-    // by any positive frame (markHealthy), which a healthy-but-flapping server legitimately triggers — but that
-    // same reset lets a HOSTILE server emit one cheap frame (a HEARTBEAT, or the SUBSCRIBE_OK itself) per
-    // connection then drop, pinning the budget at zero and looping the client forever (a self-inflicted DoS).
-    // The discriminator is stability: a genuinely healthy connection stays up a while;
-    // the hostile pattern drops almost immediately. So a connection torn down before it has been up
-    // MIN_STABLE_MILLIS counts toward rapidFailures, which markHealthy CANNOT reset (only a stable connection
-    // does) — after maxAttempts such rapid failures the client gives up. Genuine flapping (each connection up
-    // >= MIN_STABLE_MILLIS between drops) resets rapidFailures and is still tolerated without bound.
+    // Rapid-failure counter: measures hostile server DoS (cheap frame then drop).
+    // markHealthy resets reconnectAttempt but NOT rapidFailures (only stable connections do).
+    // A connection lost before MIN_STABLE_MILLIS counts as rapid failure; after maxAttempts the client gives up.
     private static final long MIN_STABLE_MILLIS = 1000;
     private volatile long connectedAtNanos;
     private final AtomicInteger rapidFailures = new AtomicInteger();
@@ -90,12 +74,10 @@ public final class EdgeSession implements AutoCloseable {
         });
     }
 
-    /** Replaces the active inbound handler (a Subscription/WatchSession takes over from the default). */
     public void setHandler(InboundFrameHandler handler) {
         this.activeHandler = handler;
     }
 
-    /** Sets the post-(re)authentication hook — a Subscription/WatchSession (re)sends its subscribe/create here. */
     public void setOnAuthenticated(Consumer<EdgeConnection> onAuthenticated) {
         this.onAuthenticated = onAuthenticated;
     }

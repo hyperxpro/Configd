@@ -10,31 +10,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-/**
- * Holds all configuration for a Configd server instance.
- * <p>
- * Parsed from command-line arguments. Immutable after construction.
- *
- * @param nodeId          unique integer identifier for this node in the cluster
- * @param dataDir         directory for durable storage (Raft state, WAL, snapshots)
- * @param peers           set of peer node IDs (excluding this node)
- * @param bindAddress     network address to bind the server to
- * @param bindPort        network port to bind the server to
- * @param apiPort         HTTP API port (default 8080)
- * @param tlsCertPath     path to the TLS certificate (PKCS12), or null if TLS disabled
- * @param tlsKeyPath      path to the TLS key store (PKCS12), or null if TLS disabled
- * @param tlsTrustStorePath path to the TLS trust store (PKCS12), or null if TLS disabled
- * @param authToken       simple bearer token for API auth, or null if auth disabled
- * @param peerAddresses   map of peer NodeId to network address, or null if not configured
- * @param strongReadPrefixes key prefixes whose GETs MUST be served fail-closed
- *                        linearizable; defaults to
- *                        {@code secure/}. Empty disables strong-read enforcement.
- * @param edgePort        the fan-out endpoint port, or {@code null} to
- *                        disable the edge data-plane endpoint (the default - current
- *                        behavior is unchanged when {@code --edge-port} is absent). When
- *                        present, the endpoint reuses the same {@link io.configd.transport.TlsManager}
- *                        as Raft (REQUIRED mTLS when TLS is configured; plaintext otherwise).
- */
+
 public record ServerConfig(
         NodeId nodeId,
         Path dataDir,
@@ -52,34 +28,7 @@ public record ServerConfig(
         Integer edgePort
 ) {
 
-    /**
-     * Parses command-line arguments into a {@code ServerConfig}.
-     * <p>
-     * Expected arguments:
-     * <pre>
-     *   --node-id         integer node ID (required)
-     *   --data-dir        path to data directory (required)
-     *   --peers           comma-separated peer node IDs, e.g. "2,3,4" (required)
-     *   --bind-address    bind address (default: 127.0.0.1 loopback; a real cluster sets a routable
-     *                     address explicitly)
-     *   --bind-port       bind port (default: 9090)
-     *   --api-port        HTTP API port (default: 8080)
-     *   --tls-cert        path to TLS certificate store (optional)
-     *   --tls-key         path to TLS key store (optional)
-     *   --tls-trust-store path to TLS trust store (optional)
-     *   --auth-token      bearer token for API auth (optional)
-     *   --strong-read-prefixes comma-separated key prefixes served fail-closed
-     *                     linearizable; default "secure/"
-     *   --edge-port       fan-out edge endpoint port; absent = endpoint
-     *                     disabled (default). Reuses the Raft TlsManager (mTLS) when configured.
-     *   --config          path to an optional YAML config file (loaded into the ConfigSource by
-     *                     {@code ConfigdServer.loadBootConfig}, not stored on this record)
-     * </pre>
-     *
-     * @param args command-line arguments
-     * @return parsed server configuration
-     * @throws IllegalArgumentException if required arguments are missing or invalid
-     */
+    
     public static ServerConfig parse(String[] args) {
         int nodeId = -1;
         String dataDir = null;
@@ -203,21 +152,17 @@ public record ServerConfig(
         );
     }
 
-    /** True if the fan-out edge endpoint is configured ({@code --edge-port} present). */
+    
     public boolean edgeEnabled() {
         return edgePort != null;
     }
 
-    /**
-     * Returns true if all three TLS paths are configured.
-     */
+    
     public boolean tlsEnabled() {
         return tlsCertPath != null && tlsKeyPath != null && tlsTrustStorePath != null;
     }
 
-    /**
-     * Returns true if bearer token auth is configured.
-     */
+    
     public boolean authEnabled() {
         return authToken != null && !authToken.isBlank();
     }
@@ -234,10 +179,7 @@ public record ServerConfig(
                 .collect(Collectors.toUnmodifiableSet());
     }
 
-    /**
-     * Parses peer addresses from a string of format "id=host:port,id=host:port,...".
-     * Example: "1=192.168.1.10:9091,2=192.168.1.11:9092"
-     */
+    
     private static Map<NodeId, InetSocketAddress> parsePeerAddresses(String str) {
         if (str == null || str.isBlank()) {
             return Map.of();
@@ -262,16 +204,7 @@ public record ServerConfig(
         return Map.copyOf(result);
     }
 
-    /**
-     * Parses the strong-read prefix list.
-     * <ul>
-     *   <li>flag omitted ({@code null}) &rarr; the safe default {@code secure/}
-     *       (security keys stay protected even if the operator forgot the flag);</li>
-     *   <li>explicit empty / blank value &rarr; empty set (enforcement disabled,
-     *       a deliberate opt-out);</li>
-     *   <li>otherwise &rarr; the comma-separated, trimmed, non-blank prefixes.</li>
-     * </ul>
-     */
+    
     private static Set<String> parseStrongReadPrefixes(String str) {
         if (str == null) {
             return Set.of(StrongReadPolicy.DEFAULT_PREFIX);

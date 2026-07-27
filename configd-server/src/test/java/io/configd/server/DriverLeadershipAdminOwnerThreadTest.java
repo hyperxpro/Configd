@@ -27,15 +27,6 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Proves the load-bearing property of {@link DriverLeadershipAdmin}: the owner-thread-confined
- * {@link RaftNode#transferLeadership} is marshalled onto the group's owner executor, never run on the
- * calling (HTTP) thread. Wiring mirrors {@link OwnerNetCatchesOffOwnerInboundTest}: a real prod-mode
- * {@link InvariantMonitor} is the node's checker, so an off-owner {@code RaftNode} touch increments the
- * {@code invariant.violation.raft_owner_thread} counter (metric, does not throw - exactly the live server
- * behaviour), letting us assert both that the posted transfer stays silent and that a direct off-owner call
- * would trip the guard.
- */
 class DriverLeadershipAdminOwnerThreadTest {
 
     private static final int GROUP = 0;
@@ -62,13 +53,6 @@ class DriverLeadershipAdminOwnerThreadTest {
         return registry.counter(VIOLATION_METRIC).get();
     }
 
-    /**
-     * A single-node leader: the transfer is posted to the owner and runs there (the guard stays silent),
-     * while a direct off-owner call from the test thread trips the guard - so the marshalling is proven
-     * necessary, not incidental. The transfer itself returns {@code Failure} (a single-node cluster has no
-     * other voter to receive leadership), which is exactly the right {@link AdminService.AdminResult}: what
-     * matters here is WHERE the RaftNode touch ran.
-     */
     @Test
     @Timeout(30)
     void transferIsPostedToTheOwnerThreadAndADirectCallWouldTrip() throws Exception {
@@ -110,11 +94,6 @@ class DriverLeadershipAdminOwnerThreadTest {
         }
     }
 
-    /**
-     * A follower node: the built {@link AdminService} guard returns {@link AdminService.AdminResult.NotLeader}
-     * BEFORE ever posting to the owner (the mechanism is not attempted on a non-leader), and the off-owner-safe
-     * leader/role reads never trip the guard.
-     */
     @Test
     @Timeout(30)
     void transferOnAFollowerReturnsNotLeaderWithoutTouchingTheOwner() throws Exception {
@@ -143,11 +122,6 @@ class DriverLeadershipAdminOwnerThreadTest {
         }
     }
 
-    /**
-     * A transfer submitted while the owner executor is shutting down must surface the retryable
-     * {@link AdminApiHandler.LeadershipTransferTimeout} path (mapped to 503), never a bare
-     * RejectedExecutionException that would become a 500.
-     */
     @Test
     @Timeout(30)
     void transferDuringOwnerShutdownIsARetryableTimeoutNotA500() throws Exception {

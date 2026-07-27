@@ -15,12 +15,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Tests for {@link AclConfigPolicyLoader}: the idempotent whole-subtree rebuild, the apply-thread gate (no
- * {@code _acl/} touch, no rebuild), the snapshot-install hook, fail-closed-to-last-good on malformed or
- * reserved policy (never deny-all or allow-all), and the load-bearing proof that no config-loaded role can
- * carve the break-glass root principal (reserved-name validation).
- */
 class AclConfigPolicyLoaderTest {
 
     private static final Set<String> RESERVED_ROLES = Set.of("admin");
@@ -139,14 +133,6 @@ class AclConfigPolicyLoaderTest {
         assertFalse(acl.isAllowed("alice", "app.x", AclService.Permission.WRITE), "not allow-all");
     }
 
-    /**
-     * Characterization (intentional behavior, not a bug): the whole-subtree parse is all-or-nothing, so one
-     * persisted malformed {@code _acl/} key freezes all subsequent policy updates until it is removed -
-     * every rebuild re-reads it and re-rejects the whole subtree (keeping last-good). This is the deliberate
-     * "reject whole load, never silently partial" tradeoff (a partial or truncated policy is more dangerous);
-     * the residual is loudly observable on {@code configd.acl.policy.load.failed} and is closed by a
-     * validate-at-write-time gate (which still cannot clear an already-committed or snapshot-delivered key).
-     */
     @Test
     void poisonKeyFreezesSubsequentUpdates() {
         AclService acl = new AclService();
@@ -241,12 +227,6 @@ class AclConfigPolicyLoaderTest {
         assertEquals(ConfigPolicy.EMPTY, acl.configPolicy(), "reserved principal binding ⇒ last-good kept");
     }
 
-    /**
-     * The load-bearing neutralization proof: with the loader reserving the {@code root} principal and
-     * {@code ConfigdServer} asserting {@code Set.of()} for root, no config-loaded role can carve root. Here
-     * a hostile or operator config tries to bind root to a deny-everything role; the loader rejects the
-     * whole load (last-good kept), so root's static grant stands and root remains fully authorized.
-     */
     @Test
     void rootIsUncarveableByAnyConfigRole() {
         AclService acl = new AclService();

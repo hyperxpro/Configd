@@ -21,31 +21,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Validates the monitoring-read hazard: concurrently reading monitoring state is safe and never blocks.
- *
- * <p>The concurrency stress coverage deliberately does not cover the read-only monitoring accessors;
- * this test closes that gap with an owner-published immutable snapshot ({@link RaftNode#monitorView()}).
- * This test is the macro complement to the {@code configd-jcstress} {@code RaftMonitorViewPublicationTest}
- * (which pins the JMM no-tear primitive). It proves, against a real {@link RaftNode} bound to an owner
- * executor:
- *
- * <ol>
- *   <li><b>{@link #monitorViewIsCoherentAndNeverBlocksUnderConcurrentPublish()}</b> - while the owner
- *       thread advances consensus state (propose+tick, republishing the view every tick), a FOREIGN
- *       thread spins on {@code monitorView()} and every observed snapshot is non-null, internally
- *       coherent ({@code snapshotIndex <= lastApplied <= commitIndex <= lastLogIndex}) and monotonic
- *       across reads (term and commitIndex never go backwards). No tear, no partial structure, no
- *       block, no throw. Non-vacuous: commitIndex demonstrably advances and the reader observes many
- *       distinct snapshots while racing the publisher.</li>
- *   <li><b>{@link #h3AccessorsTripOffOwnerWhileMonitorViewAndSSetStaySafe()}</b> - the five
- *       formerly-unguarded monitoring accessors (currentTerm/votedFor/log/transferTarget/
- *       clusterConfig) now trip {@code raft_owner_thread} when called off-owner, while the published
- *       {@code monitorView()} and the volatile S-set (role/leaderId/nodeId) stay safe.</li>
- * </ol>
- *
- * @see RaftNodeConcurrencyStressTest the concurrency stress coverage this complements
- */
 class RaftMonitorViewConcurrencyTest {
 
     private static final NodeId N1 = NodeId.of(1);

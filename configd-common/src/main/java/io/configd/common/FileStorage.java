@@ -57,13 +57,6 @@ public final class FileStorage implements Storage {
     private final java.util.Set<String> pendingDirSync =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
 
-    /**
-     * Creates a new FileStorage backed by the given directory.
-     * The directory is created if it does not already exist.
-     *
-     * @param directory the directory for storage files
-     * @throws UncheckedIOException if the directory cannot be created
-     */
     public FileStorage(Path directory) {
         this.directory = directory;
         try {
@@ -90,14 +83,13 @@ public final class FileStorage implements Storage {
                 while (buf.hasRemaining()) {
                     channel.write(buf);
                 }
-                channel.force(true); // fsync data + metadata
+                channel.force(true);
             }
             // Atomic rename: either the old file or the new file is visible,
             // never a partial/corrupt state.
             Files.move(tmp, file,
                     java.nio.file.StandardCopyOption.REPLACE_EXISTING,
                     java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-            // fsync directory to ensure the rename is durable
             sync();
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to write key: " + key, e);
@@ -181,7 +173,7 @@ public final class FileStorage implements Storage {
             return;
         }
         try {
-            channel.force(true); // one fsync (data + metadata) durably commits the whole batch
+            channel.force(true);
             if (pendingDirSync.remove(logName)) {
                 // First durability point for a freshly created WAL file: fsync the directory
                 // too so the file's existence (not just its bytes) survives a crash.
@@ -192,10 +184,6 @@ public final class FileStorage implements Storage {
         }
     }
 
-    /**
-     * Returns the kept-open append channel for {@code logName}, opening and caching it on
-     * first use (CREATE|WRITE|APPEND, so every write lands at EOF).
-     */
     private FileChannel appendChannel(String logName) throws IOException {
         FileChannel channel = appendChannels.get(logName);
         if (channel != null && channel.isOpen()) {
@@ -209,7 +197,7 @@ public final class FileStorage implements Storage {
                 StandardOpenOption.APPEND);
         appendChannels.put(logName, channel);
         if (!existedBefore) {
-            pendingDirSync.add(logName); // dir fsync on first syncLog (file-creation durability)
+            pendingDirSync.add(logName);
         }
         if (channel.size() == 0) {
             // Fresh file: stamp the container header as the leading bytes, ahead of any frame.
@@ -223,7 +211,6 @@ public final class FileStorage implements Storage {
         return channel;
     }
 
-    /** Builds the framed WAL record: {@code [4-byte length][data][4-byte CRC32C]}. */
     private static ByteBuffer frame(byte[] data) {
         CRC32C crc = new CRC32C();
         crc.update(data);
@@ -236,11 +223,6 @@ public final class FileStorage implements Storage {
         return frame;
     }
 
-    /**
-     * Closes and evicts any kept-open append channel for {@code logName} (idempotent). Must be
-     * called before a truncate/rename replaces or removes the underlying file, so a subsequent
-     * append reopens the new inode rather than writing through a stale descriptor.
-     */
     private void evictAppendChannel(String logName) {
         FileChannel channel = appendChannels.remove(logName);
         pendingDirSync.remove(logName);
@@ -301,9 +283,6 @@ public final class FileStorage implements Storage {
                 // file size, itself capped at MAX_READABLE_LOG_BYTES) cannot overflow, so an
                 // over-long length is always dropped as a torn tail rather than allocated.
                 if (length < 0 || length > buffer.remaining() - 4) {
-                    // Truncated (or forged-over-long) trailing entry - stop reading. All
-                    // previously read entries (which had valid CRCs) are intact; this one is
-                    // discarded.
                     break;
                 }
 
@@ -337,7 +316,7 @@ public final class FileStorage implements Storage {
      * single-array limit refuses to load with a clear, actionable error rather than silently
      * truncating committed entries.
      */
-    static final long MAX_READABLE_LOG_BYTES = Integer.MAX_VALUE - 8L; // JVM max-array headroom
+    static final long MAX_READABLE_LOG_BYTES = Integer.MAX_VALUE - 8L;
 
     static int checkedLogReadSize(String logName, long fileSize) {
         if (fileSize > MAX_READABLE_LOG_BYTES) {

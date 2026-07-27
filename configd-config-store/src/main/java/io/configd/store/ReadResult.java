@@ -3,17 +3,8 @@ package io.configd.store;
 import java.util.Arrays;
 
 /**
- * Immutable result of a config store read operation.
- * <p>
- * Instances are obtained from the pre-allocated {@link #NOT_FOUND} sentinel
- * or from the {@link #found(byte[], long)} factory. The {@code found} flag
- * distinguishes a missing key from a present key with an empty value.
- * <p>
- * Each found result is a lightweight 24-byte object (object header + reference
- * + long + boolean), trivially collected by ZGC in the nursery. The previous
- * ThreadLocal flyweight pattern was removed because it introduced a mutable
- * aliasing hazard: two consecutive {@code get()} calls would silently overwrite
- * the first result's data.
+ * Pre-allocated NOT_FOUND singleton for zero-alloc miss. Found instances ~24 bytes (header+ref+long+bool).
+ * ThreadLocal flyweight removed due to mutable aliasing hazard (consecutive gets overwrote first result).
  */
 public final class ReadResult {
 
@@ -33,13 +24,6 @@ public final class ReadResult {
         this.found = found;
     }
 
-    /**
-     * Creates a found result with the given value and version.
-     *
-     * @param value   raw config bytes (non-null)
-     * @param version the version at which this value was written
-     * @return a new immutable ReadResult
-     */
     public static ReadResult found(byte[] value, long version) {
         return new ReadResult(value, version, true);
     }
@@ -52,17 +36,14 @@ public final class ReadResult {
         return found(value, version);
     }
 
-    /** Raw config bytes, or empty array if not found. */
     public byte[] value() {
         return value;
     }
 
-    /** The version at which this value was written (0 if not found). */
     public long version() {
         return version;
     }
 
-    /** True if the key exists in the store. */
     public boolean found() {
         return found;
     }

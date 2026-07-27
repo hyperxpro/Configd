@@ -21,25 +21,10 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-/**
- * Backs the ADMIN-gated Raft cluster endpoints (status + add-server) with the {@link MultiRaftDriver}.
- *
- * <p><b>Owner-thread confinement is load-bearing.</b> The voter set ({@link RaftNode#clusterConfig()}) and
- * the joint-consensus proposal ({@link RaftNode#proposeConfigChange}) both assert the group's single owner
- * thread, so they are posted to {@link MultiRaftDriver#ownerExecutor(int)} and awaited under a bounded
- * deadline - never touched from the HTTP thread. Role/leader ({@link RaftNode#role()} /
- * {@link RaftNode#leaderId()}) and the monitoring snapshot ({@link RaftNode#monitorView()}) are the
- * off-owner-safe accessors and are read directly. A wedged or overloaded owner surfaces as
- * {@link AdminApiHandler.RaftAdminTimeout} (mapped to 503), never a torn read or an indefinite block.
- *
- * <p>Add-server is driven through the built {@link AdminService} guard so the is-leader check and the
- * NotLeader/Success/Failure shaping stay the single source of truth (identical to the leadership-transfer
- * path); the membership changer computes {@code newVoters = currentVoters ∪ {target}} on the owner thread
- * and calls {@code proposeConfigChange}.
- */
+
 final class DriverRaftClusterAdmin implements AdminApiHandler.RaftClusterAdmin {
 
-    /** Default bounded wait for an owner-confined read/propose; expiry -> 503 (unknown, retryable). */
+    
     static final long DEFAULT_AWAIT_MILLIS = 5_000L;
 
     private final MultiRaftDriver driver;
@@ -105,18 +90,13 @@ final class DriverRaftClusterAdmin implements AdminApiHandler.RaftClusterAdmin {
         return adminService.addNode(target);
     }
 
-    /** Reads {@code clusterConfig().voters()} on the group's owner thread under the bounded deadline. */
+    
     private Set<NodeId> votersOwnerConfined(int groupId, RaftNode node) {
         return awaitOnOwner(groupId, "raft-status voter read", node,
                 () -> Set.copyOf(node.clusterConfig().voters()));
     }
 
-    /**
-     * Submits {@code task} to the group's owner executor and awaits it under {@link #awaitMillis}. A
-     * rejected submission (shutting-down owner), a timeout, or an interrupt surfaces as the retryable
-     * {@link AdminApiHandler.RaftAdminTimeout} (503); an execution failure is a genuine defect and is
-     * surfaced as an {@link IllegalStateException} rather than swallowed.
-     */
+    
     private <T> T awaitOnOwner(int groupId, String operation, RaftNode node, Callable<T> task) {
         ScheduledExecutorService owner = driver.ownerExecutor(groupId);
         final Future<T> f;
@@ -139,11 +119,7 @@ final class DriverRaftClusterAdmin implements AdminApiHandler.RaftClusterAdmin {
         }
     }
 
-    /**
-     * The is-leader / leader reads the built {@link AdminService} guard needs, using ONLY the volatile,
-     * off-owner-safe {@link RaftNode} accessors. The cluster-status methods are unused by
-     * {@link AdminService#addNode} and remain unexposed (a future caller must resolve them owner-confined).
-     */
+    
     private static final class GroupStateProvider implements AdminService.ClusterStateProvider {
         private final RaftNode node;
 
@@ -182,12 +158,7 @@ final class DriverRaftClusterAdmin implements AdminApiHandler.RaftClusterAdmin {
         }
     }
 
-    /**
-     * Marshals the joint-consensus membership proposal onto the group's owner thread: it reads the current
-     * voters and appends {@code target} there (both owner-confined in one hop), then calls
-     * {@link RaftNode#proposeConfigChange}. {@code removeNode}/{@code transferLeadership} are unexposed (this
-     * surface exposes add-server only).
-     */
+    
     private final class OwnerThreadAddChanger implements AdminService.MembershipChanger {
         private final int groupId;
         private final RaftNode node;

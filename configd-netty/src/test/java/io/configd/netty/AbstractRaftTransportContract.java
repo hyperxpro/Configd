@@ -49,39 +49,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Transport-equivalence contract for the inter-node consensus transport. The same
- * functional round-trip, mTLS hostname verification, mTLS-attack rejection, slowloris/admission-cap
- * guard, and non-blocking-send-under-blackhole behaviour is proven against every
- * {@link RaftTransportEndpoint} implementation by varying ONLY transport construction
- * ({@link #newEndpoint}); the assertions, failure messages, deadlines, and keytool fixtures are
- * transcribed verbatim from the per-transport JDK tests this folds in:
- *
- * <ul>
- *   <li>{@code TcpRaftTransportTest} - 9 functional legs (send/bidi/reconnect/concurrency/shutdown/
- *       registerHandler/unknown-peer/empty-payload + the {@code find0051} hostname-verification
- *       regression);</li>
- *   <li>{@code RaftTransportMtlsAttackTest} - 3 mTLS negatives (plaintext, expired CA-signed
- *       end-entity, TLSv1.2 downgrade);</li>
- *   <li>{@code TcpRaftTransportSlowlorisTest} - 2 admission/idle-deadline negatives;</li>
- *   <li>{@code TcpRaftTransportBlackholeTest} - 2 caller-release regressions.</li>
- * </ul>
- *
- * <p>It also adds two mutual-auth negatives: a client whose end-entity is signed by an untrusted CA,
- * and a client presenting no certificate at all against the {@code setNeedClientAuth(true)} server.
- *
- * <h2>Observation discipline (TLS 1.3 timing)</h2>
- * On the consensus plane the only secure, attack-agnostic observation is "did a decoded peer frame
- * reach the inbound handler?". In TLS 1.3 the client {@code startHandshake()} can return before the
- * server's rejection lands, so each negative test drives a bounded send/observation window and
- * asserts the inbound handler count stays at zero. Only construction differs across transports; the
- * attacker is always a bare socket.
- *
- * <h2>Fixture discipline</h2>
- * Every keytool subprocess is hoisted into one {@code @BeforeAll static} fixture (cached temp dir,
- * {@code @AfterAll} cleanup), which JUnit runs once per concrete subclass and does NOT subject to the
- * class {@link Timeout}. The TLS/keytool tests carry a generous method-level {@code @Timeout(120)} for
- * pure hang detection, never a perf assertion; synchronization uses latches / bounded polling, never
- * {@code sleep} (except where a folded JDK test body uses it verbatim).
+ * Transport-equivalence contract: same functional, mTLS, and attack-rejection properties across
+ * all {@link RaftTransportEndpoint} implementations, varying only transport construction.
  */
 @Timeout(120)
 abstract class AbstractRaftTransportContract {
@@ -105,27 +74,18 @@ abstract class AbstractRaftTransportContract {
     private final List<Socket> attackers = new ArrayList<>();
 
     private static Path fixtureDir;
-
-    // Server cert whose SAN covers ONLY "localhost" (so a client targeting 127.0.0.2
-    // fails endpoint identification even though the cert is otherwise trusted).
     private static Path f0051KeyStore;
     private static Path f0051TrustStore;
     private static Path f0051Cert;
-
-    // Server identity + trust store, a legit/trusted client, a CA, and a CA-signed expired end-entity.
     private static Path serverKeyStore;
     private static Path serverTrustStore;
-    private static Path clientKeyStore;    // legit, trusted (the downgrade attack's credential)
-    private static Path expiredKeyStore;   // CA-signed end-entity, validity window already past
-
-    // A client signed by a DIFFERENT CA that is NOT in the server trust store.
+    private static Path clientKeyStore;
+    private static Path expiredKeyStore;
     private static Path untrustedClientKeyStore;
 
     @BeforeAll
     static void generateTlsFixture() throws Exception {
         fixtureDir = Files.createTempDirectory("configd-raft-transport-contract-");
-
-        // Hostname-verification fixture: SAN only matches "localhost", not 127.0.0.2.
         f0051KeyStore = fixtureDir.resolve("f0051-ks.p12");
         f0051TrustStore = fixtureDir.resolve("f0051-ts.p12");
         f0051Cert = fixtureDir.resolve("f0051.pem");
@@ -149,8 +109,6 @@ abstract class AbstractRaftTransportContract {
                 "-keystore", f0051TrustStore.toString(),
                 "-storepass", "changeit", "-storetype", "PKCS12",
                 "-noprompt");
-
-        // mTLS-attack fixture.
         serverKeyStore = fixtureDir.resolve("server-ks.p12");
         serverTrustStore = fixtureDir.resolve("server-ts.p12");
         clientKeyStore = fixtureDir.resolve("client-ks.p12");
@@ -159,33 +117,17 @@ abstract class AbstractRaftTransportContract {
         Path serverCert = fixtureDir.resolve("server.pem");
         Path clientCert = fixtureDir.resolve("client.pem");
         Path caCert = fixtureDir.resolve("ca.pem");
-
-        // SAN covers 127.0.0.1 so the client's HTTPS endpoint identification is satisfied for the
-        // legit/downgrade tests - the rejection under test must come from the attack, not from an
-        // incidental SAN mismatch.
         genKeyPair(serverKeyStore, "server", "CN=localhost,O=configd-test", "-validity", "1");
         genKeyPair(clientKeyStore, "client", "CN=raft-peer-1,O=configd-test", "-validity", "1");
         exportCert(serverKeyStore, "server", serverCert);
         exportCert(clientKeyStore, "client", clientCert);
-
-        // A CA, and an expired END-ENTITY client signed by it. The truststore anchors at the CA, so
-        // path validation reaches the leaf and enforces its dead validity window (notAfter ~1 day
-        // ago). A self-signed expired LEAF imported as an anchor would be accepted (RFC 5280 section 6.1),
-        // so the CA layer is what makes this a meaningful expiry test.
         genCa(caKeyStore, "CN=configd-test-ca,O=configd-test");
         exportCert(caKeyStore, "ca", caCert);
         genCaSignedExpiredEndEntity(expiredKeyStore, caKeyStore, caCert,
                 "CN=raft-peer-expired,O=configd-test");
-
-        // Server trusts: its own cert (so a client can verify it), the legit client leaf, and the CA
-        // (so the expired end-entity's chain validates UP TO the anchor and fails only on validity).
         importCert(serverTrustStore, "server", serverCert);
         importCert(serverTrustStore, "client", clientCert);
         importCert(serverTrustStore, "ca", caCert);
-
-        // Mutual-auth negative: a client signed by a DIFFERENT CA the server does NOT trust.
-        // Built like the expired end-entity but valid-dated; the signing CA is never imported into
-        // serverTrustStore, so the server's PKIX path build cannot reach an anchor.
         untrustedClientKeyStore = fixtureDir.resolve("untrusted-client-ks.p12");
         Path untrustedCaKeyStore = fixtureDir.resolve("untrusted-ca-ks.p12");
         Path untrustedCaCert = fixtureDir.resolve("untrusted-ca.pem");
@@ -205,7 +147,6 @@ abstract class AbstractRaftTransportContract {
                 try {
                     Files.deleteIfExists(p);
                 } catch (IOException ignored) {
-                    // best-effort temp cleanup
                 }
             });
         }
@@ -217,7 +158,6 @@ abstract class AbstractRaftTransportContract {
             try {
                 s.close();
             } catch (Exception ignored) {
-                // best-effort
             }
         }
         attackers.clear();
@@ -238,7 +178,6 @@ abstract class AbstractRaftTransportContract {
         return t;
     }
 
-    /** Plaintext convenience for the functional legs (verbatim from TcpRaftTransportTest). */
     private RaftTransportEndpoint createTransport(NodeId self, InetSocketAddress bindAddress,
                                                   Map<NodeId, InetSocketAddress> peers,
                                                   Consumer<InboundMessage> handler) {

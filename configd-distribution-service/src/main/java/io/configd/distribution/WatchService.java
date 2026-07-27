@@ -150,59 +150,22 @@ public final class WatchService {
         return id;
     }
 
-    /**
-     * Registers a watch starting from version 0 (receives all future events).
-     */
     public long register(String prefix, WatchListener listener) {
         return register(prefix, 0, listener);
     }
 
-    /**
-     * Cancels a watch by ID.
-     *
-     * @param watchId the ID returned by {@link #register}
-     * @return true if the watch existed and was removed
-     */
     public boolean cancel(long watchId) {
         return watches.remove(watchId) != null;
     }
 
-    /**
-     * Returns the watch registration for the given ID, or null if not found.
-     */
     public Watch watch(long watchId) {
         return watches.get(watchId);
     }
 
-    /**
-     * Receives config mutations from the Raft state machine apply path.
-     * This method feeds the coalescer; actual dispatch happens on
-     * {@link #tick()}.
-     * <p>
-     * Intended to be registered as a
-     * {@code ConfigStateMachine.ConfigChangeListener}.
-     *
-     * @param mutations the mutations applied
-     * @param version   the store version after applying
-     */
     public void onConfigChange(List<ConfigMutation> mutations, long version) {
         coalescer.add(mutations, version);
     }
 
-    /**
-     * Called on each I/O tick to flush coalesced events and dispatch them
-     * to matching watchers.
-     * <p>
-     * This is the core fan-out loop. For each flushed event:
-     * <ol>
-     *   <li>Determine which mutations match each watcher's prefix filter.</li>
-     *   <li>Skip watchers whose cursor is >= the event version (already seen).</li>
-     *   <li>Deliver a filtered event containing only matching mutations.</li>
-     *   <li>Advance the watcher's cursor to the event version.</li>
-     * </ol>
-     *
-     * @return the number of watcher notifications dispatched
-     */
     public int tick() {
         if (!coalescer.shouldFlush()) {
             return 0;
@@ -216,12 +179,6 @@ public final class WatchService {
         return dispatchEvent(event);
     }
 
-    /**
-     * Forces an immediate flush and dispatch, regardless of the coalescing
-     * window. Useful for tests and shutdown draining.
-     *
-     * @return the number of watcher notifications dispatched
-     */
     public int flushAndDispatch() {
         WatchEvent event = coalescer.flush();
         if (event == null) {
@@ -230,23 +187,14 @@ public final class WatchService {
         return dispatchEvent(event);
     }
 
-    /**
-     * Returns the number of active watches.
-     */
     public int watchCount() {
         return watches.size();
     }
 
-    /**
-     * Returns the number of mutations pending in the coalescer.
-     */
     public int pendingCount() {
         return coalescer.pendingCount();
     }
 
-    /**
-     * Returns the version cursor for the given watch, or -1 if not found.
-     */
     public long cursor(long watchId) {
         Watch w = watches.get(watchId);
         return (w != null) ? w.cursor() : -1;

@@ -27,10 +27,6 @@ public final class OwnerExecutorPool {
     private final ScheduledExecutorService[] owners;
     private final int size;
 
-    /**
-     * @param size the number of owner threads (the pool size N); must be &gt;= 1.
-     * @throws IllegalArgumentException if {@code size < 1}
-     */
     public OwnerExecutorPool(int size) {
         if (size < 1) {
             throw new IllegalArgumentException("owner pool size must be >= 1, was " + size);
@@ -52,29 +48,24 @@ public final class OwnerExecutorPool {
         return Math.floorMod(groupId, size);
     }
 
-    /** The owner executor for a group - the ONLY executor on which that group's RaftNode may run. */
     public ScheduledExecutorService ownerExecutor(int groupId) {
         return owners[ownerIndexOf(groupId)];
     }
 
-    /** The owner executor at a given pool index (for per-owner scheduling / fan-out). */
     public ScheduledExecutorService ownerByIndex(int ownerIndex) {
         return owners[ownerIndex];
     }
 
-    /** The pool size N. */
     public int size() {
         return size;
     }
 
-    /** Initiates an orderly shutdown of every owner executor. */
     public void shutdown() {
         for (ScheduledExecutorService o : owners) {
             o.shutdown();
         }
     }
 
-    /** Awaits termination of every owner executor (best-effort, sequential). */
     public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
         boolean allDone = true;
         for (ScheduledExecutorService o : owners) {

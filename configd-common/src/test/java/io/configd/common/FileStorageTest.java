@@ -13,9 +13,6 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link FileStorage}.
- */
 final class FileStorageTest {
 
     @TempDir
@@ -238,10 +235,6 @@ final class FileStorageTest {
         List<byte[]> beforeCorruption = storage.readLog("recovery-log");
         assertEquals(2, beforeCorruption.size());
 
-        // Simulate a crash mid-write: truncate the WAL's last 3 bytes so the second entry's
-        // CRC is incomplete. The WAL layout is an 8-byte container header followed by
-        // [4-byte length][data][4-byte CRC32C] per entry, so truncating the tail damages only
-        // the last frame, which readLog() must discard.
         Path walFile = storeDir.resolve("recovery-log.wal");
         long originalSize = Files.size(walFile);
 
@@ -280,11 +273,7 @@ final class FileStorageTest {
         assertTrue((int) twoGiB < 0, "(int) 2GiB wraps negative");
     }
 
-    // WAL container header (WalContainer): every .wal file self-identifies with an 8-byte
-    // header at offset 0, validated before any frame is read (fail closed on a foreign, corrupt,
-    // or newer file). A file below the header floor is fresh (empty, first-boot, or torn header).
 
-    /** The valid 8-byte container header: [WAL_FILE_MAGIC:4][fileVersion:1][flags:1=0][reserved:2=0]. */
     private static byte[] validHeader() {
         ByteBuffer b = ByteBuffer.allocate(8);
         b.putInt(WalContainer.WAL_FILE_MAGIC);
@@ -359,7 +348,7 @@ final class FileStorageTest {
 
         Path walFile = storeDir.resolve("raft-log.wal");
         byte[] fileBytes = Files.readAllBytes(walFile);
-        fileBytes[0] ^= 0xFF; // corrupt the container magic
+        fileBytes[0] ^= 0xFF;
         Files.write(walFile, fileBytes);
 
         assertThrows(UncheckedIOException.class, () -> storage.readLog("raft-log"),
@@ -374,7 +363,7 @@ final class FileStorageTest {
 
         Path walFile = storeDir.resolve("raft-log.wal");
         byte[] fileBytes = Files.readAllBytes(walFile);
-        fileBytes[4] = 2; // fileVersion byte -> an unknown, higher version
+        fileBytes[4] = 2;
         Files.write(walFile, fileBytes);
 
         assertThrows(UncheckedIOException.class, () -> storage.readLog("raft-log"),

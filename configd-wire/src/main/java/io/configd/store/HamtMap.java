@@ -56,25 +56,22 @@ public final class HamtMap<K, V> {
         this.size = size;
     }
 
-    /** Returns an empty, immutable {@code HamtMap}. */
     @SuppressWarnings("unchecked")
     public static <K, V> HamtMap<K, V> empty() {
         return (HamtMap<K, V>) EMPTY;
     }
 
-    /** Number of key-value pairs. */
     public int size() {
         return size;
     }
 
-    /** True if empty. */
     public boolean isEmpty() {
         return size == 0;
     }
 
     /**
-     * Returns the value for {@code key}, or {@code null} if absent.
-     * Zero-allocation: no objects are created on this path.
+     * Get value for key (null if absent). Zero-allocation: no objects created
+     * on this path.
      */
     public V get(K key) {
         Objects.requireNonNull(key, "key must not be null");

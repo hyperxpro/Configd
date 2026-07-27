@@ -37,17 +37,6 @@ public final class SloTracker {
     /** Event logs per SLO: name -> event deque. */
     private final ConcurrentHashMap<String, ConcurrentLinkedDeque<SloEvent>> events = new ConcurrentHashMap<>();
 
-    /**
-     * Defines a new SLO with the given target compliance and sliding window.
-     * <p>
-     * If an SLO with the same name already exists, it is replaced and its
-     * event history is cleared.
-     *
-     * @param name   the SLO name (non-null, non-blank)
-     * @param target the target compliance ratio in [0.0, 1.0] (e.g., 0.999)
-     * @param window the sliding window duration (non-null, positive)
-     * @throws IllegalArgumentException if target is not in [0.0, 1.0] or window is non-positive
-     */
     public void defineSlo(String name, double target, Duration window) {
         Objects.requireNonNull(name, "name must not be null");
         if (name.isBlank()) {
@@ -65,36 +54,14 @@ public final class SloTracker {
         events.put(name, new ConcurrentLinkedDeque<>());
     }
 
-    /**
-     * Records a successful event for the given SLO.
-     *
-     * @param sloName the SLO name (must have been defined via {@link #defineSlo})
-     * @throws IllegalArgumentException if the SLO is not defined
-     */
     public void recordSuccess(String sloName) {
         recordEvent(sloName, true);
     }
 
-    /**
-     * Records a failure event for the given SLO.
-     *
-     * @param sloName the SLO name (must have been defined via {@link #defineSlo})
-     * @throws IllegalArgumentException if the SLO is not defined
-     */
     public void recordFailure(String sloName) {
         recordEvent(sloName, false);
     }
 
-    /**
-     * Computes the current compliance ratio for the given SLO over its
-     * sliding window.
-     * <p>
-     * Returns 1.0 if no events have been recorded in the window (vacuous truth).
-     *
-     * @param sloName the SLO name (must have been defined)
-     * @return compliance ratio in [0.0, 1.0]
-     * @throws IllegalArgumentException if the SLO is not defined
-     */
     public double compliance(String sloName) {
         SloDefinition def = requireDefined(sloName);
         ConcurrentLinkedDeque<SloEvent> deque = events.get(sloName);
@@ -119,24 +86,11 @@ public final class SloTracker {
         return (double) (total - failures) / total;
     }
 
-    /**
-     * Returns {@code true} if the SLO is currently breaching - i.e., the
-     * current compliance is below the target.
-     *
-     * @param sloName the SLO name (must have been defined)
-     * @return {@code true} if breaching
-     * @throws IllegalArgumentException if the SLO is not defined
-     */
     public boolean isBreaching(String sloName) {
         SloDefinition def = requireDefined(sloName);
         return compliance(sloName) < def.target();
     }
 
-    /**
-     * Returns a snapshot of all defined SLOs and their current status.
-     *
-     * @return unmodifiable map of SLO name to status
-     */
     public Map<String, SloStatus> snapshot() {
         return definitions.keySet().stream()
                 .collect(Collectors.toUnmodifiableMap(
@@ -144,16 +98,6 @@ public final class SloTracker {
                         this::statusFor));
     }
 
-    /**
-     * Point-in-time status of a single SLO.
-     *
-     * @param name         the SLO name
-     * @param target       the target compliance ratio
-     * @param current      the current compliance ratio
-     * @param totalEvents  total events in the current window
-     * @param failedEvents failed events in the current window
-     * @param breaching    {@code true} if current compliance is below target
-     */
     public record SloStatus(
             String name,
             double target,

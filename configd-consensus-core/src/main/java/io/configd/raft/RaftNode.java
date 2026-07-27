@@ -2036,34 +2036,21 @@ public final class RaftNode {
         }
     }
 
-    // AppendEntries handling
-
     private void handleAppendEntries(AppendEntriesRequest req) {
-        // Rule: if term < currentTerm, reject (Raft section 5.1)
         if (req.term() < currentTerm) {
             transport.send(req.leaderId(),
                     new AppendEntriesResponse(currentTerm, false, 0, config.nodeId()));
             return;
         }
-
-        // If we see a higher term, step down
         if (req.term() > currentTerm) {
             becomeFollower(req.term());
         } else if (role == RaftRole.CANDIDATE) {
-            // If we're a candidate and receive AppendEntries with our current term,
-            // a leader has been elected - step down
             becomeFollower(req.term());
         }
-
-        // Reset election timer - we heard from the leader
         electionTicksElapsed = 0;
         leaderId = req.leaderId();
-
-        // Attempt to append entries. appendEntries does the W-fsync + the anchor head raise (and, on a
-        // conflict, the anchor lower-before-rewrite) internally, so the matchIndex this follower is
-        // about to ACK is already anchor-covered (INV-ANCHOR-ACK follower). A fsync fault here panics
-        // under the fail-closed policy BEFORE any ACK is sent. A plain false is a consistency-check
-        // mismatch (not a durability failure) and returns a negative ACK as before.
+        // appendEntries does the W-fsync + anchor head raise internally;
+        // the matchIndex this follower is about to ACK is already anchor-covered (INV-ANCHOR-ACK).
         boolean[] appended = {false};
         durablyOrPanic("follower-append", () ->
                 appended[0] = log.appendEntries(req.prevLogIndex(), req.prevLogTerm(), req.entries()));
@@ -2073,37 +2060,20 @@ public final class RaftNode {
                     new AppendEntriesResponse(currentTerm, false, 0, config.nodeId()));
             return;
         }
-
-        // INV-3: LogMatching - if two logs contain an entry with the same
-        // index and term, they are identical in all preceding entries.
-        // This is structurally guaranteed by the AppendEntries consistency check,
-        // but we assert it was applied correctly.
         if (!req.entries().isEmpty()) {
             LogEntry lastAppended = req.entries().getLast();
             LogEntry stored = log.entryAt(lastAppended.index());
             invariantChecker.check("log_matching",
                     stored != null && stored.term() == lastAppended.term(),
                     "Log matching violated at index " + lastAppended.index());
-
-            // Raft section 4.1: "A server always uses the latest configuration in its log,
-            // regardless of whether the entry is committed." Recompute config after any log
-            // modification (append or truncation) to match the TLA+ spec's EffectiveConfig(newLog).
             recomputeConfigFromLog();
         }
-
-        // Advance commit index (Raft section 5.3 rule 5)
         if (req.leaderCommit() > log.commitIndex()) {
             long lastNewIndex = req.entries().isEmpty() ? log.lastIndex()
                     : req.entries().getLast().index();
             log.setCommitIndex(Math.min(req.leaderCommit(), lastNewIndex));
         }
-
         applyCommitted();
-
-        // Report the last verified index - the last entry in the batch, or
-        // prevLogIndex for an empty heartbeat.  Using log.lastIndex() would be
-        // incorrect when the leader limits batch size: entries beyond the batch
-        // are unverified and must not be counted as matched.
         long matchIndex = req.entries().isEmpty()
                 ? req.prevLogIndex()
                 : req.entries().getLast().index();
@@ -2132,72 +2102,48 @@ public final class RaftNode {
         inflightCount.merge(resp.from(), -1, (a, b) -> Math.max(0, a + b));
 
         if (resp.success()) {
-            // Update nextIndex and matchIndex for the follower
             long newMatchIndex = resp.matchIndex();
             matchIndex.put(resp.from(), newMatchIndex);
             nextIndex.put(resp.from(), newMatchIndex + 1);
-
-            // The follower is replicating via AppendEntries, so any snapshot transfer we had in
-            // flight to it is moot; drop the progress so it does not linger or spuriously restart.
             snapshotSend.remove(resp.from());
-
             maybeAdvanceCommitIndex();
             applyCommitted();
-
-            // If we're transferring leadership and target is caught up, send TimeoutNow
             maybeSendTimeoutNow();
         } else {
-            // Decrement nextIndex and retry (Raft section 5.3)
             long ni = nextIndex.getOrDefault(resp.from(), log.lastIndex() + 1);
             nextIndex.put(resp.from(), Math.max(1, ni - 1));
             sendAppendEntries(resp.from());
         }
     }
 
-    // RequestVote handling
-
     private void handleRequestVote(RequestVoteRequest req) {
         if (req.preVote()) {
             handlePreVoteRequest(req);
             return;
         }
-
-        // Non-voters must not grant votes (TLA+ spec: m in VotingMembers(config[m]))
         if (!clusterConfig.isVoter(config.nodeId())) {
             transport.send(req.candidateId(),
                     new RequestVoteResponse(currentTerm, false, config.nodeId(), false));
             return;
         }
-
-        // Rule: if term < currentTerm, reject
         if (req.term() < currentTerm) {
             transport.send(req.candidateId(),
                     new RequestVoteResponse(currentTerm, false, config.nodeId(), false));
             return;
         }
-
-        // Step down if we see a higher term
         if (req.term() > currentTerm) {
             becomeFollower(req.term());
         }
-
-        // Grant vote if: (a) we haven't voted for someone else in this term,
-        // and (b) candidate's log is at least as up-to-date as ours (Raft section 5.4.1)
         boolean canVote = (votedFor == null || votedFor.equals(req.candidateId()));
         boolean logOk = log.isAtLeastAsUpToDate(req.lastLogTerm(), req.lastLogIndex());
-        // Anchor-witness vote latch: until the boot gate has witnessed our anchorSeq at a
-        // quorum, grant no vote - a disk rollback of our vote could otherwise double-vote at this term
-        // (split-brain). Inert unless the witness is armed; at N=1 the gate is cleared at arm time.
+        // Anchor-witness vote latch: until boot gate witnesses our anchorSeq at quorum,
+        // grant no vote - a disk rollback could otherwise cause split-brain.
         boolean witnessOk = !witnessArmed || votingCleared;
-
         if (canVote && logOk && witnessOk) {
-            // Persist the vote to the anchor BEFORE the in-memory update (Raft section 5.2), a
-            // standalone fsync under the fail-closed policy. This raises anchorSeq.
+            // Persist the vote to the anchor BEFORE in-memory update (Raft section 5.2).
             durablyOrPanic("vote", () -> log.persistTermVote(currentTerm, req.candidateId().id()));
             votedFor = req.candidateId();
-            electionTicksElapsed = 0; // reset timer on granting vote
-            // Announce-before-grant: broadcast the raised anchorSeq to peers before voteGranted is
-            // usable (armed path); un-armed this is the byte-identical immediate voteGranted send.
+            electionTicksElapsed = 0;
             grantVoteWitnessed(req.candidateId());
         } else {
             transport.send(req.candidateId(),
@@ -2550,19 +2496,6 @@ public final class RaftNode {
         inflightCount.merge(peer, 1, Integer::sum);
     }
 
-    /**
-     * Sends the current snapshot to a lagging peer as a chunked InstallSnapshot transfer.
-     * <p>
-     * Called when the peer's nextIndex points to an entry that has been compacted. If no snapshot
-     * is available, this is a no-op (the peer will catch up once the log advances or a snapshot is
-     * taken). The snapshot is split into ordered chunks of at most {@link #snapshotChunkBytes}; this
-     * call sends the chunk at {@code ackedOffset}. {@link #handleInstallSnapshotResponse} re-syncs
-     * {@code ackedOffset} to the follower's reported {@code nextExpectedOffset} on every ack, so
-     * this heartbeat-driven call simply (re)sends the exact chunk the follower needs next - which is
-     * how a lost chunk, a reordered delivery, or a follower that restarted mid-transfer all recover.
-     *
-     * @param peer the target follower node
-     */
     private void sendInstallSnapshot(NodeId peer) {
         if (latestSnapshot == null) {
             // No snapshot available yet - take one now
@@ -2591,14 +2524,6 @@ public final class RaftNode {
         sendSnapshotChunk(peer, st);
     }
 
-    /**
-     * Sends one InstallSnapshot chunk to {@code peer}: the snapshot slice starting at
-     * {@code st.ackedOffset}, up to {@link #snapshotChunkBytes} bytes. The final chunk carries
-     * {@code done=true} and the cluster config - the receiver needs the config only at install
-     * time, so it rides the last chunk and every intermediate chunk stays pure data. A snapshot
-     * that fits one chunk is sent exactly as an unchunked transfer was: offset 0, done true, the
-     * full data array, config attached.
-     */
     private void sendSnapshotChunk(NodeId peer, SnapshotSendState st) {
         byte[] data = latestSnapshot.data();
         int total = data.length;
@@ -2634,47 +2559,28 @@ public final class RaftNode {
         inflightCount.merge(peer, 1, Integer::sum);
     }
 
-    /**
-     * Advances the commit index based on matchIndex values (Raft section 5.3/5.4).
-     * <p>
-     * Only commits entries from the current term (Raft section 5.4.2 safety rule):
-     * a leader cannot determine commitment of entries from prior terms
-     * based on replication count alone.
-     * <p>
-     * During joint consensus, commitment requires agreement from
-     * majorities of BOTH the old and new voter sets.
-     */
     private void maybeAdvanceCommitIndex() {
         if (role != RaftRole.LEADER) {
             return;
         }
 
-        // For each index from the last log entry down to commitIndex+1,
-        // check if a quorum has replicated it and it's from the current term.
-        // Reuse a single set across iterations to avoid per-iteration allocation.
         var replicated = new java.util.HashSet<NodeId>();
         var peers = clusterConfig.peersOf(config.nodeId());
         for (long n = log.lastIndex(); n > log.commitIndex(); n--) {
             if (log.termAt(n) != currentTerm) {
                 continue;
             }
-
-            // Build set of nodes that have replicated entry n
             replicated.clear();
-            // Count this leader toward the quorum for index n ONLY if n is durably fsynced
-            // locally (durableIndex). A buffered-but-unsynced self-copy must never be the deciding
-            // vote - a leader crash before the flush would otherwise lose an entry that quorum logic
-            // had marked committed. Followers already report matchIndex only after their own durable
-            // append (persist-before-ACK), so peers are always durable.
+            // Count this leader toward quorum only if n is durably fsynced (durableIndex).
+            // Buffered-but-unsynced self-copy must never be deciding vote (crash would lose entry).
             if (durableIndex >= n) {
-                replicated.add(config.nodeId()); // self (durable)
+                replicated.add(config.nodeId());
             }
             for (NodeId peer : peers) {
                 if (matchIndex.getOrDefault(peer, 0L) >= n) {
                     replicated.add(peer);
                 }
             }
-
             if (clusterConfig.isQuorum(replicated)) {
                 log.setCommitIndex(n);
                 applyCommitted();
@@ -2683,13 +2589,6 @@ public final class RaftNode {
         }
     }
 
-    /**
-     * Schedules a coalescing group-commit flush for entries appended via
-     * {@link RaftLog#appendNoSync} but not yet force-synced. If the unsynced backlog has reached
-     * {@link #groupCommitMaxBatch}, flushes immediately (bounding latency and the uncommitted
-     * backlog); otherwise schedules a single flush (honoring the linger) unless one is already
-     * pending - so concurrently-proposed entries coalesce into ONE fsync. Tick-thread only.
-     */
     private void scheduleFlush() {
         long pending = log.lastIndex() - durableIndex;
         if (pending <= 0) {
@@ -2706,53 +2605,26 @@ public final class RaftNode {
         flushScheduler.schedule(this::flushDurable, groupCommitLingerMicros);
     }
 
-    /**
-     * Force-syncs every entry buffered since the last sync (ONE fsync for the whole batch),
-     * advances {@link #durableIndex}, then re-evaluates the commit index now that the leader's own
-     * entries up to {@code lastIndex} are durable. Runs on the tick thread - inline via the default
-     * scheduler, or dispatched onto the single tick executor in production. Because the tick thread
-     * is single-threaded, no append can interleave the fsync, so {@code durableIndex == lastIndex}
-     * captured here is exact.
-     */
     private void flushDurable() {
-        // The production FlushScheduler dispatches this flush onto
-        // the group's owner executor. If a rehome moved the group AFTER the flush was scheduled, a stale
-        // dispatch would otherwise run here OFF the current owner - an unsynchronised touch of log /
-        // durableIndex / commit advancement. Guarding converts that into a net fire (throw in test/sim,
-        // metric + SEVERE in prod) instead of a SILENT race; on the correct owner (every production path -
-        // single-group, dormant rehoming) the call is on-owner and silent. See MultiRaftDriver.dispatchFlush.
         assertOwnerThread();
         flushScheduled = false;
         long target = log.lastIndex();
         if (target <= durableIndex) {
-            return; // already durable - nothing to sync
+            return;
         }
-        // W-fsync (covering every appendNoSync since the last sync) then the anchor head raise, both
-        // inside syncWal, under the fail-closed policy. durableIndex advances only AFTER both barriers
-        // succeed (INV-ANCHOR-ACK: the leader's self-vote counts only once the anchor covers target).
+        // W-fsync + anchor head raise inside syncWal, under fail-closed policy.
+        // durableIndex advances only AFTER both barriers succeed (INV-ANCHOR-ACK).
         durablyOrPanic("leader-flush", log::syncWal);
-        durableIndex = target;   // the leader may now count itself up to here
+        durableIndex = target;
         maybeAdvanceCommitIndex();
     }
 
-    /**
-     * Applies all committed but unapplied entries to the state machine.
-     * Also handles config change entries for joint consensus transitions
-     * and tracks no-op commitment for reconfiguration safety.
-     */
     private void applyCommitted() {
         while (log.lastApplied() < log.commitIndex()) {
             long nextApply = log.lastApplied() + 1;
 
             LogEntry entry = log.entryAt(nextApply);
             if (entry == null) {
-                // A committed index with no log entry and no covering snapshot is a GAP in the
-                // recoverable prefix. Silently skipping here and advancing lastApplied would amplify
-                // any data loss by turning an unrestored snapshot into invisible total data loss.
-                // Fail loudly instead: throw in test/sim, increment the durable_prefix_no_gap
-                // metric + SEVERE log in production. nextApply > snapshotIndex here (we only
-                // advance lastApplied within (snapshotIndex, commitIndex]), so a null entry means
-                // the entry is genuinely missing, not merely compacted-and-restored.
                 invariantChecker.check("durable_prefix_no_gap",
                         false,
                         "Committed index " + nextApply + " is missing from the recoverable prefix"
@@ -2761,41 +2633,21 @@ public final class RaftNode {
                                 + ", commitIndex=" + log.commitIndex()
                                 + "): persisted snapshot + WAL suffix do not cover all committed"
                                 + " entries — refusing to silently skip.");
-                // In production (fail-open) the metric/log has fired; do NOT advance lastApplied
-                // past the gap. Stop applying - the node is in a corrupt recovery state.
                 break;
             }
-
-            // INV-5: VersionMonotonicity - the entry we are about to apply must carry an
-            // index strictly greater than lastApplied. entry.index() comes from the log
-            // (independent of the nextApply computation), so a log returning a stale/wrong
-            // entry trips this.
             invariantChecker.check("version_monotonicity",
                     entry.index() > log.lastApplied(),
                     "Apply entry index " + entry.index() + " not > lastApplied " + log.lastApplied());
-
-            // INV-4: StateMachineSafety - entry at this index must match across nodes
-            // (structural guarantee from Raft log matching; assert entry consistency)
             invariantChecker.check("state_machine_safety",
                     entry.index() == nextApply,
                     "Entry index " + entry.index() + " != expected " + nextApply);
-
-            // Track no-op commitment in current term (for reconfig safety)
             if (entry.term() == currentTerm && entry.command().length == 0) {
                 noopCommittedInCurrentTerm = true;
             }
-
-            // Handle config change entries
             if (isConfigChangeEntry(entry.command())) {
-                // RCFG entries bypass the state machine; they assign no applied-mutation seq.
-                // A commit-outcome callback on this index surfaces the current sequence,
-                // consistent with the non-mutating case.
                 handleCommittedConfigChange(entry);
                 recordAppliedSeq(entry.index(), currentAppliedSequence());
             } else {
-                // apply() returns the assigned applied-mutation seq (or NON_MUTATING for a no-op).
-                // Record it per index so the commit-outcome seam can surface the correct seq for
-                // this exact entry.
                 long appliedSeq = stateMachine.apply(entry.index(), entry.term(), entry.command());
                 if (appliedSeq == StateMachine.NON_MUTATING) {
                     appliedSeq = currentAppliedSequence();
@@ -2806,42 +2658,22 @@ public final class RaftNode {
             }
             log.setLastApplied(nextApply);
         }
-        // Apply advanced lastApplied - some pending reads may now satisfy "lastApplied >= readIndex".
         fireReadyCallbacks();
-        // Apply advanced lastApplied - pending commit outcomes at or below the new lastApplied
-        // are now decidable (COMMITTED / LOST).
         fireCommitOutcomes();
     }
 
-    /**
-     * Records the applied-mutation seq for {@code index} so a commit-outcome
-     * registration arriving after the apply can still surface the correct seq.
-     * Pruned to indices that may still be queried by a pending callback, and
-     * hard-capped so a workload that never registers cannot grow it unbounded.
-     */
     private void recordAppliedSeq(long index, long seq) {
         appliedSeqByIndex.put(index, seq);
-        // Drop records strictly below the lowest pending-callback index - once
-        // every pending callback has registered at an index >= floor, no
-        // registration can ever query an older index again. Only prune by floor
-        // when callbacks ARE pending: with none pending, an imminent registration
-        // (the single-node immediate-commit path registers right after this apply)
-        // must still be able to read the seq it just recorded, so we must NOT wipe
-        // the recent records - the hard cap below bounds the map in that case.
         long floor = lowestPendingCommitIndex();
         if (floor != Long.MAX_VALUE) {
             appliedSeqByIndex.keySet().removeIf(k -> k < floor);
         }
-        // Hard cap: bound the map for a workload that proposes without ever
-        // registering a commit-outcome callback - retain only the most recent
-        // window of indices (the only ones a late registration could query).
         if (appliedSeqByIndex.size() > MAX_RETAINED_APPLIED_SEQ) {
             long cutoff = log.lastApplied() - MAX_RETAINED_APPLIED_SEQ;
             appliedSeqByIndex.keySet().removeIf(k -> k < cutoff);
         }
     }
 
-    /** Lowest index among pending commit-outcome callbacks, or MAX if none. */
     private long lowestPendingCommitIndex() {
         long min = Long.MAX_VALUE;
         for (long idx : commitOutcomeCallbacks.keySet()) {
@@ -3182,32 +3014,16 @@ public final class RaftNode {
 
         if (resp.success() && latestSnapshot != null) {
             long snapIndex = latestSnapshot.lastIncludedIndex();
-
             SnapshotSendState st = snapshotSend.get(resp.from());
             boolean chunkedInProgress = st != null
                     && st.index == latestSnapshot.lastIncludedIndex()
                     && st.term == latestSnapshot.lastIncludedTerm();
-
             if (chunkedInProgress && resp.lastIncludedIndex() < snapIndex) {
-                // The follower has NOT installed yet (it still reports a position below the
-                // snapshot). Re-sync our send offset to the follower's REPORTED position - its
-                // ground truth - rather than counting acks. This is what makes the transfer correct
-                // under a lossy transport, chunk reorder, and follower restart: a dropped chunk
-                // leaves the follower's position at the gap and a restarted follower reports 0, so
-                // we always resume from exactly where the follower actually is. A rejected chunk
-                // (gap/duplicate) reports the same position, so we simply retransmit it.
-                //
-                // Crucially, do NOT touch matchIndex: the follower does not hold the snapshot yet,
-                // so counting it as replicated would let a not-yet-installed index flow into the
-                // commit quorum. matchIndex advances only on the final (install) ack below.
+                // Re-sync offset to follower's REPORTED position (ground truth).
+                // Do NOT touch matchIndex until final (install) ack.
                 int total = latestSnapshot.data().length;
                 int reportedOffset = Math.max(0, Math.min(resp.nextExpectedOffset(), total));
-                // Any ack means the channel is alive and the ground-truth echo is driving recovery,
-                // so clear the stall backstop. The offset-0 restart must fire ONLY on total silence
-                // (no ack at all for SNAPSHOT_TRANSFER_STALL_HEARTBEATS heartbeats): resetting a
-                // slow-but-acking follower - one whose chunk round-trip exceeds a few heartbeats over
-                // a high-RTT link, or one that keeps rejecting at a gap - would discard the partial
-                // it is still building and livelock the transfer.
+                // Any ack clears the stall backstop; only total silence triggers offset-0 restart.
                 st.stallHeartbeats = 0;
                 st.ackedOffset = reportedOffset;
                 if (st.ackedOffset < total) {
@@ -3215,79 +3031,42 @@ public final class RaftNode {
                 }
                 return;
             }
-
-            // Final (install) ack, or the follower is already at/ahead of our snapshot: the
-            // transfer is done. Drop any in-flight send progress and advance the follower's indices.
+            // Final ack or follower past snapshot: transfer done.
             snapshotSend.remove(resp.from());
-
-            // A follower may already be past our cached snapshot (e.g., it caught up via a
-            // more-recent snapshot from a different leader during a partition). Trust the
-            // follower's reported index, but clamp the upper bound so a malicious or buggy
-            // follower cannot fast-forward matchIndex beyond what the leader can attest to.
-            //
-            // The upper bound is `max(commitIndex, snapshotIndex,
-            // lastIndex)` - using `commitIndex` alone would regress
-            // on a freshly-elected leader whose noop hasn't committed
-            // yet but whose durable snapshotIndex is already large
-            // (cold-start-from-snapshot scenario), pinning matchIndex
-            // to 0 and re-looping snapshot install forever.
+            // Clamp reported index to what leader can attest to (avoid malicious fast-forward).
             long reported = resp.lastIncludedIndex();
             long upperBound = Math.max(
                     Math.max(log.commitIndex(), log.snapshotIndex()),
                     log.lastIndex());
             long effective = Math.min(Math.max(snapIndex, reported), upperBound);
-
             matchIndex.put(resp.from(), effective);
             nextIndex.put(resp.from(), effective + 1);
-
             maybeAdvanceCommitIndex();
             applyCommitted();
         }
     }
 
-    // CheckQuorum
-
-    /**
-     * Builds the set of active peers (including self), resets activity tracking,
-     * and returns the set. Used by tickHeartbeat for CheckQuorum and ReadIndex
-     * confirmation with correct joint consensus dual-majority checking.
-     *
-     * @return the set of active cluster members (including self)
-     */
     private Set<NodeId> buildActiveSetAndReset() {
         Set<NodeId> peers = clusterConfig.peersOf(config.nodeId());
         var activeSet = new HashSet<NodeId>();
-        activeSet.add(config.nodeId()); // self is always active
-
+        activeSet.add(config.nodeId());
         for (NodeId peer : peers) {
             if (Boolean.TRUE.equals(peerActivity.get(peer))) {
                 activeSet.add(peer);
             }
         }
-
-        // Reset activity tracking for the next round
         for (NodeId peer : peers) {
             peerActivity.put(peer, Boolean.FALSE);
         }
-
         return activeSet;
     }
 
-    /**
-     * Confirms pending ReadIndex requests if the active set forms a quorum.
-     * Uses set-based quorum check for correct joint consensus handling.
-     *
-     * @param activeSet the set of active cluster members
-     */
     private void confirmPendingReads(Set<NodeId> activeSet) {
         if (clusterConfig.isQuorum(activeSet)) {
             readIndexState.confirmAllLeadership();
-            // Signal any callers waiting on whenReadReady(...).
             fireReadyCallbacks();
         }
     }
-
-    // Leadership transfer helpers
 
     private void maybeSendTimeoutNow() {
         if (transferTarget == null) {
@@ -3301,55 +3080,27 @@ public final class RaftNode {
         }
     }
 
-    // Election timeout randomization
-
     private void resetElectionTimeout() {
-        // Randomize within the tick-domain bounds derived from the millisecond budgets
-        // (electionTimeoutMin/MaxMs / tickPeriodMs). With the simulation's 1ms tick this is
-        // identical to ms-as-ticks values (150..300); in production (10ms tick) it is
-        // 15..30 ticks == 150..300ms.
         electionTimeoutTicks = electionTimeoutMinTicks
                 + random.nextInt(electionTimeoutMaxTicks - electionTimeoutMinTicks + 1);
     }
 
-    // Test seam for tick-count accessors. Package-private accessors expose the derived tick
-    // counts so a unit test can pin the ms->tick conversion directly. Production code never
-    // reads these; the timer logic above uses the cached fields.
-
-    /** The current randomized election-timeout target, in ticks. */
     int electionTimeoutTicksForTest() {
         return electionTimeoutTicks;
     }
 
-    /** The heartbeat interval the leader actually fires at, in ticks. */
     int heartbeatTimeoutTicksForTest() {
         return heartbeatTimeoutTicks;
     }
 
-    /**
-     * The current per-peer in-flight AppendEntries window count. Test seam so a recovery
-     * test can prove the wedge precondition (window pinned at {@code maxInflightAppends})
-     * before exercising the heartbeat decay. Production code never reads this; it is
-     * leader-only volatile state.
-     */
     int inflightCountForTest(NodeId peer) {
         return inflightCount == null ? 0 : inflightCount.getOrDefault(peer, 0);
     }
 
-    /**
-     * The leader's recorded highest-replicated index for {@code peer}. Test seam so a chunked-
-     * snapshot test can prove that an intermediate-chunk ack does NOT advance matchIndex (the
-     * follower has not installed yet) while the final ack does. Leader-only volatile state.
-     */
     long matchIndexForTest(NodeId peer) {
         return matchIndex == null ? 0L : matchIndex.getOrDefault(peer, 0L);
     }
 
-    /**
-     * Overrides the per-chunk snapshot byte cap so a test can force a multi-chunk transfer over a
-     * small snapshot without allocating a multi-megabyte one. Production uses
-     * {@link #DEFAULT_SNAPSHOT_CHUNK_BYTES}.
-     */
     void setSnapshotChunkBytesForTest(int bytes) {
         if (bytes <= 0) {
             throw new IllegalArgumentException("snapshotChunkBytes must be positive: " + bytes);

@@ -24,30 +24,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Pins the demotion-notice backpressure contract: {@code demote()} must not emit the
- * DEMOTED_TO_CATCHUP notice through the regular {@code emit()} path, whose refusal
- * semantics mark the session CLOSED and record a phantom
- * {@code onSessionClosed(transport_gone)}, with the demote tail then resurrecting the
- * session to CATCHUP. Under a full outbound queue the refusal is near-certain when the
- * demotion reason is TRANSPORT_BLOCK, since the queue is full by definition.
- *
- * <p><b>Pinned behavior, the would-block doctrine:</b> a refused demotion-notice offer is
- * transport backpressure, not transport death. The notice is advisory, since the snapshot
- * that follows is the load-bearing signal; it is retained and re-offered each tick ahead of
- * the snapshot transfer, so the wire order (notice, then BEGIN through chunks through END)
- * is preserved, the notice is delivered exactly once, and the session never records a
- * close it did not perform.
- *
- * <p>Deterministic, no threads, following the {@link BootstrapSnapshotBackpressureTest}
- * pattern: the test plays the role of the writer by draining the bounded sink between
- * ticks.
+ * Demotion-notice backpressure: refusal is backpressure (retained, re-offered each tick),
+ * not transport death (no phantom CLOSED). Notice is advisory; snapshot is load-bearing.
  */
 class DemotionNoticeBackpressureTest {
 
-    /** Sink capacity 1: the demotion-notice offer at demote() time is GUARANTEED refused. */
+    // Capacity 1 guarantees demotion-notice offer is refused at demote() time.
     private static final int SINK_CAPACITY = 1;
 
-    /** The FanOutServer.Connection transport model (bounded, non-blocking, drainable). */
     private static final class BoundedDrainingSink implements TransportSink {
         final Deque<EdgeFrame> queued = new ArrayDeque<>();
         final List<EdgeFrame> deliveredToEdge = new ArrayList<>();

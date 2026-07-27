@@ -1,14 +1,7 @@
-# Configd -- CI / Build Image
-#
-# Produces all module JARs and runs the full test suite inside a reproducible,
-# hermetic container. Intended for CI pipelines (GitHub Actions, Jenkins, etc.)
-# and for local clean-room builds.
-#
-# Usage:
-#   docker build -f docker/Dockerfile.build -t configd-build .
-#   docker run --rm configd-build
-#
-# Artifacts are written to /workspace/*/target/ inside the container.
+# Configd — CI / Build Image
+# Produces all JARs and runs test suite inside reproducible, hermetic container.
+# Usage: docker build -f docker/Dockerfile.build -t configd-build . && docker run --rm configd-build
+# Artifacts written to /workspace/*/target/ inside container.
 
 FROM eclipse-temurin:25-jdk-noble AS builder
 
@@ -19,8 +12,7 @@ RUN apt-get update && apt-get install -y maven && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
 
-# Layer 1: POM files change less often than source, so copying them first
-# lets Docker cache this layer.
+# POM layer caches before source layer (POMs change less often).
 COPY pom.xml ./
 COPY configd-common/pom.xml         configd-common/pom.xml
 COPY configd-transport/pom.xml      configd-transport/pom.xml
@@ -37,11 +29,9 @@ COPY configd-edge-node/pom.xml      configd-edge-node/pom.xml
 COPY configd-linz/pom.xml           configd-linz/pom.xml
 COPY configd-jcstress/pom.xml       configd-jcstress/pom.xml
 
-# Resolve dependencies in their own layer so Docker caches them separately
-# from the source layer below.
+# Resolve dependencies in separate layer for cache efficiency.
 RUN mvn dependency:resolve -B -q || true
 
-# Layer 2: source (changes often; invalidates layers above it on every edit).
 COPY . .
 
 CMD ["mvn", "clean", "verify", "-B"]

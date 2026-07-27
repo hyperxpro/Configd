@@ -1,34 +1,9 @@
-# E2E topology: 3 control-plane nodes + 3 steady-state edge nodes (+ edge4,
-# profile "bootstrap", started mid-load by the scenario script).
-#
-# Everything speaks mTLS over the real production CLI paths:
-#   - Raft peer transport and the --edge-port fan-out endpoint share the server
-#     TLS triple (the ConfigdServer single-TlsManager design);
-#   - edges present CN=edge-N client certs -- the cert DN is the authoritative
-#     session identity, and --edge-id carries the same string;
-#   - all three CP nodes mount the same Ed25519 signing key (--signing-key-file):
-#     each node signs its fan-out stream at apply, so failover only verifies if
-#     the key is cluster-shared. Edges verify with the exported --verify-key.
-#
-# Secrets come from ./secrets (deploy/compose/setup-secrets.sh). Images are
-# slim JRE layers over host-built shaded jars (gates/e2e-compose-scenario.sh
-# stages and builds them; pull_policy: never -- nothing comes from a registry).
-#
-# Heaps are small on purpose: 6-7 JVMs must fit the 2-vCPU/7.7GB gate box.
-# Ports publish on host loopback only:
-#   cp1..cp3 API  -> 127.0.0.1:18081..18083
-#   edge1..edge4  -> 127.0.0.1:18181..18184
-# The fan-out port (7070) stays internal to cpnet.
-#
-# Partition fault (scenario phase 3) = `docker network disconnect` of the victim
-# edge from cpnet; observation continues via `docker exec ... curl localhost:8080`
-# (network-independent -- the reason curl is in the images).
+# E2E topology: 3 control-plane nodes + 3 steady-state edge nodes (+ edge4 bootstrap).
+# All speak mTLS over production CLI paths; small heaps by design (6-7 JVMs fit 2-vCPU box).
+# Partition fault in scenario = docker network disconnect; edge4 started mid-load by scenario.
+# Static container IPs required: partition phase reconnects with same IP.
 name: configd-e2e
 
-# Static container IPs: the partition phase disconnects/reconnects an edge from
-# cpnet, and the host-published-port NAT path stays valid only if the container
-# comes back with the same address (the scenario script reconnects with
-# `docker network connect --ip <same-ip>`).
 networks:
   cpnet:
     ipam:
@@ -38,14 +13,7 @@ networks:
 x-cp-common: &cp-common
   image: configd-e2e-server:latest
   pull_policy: never
-  # These CP nodes bind --bind-address 0.0.0.0 with app-layer auth off (the mTLS here is
-  # wantClientAuth=optional, so a certless client is not authenticated). ConfigdServer's fail-closed guard
-  # (enforceBindNotSilentlyPublic) refuses to start an unauthenticated public bind unless the operator
-  # explicitly acknowledges it. This is a trusted-network lab posture (a private compose network on host
-  # loopback). A production deployment must instead enable real auth (configd.auth.mode=basic|oidc|
-  # mtls-with-real-client-auth, or --auth-token) rather than rely on this override. Passed as a -D via
-  # JAVA_TOOL_OPTIONS because the override key is camelCase (the systematic CONFIGD_* env mapping lowercases
-  # and cannot express it).
+  # allowInsecurePublicBind needed: bind 0.0.0.0 without auth (trusted lab network only; production must enable real auth).
   environment:
     JAVA_TOOL_OPTIONS: "-Dconfigd.security.allowInsecurePublicBind=true"
   volumes:
@@ -103,9 +71,7 @@ services:
     ports:
       - "127.0.0.1:18083:8080"
 
-  # Edges stagger their first fan-out endpoint (cp1/cp2/cp3) so a leader kill
-  # exercises failover from a mix of subscription points (round-robin carries on
-  # from wherever each edge currently sits).
+  # Edges stagger first fanout endpoint for failover from different subscription points.
   edge1:
     <<: *edge-common
     networks:
@@ -148,9 +114,6 @@ services:
     ports:
       - "127.0.0.1:18183:8080"
 
-  # Phase 4: the fresh edge that bootstraps mid-load (zero state, cursor 0, so
-  # SNAPSHOT_FIRST applies). Started explicitly by the scenario script:
-  #   docker compose --profile bootstrap up -d edge4
   edge4:
     <<: *edge-common
     networks:

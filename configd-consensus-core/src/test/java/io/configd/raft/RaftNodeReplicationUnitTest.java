@@ -13,21 +13,6 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Discriminating tests for {@link RaftNode}'s leader-side replication and
- * election-response handlers, driven through the public {@code handleMessage}
- * seam so the production code path (not a synthetic shim) executes.
- * <p>
- * Covers {@code handleAppendEntriesResponse}, {@code maybeAdvanceCommitIndex},
- * {@code handleInstallSnapshotResponse}, {@code handleRequestVoteResponse},
- * {@code handlePreVoteRequest}, and {@code handleTimeoutNow} - focusing on
- * conditional-branch and arithmetic boundaries (higher-term step-down guards,
- * the nextIndex walk-back floor, the commit-advance term/quorum boundary, the
- * snapshot-response matchIndex clamp, the quorum->becomeLeader transition, the
- * PreVote stale-term / recent-leader shields). Each test asserts the observable
- * effect at the boundary: a role change that must (or must not) happen, a
- * nextIndex/matchIndex value, a vote response field. Deterministic, no sleeps.
- */
 class RaftNodeReplicationUnitTest {
 
     private static final NodeId N1 = NodeId.of(1);

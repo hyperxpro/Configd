@@ -43,28 +43,12 @@ public final class MetricsRegistry {
     private final ConcurrentHashMap<String, DefaultHistogram> histograms = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, InfoGaugeRegistration> infoGauges = new ConcurrentHashMap<>();
 
-    /**
-     * A monotonically increasing counter.
-     */
     public interface Counter {
-        /** Increments the counter by 1. */
         void increment();
-
-        /** Increments the counter by the given amount. */
         void increment(long n);
-
-        /** Returns the current count. */
         long get();
     }
 
-    /**
-     * Returns or creates a counter with the given name.
-     * <p>
-     * Repeated calls with the same name return the same counter instance.
-     *
-     * @param name the metric name (non-null, non-blank)
-     * @return the counter
-     */
     public Counter counter(String name) {
         Objects.requireNonNull(name, "name must not be null");
         if (name.isBlank()) {
@@ -73,16 +57,7 @@ public final class MetricsRegistry {
         return counters.computeIfAbsent(name, k -> new DefaultCounter());
     }
 
-    /**
-     * Registers a gauge with the given name and value supplier.
-     * <p>
-     * If a gauge with the same name already exists, it is replaced.
-     * The supplier is invoked at snapshot time - it must be thread-safe
-     * and should not block.
-     *
-     * @param name     the metric name (non-null, non-blank)
-     * @param supplier the value supplier (non-null)
-     */
+    /** Supplier is invoked at snapshot time; must be thread-safe and non-blocking. */
     public void gauge(String name, LongSupplier supplier) {
         Objects.requireNonNull(name, "name must not be null");
         if (name.isBlank()) {
@@ -118,80 +93,24 @@ public final class MetricsRegistry {
         infoGauges.put(name, new InfoGaugeRegistration(labelName, valueSupplier));
     }
 
-    /**
-     * One info-gauge sample: the metric name, its label key, and the current string value. Returned by
-     * {@link #infoGaugeSamples()} for the exporter to render.
-     */
     public record InfoSample(String name, String labelName, String value) {}
 
-    /**
-     * Reads the current value of every registered info gauge (calls each supplier once). Used by
-     * {@link PrometheusExporter}; separate from {@link #snapshot()} because an info gauge's payload is a
-     * string, not the {@code long} that {@link MetricValue} carries.
-     */
     public java.util.List<InfoSample> infoGaugeSamples() {
         var out = new java.util.ArrayList<InfoSample>(infoGauges.size());
         infoGauges.forEach((name, reg) -> out.add(new InfoSample(name, reg.labelName(), reg.supplier().get())));
         return out;
     }
 
-    /**
-     * A distribution of {@code long} values with percentile support.
-     */
     public interface Histogram {
-        /** Records a value. */
         void record(long value);
-
-        /** Returns the total number of recorded values. */
         long count();
-
-        /** Returns the minimum recorded value, or 0 if empty. */
         long min();
-
-        /** Returns the maximum recorded value, or 0 if empty. */
         long max();
-
-        /** Returns the arithmetic mean, or 0.0 if empty. */
         double mean();
-
-        /**
-         * Returns the value at the given percentile (0.0 to 1.0).
-         * <p>
-         * Uses nearest-rank interpolation on the current ring buffer contents.
-         * For example, {@code percentile(0.99)} returns the p99 value.
-         *
-         * @param p percentile in [0.0, 1.0]
-         * @return the value at the given percentile, or 0 if empty
-         */
         long percentile(double p);
-
-        /**
-         * Returns the cumulative count of samples that fell at or below each
-         * cutoff in the supplied array. Used by {@link PrometheusExporter} to
-         * emit {@code _bucket{le="X"}} lines matching the SLO alert vocabulary.
-         * The returned array has the same length as {@code cutoffs}; element
-         * {@code i} is the number of recorded samples with
-         * {@code value <= cutoffs[i]}.
-         *
-         * <p>Counts are taken from the ring-buffer window (same window used
-         * for percentile computation) and are therefore approximate when the
-         * total recorded count exceeds the buffer capacity - this matches the
-         * documented behavior of {@link #percentile(double)}.
-         *
-         * @param cutoffs strictly-increasing cutoffs in sample units
-         * @return per-cutoff cumulative sample counts
-         */
         long[] bucketCounts(long[] cutoffs);
     }
 
-    /**
-     * Returns or creates a histogram with the given name.
-     * <p>
-     * Repeated calls with the same name return the same histogram instance.
-     *
-     * @param name the metric name (non-null, non-blank)
-     * @return the histogram
-     */
     public Histogram histogram(String name) {
         Objects.requireNonNull(name, "name must not be null");
         if (name.isBlank()) {
@@ -200,13 +119,6 @@ public final class MetricsRegistry {
         return histograms.computeIfAbsent(name, k -> new DefaultHistogram(DEFAULT_HISTOGRAM_CAPACITY));
     }
 
-    /**
-     * A point-in-time snapshot of a single metric's value.
-     *
-     * @param name  the metric name
-     * @param type  the metric type ("counter", "gauge", "histogram")
-     * @param value the numeric value (count for counters/gauges, count for histograms)
-     */
     public record MetricValue(String name, String type, long value) {
         public MetricValue {
             Objects.requireNonNull(name, "name must not be null");
@@ -214,11 +126,6 @@ public final class MetricsRegistry {
         }
     }
 
-    /**
-     * An immutable snapshot of all metrics at a point in time.
-     *
-     * @param metrics unmodifiable map of metric name to metric value
-     */
     public record MetricsSnapshot(Map<String, MetricValue> metrics) {
         public MetricsSnapshot {
             Objects.requireNonNull(metrics, "metrics must not be null");
@@ -226,11 +133,6 @@ public final class MetricsRegistry {
         }
     }
 
-    /**
-     * Takes a point-in-time snapshot of all registered metrics.
-     *
-     * @return metrics snapshot
-     */
     public MetricsSnapshot snapshot() {
         var result = new java.util.LinkedHashMap<String, MetricValue>();
 
@@ -246,10 +148,6 @@ public final class MetricsRegistry {
         return new MetricsSnapshot(result);
     }
 
-    /**
-     * Lock-free counter backed by {@link LongAdder} for high-throughput
-     * concurrent increments.
-     */
     private static final class DefaultCounter implements Counter {
 
         private final LongAdder adder = new LongAdder();
@@ -286,31 +184,14 @@ public final class MetricsRegistry {
         }
     }
 
-    /**
-     * Ring-buffer-based histogram. Thread-safe via synchronized write and
-     * volatile/snapshot reads. The ring buffer provides an approximate
-     * sliding window of the most recent {@code capacity} values.
-     * <p>
-     * Percentile computation copies the current buffer contents and sorts
-     * them - this is O(n log n) but only happens on explicit query, not on
-     * the recording hot path.
-     */
     private static final class DefaultHistogram implements Histogram {
 
         private final long[] buffer;
         private final int capacity;
-
-        /** Total number of values ever recorded. */
         private final AtomicLong totalCount = new AtomicLong(0);
-
-        /** Tracks min/max across all time (not just the ring buffer window). */
         private volatile long minValue = Long.MAX_VALUE;
         private volatile long maxValue = Long.MIN_VALUE;
-
-        /** Sum of all values ever recorded, for mean computation. */
         private final LongAdder sum = new LongAdder();
-
-        /** Write cursor into the ring buffer (monotonically increasing). */
         private final AtomicLong cursor = new AtomicLong(0);
 
         DefaultHistogram(int capacity) {
@@ -328,7 +209,6 @@ public final class MetricsRegistry {
             totalCount.incrementAndGet();
             sum.add(value);
 
-            // Update min/max with simple spin - acceptable for monitoring
             updateMin(value);
             updateMax(value);
         }
@@ -349,12 +229,6 @@ public final class MetricsRegistry {
             } while (!compareAndSetMax(current, value));
         }
 
-        /**
-         * CAS-like update for volatile min. Uses a synchronized block
-         * since VarHandle on a plain field is more ceremony than warranted
-         * for monitoring code. The synchronized block is only contended
-         * when a new min is discovered, which is rare after warmup.
-         */
         private synchronized boolean compareAndSetMin(long expected, long update) {
             if (minValue == expected) {
                 minValue = update;

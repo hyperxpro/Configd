@@ -47,15 +47,14 @@ public final class RehomingDoubleOwnershipTest {
     private RehomingDoubleOwnershipTest() {
     }
 
-    /** A never-started Thread that equals no running thread - the "owned by nobody" handoff sentinel
-     *  (verbatim mirror of {@code RaftNode.HANDOFF}). */
+    // Verbatim mirror of RaftNode.HANDOFF: sentinel meaning "owned by nobody".
     private static final Thread HANDOFF = new Thread("raft-owner-handoff-sentinel");
 
-    // Result codes for the loser/gainer overlap witnesses.
-    private static final int DID_NOT_OWN = -1; // the actor never passed its guard (lost the field race)
-    private static final int NO_OVERLAP = 0;   // owned, and did NOT observe the other owner active
-    private static final int OVERLAP = 1;      // owned, and DID observe the other owner active (double-own)
-    private static final int NOT_ADOPTED = 2;  // the gainer never observed the handoff (did not adopt)
+    // Overlap witness codes.
+    private static final int DID_NOT_OWN = -1; // actor did not pass guard (lost field race)
+    private static final int NO_OVERLAP = 0;   // owned, did not observe other owner active
+    private static final int OVERLAP = 1;      // owned, did observe other owner active
+    private static final int NOT_ADOPTED = 2;  // gainer never observed handoff
 
     /**
      * No double-ownership under the volatile field + the barrier.
@@ -88,7 +87,6 @@ public final class RehomingDoubleOwnershipTest {
         @Actor
         public void loser(II_Result r) {
             ownerThread = Thread.currentThread();        // A becomes the owner (bind)
-            // A's owner-work critical section, guarded by a SINGLE snapshot read (as assertOwnerThread does):
             int sawGainer = DID_NOT_OWN;
             if (ownerThread == Thread.currentThread()) { // A passes its guard
                 loserInCrit = true;
@@ -144,7 +142,7 @@ public final class RehomingDoubleOwnershipTest {
         public void loser(II_Result r) {
             ownerThread = Thread.currentThread();        // A claims ownership
             int sawGainer = DID_NOT_OWN;
-            if (ownerThread == Thread.currentThread()) { // snapshot guard (may be stale - that is the hazard)
+            if (ownerThread == Thread.currentThread()) { // guard may be stale (the hazard)
                 loserInCrit = true;
                 sawGainer = gainerInCrit ? OVERLAP : NO_OVERLAP;
                 loserInCrit = false;
@@ -154,9 +152,9 @@ public final class RehomingDoubleOwnershipTest {
 
         @Actor
         public void gainer(II_Result r) {
-            ownerThread = Thread.currentThread();        // B adopts WITHOUT the barrier (the bug)
+            ownerThread = Thread.currentThread();        // B adopts WITHOUT barrier (the bug)
             int sawLoser = DID_NOT_OWN;
-            if (ownerThread == Thread.currentThread()) { // snapshot guard (may be stale)
+            if (ownerThread == Thread.currentThread()) { // guard may be stale
                 gainerInCrit = true;
                 sawLoser = loserInCrit ? OVERLAP : NO_OVERLAP;
                 gainerInCrit = false;
@@ -165,9 +163,9 @@ public final class RehomingDoubleOwnershipTest {
         }
     }
 
-    private static final int GUARD_FIRED = 0;     // off-owner caller intercepted (correct)
-    private static final int PRE_SERVICE = 1;     // arrived before B entered service (inert window)
-    private static final int FALSE_NEGATIVE = 2;  // in service as B, yet the guard saw null/self (forbidden)
+    private static final int GUARD_FIRED = 0;     // off-owner caller intercepted
+    private static final int PRE_SERVICE = 1;     // arrived before B in service (inert window)
+    private static final int FALSE_NEGATIVE = 2;  // in service, but guard saw null/self (forbidden)
 
     /**
      * Re-binding the owner across a handoff must not open a false NEGATIVE. {@code handoff}
