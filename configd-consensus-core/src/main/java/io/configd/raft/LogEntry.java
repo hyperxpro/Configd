@@ -3,12 +3,7 @@ package io.configd.raft;
 import java.util.Arrays;
 
 /**
- * A single entry in the Raft log.
- *
- * @param index   1-based log position (monotonically increasing)
- * @param term    the leader term in which this entry was created
- * @param command opaque command bytes to be applied to the state machine;
- *                may be empty for no-op entries used during leader election
+ * Single Raft log entry: index (1-based), term (leader term at creation), command (opaque or empty no-op).
  */
 public record LogEntry(long index, long term, byte[] command) {
 
@@ -24,10 +19,7 @@ public record LogEntry(long index, long term, byte[] command) {
         }
     }
 
-    /**
-     * Convenience factory for no-op entries (used by leader to commit
-     * entries from prior terms per Raft section 5.4.2).
-     */
+    /** No-op entry for prior-term commits (Raft §5.4.2). */
     public static LogEntry noop(long index, long term) {
         return new LogEntry(index, term, new byte[0]);
     }

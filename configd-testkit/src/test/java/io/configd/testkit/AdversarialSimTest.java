@@ -16,25 +16,11 @@ import java.util.HexFormat;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Verifies the adversarial simulation: faults inject, invariants hold (no
- * safety violation across a batch of seeds), the run is byte-replayable by seed
- * alone (determinism survives the fault machinery), and the run does
- * real work (activity predicate). A safety violation, were one to occur,
- * would surface as a thrown {@link SimInvariants.SafetyViolation} that fails the
- * seed with replay context.
- */
 class AdversarialSimTest {
 
     private static final int NODES = 5;
     private static final int TICKS = 1_500;
 
-    /**
-     * Per-fault-class smoke: a single representative seed exercises the whole
-     * adversarial configuration (reorder/drop/dup/delay/partition/crash-arm +
-     * concurrent workload) and completes without any safety violation. This is the
-     * one-line proof that the fault layer runs end-to-end under continuous checking.
-     */
     @Test
     void adversarialRunCompletesWithoutSafetyViolation() {
         AdversarialSim sim = new AdversarialSim(20260611L, NODES, TICKS);
@@ -47,10 +33,6 @@ class AdversarialSimTest {
                 "a leader should elect despite faults (else record as liveness stall)");
     }
 
-    /**
-     * Safety across a batch: many seeds, all faults, every tick checked. Zero
-     * safety violations expected; any violation fails the offending seed by name.
-     */
     @Test
     void batchOfSeedsHoldsAllInvariants() {
         int batch = Integer.getInteger("configd.adversarial.batch", 60);
@@ -70,12 +52,6 @@ class AdversarialSimTest {
                         + leaderElected + "/" + batch);
     }
 
-    /**
-     * Determinism under faults: the same seed produces a byte-identical
-     * execution schedule even with all fault machinery active. This is the
-     * foundation - if any new fault source broke same-seed-same-schedule it would
-     * be a bug in the new code.
-     */
     @Test
     void sameSeedProducesIdenticalScheduleUnderFaults() {
         long seed = 987_654_321L;
@@ -90,13 +66,6 @@ class AdversarialSimTest {
                 "Distinct seeds must produce distinct adversarial schedules");
     }
 
-    /**
-     * The full-scale adversarial sweep. Gated on
-     * {@code -Dconfigd.adversarial.nightly=true} so it is not part of the normal
-     * suite; the count defaults to 10,000. Prints runtime, election rate, and the
-     * count of recorded liveness stalls (reported, never failed). Any safety
-     * violation throws with the offending seed.
-     */
     @Test
     @EnabledIfSystemProperty(named = "configd.adversarial.nightly", matches = "true")
     void nightlyAdversarialSweep() {

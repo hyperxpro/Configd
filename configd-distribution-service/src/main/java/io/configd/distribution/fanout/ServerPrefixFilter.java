@@ -40,12 +40,6 @@ final class ServerPrefixFilter {
         this.strongReadPrefixes = Set.copyOf(strongReadPrefixes);
     }
 
-    /**
-     * Whether a session subscribing with {@code subscribe} filters server-side under {@code
-     * config}: the posture is on, the edge opted in, and the subscription is a non-empty prefix
-     * set (full-store / empty-prefix is match-all, so filtering would be inert). The single
-     * source of the filter-active decision, shared by the drain and the snapshot path.
-     */
     static boolean isActive(FanOutConfig config, EdgeFrame.Subscribe subscribe) {
         return config.serverSidePrefixFilter()
                 && subscribe.acceptsFiltered()
@@ -53,19 +47,10 @@ final class ServerPrefixFilter {
                 && !subscribe.prefixes().isEmpty();
     }
 
-    /**
-     * The key-level keep predicate (subscribed-prefix match OR strong-read key), for filtering
-     * the catch-up snapshot the same way the live tail is filtered ({@link FilteringReplaySource}).
-     */
     Predicate<String> keyPredicate() {
         return key -> matchesPrefix(key) || isStrongRead(key);
     }
 
-    /**
-     * True iff this delta must be delivered to the edge: it touches a subscribed-prefix key or
-     * a strong-read key. A delta with no matching mutation is dropped whole (the cursor still
-     * advances over it - the edge learns the covered position from the HEARTBEAT).
-     */
     boolean keep(CommitNotification notification) {
         for (ConfigMutation m : notification.delta().mutations()) {
             String key = m.key();

@@ -56,41 +56,14 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * Netty inter-node consensus transport - the Netty twin of the JDK
- * {@link io.configd.transport.TcpRaftTransport TcpRaftTransport}, over the SAME transport-agnostic
- * {@link RaftWireProtocol} wire, framing, and admission policy. Every safety property the JDK
- * transport carries is re-proven on this pipeline by the identical {@code RaftTransportContract}
- * (JDK + Netty(auto) + Netty(forced-NIO)) and the mTLS-attack / slowloris / blackhole /
- * non-blocking contracts.
+ * Netty consensus transport: transport-agnostic {@link RaftWireProtocol} wire over Netty pipelines
+ * with identical safety properties as the JDK {@link io.configd.transport.TcpRaftTransport
+ * TcpRaftTransport}, proven by {@code RaftTransportContract} across all tiers.
  *
- * <h2>Pipelines</h2>
- * <ul>
- *   <li><b>Inbound (accepted):</b> {@code [SslHandler(server)? -&gt; IdleStateHandler -&gt;
- *       RaftFrameDecoder -&gt; InboundHandler]}. The {@link IdleStateHandler} is the read-idle
- *       deadline (the Netty equivalent of the JDK {@code setSoTimeout}); admission is bounded in
- *       {@code channelActive} <b>before</b> the handshake (a half-open flood cannot exhaust
- *       fds/threads).</li>
- *   <li><b>Outbound (connect to a peer):</b> {@code [SslHandler(client)? -&gt; RaftFrameDecoder
- *       -&gt; NettyConsensusFrameEncoder -&gt; PeerHandler]}. The peer may send responses back on
- *       this connection (decoded and dispatched), exactly like the JDK reader on the outbound
- *       socket.</li>
- * </ul>
- *
- * <h2>mTLS</h2>
- * Both directions build an {@link SslHandler} from the same {@link TlsManager} {@link SSLContext}.
- * Server: {@code setUseClientMode(false)} + {@code setNeedClientAuth(true)} + TLSv1.3-only. Client:
- * {@code setUseClientMode(true)} + {@code setEndpointIdentificationAlgorithm("HTTPS")} for
- * hostname verification. No {@link TlsManager} = plaintext (no {@code SslHandler}), matching the
- * JDK transport for tests.
- *
- * <h2>The ~0-B/op write path</h2>
- * {@link #send} (the consensus/tick thread) does a non-blocking {@code offer} onto a per-peer bounded
- * {@link ArrayBlockingQueue} (drop-oldest on full, counted) and at most one CAS-gated wake of the
- * channel's event loop. The drain runs <b>on the event loop</b>, writing each frame inline
- * ({@code ch.write} from {@code inEventLoop()} - no per-message {@code WriteTask}) and flushing
- * once. Draining is gated on {@link Channel#isWritable()} so a slow/blackholed peer backs up into
- * the bounded queue (overflow = drop); {@code channelWritabilityChanged} re-arms when the outbound
- * buffer drains.
+ * <p><b>Inbound:</b> admission-capped before handshake (half-open flood cannot exhaust fds/threads).
+ * <p><b>Outbound:</b> peer replies on this connection (JDK twin).
+ * <p><b>Write path:</b> sends offer a bounded queue; one CAS-gated wake drains frames inline,
+ * gated on {@link Channel#isWritable()} so slow peers back up into the queue.
  */
 public final class NettyRaftTransport implements RaftTransportEndpoint {
 
@@ -142,13 +115,13 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
     private volatile RaftTransport.MessageHandler messageHandler;
 
     /**
-     * Creates a Netty consensus transport.
+     * Creates a Netty consensus transport with unenforced peer-identity and no metrics.
      *
-     * @param self           this node's identity (the 4-byte wire sender-id prefix)
-     * @param bindAddress    the address to listen on for inbound peer connections
+     * @param self           this node's identity
+     * @param bindAddress    listen address for inbound peer connections
      * @param peerAddresses  map of peer NodeIds to their listen addresses
-     * @param tlsManager     TLS manager for mTLS, or null for plaintext (test only)
-     * @param inboundHandler callback invoked when a message arrives (may be null if using registerHandler)
+     * @param tlsManager     TLS manager for mTLS, or null for plaintext
+     * @param inboundHandler inbound message callback (may be null if using registerHandler)
      */
     public NettyRaftTransport(NodeId self,
                               InetSocketAddress bindAddress,
@@ -205,9 +178,7 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
         if (!running.compareAndSet(false, true)) {
             throw new IllegalStateException("Transport already started");
         }
-        // Fail closed BEFORE binding: an enforced allow-list without mTLS cannot bind identity to a
-        // certificate, so it would fail OPEN. Refuse to start rather than silently downgrade. After
-        // this, enforced() implies mTLS on both transports (parity with the JDK transport).
+        // Enforced identity policy without mTLS fails OPEN — refuse to start rather than silently downgrade
         if (peerIdentityPolicy.enforced() && tlsManager == null) {
             running.set(false);
             throw new IllegalStateException(
@@ -230,8 +201,6 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
                         if (tlsManager != null) {
                             ch.pipeline().addLast(newServerSslHandler());
                         }
-                        // Read-idle deadline (the JDK setSoTimeout equivalent). A stalled/slow-drip
-                        // peer makes no read progress within the window -> READER_IDLE -> close.
                         ch.pipeline().addLast(new IdleStateHandler(
                                 inboundReadTimeoutMs, 0, 0, TimeUnit.MILLISECONDS));
                         ch.pipeline().addLast(new RaftFrameDecoder());
@@ -252,10 +221,6 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
             bound = true;
         } finally {
             if (!bound) {
-                // A mid-start failure (bind refused / port in use, including a BindException sneak-thrown by
-                // sync()) must not leak the non-daemon boss/worker event loops just created. close() resets
-                // running and shuts them (it is idempotent, and serverChannel is null-guarded), so a failed
-                // start() leaves nothing behind; the original failure propagates.
                 close();
             }
         }
@@ -281,14 +246,12 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
         Objects.requireNonNull(target, "target must not be null");
         Objects.requireNonNull(message, "message must not be null");
         if (!running.get()) {
-            return; // closed - silently drop (Raft re-sends); matches the JDK transport
+            return;
         }
         if (!(message instanceof FrameCodec.Frame frame)) {
             throw new IllegalArgumentException(
                     "NettyRaftTransport expects FrameCodec.Frame messages, got: " + message.getClass().getName());
         }
-        // Runs on the consensus (tick) thread and MUST NOT block. computeIfAbsent throws
-        // IllegalArgumentException for an unknown peer (matching TcpRaftTransport.createPeerConnection).
         PeerChannel pc = peers.computeIfAbsent(target, t -> {
             InetSocketAddress addr = peerAddresses.get(t);
             if (addr == null) {
@@ -372,8 +335,6 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
                 handler.onMessage(msg.from(), msg.frame());
             }
         } catch (RuntimeException e) {
-            // A handler throw is logged but does NOT close the channel: the framing layer is intact,
-            // so we keep reading (mirrors TcpRaftTransport.handleInboundConnection's inner try/catch).
             if (running.get()) {
                 LOG.log(Level.WARNING, e, () -> "Inbound handler error from peer " + msg.from()
                         + " for frame " + msg.frame().messageType());
@@ -383,8 +344,6 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
 
     /** Server-mode mTLS handler. Package-private for the handshake-timeout regression test. */
     SslHandler newServerSslHandler() {
-        // peerContext(): the Raft interior may use a SEPARATE peer trust anchor. Identical to
-        // currentContext() unless configd.raft.peerIdentity.trustStore is set (byte-identical then).
         SSLContext ctx = tlsManager.peerContext();
         SSLEngine engine = ctx.createSSLEngine();
         engine.setUseClientMode(false);
@@ -393,14 +352,8 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
         return boundedHandshake(new SslHandler(engine));
     }
 
-    /**
-     * Client-mode mTLS handler with hostname verification against {@code peer}. The engine is created
-     * with the advisory peer host/port (for SNI and endpoint identification), mirroring the JDK
-     * {@code createClientSocket}. Without the {@code HTTPS} algorithm any trust-store-signed cert is
-     * accepted, defeating peer pinning.
-     */
+    /** Client-mode mTLS handler with hostname verification against {@code peer}. */
     SslHandler newClientSslHandler(InetSocketAddress peer) {
-        // peerContext(): the Raft interior may use a SEPARATE peer trust anchor (see newServerSslHandler).
         SSLContext ctx = tlsManager.peerContext();
         SSLEngine engine = ctx.createSSLEngine(peer.getHostString(), peer.getPort());
         engine.setUseClientMode(true);
@@ -444,8 +397,6 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
 
         @Override
         public void channelActive(ChannelHandlerContext ctx) {
-            // Cap concurrent inbound connections BEFORE the handshake, so a flood of half-open
-            // sockets cannot exhaust fds/threads. Over the bound: refuse + close + count.
             counted = true;
             if (liveInbound.incrementAndGet() > maxInboundConnections) {
                 inboundConnectionsRefused.incrementAndGet();
@@ -459,10 +410,6 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
 
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, InboundMessage msg) {
-            // Layer 2: the self-declared senderId prefix must equal the connection's authenticated
-            // cert identity (pinned on handshake). A cert-valid peer forging another node's id is
-            // dropped (desync-equivalent) and counted. Only active when an allow-list is enforced;
-            // the JDK transport applies the identical check in handleInboundConnection.
             if (peerIdentityPolicy.enforced()) {
                 NodeId pinned = ctx.channel().attr(PEER_IDENTITY).get();
                 if (pinned == null || !pinned.equals(msg.from())) {
@@ -477,18 +424,10 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
         @Override
         public void userEventTriggered(ChannelHandlerContext ctx, Object evt) {
             if (evt instanceof IdleStateEvent) {
-                // Read-idle deadline tripped: a slow-drip / stalled peer. Drop the connection
-                // (releases the reader + FD), exactly like the JDK SocketTimeoutException path.
                 ctx.close();
                 return;
             }
             if (evt instanceof SslHandshakeCompletionEvent handshake) {
-                // Layer 1: on a successful mTLS handshake under an enforced allow-list, resolve the
-                // peer's certificate identity and pin the NodeId it is authorized to present. A cert
-                // whose identity is not in the allow-list (e.g. a plain client cert with no node
-                // marker) cannot open a peer connection - drop (counted). Unenforced or plaintext
-                // leaves no pinned attribute and the read path unchanged. A FAILED handshake needs no
-                // action here: the SslHandler closes the channel itself.
                 if (handshake.isSuccess() && peerIdentityPolicy.enforced()) {
                     NodeId pinned = resolvePinnedIdentity(ctx);
                     if (pinned == null) {
@@ -559,9 +498,6 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-            // Decode desync (CorruptedFrameException) or transport error - drop the connection. Count only
-            // the decode-desync so the series stays "connection dropped because a frame did not decode",
-            // not a catch-all for transport errors (which are their own class of event).
             if (cause instanceof CorruptedFrameException) {
                 transportMetrics.onInboundConnectionDropped();
             }
@@ -702,18 +638,7 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
                             ch.pipeline().addLast(new PeerHandler());
                         }
                     });
-            // A raft outbound channel is SEND-ONLY (a peer replies on ITS OWN outbound, never on the
-            // connection we opened), so a read-idle check can never see a half-open link to a peer that
-            // restarted or crashed - our AppendEntries would blackhole into the dead socket forever with
-            // no reconnect (the peers-never-re-dial-a-restarted-node bug). TCP_USER_TIMEOUT makes the
-            // kernel fail the connection once our sent bytes go unACKed for the window (exactly the
-            // dead/restarted-peer case), so channelInactive fires and we reconnect to the peer's fresh
-            // listener. A healthy peer ACKs within milliseconds so a live link never trips it. Set it on
-            // every native Linux tier that exposes the socket option (epoll AND io_uring). On the pure-NIO
-            // tier the option is unavailable, so a dead peer is detected only by the kernel's TCP
-            // retransmission timeout (tcp_retries2, ~15 min) - SO_KEEPALIVE above does NOT shorten that
-            // (its default idle is 2h and it does not probe while sends are outstanding); NIO is a
-            // test/fallback tier, not the production tier (which auto-selects epoll on Linux).
+            // Detect unACKed sends via TCP_USER_TIMEOUT on native tiers (absent on NIO)
             Class<? extends Channel> clientChannel = transport.clientChannelClass();
             if (clientChannel == EpollSocketChannel.class) {
                 b.option(EpollChannelOption.TCP_USER_TIMEOUT, OUTBOUND_ACK_TIMEOUT_MS);
@@ -797,16 +722,12 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
         private final class PeerHandler extends SimpleChannelInboundHandler<InboundMessage> {
             @Override
             protected void channelRead0(ChannelHandlerContext ctx, InboundMessage msg) {
-                // Layer 2 reverse-path binding: a peer may reply on this connection WE dialed. The far
-                // end is the target we connected to (hostname-verified on connect), so any frame whose
-                // senderId differs from `target` is a forged-id injection - drop + count. Only active
-                // when an allow-list is enforced; mirrors the JDK outbound-reverse reader.
                 if (peerIdentityPolicy.enforced() && !target.equals(msg.from())) {
                     transportMetrics.onPeerIdentityRejected();
                     ctx.close();
                     return;
                 }
-                dispatch(msg); // a peer may reply on the connection we opened (JDK reads here too)
+                dispatch(msg);
             }
 
             @Override
@@ -826,12 +747,10 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
 
             @Override
             public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-                // The frame decoder is shared with the inbound pipeline (a peer may reply on the
-                // connection we dialed), so a corrupt reply desyncs here too - count it the same way.
                 if (cause instanceof CorruptedFrameException) {
                     transportMetrics.onInboundConnectionDropped();
                 }
-                ctx.close(); // decode desync / transport error - drop; reconnect on the next send
+                ctx.close();
             }
         }
     }

@@ -1,38 +1,17 @@
 #!/usr/bin/env bash
-# wsC-ladder.sh — re-threaded single-Raft-group throughput ceiling (decides
-#                 whether a single group's throughput is enough or sharding
-#                 is needed).
+# wsC-ladder.sh — re-threaded single-Raft-group throughput ceiling.
+# Measures honest sustained write-throughput knee; compares vs ~800/s baseline (m6id.4xlarge).
+# Transport forced+verified so io_uring (~2x worse) cannot confound. Fresh cluster per rate (avoid poisoning).
+# reads configd_raft_elections_total as direct heartbeat-starvation signal.
 #
-# Measures the honest sustained write-throughput knee of the re-threaded
-# single Raft group (owner-executor pool + coalesced heartbeats; ADR-0043
-# Netty consensus wire) and compares it to an ~800/s baseline previously
-# measured on the same instance type (m6id.4xlarge). The delta is
-# attributable to the re-threading (hardware held constant); the transport
-# is forced + verified so the io_uring axis (previously measured ~2x worse
-# for consensus) cannot confound it.
-#
-# Derived from perf/s75-throughput.sh — same cluster launch (3 co-located
-# nodes, shared pre-generated signing key, data+WAL on /mnt/nvme, ZGC 4g
-# heaps), same open-loop CO-corrected OpenLoopWriteDriver, same per-phase
-# iostat/mpstat/pidstat instrumentation. The one change: it climbs a rate
-# ladder with a fresh cluster per rate (a collapsed cluster from a high rate
-# must not poison the next point), reading configd_raft_elections_total per
-# rate as the direct heartbeat-starvation signal.
-#
-#   Usage:  perf/wsC-ladder.sh [outdir]
-#   Env:    WSC_RATES   (default "200 400 600 800 1000 1200 2000 4000 8000")
-#           WSC_DUR     (default 15)    per-rate run seconds
-#           WSC_CONC    (default 256)   driver concurrency
-#           WSC_VALBYTES(default 512)   value size
-#           WSC_HEAP    (default "-Xmx4g -Xms4g")   per-node heap
-#           WSC_GC      (default "-XX:+UseZGC")     generational ZGC
-#           WSC_TRANSPORT (default epoll)  forced consensus tier (epoll|nio|io_uring)
-#           WSC_JVM_EXTRA (default "")   extra per-node JVM flags, e.g.
-#                          "-Dconfigd.write.maxInflightProposals=16"  (admission axis)
-#                          "-Dconfigd.raft.ownerPoolSize=4"           (no effect at 1 group)
-#           WSC_BASE    (default /mnt/nvme/run/wsc-<pid>)   data+WAL root (must be /mnt/nvme)
-#           WSC_DRYRUN  (default 0)      1 = dev-box smoke (skip /mnt/nvme assert; not a measurement)
-#           CONFIGD_JAR (shaded server jar)   CONFIGD_BENCH (benchmarks.jar)
+# Usage:  perf/wsC-ladder.sh [outdir]
+# Env:    WSC_RATES (default "200 400 600 800 1000 1200 2000 4000 8000")  WSC_DUR (default 15)
+#         WSC_CONC (default 256)  WSC_VALBYTES (default 512)
+#         WSC_HEAP (default "-Xmx4g -Xms4g")  WSC_GC (default "-XX:+UseZGC")
+#         WSC_TRANSPORT (default epoll)  WSC_JVM_EXTRA (default "")
+#         WSC_BASE (default /mnt/nvme/run/wsc-<pid>)  WSC_DRYRUN (default 0)
+#         CONFIGD_JAR  CONFIGD_BENCH
+
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JAR="${CONFIGD_JAR:-$(ls "$ROOT"/configd-server/target/configd-server-*.jar 2>/dev/null | grep -v original- | head -1)}"
@@ -77,9 +56,7 @@ launch_node() {
   local k="$1"
   local peers; peers=$(echo "1 2 3" | tr ' ' '\n' | grep -v "^$k$" | paste -sd,)
   local dd="$BASE/n$k"; mkdir -p "$dd"
-  # -Dconfigd.netty.transport forces the consensus tier AND fails loud at startup if
-  # that tier is unavailable on the host (NettyTransport.forced()): a clean runtime
-  # guarantee that the measured tier is the intended one (no silent io_uring confound).
+  # -Dconfigd.netty.transport forces tier + fails loud if unavailable (no silent io_uring confound).
   java $GCFLAGS $HEAP -Dconfigd.netty.transport="$TRANSPORT" $JVM_EXTRA --enable-preview -jar "$JAR" \
     --node-id "$k" --data-dir "$dd" --peers "$peers" \
     --signing-key-file "$SIGNKEY" \
@@ -91,8 +68,7 @@ launch_node() {
 
 launch_cluster() {
   PIDS=()
-  # Pre-generate the shared signing key by launching node 1 alone (the loadOrCreate
-  # exists()-then-CREATE_NEW race crashes a simultaneous first boot), then 2 and 3 load it.
+  # Pre-generate signing key: launch node 1 alone (exists()-then-CREATE_NEW races crash simultaneous first boot).
   launch_node 1
   local keyok=0
   for i in $(seq 1 40); do
@@ -148,7 +124,6 @@ assert_data_on_nvme() {
   esac
 }
 
-# configd_raft_elections_total (max across the 3 nodes) — the direct heartbeat-starvation signal.
 read_elections() {
   local maxv=0
   for k in 1 2 3; do

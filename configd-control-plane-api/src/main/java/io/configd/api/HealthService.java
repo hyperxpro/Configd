@@ -4,17 +4,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * Health check service for liveness, readiness, and detailed diagnostics.
- * <p>
- * Provides three levels of health checks:
- * <ul>
- *   <li><b>Liveness</b> - is the process alive? Always true if reachable.</li>
- *   <li><b>Readiness</b> - can this node serve traffic? Checks Raft state,
- *       store health, and connectivity.</li>
- *   <li><b>Detailed</b> - full diagnostic report for operators.</li>
- * </ul>
- */
 public final class HealthService {
 
     @FunctionalInterface
@@ -77,7 +66,6 @@ public final class HealthService {
         return new HealthStatus(allHealthy, results);
     }
 
-    /** Currently identical to {@link #readiness()}; no additional diagnostics are collected yet. */
     public HealthStatus detailed() {
         return readiness();
     }

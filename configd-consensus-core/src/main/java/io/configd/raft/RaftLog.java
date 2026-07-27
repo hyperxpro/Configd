@@ -722,55 +722,17 @@ public final class RaftLog {
         }
     }
 
-    /**
-     * Durably persists the snapshot bytes (state-machine state + the
-     * {@link SnapshotState} envelope) to storage, fsynced, before returning.
-     * <p>
-     * <b>Ordering contract (the durable-prefix invariant).</b> This MUST be called
-     * and MUST complete BEFORE {@link #compact(long, long)} deletes the WAL prefix
-     * [1..index]. Persist-before-truncate guarantees that at every instant a complete
-     * prefix exists on durable storage: either the snapshot bytes (once persisted)
-     * OR the still-present WAL. A crash between this call and {@code compact()} leaves
-     * the full WAL intact (recovery replays it and ignores the ahead-of-WAL blob); a
-     * crash after {@code compact()} has the snapshot bytes durable. There is no instant
-     * at which both the WAL prefix and the snapshot bytes for an index are missing.
-     * <p>
-     * No-op in the in-memory ({@code storage == null}) mode.
-     *
-     * @param snapshot the snapshot to persist; its {@code lastIncludedIndex} is
-     *                 the boundary that {@code compact} will subsequently set
-     */
     public void persistSnapshot(SnapshotState snapshot) {
         if (storage == null) {
-            return; // in-memory mode: nothing durable to write
+            return;
         }
-        // Storage.put writes a temp file, fsyncs it, atomic-renames, and fsyncs
-        // the directory before returning - so the blob is on durable storage
-        // when this returns, independent of any later WAL rewrite.
         storage.put(SNAPSHOT_BLOB_KEY, serializeSnapshot(snapshot));
     }
 
-    /**
-     * Returns the snapshot recovered from durable storage on construction, used by
-     * RaftNode to restore the state machine before replaying the WAL suffix, or
-     * {@code null} if none is on disk or it does not match the recovered WAL boundary
-     * (see the recovery rule in the constructor). Idempotent.
-     */
     public SnapshotState recoveredSnapshot() {
         return recoveredSnapshot;
     }
 
-    /**
-     * Compacts entries up to the given index (inclusive) for snapshot.
-     * After compaction, entries [1..snapshotIndex] are discarded.
-     * <p>
-     * Callers that take a real snapshot (not just a follower's InstallSnapshot of
-     * already-known state) MUST {@link #persistSnapshot} the snapshot bytes durably
-     * BEFORE invoking this, so the WAL prefix is never the sole record of committed state.
-     *
-     * @param index the index of the last entry included in the snapshot
-     * @param term  the term of the last entry included in the snapshot
-     */
     public void compact(long index, long term) {
         if (index <= snapshotIndex) {
             return; // Already compacted past this point
@@ -818,13 +780,6 @@ public final class RaftLog {
         }
     }
 
-    /**
-     * Checks whether candidate's log is at least as up-to-date as this log.
-     * Used for vote decisions (Raft section 5.4.1).
-     * <p>
-     * A log is "at least as up-to-date" if its last term is greater,
-     * or if terms are equal and its last index is >= this log's last index.
-     */
     public boolean isAtLeastAsUpToDate(long candidateLastLogTerm, long candidateLastLogIndex) {
         long myLastTerm = lastTerm();
         if (candidateLastLogTerm != myLastTerm) {
@@ -833,12 +788,6 @@ public final class RaftLog {
         return candidateLastLogIndex >= lastIndex();
     }
 
-    // Internal helpers
-
-    /**
-     * Converts a 1-based log index to a 0-based offset into the entries list,
-     * accounting for the snapshot offset.
-     */
     private int toOffset(long index) {
         return (int) (index - snapshotIndex - 1);
     }

@@ -12,31 +12,9 @@ import java.nio.file.Path;
 import java.util.Map;
 
 /**
- * STALE READ discrimination scenario, adapted to be single-host injectable.
- *
- * <p><b>Why adapted.</b> The standard form - isolate the deposed leader and read it -
- * is NOT injectable on single-host loopback: a partitioned leader fails CheckQuorum
- * and steps down (so it can't serve), and a mutation that kept it "leader" would leak
- * its outbound heartbeats to the majority (the transport's outbound sockets aren't
- * source-bound - verified), preventing the re-election needed to write the newer
- * value. So a deposed-leader-still-serving needs real per-pair partitions (network
- * namespaces) - recorded as a netns follow-up, not silently dropped.
- *
- * <p><b>The same safety violation, single-host.</b> A <i>lagging isolated follower</i>
- * answering a linearizable read from its stale local state - exactly what the
- * leader/quorum gate (RaftNode.readIndex leader check + isReadReady recheck + the
- * quorum ReadIndex confirm) exists to forbid. Schedule: commit & confirm v1 everywhere
- * -> isolate a follower F (it stops receiving updates; PreVote keeps it from deposing
- * the leader) -> commit & confirm v2 via the leader (still has quorum) -> read F.
- * Correct build: F is a follower, returns 503 (no stale read) -> GREEN. Mutated build
- * (the read path serves local state regardless of leadership): F returns the stale v1
- * after v2 was confirmed -> RED.
- *
- * <p>Because {@code ack != commit}, every PUT is followed by a settle + a retrying
- * read-back before the value is treated as established - otherwise a read can race
- * ahead of the commit and observe the prior value (a real, expected behaviour, not the
- * bug under test).
- *
+ * STALE READ scenario, single-host adapted (netns version deferred): lagging isolated follower
+ * answering linread from stale local state. Commit & confirm v1 everywhere -> isolate F -> commit & confirm v2
+ * (majority) -> read F. Correct: F is follower, returns 503 (GREEN). Broken: F ignores leadership, serves stale v1 (RED).
  * Exit: 0 GREEN, 1 RED, 2 INDETERMINATE.
  */
 public final class StaleReadScenario {
@@ -75,12 +53,7 @@ public final class StaleReadScenario {
             System.out.println("[staleread/" + label + "] leader=node" + leader
                     + " lagging-follower=node" + followerId);
 
-            // 1. PUT v1, settle, confirm v1 (committed & applied on all nodes).
-            // A 200 PUT is returned only after quorum-commit, so that is itself the
-            // write's definite real-time point; we do not depend on the flaky linearizable
-            // read to *establish* v1. We confirm propagation with the reliable
-            // default-GET poll and record a confirming read for the backbone, falling
-            // back to the committed PUT's interval when the linearizable read is flaky.
+            // Step 1: PUT v1, confirm everywhere
             ConfigClient.OpResult put1 = putCommitted(client, cluster, leader, key, "v1", 8);
             recorder.recordPut(0, key, "v1", put1.status(), put1.callNs(), put1.retNs());
             if (put1.status() == Op.Status.FAIL) {
@@ -94,47 +67,38 @@ public final class StaleReadScenario {
             if (c1.status() == Op.Status.OK && "v1".equals(c1.value())) {
                 recorder.recordRead(0, key, c1.value(), c1.status(), c1.callNs(), c1.retNs());
             } else if (put1.status() == Op.Status.OK) {
-                // Linearizable read-back flaky (the 150ms ReadIndex confirm timeout);
-                // but the PUT committed, so the write is a real linearization point.
-                // Backbone = the committed PUT's interval.
+                // Flaky lin-read; committed PUT is a sound OK backbone
                 recorder.recordRead(0, key, "v1", Op.Status.OK, put1.callNs(), put1.retNs());
             } else {
                 exit(2, "could not establish v1 (PUT status=" + put1.status()
                         + ", read status=" + c1.status() + " value='" + c1.value() + "')");
             }
 
-            // Warm-up: wait until EVERY node has applied v1. This forces the leader to
-            // establish replication to BOTH followers, so after we isolate one the other
-            // is a warm quorum partner and v2 can commit. Without this the leader's link
-            // to the non-isolated follower may still be cold and v2 would stall.
+            // Warm-up: force leader to replicate to both followers so isolated follower doesn't stall v2 commit
             if (!awaitAllApplied(client, cluster, key, "v1", 12_000)) {
                 exit(2, "not all nodes applied v1 (cluster not warm)");
             }
 
-            // 2. Isolate the follower - it stops receiving AppendEntries, so it lags.
+            // Step 2: Isolate follower F
             faults.isolate(F);
             System.out.println("[staleread/" + label + "] isolated follower node" + followerId);
             Thread.sleep(1500);
 
-            // 3. PUT v2 to the leader (commits via the majority; the isolated F never sees it).
+            // Step 3: PUT v2 to leader (commits via majority, F never sees it)
             int leadId = client.suspectedLeaderId();
             ConfigClient.OpResult put2 = putCommitted(client, cluster,
                     leadId > 0 ? leadId : leader, key, "v2", 8);
             ClusterNode leadNode = cluster.node(Math.max(1, client.suspectedLeaderId()));
             recorder.recordPut(0, key, "v2", put2.status(), put2.callNs(), put2.retNs());
-            // Wait for v2 to actually commit+apply on the leader (reliable default-GET poll,
-            // not the flaky linearizable read). Only then is the follower's v1 genuinely stale.
+            // Wait for v2 to commit+apply on leader (reliable default-GET, not flaky lin-read)
             ClusterNode v2Leader = leadNode;
             if (!awaitApplied(client, v2Leader, key, "v2", 18_000)) {
-                // leadership may have moved; re-resolve once and retry the poll
                 v2Leader = currentLeader(client, cluster, leader);
                 if (!awaitApplied(client, v2Leader, key, "v2", 8_000)) {
                     exit(2, "v2 did not commit on the leader (cluster could not make progress)");
                 }
             }
-            // Now capture an OK observation of v2 (the real-time backbone). Prefer a
-            // linearizable read; fall back to the committed PUT's interval when the
-            // ReadIndex confirm is flaky (an OK 200 PUT means quorum-committed).
+            // Capture OK observation of v2 (real-time backbone)
             ConfigClient.OpResult c2 = confirmValue(client, v2Leader, key, "v2", 8000);
             if (c2.status() == Op.Status.OK && "v2".equals(c2.value())) {
                 recorder.recordRead(0, key, c2.value(), c2.status(), c2.callNs(), c2.retNs());
@@ -146,7 +110,7 @@ public final class StaleReadScenario {
             }
             System.out.println("[staleread/" + label + "] v2 committed + confirmed on the leader");
 
-            // 4. Read the lagging follower. Correct: 503 (INFO, dropped). Mutated: stale v1 (OK -> RED).
+            // Step 4: Read lagging follower (correct: 503 INFO, broken: stale v1 OK->RED)
             Op.Status staleStatus = Op.Status.INFO;
             String staleVal = "";
             long sCall = System.nanoTime();
@@ -157,7 +121,7 @@ public final class StaleReadScenario {
                 if (sr.status() == Op.Status.OK) {
                     staleStatus = Op.Status.OK;
                     staleVal = sr.value();
-                    break; // captured the (stale) served read
+                    break;
                 }
                 Thread.sleep(60);
             }
@@ -174,11 +138,8 @@ public final class StaleReadScenario {
     }
 
     /**
-     * Writes {@code value} and retries until the write COMMITS (OK - a 200 means
-     * quorum-committed). During cluster stabilization a fresh leader can transiently
-     * 503 (Lost/NotLeader) before it has committed its term's no-op - that is expected,
-     * not the bug under test, so we re-probe the leader and retry. The returned interval
-     * is the committing attempt's. Falls back to the last result if no attempt commits.
+     * Retries PUT until COMMITS (OK=200). Fresh leader may transiently 503 before term no-op commits (expected).
+     * Returns committing attempt or last.
      */
     private static ConfigClient.OpResult putCommitted(ConfigClient client, Cluster cluster,
             int leaderHint, String key, String value, int attempts) throws InterruptedException {
@@ -201,7 +162,6 @@ public final class StaleReadScenario {
         return last;
     }
 
-    /** Waits until a single node's local applied state for {@code key} equals {@code value}. */
     private static boolean awaitApplied(ConfigClient client, ClusterNode node, String key,
                                         String value, long budgetMs) throws InterruptedException {
         long deadline = System.nanoTime() + budgetMs * 1_000_000L;
@@ -214,7 +174,6 @@ public final class StaleReadScenario {
         return false;
     }
 
-    /** Waits until every node's local applied state for {@code key} equals {@code value}. */
     private static boolean awaitAllApplied(ConfigClient client, Cluster cluster, String key,
                                            String value, long budgetMs) throws InterruptedException {
         long deadline = System.nanoTime() + budgetMs * 1_000_000L;
@@ -234,13 +193,11 @@ public final class StaleReadScenario {
         return false;
     }
 
-    /** The node the client currently believes is leader, falling back to {@code fallbackId}. */
     private static ClusterNode currentLeader(ConfigClient client, Cluster cluster, int fallbackId) {
         int id = client.suspectedLeaderId();
         return cluster.node(id > 0 && id <= cluster.size() ? id : fallbackId);
     }
 
-    /** Retries a linearizable read until it returns OK with {@code expected}, within a time budget. */
     private static ConfigClient.OpResult confirmValue(ConfigClient client, ClusterNode node, String key,
                                                       String expected, long budgetMs) throws InterruptedException {
         long deadline = System.nanoTime() + budgetMs * 1_000_000L;

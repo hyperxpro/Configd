@@ -19,34 +19,10 @@ import java.util.Objects;
 import static io.configd.raft.RaftArtifactMagic.KEYRING_MAGIC;
 
 /**
- * The {@code raft-keyring} body codec + rotation primitives (layout frozen in
- * {@code docs/architecture/frozen-format-v1.md}).
- *
- * <p>Roots are INDEPENDENT random 32-byte secrets (NOT {@code HKDF(signing key)}), wrapped per-term
- * and retained forever; rotation APPENDS a term and never re-encrypts old data. The whole body rides
- * an outer HMAC {@link IntegrityEnvelope} under {@code K_keyringMac} (strip/swap/add/truncate of
- * entries fails the outer MAC). Each local entry's root is AES-256-GCM-wrapped under {@code KEK_wrap}
- * with an AAD that binds {@code (KEYRING_MAGIC, keyringFormatVersion, term, wrapAlgId, nodeKeyId,
- * "root")}, so a wrapped root cannot be replayed into a different term slot or a different node.
- *
- * <pre>
- *   KEYRING_BODY:
- *     [keyringFormatVersion:2 = 1][keyringSeq:8][activeTerm:4][entryCount:4]
- *     entry * entryCount:
- *       [term:4][wrapAlgId:1][nonceLen:1][nonce:nonceLen][wrappedLen:4][wrappedRoot:wrappedLen]
- * </pre>
- *
- * <p>This is the pure body/rotation layer; the physical dual-slot placement (crash-atomic
- * signing-key handover) lives in {@link KeyringFile}, which reuses the proven {@link AnchorIO}
- * transport. Roots decouple from the signing key: rotating the signing key only rewraps the keyring
- * ({@link #rewrapUnderNewKek}), so every retained {@code root[term]} is unchanged and all prior
- * data still decrypts/verifies. This is what makes the documented data-destroying rotation
- * impossible by construction.
- *
- * <p><b>Reserved-value discipline (fail-closed):</b> {@code keyringFormatVersion == 0} or {@code != 1}
- * throws; a keyring entry {@code term == 0} throws (term 0 is the signing-key domain, illegal here);
- * an unknown {@code wrapAlgId} throws; a length field that overruns the body throws. Nothing is ever
- * best-effort parsed.
+ * raft-keyring body codec + rotation (layout frozen in docs/architecture/frozen-format-v1.md).
+ * Roots: independent random 32-byte secrets (NOT HKDF(signing key)), wrapped per-term, retained forever.
+ * Rotation appends; never re-encrypts. Roots decouple from signing key (rotation only rewraps, data survives).
+ * Reserved-value discipline: fail-closed (term 0, unknown wrapAlgId throw).
  */
 final class KeyringCodec {
 

@@ -14,26 +14,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-/**
- * The edge-data-plane gate seed sweep: the committed >=500-seed manifest
- * (the same loader as {@link AdversarialGateSeedSweepTest}) run through an
- * {@link EdgeFanOutSim} with 3 edges + the real {@link C1StreamDriver} + the full CP fault
- * schedule + edge faults, with {@link EdgeInvariants} checked after every tick.
- *
- * <h2>What is enforced vs recorded</h2>
- * <ul>
- *   <li><b>SAFETY (enforced, throws):</b> per-edge version monotonicity and no-stale-overwrite
- *       (and the read-side monotonic-read guarantee monitor inside {@link EdgeActor}) are checked every tick;
- *       a violation on ANY seed throws {@link SimInvariants.SafetyViolation} and fails the
- *       build naming the seed. <b>This count must be ZERO across all seeds.</b></li>
- *   <li><b>LIVENESS (recorded, never fails):</b> end-of-run convergence ({@code finalCheck}
- *       after a heal-all + drain). Under a never-healed fault schedule an edge can legitimately
- *       remain behind, so a convergence miss is recorded, not failed - mirroring how the CP
- *       gate records liveness stalls. The convergence rate is asserted only to be non-vacuous
- *       (the gate must converge on a healthy majority) and reported in the failure message if
- *       it dips, but a low rate under never-healed schedules is expected, not a bug.</li>
- * </ul>
- */
 class EdgeAdversarialGateSeedSweepTest {
 
     private static final String MANIFEST = "/gate/adversarial-gate-seeds.txt";

@@ -6,42 +6,18 @@ import java.util.List;
 import java.util.SplittableRandom;
 
 /**
- * A fully-deterministic fault + workload plan derived purely from a seed. Because the
- * binary has no determinism seam (election RNG is nanoTime-seeded), reproducibility
- * is of the <b>inputs</b> - which faults and ops at which logical offsets - not of
- * which node wins. Two runs of the same seed therefore produce a byte-identical
- * {@code schedule-<seed>.json}; the recorded history differs by design.
- *
- * <p>Two generation modes:
- * <ul>
- *   <li>{@link Mode#SEQUENTIAL} - the original gate schedule: sequential single faults
- *       (each heals before the next begins), at most one node faulted at a time, so quorum
- *       is preserved ({@code n >= 3}) and the cluster stays continuously available. A correct
- *       system stays linearizable throughout. This is the fast CI/reproducibility schedule.</li>
- *   <li>{@link Mode#ADVERSARIAL} - the Jepsen-grade schedule: overlapping <b>combination</b>
- *       faults drawn from the full nemesis set (isolate, kill+restart, SIGSTOP/SIGCONT pause,
- *       probabilistic packet loss), targeting multiple nodes at once. It deliberately breaks
- *       quorum in bursts (total unavailability windows) separated by recovery windows. During a
- *       quorum-loss window a correct system serves NO linearizable read/commit (they become
- *       indeterminate and are dropped); the ops that DO complete must still be linearizable, and
- *       the system must recover cleanly. The fault timers run concurrently, so faults overlap.</li>
- * </ul>
+ * Deterministic fault+workload plan from seed (reproducible inputs, not node elections).
+ * SEQUENTIAL: single faults one-at-a-time, quorum preserved, fast CI.
+ * ADVERSARIAL: overlapping bursts (quorum-breaking), recovery windows—Jepsen-grade.
  */
 public final class Schedule {
 
     public enum OpKind { PUT, READ, DELETE }
 
     /**
-     * Fault classes. {@code *_LEADER} kinds resolve their target to the current leader at
-     * injection time; {@code *_NODE} kinds target a fixed node id.
-     * <ul>
-     *   <li>ISOLATE_* - full REJECT on the node's raft port (symmetric quorum-isolation).</li>
-     *   <li>KILL_* - SIGKILL, then restart-into-the-live-cluster after the duration (the
-     *       transport-rejoin + WAL-recovery path).</li>
-     *   <li>PAUSE_* - SIGSTOP (freeze, sockets stay open), then SIGCONT after the duration
-     *       (the stale-leader / stop-the-world nemesis).</li>
-     *   <li>LOSS_NODE - probabilistic packet loss ({@code param}%) on the node's raft port.</li>
-     * </ul>
+     * *_LEADER kinds resolve to current leader at injection; *_NODE kinds target fixed node.
+     * ISOLATE: full REJECT on raft port. KILL: SIGKILL + restart. PAUSE: SIGSTOP + SIGCONT.
+     * LOSS_NODE: probabilistic DROP (param%).
      */
     public enum FaultKind {
         ISOLATE_LEADER, ISOLATE_NODE,
@@ -52,14 +28,8 @@ public final class Schedule {
 
     public enum Mode { SEQUENTIAL, ADVERSARIAL }
 
-    /** One client operation at a logical offset (ms from t0). {@code token} is the PUT value. */
     public record WorkOp(long offsetMs, OpKind kind, int keyIndex, String token) {}
 
-    /**
-     * One scheduled fault. {@code nodeId} is the target for {@code *_NODE} kinds; -1 means
-     * "the current leader". {@code param} is kind-specific (the loss percentage for LOSS_NODE;
-     * 0 and unused for other kinds).
-     */
     public record FaultEvent(long offsetMs, FaultKind kind, int nodeId, long durationMs, int param) {}
 
     public final long seed;
@@ -88,12 +58,9 @@ public final class Schedule {
     }
 
     /**
-     * The original SEQUENTIAL gate schedule.
-     *
-     * @param readPct       percent of ops that are reads (the rest are 90% PUT / 10% DELETE).
-     *                      The gate uses a read-heavy mix (72) so the confirm-bound pins most
-     *                      writes and Porcupine stays tractable; lower values stress the checker.
-     * @param intervalBase  base ms between a client's ops (a 0..+intervalBase jitter is added).
+     * SEQUENTIAL gate schedule.
+     * readPct: percent reads (rest 90% PUT/10% DELETE); gate uses 72 so confirm-bound pins writes.
+     * intervalBase: base ms between ops (0..+intervalBase jitter added).
      */
     public static Schedule generate(long seed, int nodes, int clients, int keys, long durationMs,
                                     int readPct, int intervalBase) {
@@ -124,15 +91,9 @@ public final class Schedule {
     }
 
     /**
-     * The ADVERSARIAL Jepsen-grade schedule: overlapping combination faults from the full nemesis
-     * set, in bursts that may break quorum, separated by recovery windows. Faults within a burst
-     * target DISTINCT nodes (a node is never double-faulted at the same instant) and overlap in time.
-     * The default op mix is write-heavier (lower readPct) than the sequential gate to sharpen the
-     * checker's discrimination.
-     *
-     * @param maxConcurrent upper bound on faults active in one burst (clamped to n-1 so at least one
-     *                      node is always fault-free at the START of a burst; overlap still lets a
-     *                      burst reach total unavailability when a resolved leader coincides).
+     * ADVERSARIAL Jepsen-grade: overlapping combination faults in quorum-breaking bursts + recovery windows.
+     * Distinct node targets per burst; write-heavier op mix sharpens checker discrimination.
+     * maxConcurrent: upper bound on active faults per burst (clamped to n-1 for initial fault-free node).
      */
     public static Schedule generateAdversarial(long seed, int nodes, int clients, int keys, long durationMs,
                                                int readPct, int intervalBase, int maxConcurrent) {
@@ -144,11 +105,9 @@ public final class Schedule {
 
         int burstCap = Math.max(1, Math.min(maxConcurrent, nodes - 1));
         List<FaultEvent> faults = new ArrayList<>();
-        long t = 2500 + faultRng.nextLong(800);   // let the cluster settle first
+        long t = 2500 + faultRng.nextLong(800);
         while (t < durationMs - 2000) {
             int burst = 1 + faultRng.nextInt(burstCap);
-            // Distinct node targets for this burst (shuffled 1..n); *_LEADER faults use -1 and do
-            // not consume a fixed target, so they can coincide with a *_NODE fault on the same node.
             List<Integer> pool = new ArrayList<>();
             for (int k = 1; k <= nodes; k++) {
                 pool.add(k);
@@ -166,16 +125,16 @@ public final class Schedule {
                 } else if (poolIdx < pool.size()) {
                     nodeId = pool.get(poolIdx++);
                 } else {
-                    continue; // ran out of distinct nodes for *_NODE faults this burst
+                    continue;
                 }
-                long stagger = faultRng.nextLong(400);          // faults in a burst start within 400ms
-                long dur = 700 + faultRng.nextLong(2200);        // 0.7 - 2.9s, deliberately overlapping
-                int param = kind == FaultKind.LOSS_NODE ? 10 + faultRng.nextInt(41) : 0; // 10-50% loss
+                long stagger = faultRng.nextLong(400);
+                long dur = 700 + faultRng.nextLong(2200);
+                int param = kind == FaultKind.LOSS_NODE ? 10 + faultRng.nextInt(41) : 0;
                 long off = t + stagger;
                 faults.add(new FaultEvent(off, kind, nodeId, dur, param));
                 burstEnd = Math.max(burstEnd, off + dur);
             }
-            t = burstEnd + 900 + faultRng.nextLong(1400);        // recovery window before the next burst
+            t = burstEnd + 900 + faultRng.nextLong(1400);
         }
 
         return new Schedule(seed, nodes, clients, keys, durationMs, Mode.ADVERSARIAL, faults, workload);
@@ -188,7 +147,6 @@ public final class Schedule {
             FaultKind.LOSS_NODE
     };
 
-    /** Each client a steady, jittered op stream. Shared by both schedule modes. */
     private static List<List<WorkOp>> buildWorkload(SplittableRandom workRoot, int clients, int keys,
                                                     long durationMs, long seed, int readPct, int intervalBase) {
         int putCut = readPct + (100 - readPct) * 9 / 10; // 90% of the non-reads are PUT
@@ -212,7 +170,6 @@ public final class Schedule {
         return workload;
     }
 
-    /** Deterministic Fisher-Yates using the schedule RNG so the shuffled order is seed-reproducible. */
     private static void shuffle(List<Integer> list, SplittableRandom rng) {
         for (int i = list.size() - 1; i > 0; i--) {
             int j = rng.nextInt(i + 1);

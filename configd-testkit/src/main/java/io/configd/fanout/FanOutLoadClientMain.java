@@ -19,24 +19,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Fan-out head-to-head - the <b>out-of-JVM subscriber load client</b>. Opens
- * {@code subscribers} long-lived edge streams (virtual thread each), subscribes each in TAIL mode,
- * and drains the {@code NOTIFY} fan-out from {@link FanOutPushServerMain} while acking periodically
- * (so the slow-consumer governor never demotes a keeping-up subscriber). Lives in its own JVM so
- * none of this client's allocation/threads contaminate the server-side {@code strace} window.
- *
- * <p>Owns two axes:
- * <ul>
- *   <li><b>Delivery throughput</b> - {@code measureCount x subscribers} notifications delivered /
- *       wall time from {@code GO} to the last delivery (all in this client's {@code nanoTime}, so
- *       it is internally consistent). This is the fan-out rate the transport sustains.</li>
- *   <li><b>One-way delivery latency</b> - {@code recvMillis - notify.commitTimestampMillis}, recorded
- *       in an {@link Histogram}. Note: {@code System.currentTimeMillis()} is the only clock
- *       comparable across two JVMs on one box, so this is <b>ms-resolution</b> - a coarse indicator,
- *       not a sub-ms tail. The trustworthy fan-out axes are server-side syscalls/op (strace) and
- *       delivery throughput; latency here is labelled coarse on purpose.</li>
- * </ul>
- *
  * <pre>
  *   java --enable-preview -cp benchmarks.jar io.configd.fanout.FanOutLoadClientMain \
  *        &lt;host&gt; &lt;edgePort&gt; &lt;controlPort&gt; &lt;subscribers&gt; &lt;valueBytes&gt; \

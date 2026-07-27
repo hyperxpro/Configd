@@ -9,26 +9,9 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * The immutable, plane-agnostic configuration shared by every reference-client plane: the edge endpoints, the
- * TLS setup, the credential source, the signed-chain verification mode, and the hostile-server bounds / retry /
- * resume-persistence policies. Built via {@link #builder()}; validated at build so a misconfiguration fails
- * fast rather than at first connect.
- *
- * <p><b>TLS is required in production.</b> A configuration with no {@link ClientTls} is rejected
- * unless the caller explicitly opts into {@code allowPlaintext} — a test-only escape hatch, never a silent
- * downgrade. The credential source is optional: present ⇒ a token/basic edge; absent with a client certificate
- * ⇒ mTLS; absent without ⇒ no-auth.
- *
- * <p><b>Signed-chain verification is a binary the operator chooses explicitly</b> (a subscribe requires it):
- * either {@link Builder#verifyWith(PublicKey)} (VERIFY — the production default: every delta's Ed25519
- * signature, chain continuity, and epoch monotonicity are checked, fail-closed) or
- * {@link Builder#trustUnverified()} (an explicit opt-out for a genuinely unsigned deployment). There is no
- * implicit middle state.
- *
- * <p><b>Resume persistence is coupled</b>: {@link Builder#dataDir(Path)} makes the client <b>persistent</b> —
- * both the resume cursor and the replay-protection epoch high-water are written there durably and
- * crash-atomically ({@link FileCursorStore} / {@link FileEpochStore}); without it the client is ephemeral
- * (in-memory, re-hydrates fresh on restart).
+ * Immutable configuration shared by both client planes. Validated at build. TLS required in production.
+ * Verification mode is binary: verifyWith(key) for VERIFY (production default), or trustUnverified() for opt-out.
+ * Persistence is coupled to dataDir: present ⇒ durable, absent ⇒ ephemeral (in-memory).
  */
 public final class ConfigdClientConfig {
 
@@ -79,12 +62,10 @@ public final class ConfigdClientConfig {
         return endpoints;
     }
 
-    /** The TLS setup, or empty for a test-only plaintext client. */
     public Optional<ClientTls> tls() {
         return Optional.ofNullable(tls);
     }
 
-    /** The framed-credential source (bearer/basic), or empty on an mTLS / no-auth edge. */
     public Optional<CredentialSource> credentialSource() {
         return Optional.ofNullable(credentialSource);
     }
@@ -105,22 +86,18 @@ public final class ConfigdClientConfig {
         return epochStore;
     }
 
-    /** The leader public key when in VERIFY mode; empty in TRUST-UNVERIFIED mode or when unset. */
     public Optional<PublicKey> leaderVerifyKey() {
         return Optional.ofNullable(leaderVerifyKey);
     }
 
-    /** True iff the operator explicitly opted out of signed-chain verification (TRUST-UNVERIFIED). */
     public boolean trustUnverified() {
         return trustUnverified;
     }
 
-    /** True iff this is a test-only plaintext client (no TLS). */
     public boolean allowPlaintext() {
         return allowPlaintext;
     }
 
-    /** Mutable builder for {@link ConfigdClientConfig}. Not thread-safe; build once. */
     public static final class Builder {
         private final java.util.ArrayList<ServerAddress> endpoints = new java.util.ArrayList<>();
         private ClientTls tls;
@@ -157,7 +134,6 @@ public final class ConfigdClientConfig {
             return this;
         }
 
-        /** Sets the framed-credential source (token/basic). Omit for mTLS or no-auth. */
         public Builder credentialSource(CredentialSource credentialSource) {
             this.credentialSource = credentialSource;
             return this;
@@ -173,47 +149,31 @@ public final class ConfigdClientConfig {
             return this;
         }
 
-        /** Overrides the resume cursor store (defaults to durable under {@link #dataDir} or in-memory). */
         public Builder cursorStore(CursorStore cursorStore) {
             this.cursorStore = Objects.requireNonNull(cursorStore, "cursorStore");
             return this;
         }
 
-        /** Overrides the epoch high-water store (defaults to durable under {@link #dataDir} or in-memory). */
         public Builder epochStore(EpochStore epochStore) {
             this.epochStore = Objects.requireNonNull(epochStore, "epochStore");
             return this;
         }
 
-        /**
-         * Makes the client persistent: the resume cursor and the epoch high-water are written durably and
-         * crash-atomically under {@code dataDir}. Omit for an ephemeral (in-memory) client.
-         */
         public Builder dataDir(Path dataDir) {
             this.dataDir = Objects.requireNonNull(dataDir, "dataDir");
             return this;
         }
 
-        /**
-         * VERIFY mode: every streamed delta is verified against {@code leaderPublicKey} (Ed25519), with chain
-         * continuity and epoch-replay protection, fail-closed. The production default.
-         */
         public Builder verifyWith(PublicKey leaderPublicKey) {
             this.leaderVerifyKey = Objects.requireNonNull(leaderPublicKey, "leaderPublicKey");
             return this;
         }
 
-        /**
-         * TRUST-UNVERIFIED mode: an explicit opt-out of signed-chain verification, for a genuinely unsigned
-         * deployment. Deltas are applied without a cryptographic check. Never combine with
-         * {@link #verifyWith(PublicKey)}.
-         */
         public Builder trustUnverified() {
             this.trustUnverified = true;
             return this;
         }
 
-        /** Opt into a test-only plaintext transport (no TLS). Never use in production. */
         public Builder allowPlaintext(boolean allowPlaintext) {
             this.allowPlaintext = allowPlaintext;
             return this;

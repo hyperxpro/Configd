@@ -19,27 +19,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
-/**
- * Multi-Raft <b>shard-aware</b> open-loop write driver - the Nxknee load generator.
- *
- * <p>{@link OpenLoopWriteDriver} keeps a single leader pointer, which thrashes against an
- * N-group cluster whose N shard leaders are scattered across the nodes (each PUT to the wrong
- * shard leader gets a 503 + hint). This driver instead replicates the server's routing
- * ({@link io.configd.replication.StaticShardMap}: {@code shardFor = floorMod(SplitMix64(FNV1a(scope,
- * key)), N)}) and keeps a <b>per-shard leader pointer</b>, learned from the {@code X-Leader-Hint}
- * on a 503. So every write is sent to the node that currently leads that key's shard - the
- * production-faithful sharded-client pattern. The open-loop, coordinated-omission-corrected
- * scheduling and the ATRATE-RESULT/STATUS/HISTOGRAM output are identical to {@link OpenLoopWriteDriver}
- * so the existing harness parsing is unchanged.
- *
- * <p>Election timeouts on the cluster stay realistic + symmetric (leaders scatter naturally); this
- * driver does NOT depend on any leader-placement trick, so the measured knee is the real one.
- *
- * <pre>
- *   atrate-sharded &lt;nodeMap&gt; &lt;N&gt; &lt;targetRate&gt; &lt;durationSec&gt; &lt;concurrency&gt; [valueBytes]
- *     nodeMap = "1=http://127.0.0.1:8281,2=http://127.0.0.1:8282,3=..."
- * </pre>
- */
 public final class ShardAwareWriteDriver {
 
     private static final long FNV_OFFSET_BASIS = 1469598103934665603L;
@@ -131,10 +110,7 @@ public final class ShardAwareWriteDriver {
         }
     }
 
-    // calibrate-sharded: CLOSED-loop max sustainable commit rate. N workers each loop
-    // send-as-fast-as-possible, routing per shard; the achieved 200/s is the cluster's real
-    // throughput ceiling at this concurrency (no open-loop schedule to fall behind, so it is NOT
-    // contaminated by driver backpressure the way an over-driven open-loop atrate run is).
+    // Closed-loop ceiling free of driver backpressure that contaminates over-driven open-loop runs.
     private static void calibrate(String[] args) throws Exception {
         Map<Integer, String> nodes = parseNodeMap(args[1]);
         int n = Integer.parseInt(args[2]);
@@ -185,7 +161,6 @@ public final class ShardAwareWriteDriver {
                 .build();
     }
 
-    /** Per-shard leader URLs, learned by probing one representative key per shard (follow hints). */
     private static AtomicReferenceArray<String> resolveShardLeaders(HttpClient client, Map<Integer, String> nodes, int n, byte[] value) {
         String firstUrl = nodes.values().iterator().next();
         AtomicReferenceArray<String> shardLeader = new AtomicReferenceArray<>(n);
@@ -206,7 +181,6 @@ public final class ShardAwareWriteDriver {
         return shardLeader;
     }
 
-    /** One synchronous PUT for warmup; updates the shard leader on a hint; returns true on 200. */
     private static boolean sendOnce(HttpClient client, AtomicReferenceArray<String> shardLeader, int shard,
                                     String k, byte[] value, Map<Integer, String> nodes) {
         try {

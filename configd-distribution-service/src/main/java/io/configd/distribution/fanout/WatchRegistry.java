@@ -35,55 +35,35 @@ final class WatchRegistry {
     /** Every {@code watch_id} ever registered on this connection (never reused). */
     private final Set<Long> everUsed = new HashSet<>();
 
-    /** True iff {@code watchId} has ever been used on this connection (live OR canceled). */
     boolean isUsed(long watchId) {
         return everUsed.contains(watchId);
     }
 
-    /**
-     * Registers a new live watch. The caller MUST have already rejected a reused id
-     * ({@link #isUsed}); this method records the id in {@code everUsed} regardless so a future
-     * reuse is caught even if the entry is later canceled.
-     */
     void register(WatchEntry entry) {
         live.put(entry.watchId(), entry);
         everUsed.add(entry.watchId());
     }
 
-    /**
-     * Cancels (removes) the live watch; the id stays in {@code everUsed} (no reuse).
-     *
-     * @return the removed entry, or {@code null} if no live watch had that id
-     */
     WatchEntry cancel(long watchId) {
         return live.remove(watchId);
     }
 
-    /** The live entry for {@code watchId}, or {@code null} if not live. */
     WatchEntry get(long watchId) {
         return live.get(watchId);
     }
 
-    /** The live entries in creation order (read-only; iterated on the session thread only). */
     Collection<WatchEntry> liveEntries() {
         return Collections.unmodifiableCollection(live.values());
     }
 
-    /** True iff no watch is currently live. */
     boolean isEmpty() {
         return live.isEmpty();
     }
 
-    /** The number of live watches. */
     int liveCount() {
         return live.size();
     }
 
-    /**
-     * The number of distinct {@code watch_id}s ever used on this connection - the no-reuse budget.
-     * Because {@code everUsed} never shrinks, the driver bounds it (a per-connection
-     * watch-id budget) so a long-lived connection with high watch churn cannot grow it unbounded.
-     */
     int totalUsed() {
         return everUsed.size();
     }

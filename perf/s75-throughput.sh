@@ -1,31 +1,15 @@
 #!/usr/bin/env bash
-# s75-throughput.sh — real-hardware throughput + fsync attribution
-#
-# Same 3-node cluster launch shape as perf/wsB-live-write.sh, adapted for a
-# real-hardware campaign on m6id.4xlarge instances:
-#
-#   (1) Data + WAL live on /mnt/nvme (local instance-store NVMe), never the EBS
-#       root — on this instance type /tmp resolves to EBS, which is forbidden
-#       for this measurement. The runtime WAL path is asserted under
-#       /mnt/nvme before any phase runs.
-#   (2) The shared cluster signing key lives OUTSIDE every node data dir
-#       (--signing-key-file); the fail-closed at-rest-key guard refuses to
-#       boot otherwise.
-#   (3) Per-phase instrumentation: per-process CPU (pidstat) + device I/O incl.
-#       flush/s (iostat -x nvme1n1) sampled for the whole phase, to attribute
-#       the bottleneck (fsync-IOPS-bound vs CPU-bound vs system-bound). fsyncs/sec
-#       is derived from achieved_commit_rate (per-entry fsync is proven in
-#       code: RaftNode.propose->log.append->FileStorage.force(true), 1 fsync/entry);
-#       3 co-located nodes share ONE NVMe so device fsync demand ~= 3x commit rate.
-#   (4) Bigger heaps (default 4g/node, ZGC) so GC is not a factor and 16 vCPU
-#       is the only shared resource under test.
+# s75-throughput.sh — real-hardware throughput + fsync attribution on m6id.4xlarge.
+# Data+WAL on /mnt/nvme (not EBS root, which is forbidden). 4g heaps (ZGC) so 16 vCPU only resource under test.
+# Per-phase CPU/device-IO instrumentation for bottleneck attribution (fsync-IOPS vs CPU vs system).
+# Per-entry fsync proven: 3 co-located nodes share ONE NVMe, so device fsync demand ~= 3x commit rate.
 #
 # Usage:  perf/s75-throughput.sh <calibrate|phase2|phase3|phase4|all> [outdir]
-# Env:    S75_BASE  (default /mnt/nvme/run/s75-<pid>)   S75_HEAP  S75_GC
-#         S75_RATE3 (sustained rate, default 10000)     S75_DUR3 (default 70)
-#         S75_RATE4 (burst rate,     default 100000)    S75_DUR4 (default 30)
-#         CONFIGD_JAR  (shaded server jar)              CONFIGD_BENCH (benchmarks.jar)
-# Requires: freshly-built shaded server jar + benchmarks.jar. Idempotent cleanup.
+# Env:    S75_BASE (default /mnt/nvme/run/s75-<pid>)  S75_HEAP  S75_GC
+#         S75_RATE3 (default 10000)  S75_DUR3 (default 70)
+#         S75_RATE4 (default 100000) S75_DUR4 (default 30)
+#         CONFIGD_JAR  CONFIGD_BENCH
+
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JAR="${CONFIGD_JAR:-$(ls "$ROOT"/configd-server/target/configd-server-*.jar 2>/dev/null | grep -v original- | head -1)}"
@@ -35,11 +19,7 @@ RAFT_BASE=9290
 API_BASE=8280
 PEERS_ADDR="1=127.0.0.1:9291,2=127.0.0.1:9292,3=127.0.0.1:9293"
 HEAP="${S75_HEAP:--Xmx4g -Xms4g}"
-GCFLAGS="${S75_GC:--XX:+UseZGC}"   # generational ZGC is the only ZGC in JDK 24+; the old -XX:+ZGenerational flag was removed
-# S75_JVM_EXTRA: group-commit sizing sweep — extra JVM flags passed to every node, e.g.
-#   S75_JVM_EXTRA="-Dconfigd.groupCommit.enabled=false"      (disable group-commit, per-op baseline)
-#   S75_JVM_EXTRA="-Dconfigd.groupCommit.lingerMicros=500"   (linger sweep point)
-#   S75_JVM_EXTRA="-Dconfigd.groupCommit.maxBatch=64"        (batch-cap sweep point)
+GCFLAGS="${S75_GC:--XX:+UseZGC}"
 JVM_EXTRA="${S75_JVM_EXTRA:-}"
 MODE="${1:-all}"
 OUT="${2:-$ROOT/docs/session-7.5/captures/throughput}"
@@ -79,17 +59,12 @@ launch_node() {
 
 launch_cluster() {
   echo "[s75] launching 3-node cluster ($GCFLAGS $HEAP) under $BASE (NVMe=$(nvme_dev))"
-  # The 3 nodes share one --signing-key-file. SigningKeyStore.loadOrCreate is a non-atomic
-  # exists()-then-CREATE_NEW, so a simultaneous first boot races: one node creates the key, the
-  # others crash with FileAlreadyExistsException. Pre-generate by launching node 1 alone, waiting
-  # for the key file to appear, then launching nodes 2 & 3 (they load the now-present key). This
-  # mirrors the production model where the key is provisioned/mounted before boot, never raced
-  # into existence by the nodes.
+  # SigningKeyStore.loadOrCreate races on simultaneous first boot (exists()-then-CREATE_NEW).
+  # Pre-generate: launch node 1 alone, wait for key, then launch 2 & 3 (they load present key).
   launch_node 1
   local keyok=0
   for i in $(seq 1 40); do
     [ -s "$SIGNKEY" ] && { keyok=1; break; }
-    # Bail early if node 1 died (e.g. genuine startup failure, not the key race)
     kill -0 "${PIDS[0]}" 2>/dev/null || { tail -n 30 "$BASE"/n1.log; fail "node 1 exited before creating signing key"; }
     sleep 0.25
   done

@@ -1,20 +1,13 @@
 package io.configd.distribution.wire;
 
 /**
- * The on-wire type byte for each {@link EdgeFrame} variant. The numeric {@link #code()} is
- * pinned by the {@code EdgeFrameCodecGoldenFixtureTest} golden fixture - changing any code is
- * a wire-format change and MUST bump {@link EdgeFrameCodec#EDGE_WIRE_VERSION}.
- *
- * <p><b>Codes {@code 0x01..0x09}</b> are the connection-level fan-out vocabulary (legal on
- * a {@code 0x01} or a {@code 0x02} connection). <b>Codes {@code 0x0A..0x12}</b> are the
- * client-facing <b>watch</b> frames (W5-1); they are legal <b>only</b> on a {@code 0x02}
- * connection ({@link EdgeFrameCodec#EDGE_WIRE_VERSION_V2}) - a watch type on a
- * {@code 0x01}-stamped frame decodes as {@link ErrorCode#FRAME_CORRUPT} (W5-11).
- * <b>Codes {@code 0x13..0x14}</b> are the client-to-server <b>auth-phase</b> frames (AU3-3);
- * they are legal <b>only</b> on a {@code 0x04} frame ({@link EdgeFrameCodec#EDGE_WIRE_VERSION_V4})
- * and are version-pin-exempt (they never establish or violate the connection's protocol-version
- * pin - a {@code 0x04} auth frame may interleave on a {@code 0x01}/{@code 0x02}/{@code 0x03}
- * connection).
+ * On-wire type byte for each EdgeFrame variant; codes pinned by EdgeFrameCodecGoldenFixtureTest
+ * (changing any code is wire-format change: MUST bump EdgeFrameCodec.EDGE_WIRE_VERSION).
+ * <p>
+ * Codes 0x01–0x09: connection-level fan-out vocabulary (legal on V1 or V2).
+ * Codes 0x0A–0x12: watch frames (W5-1), V2-only (V1 decode = FRAME_CORRUPT; W5-11).
+ * Codes 0x13–0x14: auth-phase frames (AU3-3), V4-only, version-pin-exempt (may interleave
+ * on any business-version connection).
  */
 public enum FrameType {
 
@@ -60,18 +53,11 @@ public enum FrameType {
         this.code = code;
     }
 
-    /** The unsigned type byte that goes on the wire. */
     public int code() {
         return code;
     }
 
-    /**
-     * Resolves a wire type byte to its {@link FrameType}.
-     *
-     * @param code the unsigned type byte
-     * @return the matching frame type
-     * @throws IllegalArgumentException if {@code code} is not a defined type
-     */
+    /** Resolve wire type byte to FrameType; throws if not a defined type. */
     public static FrameType fromCode(int code) {
         for (FrameType t : VALUES) {
             if (t.code == code) {

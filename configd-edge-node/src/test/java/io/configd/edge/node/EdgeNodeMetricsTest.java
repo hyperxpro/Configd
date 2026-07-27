@@ -20,10 +20,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * {@link EdgeNodeMetrics} matrix: eager registration, the core delta-pump, the STALE-transition
- * counter, and the DISCONNECTED re-bootstrap trigger seam.
- */
 class EdgeNodeMetricsTest {
 
     static final class TestClock implements Clock {

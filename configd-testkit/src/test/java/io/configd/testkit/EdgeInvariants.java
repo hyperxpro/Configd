@@ -60,29 +60,18 @@ final class EdgeInvariants {
     private final long boundMs;
     private final EdgeActivity activity;
 
-    /** Identity of an edge incarnation: bumps when an edge crashes. */
     private record Incarnation(int edgeId, int incarnation) {}
 
-    /** Highest store version seen per edge incarnation (invariant a). */
     private final Map<Incarnation, Long> lastVersionPerIncarnation = new HashMap<>();
 
-    /** Per edge incarnation: key -> highest applied version (invariant b). */
     private final Map<Incarnation, Map<String, Long>> lastKeyVersionPerIncarnation = new HashMap<>();
 
-    /**
-     * Outstanding publications awaiting observation (invariant d). One entry per
-     * (cpNode, seq); checked each tick against every eligible edge. Removed once
-     * every subscribed edge has observed it OR been recorded as a violation, so the
-     * list stays bounded by the in-flight window.
-     */
     private final List<Outstanding> outstanding = new ArrayList<>();
 
-    /** A published notification awaiting edge observation. */
     private static final class Outstanding {
         final long seq;
         final int cpNode;
         final long publishedAtMs;
-        /** Edges (by id) that still owe observation of this seq. */
         final List<Integer> owingEdgeIds = new ArrayList<>();
 
         Outstanding(long seq, int cpNode, long publishedAtMs) {
@@ -102,11 +91,6 @@ final class EdgeInvariants {
         this.boundMs = boundMs;
     }
 
-    /**
-     * Records that a notification with {@code seq} was published at CP node
-     * {@code cpNode} at {@code publishedAtMs}. {@code subscribedEdgeIds} are the live
-     * edges subscribed to {@code cpNode} at publish time that owe observation.
-     */
     void recordPublication(long seq, int cpNode, long publishedAtMs, List<Integer> subscribedEdgeIds) {
         if (subscribedEdgeIds.isEmpty()) {
             return; // nobody to deliver to - no liveness obligation
@@ -116,14 +100,6 @@ final class EdgeInvariants {
         outstanding.add(o);
     }
 
-    /**
-     * Runs every per-tick edge invariant.
-     *
-     * @param edges      the edge roster (deterministic order)
-     * @param nowMs      current sim logical time
-     * @param connected  predicate: is edge id currently connected to its CP node
-     *                   (not partitioned on the edge network)?
-     */
     void checkAll(List<EdgeActor> edges, long nowMs, IntPredicate connected) {
         checkPerEdgeVersionMonotonicity(edges); // (a)
         checkNoStaleOverwrite(edges);           // (b)

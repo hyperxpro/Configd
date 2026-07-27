@@ -25,20 +25,6 @@ import java.util.zip.CRC32C;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Red-team tests for the {@code scopeId} cross-shard/scope-splice control, proven on real on-disk
- * bytes in BOTH postures - keyed (HMAC-SHA-256, scopeId inside the MAC input) and encrypting
- * (AES-256-GCM, scopeId inside the AAD). Two distinct defenses are exercised separately:
- * <ul>
- *   <li><b>reader assert</b> - an HONEST cross-shard artifact (authentic gid=1 bytes copied verbatim
- *       into a gid=0 shard) is refused because its authenticated scopeId announces its true shard; and</li>
- *   <li><b>unforgeable in place</b> - RE-STAMPING the scopeId to match the reader (and repairing every
- *       CRC so the byte layer accepts it) STILL fails, because scopeId is authenticated by the MAC/tag.
- *       The assert alone is not the only defense: the MAC/tag authenticates scopeId too.</li>
- * </ul>
- * Covers all three per-shard artifacts (WAL record, snapshot blob, {@code raft.persistent_state}),
- * plus the envelope version-downgrade refusal and the CRC-before-scope ordering.
- */
 class RaftLogScopeSpliceRedteamTest {
 
     private static final int VICTIM_GID = 0;   // the shard doing the recovery
@@ -49,8 +35,6 @@ class RaftLogScopeSpliceRedteamTest {
     /** The on-disk file names (for direct byte surgery). */
     private static final String WAL_FILE = "raft-log.wal";
     private static final String SNAP_FILE = "raft-log.snapshot.dat";
-
-    // Attack 3 - cross-shard physical replay (the reader assert catches an honest cross-shard copy).
 
     @Test
     void crossShardWalRecordRefused_hmac(@TempDir Path tempDir) {

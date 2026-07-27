@@ -12,33 +12,14 @@
 
     <artifactId>configd-jcstress</artifactId>
 
-    <!--
-      jcstress concurrency race-testing harness for the lock-free /
-      single-writer-multi-reader structures (VersionedConfigStore, HamtMap,
-      FanOutBuffer) and the TcpRaftTransport per-peer shared state.
-
-      jcstress is structured exactly like JMH (see configd-testkit): the
-      @JCStressTest classes live in src/MAIN/java so they can be bundled into an
-      executable uber-jar (jcstress.jar) whose Main-Class is
-      org.openjdk.jcstress.Main. The jcstress-core jar is BOTH a compile
-      dependency AND the annotation processor that generates the per-test runner
-      classes + the META-INF/TestList index the runner discovers tests through.
-
-      Deliberately NOT enable-preview: jcstress forks a fresh JVM per test and
-      does not propagate the parent's enable-preview flag to those forks, so a
-      preview argLine would make every fork fail to start. The codebase has zero
-      preview-feature classes (the flag is vestigial elsewhere), so the harness
-      compiles and runs cleanly on a plain release-25 JVM.
-    -->
+    <!-- jcstress race-testing: @JCStressTest in src/main/java (jcstress.jar). NOT enable-preview: jcstress doesn't propagate flags to forks. -->
 
     <dependencies>
-        <!-- jcstress runtime + annotation processor (single artifact). -->
         <dependency>
             <groupId>org.openjdk.jcstress</groupId>
             <artifactId>jcstress-core</artifactId>
         </dependency>
 
-        <!-- The structures under test. -->
         <dependency>
             <groupId>io.configd</groupId>
             <artifactId>configd-config-store</artifactId>
@@ -57,14 +38,13 @@
     </dependencies>
 
     <build>
-        <!-- Stable artifact name so the gate + docs can invoke it by path. -->
         <finalName>jcstress</finalName>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <configuration>
-                    <!-- Override the parent's enable-preview flag (see module comment). -->
+                    <!-- Override parent's enable-preview (jcstress forks don't inherit it). -->
                     <release>25</release>
                     <compilerArgs combine.self="override">
                         <arg>-Xlint:all,-processing</arg>
@@ -79,14 +59,7 @@
                 </configuration>
             </plugin>
 
-            <!--
-              Build the executable jcstress.jar exactly the way configd-testkit
-              builds benchmarks.jar (shade + Main-Class + ServicesResourceTransformer),
-              with the jcstress-specific resource concatenations: the generated
-              META-INF/TestList (the test index the runner discovers tests through)
-              and jcstress' aux index files must be APPENDED across jars, never
-              clobbered.
-            -->
+            <!-- jcstress-specific: META-INF/TestList and META-INF/AuxCounters must be concatenated, not clobbered. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>

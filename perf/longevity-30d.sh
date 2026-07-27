@@ -1,21 +1,10 @@
 #!/usr/bin/env bash
-# 30-day longevity harness.
-#
-# Same workload shape as soak-72h but for 30 days, with daily snapshot
-# install + truncate cycles to verify long-running snapshot subsystem
-# health. Watches:
-#   • snapshot-install latency drift
-#   • WAL segment count growth
-#   • disk-space high-watermark
-#   • 30-day p99 latency stability (must stay within ±10% of day-1
-#     measured baseline)
+# 30-day longevity harness: same workload as soak-72h + daily snapshot install cycles.
+# Watches: snapshot latency drift, WAL segment growth, disk space, p99 latency stability within ±10%.
+# Calendar-bounded; record measured elapsed honestly. Smoke: --duration=600.
 #
 # Usage:
 #   perf/longevity-30d.sh [--duration=<seconds>] [--seed=<int>] [--out=<dir>]
-#
-# This is a calendar-bound run (status=YELLOW until it actually runs for
-# 30 days) — record the measured elapsed honestly. Smoke runs in CI use
-# --duration=600.
 
 set -euo pipefail
 

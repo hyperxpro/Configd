@@ -24,36 +24,23 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * The client-side TLS setup for the edge plane — the one place the TLS recipe lives. It builds a
- * TLSv1.3-only {@link SSLContext} (the two AEAD suites) from PKCS12 key/trust material and creates a client
- * {@link SSLSocket} that verifies the <b>server</b> endpoint: an unconnected socket → a bounded connect by
- * <b>hostname</b> → the TLSv1.3 profile → {@code setEndpointIdentificationAlgorithm("HTTPS")} with the host
- * supplied as an SNI name so the server certificate's SAN must cover the host it connected to →
- * a bounded handshake. A trusted CA alone is insufficient without endpoint identification, so it is always on.
- *
- * <p>Two postures: {@link #mutualTls} (a client certificate — the mTLS edge authentication) and
- * {@link #trustOnly} (verify the server only — a certificate-less token/basic client authenticates with an
- * {@code AUTH} frame instead). Either way the server is always verified. This client never downgrades to
- * plaintext; a plaintext connection is a separate, test-only path outside this class.
+ * Client-side TLS setup for edge plane: single place the TLS recipe lives. Builds TLSv1.3-only SSLContext,
+ * verifies server endpoint (hostname + SAN). Two postures: mutualTls (client cert) or trustOnly (server-only).
+ * Always HTTPS endpoint identification. Never downgrades to plaintext.
  */
 public final class ClientTls {
 
-    /** The frozen TLSv1.3 profile, matching the server's {@code TlsConfig}. */
     private static final String[] PROTOCOLS = {"TLSv1.3"};
     private static final String[] CIPHERS = {"TLS_AES_256_GCM_SHA384", "TLS_AES_128_GCM_SHA256"};
 
     private final SSLContext context;
-    private final Instant clientCertNotAfter; // nullable: present only for a mTLS keystore
+    private final Instant clientCertNotAfter;
 
     private ClientTls(SSLContext context, Instant clientCertNotAfter) {
         this.context = context;
         this.clientCertNotAfter = clientCertNotAfter;
     }
 
-    /**
-     * An mTLS client: presents a client certificate from {@code keyStorePath} and verifies the server against
-     * {@code trustStorePath}. The client leaf's {@code notAfter} is captured for the cert lead-time reconnect.
-     */
     public static ClientTls mutualTls(Path keyStorePath, char[] keyStorePassword,
                                       Path trustStorePath, char[] trustStorePassword)
             throws GeneralSecurityException, IOException {
@@ -66,10 +53,6 @@ public final class ClientTls {
         return new ClientTls(ctx, earliestNotAfter(keyStore));
     }
 
-    /**
-     * A trust-only client: verifies the server against {@code trustStorePath} but presents no client
-     * certificate. Used by a token/basic edge client (it authenticates with an {@code AUTH} frame).
-     */
     public static ClientTls trustOnly(Path trustStorePath, char[] trustStorePassword)
             throws GeneralSecurityException, IOException {
         Objects.requireNonNull(trustStorePath, "trustStorePath");
@@ -77,22 +60,12 @@ public final class ClientTls {
         return new ClientTls(ctx, null);
     }
 
-    /**
-     * Connects to {@code host:port} and completes the TLS handshake, returning a ready {@link SSLSocket}. The
-     * connect and handshake are each bounded; the socket verifies the server endpoint ({@code HTTPS}) against
-     * {@code host}. On return the caller owns the socket (and resets its {@code SO_TIMEOUT} for the read loop).
-     *
-     * @throws IOException if the connect times out, the handshake fails (including endpoint-identity /
-     *                     SAN-mismatch), or the handshake times out
-     */
     public SSLSocket connect(String host, int port, int connectTimeoutMs, int handshakeTimeoutMs)
             throws IOException {
         SSLSocketFactory factory = context.getSocketFactory();
         SSLSocket socket = (SSLSocket) factory.createSocket();
         boolean handshook = false;
         try {
-            // Connect by hostname (not a pre-resolved address) so the HTTPS endpoint check has a name to
-            // match against the server certificate's SAN.
             socket.connect(new InetSocketAddress(host, port), connectTimeoutMs);
             socket.setEnabledProtocols(PROTOCOLS);
             socket.setEnabledCipherSuites(CIPHERS);
@@ -103,9 +76,8 @@ public final class ClientTls {
                 params.setServerNames(sni);
             }
             socket.setSSLParameters(params);
-            // Bound the handshake so a slow-loris server that never completes it times out rather than
-            // parking this reader. No application bytes are read before startHandshake returns, so
-            // there is nothing pre-handshake to interpret as a frame (the libpq CVE-2021-23214/23222 lesson).
+            // Bound handshake so slow-loris server that never completes times out. No app bytes before
+            // startHandshake, so nothing pre-handshake to interpret as frame (see libpq CVE-2021-23214/23222).
             socket.setSoTimeout(handshakeTimeoutMs);
             socket.startHandshake();
             handshook = true;
@@ -118,20 +90,16 @@ public final class ClientTls {
     }
 
     /**
-     * The underlying {@link SSLContext} for a transport that manages its own sockets — notably the HTTP plane's
-     * JDK {@code HttpClient}, which takes an {@code SSLContext} + {@link SSLParameters} rather than an
-     * {@code SSLSocket}. The context carries the same trust material (and, for an mTLS client, the client
-     * key manager) as {@link #connect}; pair it with {@link #httpsParameters()} to keep the same TLS profile.
+     * Underlying SSLContext for transports that manage their own sockets (HTTP plane's JDK HttpClient).
+     * Pair with httpsParameters() to keep same TLS profile as connect().
      */
     public SSLContext sslContext() {
         return context;
     }
 
     /**
-     * The frozen TLS parameters for the HTTP plane: TLSv1.3 only, with {@code HTTPS} endpoint identification
-     * (hostname/SAN verification against the request host). A fresh instance per call — {@link SSLParameters} is
-     * mutable and must not be shared. The JDK {@code HttpClient} derives SNI from the request URI host, so
-     * server names are not set here (unlike {@link #connect}, which owns the socket and sets SNI explicitly).
+     * Frozen TLS parameters for HTTP plane: TLSv1.3 + HTTPS endpoint identification.
+     * Fresh instance per call (SSLParameters is mutable). JDK HttpClient derives SNI from request URI host.
      */
     public SSLParameters httpsParameters() {
         SSLParameters params = new SSLParameters();
@@ -141,12 +109,10 @@ public final class ClientTls {
         return params;
     }
 
-    /** The client certificate's {@code notAfter}, when this is an mTLS client — for the cert lead-time reconnect. */
     public Optional<Instant> clientCertNotAfter() {
         return Optional.ofNullable(clientCertNotAfter);
     }
 
-    /** True iff this client presents a client certificate (the mTLS posture). */
     public boolean hasClientCertificate() {
         return clientCertNotAfter != null;
     }
@@ -173,7 +139,6 @@ public final class ClientTls {
         return store;
     }
 
-    /** The earliest {@code notAfter} across the keystore's certificate entries (the binding constraint). */
     private static Instant earliestNotAfter(KeyStore keyStore) throws GeneralSecurityException {
         Instant earliest = null;
         for (Enumeration<String> aliases = keyStore.aliases(); aliases.hasMoreElements(); ) {
@@ -188,7 +153,6 @@ public final class ClientTls {
         return earliest;
     }
 
-    /** An SNI list for a DNS host; empty for an IP literal (SNI names must not be IP addresses). */
     private static List<SNIServerName> sniFor(String host) {
         if (host == null || host.isEmpty() || isIpLiteral(host)) {
             return List.of();
@@ -197,7 +161,6 @@ public final class ClientTls {
     }
 
     private static boolean isIpLiteral(String host) {
-        // A colon means IPv6; otherwise treat all-digits-and-dots as IPv4. Anything else is a DNS name.
         if (host.indexOf(':') >= 0) {
             return true;
         }

@@ -49,113 +49,60 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 
-/**
- * The Netty edge fan-out endpoint - the Netty transport over the SAME
- * transport-agnostic {@link FanOutConnectionDriver} + {@link FanOutSessionCore} the JDK
- * {@link FanOutServer} drives. Every fan-out control - mTLS admission, the slow-consumer
- * demotion->quarantine->disconnect policy, propagation/monotonicity - is therefore re-proven on this
- * pipeline by the identical {@code FanOutServerContract} (JDK + Netty(auto) + Netty(forced-NIO)),
- * not re-implemented.
- *
- * <h2>Pipeline (per connection)</h2>
- * {@code [SslHandler? -> ByteToEdgeFrameDecoder -> EdgeFrameToByteEncoder -> FanOutConnection]}.
- * <ul>
- *   <li><b>mTLS:</b> when a {@link TlsManager} is present the first stage is an
- *       {@link SslHandler} built from the SAME {@code SSLContext} the JDK server + Raft use, in
- *       server mode with {@code setNeedClientAuth(true)} and the {@link TlsConfig} TLSv1.3-only
- *       protocols + ciphers. The edge identity is the verified client-cert Subject DN read from the
- *       post-handshake {@code SSLSession.getPeerPrincipal()}; the wire {@code edgeId} is advisory.
- *       No {@code TlsManager} => plaintext (no {@code SslHandler}), matching the JDK server.</li>
- *   <li><b>Codec:</b> {@link ByteToEdgeFrameDecoder} keeps the {@code peekLength}
- *       bounds-before-allocation discipline; {@link EdgeFrameToByteEncoder} does the single-pass
- *       in-pipeline pooled encode.</li>
- * </ul>
- *
- * <h2>Threading</h2>
- * The event loop owns the socket (TLS, decode, the outbound encode, write completion). One virtual
- * <b>session thread</b> per connection drives {@link FanOutConnectionDriver#runSessionLoop} - the
- * same model as the JDK server (session work, incl. up-to-1 MiB snapshot serialization, never runs
- * on the event loop). Inbound frames are routed on the event loop into the driver (single-threaded
- * inbound, exactly like the JDK reader); the driver and session communicate through a concurrent
- * command queue. The {@link TransportSink#offer} writes to the channel and bounds in-flight
- * (written-not-flushed) frames at {@code transportQueueFrames}.
- */
+
 public final class NettyFanOutServer implements FanOutEndpoint {
 
     private static final Logger LOG = Logger.getLogger(NettyFanOutServer.class.getName());
 
-    /** Named config: per-connection outbound transport queue depth (frames); same as the JDK transport. */
+    
     public static final int DEFAULT_TRANSPORT_QUEUE_FRAMES = FanOutServer.DEFAULT_TRANSPORT_QUEUE_FRAMES;
 
-    /** Named config {@code edge.fanout.transport.maxSessions} (same bound as the JDK transport). */
+    
     public static final int DEFAULT_MAX_SESSIONS = FanOutServer.DEFAULT_MAX_SESSIONS;
 
-    /** The single-shard resolver the single-source constructors bind: every target -> gid 0. */
+    
     private static final ShardResolver SINGLE_SHARD = t -> new int[]{0};
 
     private final InetSocketAddress bindAddress;
     private final TlsManager tlsManager;
-    /** gid -> that shard's commit source; single-entry {@code {0 -> source}} for the single-shard ctors. */
+    
     private final Map<Integer, CommitNotificationSource> shardSources;
-    /** gid -> that shard's replay source; single-entry for the single-shard ctors. */
+    
     private final Map<Integer, ReplaySource> shardReplaySources;
-    /** The connection's shard set, ascending ({@code [0, N)}); {@code {0}} for the single-shard ctors. */
+    
     private final int[] allGids;
-    /** Resolves a watch target to its covered shard set; {@link #SINGLE_SHARD} for the single-shard ctors. */
+    
     private final ShardResolver shardResolver;
-    /** The server's topology epoch ({@code ShardMap.epoch()}), threaded into every session driver. */
+    
     private final long topologyEpoch;
     private final FanOutConfig config;
     private final int transportQueueFrames;
     private final int maxSessions;
-    /** Pre-SUBSCRIBE first-frame deadline (ms); shared config with the JDK transport. */
+    
     private final int firstFrameDeadlineMs = FanOutServer.firstFrameDeadlineMs();
     private final SlowConsumerGovernor governor;
     private final RegistryFanOutSessionMetrics metrics;
     private final Clock clock;
     private final int workerThreads;
 
-    /**
-     * The authorization gate, or {@code null} when no principal model is wired. It gates both
-     * {@code WATCH_CREATE} (per-target) and the legacy full-store {@code SUBSCRIBE} (whole-store READ).
-     * A {@code null} authorizer fails CLOSED for watches (every {@code WATCH_CREATE} ->
-     * {@code NOT_AUTHORIZED}) but admits {@code SUBSCRIBE} (auth off), so existing callers (the
-     * contract, the testkit main) behave as an unauthenticated deployment; {@code ConfigdServer}
-     * threads a real authorizer.
-     */
+    
     private final WatchAuthorizer authorizer;
 
-    /**
-     * The edge token-authentication posture, or {@code null} when only mTLS / plaintext is configured.
-     * When non-null the pipeline installs the {@link EdgeAuthGateHandler}, the decoder enforces the
-     * pre-auth frame ceiling, and the edge TLS is {@code wantClientAuth} (a certificate-less token
-     * client may connect). When {@code null} the endpoint is byte-identical to the pre-token edge.
-     */
+    
     private final EdgeAuthConfig edgeAuth;
 
-    /**
-     * The edge client-cert validity gate ({@link EdgeCertGate#OFF} = no online revocation + no active cert
-     * expiry, byte-identical). Applied at admission on BOTH the mTLS-only path and the token-edge cert path.
-     * Never constructed for the Raft interior, so the {@code exemptInterNode} invariant holds by construction.
-     */
+    
     private final EdgeCertGate certGate;
 
     private final NettyTransport.Selection transport;
     private final AtomicBoolean running = new AtomicBoolean(false);
-    /** Live connections INCLUDING mid-handshake (the bound is applied before the handshake). */
+    
     private final AtomicInteger liveConnections = new AtomicInteger();
 
     private volatile EventLoopGroup boss;
     private volatile EventLoopGroup worker;
     private volatile Channel serverChannel;
-    /**
-     * Bounded worker pool for OFF-event-loop credential resolution. Basic verification is a deliberately
-     * expensive PBKDF2 (~50-150ms); running it inline on a shared Netty worker would stall every other
-     * connection on that loop (an unauthenticated event-loop-stall DoS, amplified by REFRESH_AUTH spam).
-     * Bounded (not virtual-thread-per-task) because the work is CPU-bound: more concurrent PBKDF2 than
-     * cores only thrashes, so the pool caps total verification CPU. Null when token auth is not configured
-     * (byte-identical mTLS-only / plaintext edge).
-     */
+    
     private volatile java.util.concurrent.ExecutorService authWorker;
 
     public NettyFanOutServer(InetSocketAddress bindAddress,
@@ -199,12 +146,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                 governor, metrics, clock, null);
     }
 
-    /**
-     * Full constructor with the authorization gate ({@code authorizer}). A {@code null} authorizer
-     * fails CLOSED for watches (rejected {@code NOT_AUTHORIZED}) and admits the legacy full-store
-     * {@code SUBSCRIBE} (auth off); a wired authorizer additionally gates {@code SUBSCRIBE} on
-     * whole-store READ. {@code ConfigdServer} threads the {@code AclServiceWatchAuthorizer} here.
-     */
+    
     public NettyFanOutServer(InetSocketAddress bindAddress,
                              TlsManager tlsManager,
                              CommitNotificationSource source,
@@ -223,16 +165,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                 EdgeCertGate.OFF);
     }
 
-    /**
-     * The multi-shard constructor: the per-shard commit sources + replay sources + shard set +
-     * resolver the fan-out/fan-in coordinator fans a watch across. At {@code N = 1} the single-source
-     * constructors delegate here with single-entry maps and the single-shard resolver, so one core is
-     * the single-shard drain (byte-identical). {@code ConfigdServer} threads the real per-shard maps.
-     *
-     * @param edgeAuth the edge token-authentication posture, or {@code null} for the mTLS-only /
-     *                 plaintext posture (byte-identical to the pre-token edge: no gate, no pre-auth
-     *                 ceiling, {@code needClientAuth})
-     */
+    
     public NettyFanOutServer(Map<Integer, CommitNotificationSource> shardSources,
                              Map<Integer, ReplaySource> shardReplaySources,
                              int[] allGids,
@@ -285,7 +218,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         return governor;
     }
 
-    /** The active transport tier (io_uring / epoll / nio) - surfaced for logging + the CI proof. */
+    
     public String transportTier() {
         return transport.tier();
     }
@@ -355,26 +288,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         }
     }
 
-    /**
-     * The bounded off-loop credential-resolution pool. Sized to the CPU count (PBKDF2 is CPU-bound, so
-     * more threads than cores only thrashes), overridable via {@code configd.edge.authWorkerThreads}, and
-     * floored at 1. Daemon threads so they never hold the JVM up.
-     *
-     * <p>The pending-verification QUEUE is bounded too ({@code configd.edge.authWorkerQueueDepth}, default a
-     * small multiple of the pool): a credential-verification flood (many connections each sending an AUTH
-     * behind a deliberately slow PBKDF2) must not grow the backlog without bound and exhaust the heap. A
-     * saturated queue makes {@code execute()} throw {@link java.util.concurrent.RejectedExecutionException},
-     * which {@link EdgeAuthGateHandler} turns into a fail-closed close (pre-auth) or a dropped refresh -
-     * never an inline event-loop resolution. Combined with the gate skipping the PBKDF2 for a connection that
-     * is already dead, this bounds both the queue depth and the wasted work under a churn/AUTH flood.
-     *
-     * <p>All credential types share this one pool, so a sustained flood of the EXPENSIVE type (Basic PBKDF2)
-     * saturates the queue and legitimate token clients are shed fail-closed ({@code AUTH_UNAVAILABLE}) rather
-     * than the server exhausting the heap or stalling the event loop. That graceful shedding is the deliberate
-     * behaviour: bounding the total verification work per node is a correctness requirement, and per-IP /
-     * per-tenant admission control against an auth flood is an ingress-layer concern (load balancer / WAF /
-     * rate limiter), as it is for etcd, Vault, and Keycloak - none run an unbounded KDF in the verifier.
-     */
+    
     private static java.util.concurrent.ExecutorService newAuthWorkerPool() {
         int threads = Math.max(1, Integer.getInteger(
                 "configd.edge.authWorkerThreads", Runtime.getRuntime().availableProcessors()));
@@ -392,7 +306,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                 new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
     }
 
-    /** Builds the server-mode mTLS {@link SslHandler} - the SAME SSLContext/protocols/ciphers as the JDK server. */
+    
     private SslHandler newSslHandler() {
         SSLContext sslContext = tlsManager.currentContext();
         SSLEngine engine = sslContext.createSSLEngine();
@@ -444,17 +358,12 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         }
     }
 
-    /**
-     * One edge subscriber connection: the event-loop body + the {@link TransportSink}; the brain is
-     * the shared {@link FanOutConnectionDriver} on a dedicated virtual session thread. A new instance
-     * per channel (holds per-connection state; event-loop methods need no synchronization, the
-     * session-thread interactions go through the driver's concurrent queue / the atomics here).
-     */
+    
     private final class FanOutConnection extends SimpleChannelInboundHandler<EdgeFrame>
             implements TransportSink {
 
         private final AtomicBoolean alive = new AtomicBoolean(true);
-        /** In-flight (written, not yet flushed) frames. */
+        
         private final AtomicInteger inFlight = new AtomicInteger();
 
         private volatile Channel channel;
@@ -463,34 +372,16 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         private boolean started;          // event-loop-only: the session has been started
         private volatile boolean connectedCounted; // onSubscriberConnected fired (pairs with disconnect)
 
-        /**
-         * Negotiated OUTBOUND edge wire version. Default {@code 0x01} (legacy); flipped to
-         * {@code 0x02} when this connection's FIRST inbound frame is a {@code WATCH_CREATE} (a watch
-         * connection). The {@link EdgeFrameToByteEncoder} reads it (via the {@code initChannel} supplier
-         * lambda) and stamps it on every outbound frame, so a {@code 0x02} client can decode the
-         * server's {@code WATCH_*} frames. Written + read on the event loop; {@code volatile}
-         * for clarity and the cross-handler supplier read. A legacy connection never flips it -> stays
-         * {@code 0x01} -> byte-identical.
-         */
+        
         volatile byte wireVersion = EdgeFrameCodec.EDGE_WIRE_VERSION;
 
-        /** Event-loop-only: whether the connection-type-deciding first inbound frame has been seen. */
+        
         private boolean firstInboundSeen;
 
-        /**
-         * The one-shot pre-SUBSCRIBE first-frame reap task, armed on session start
-         * (post-mTLS / plaintext admission) and cancelled when the first routed frame arrives.
-         * Event-loop-only (armed, cancelled, and fired all on the event loop).
-         */
+        
         private ScheduledFuture<?> firstFrameDeadline;
 
-        /**
-         * The mTLS-only cert-{@code notAfter} expiry one-shot, armed post-handshake when
-         * {@code enforceCertNotAfter} is on (the token-edge cert path is instead handled by the
-         * {@code EdgeAuthGateHandler}). Event-loop-only. A fired task closes the connection
-         * {@code CREDENTIAL_EXPIRED} (a reconnect signal). Null when enforcement is off (byte-identical).
-         * Volatile: armed on the event loop, cancelled by {@link #teardown} which may run on the session thread.
-         */
+        
         private volatile ScheduledFuture<?> certExpiry;
 
         @Override
@@ -551,7 +442,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
             ctx.fireUserEventTriggered(evt);
         }
 
-        /** The verified client-cert Subject DN (mTLS); null if no verifiable peer certificate. */
+        
         private String resolveCertIdentity(ChannelHandlerContext ctx) {
             SslHandler ssl = ctx.pipeline().get(SslHandler.class);
             if (ssl == null) {
@@ -564,7 +455,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
             }
         }
 
-        /** The verified peer certificate chain (leaf-first), or an empty list if the peer presented none. */
+        
         private List<X509Certificate> verifiedPeerChain(ChannelHandlerContext ctx) {
             SslHandler ssl = ctx.pipeline().get(SslHandler.class);
             if (ssl == null) {
@@ -611,7 +502,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                     () -> onFirstFrameDeadline(ctx), firstFrameDeadlineMs, TimeUnit.MILLISECONDS);
         }
 
-        /** Reap task: fires on the event loop if no routed frame arrived within the deadline. */
+        
         private void onFirstFrameDeadline(ChannelHandlerContext ctx) {
             if (!firstInboundSeen && alive.get()) {
                 metrics.onFirstFrameTimeout();
@@ -619,12 +510,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
             }
         }
 
-        /**
-         * Arms the mTLS-only cert-{@code notAfter} expiry one-shot on the event loop. A
-         * {@link AuthState#NO_EXPIRY} deadline (enforcement off) arms nothing. The delay is
-         * {@code max(0, deadline - now)} so a clock already past {@code notAfter} fires
-         * promptly rather than scheduling a negative delay.
-         */
+        
         private void armCertExpiry(ChannelHandlerContext ctx, long deadlineMillis) {
             if (deadlineMillis == AuthState.NO_EXPIRY || !alive.get()) {
                 return;

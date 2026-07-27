@@ -49,11 +49,6 @@ public final class FanOutBufferReadSinceTest {
     private static final int OK_EMPTY = 2;
     private static final int TORN = 9;
 
-    /**
-     * Classifies a {@link Result} against the cursor, returning a result code.
-     * Any structural violation (duplicate, descending, null, or a seq that should
-     * have been filtered) collapses to {@link #TORN}.
-     */
     private static int classify(Result res, long cursor) {
         if (res.isGap()) {
             return GAP;
@@ -79,16 +74,9 @@ public final class FanOutBufferReadSinceTest {
         return OK_RUN;
     }
 
-    /**
-     * Base for the occupancy variants: a small ring pre-seeded by the test's
-     * {@code state} constructor to a chosen fill level, then one writer publishes
-     * fresh notifications (forcing eviction once full) while one reader tails from
-     * a fixed cursor.
-     */
     abstract static class Base {
         final FanOutBuffer buf;
         final long cursor;
-        /** Seq of the first notification the writer will publish during the race. */
         final long firstNewSeq;
 
         Base(int capacity, int preSeed, long cursor) {
@@ -101,16 +89,12 @@ public final class FanOutBufferReadSinceTest {
         }
 
         final void writerPublish() {
-            // Two appends so the ring laps when it is at/near full: this is the
-            // window where a reader scanning [tail, head) can observe a slot being
-            // overwritten in place - the exact verify-after-read hazard.
+            // Two appends force wrap-around when full: the verify-after-read hazard.
             buf.publish(Notifications.of(firstNewSeq));
             buf.publish(Notifications.of(firstNewSeq + 1));
         }
     }
 
-    // Variant 1: ring NOT yet full (head < capacity). No eviction during
-    // the race window, but head advances under the reader.
     @JCStressTest
     @State
     @Description("readSince vs publish, ring partially full (no eviction) — torn read forbidden")
@@ -134,9 +118,6 @@ public final class FanOutBufferReadSinceTest {
         }
     }
 
-    // Variant 2: ring EXACTLY full (head == capacity). The next publish evicts slot 0
-    // and wraps - the head-vs-tail publish-order window the verify-after-read closes.
-    // This is the load-bearing wrap-around case.
     @JCStressTest
     @State
     @Description("readSince vs publish, ring exactly full → wrap+evict — torn read forbidden")
@@ -160,11 +141,6 @@ public final class FanOutBufferReadSinceTest {
         }
     }
 
-    // Variant 3: ring already past one full lap (head > capacity, tail > 0).
-    // The reader's cursor sits below the live window so a correct buffer must
-    // return GAP (via watermark) - the race is between the watermark publish and
-    // the slot copy. A torn read here would be the most dangerous: serving a
-    // truncated run that silently drops the evicted prefix.
     @JCStressTest
     @State
     @Description("readSince(cursor below window) vs evicting publish — GAP-or-clean, never silent skip")
@@ -191,9 +167,6 @@ public final class FanOutBufferReadSinceTest {
         }
     }
 
-    // Variant 4: two concurrent readers + one writer. Readers must never disagree
-    // in a way that proves a torn slot (each independently must see a clean run or
-    // GAP). FORBIDDEN if EITHER reader tears.
     @JCStressTest
     @State
     @Description("two readers vs one evicting writer — neither reader may tear")

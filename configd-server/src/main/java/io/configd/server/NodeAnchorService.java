@@ -19,73 +19,18 @@ import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-/**
- * The node-anchor boot cross-check and its off-ack-path periodic refresh. The node-anchor binds
- * three node-wide facts under {@code K_integrity}:
- *
- * <ol>
- *   <li><b>Topology.</b> {@code (topologyEpoch, shardCount)} == the {@code TopologyDescriptor}; a
- *       mismatch is a topology-descriptor rollback ⇒ REFUSE.</li>
- *   <li><b>Audit head.</b> {@code (auditRecordCount, auditHeadHash)} anchored on a periodic cadence;
- *       an on-disk audit chain truncated BELOW the anchored head ⇒ REFUSE. The tail written since the
- *       last anchor (at most K records / T ms old) is not covered by this check - a known, bounded
- *       gap.</li>
- *   <li><b>Shard liveness.</b> {@code shardAnchorDigest} = SHA-256 over the sorted
- *       {@code (gid, lastDurableIndex)} pairs. A shard wiped to FRESH (its {@code raft-anchor}
- *       deleted, WAL truncated to 0, snapshot deleted) resets its head to index 0 and boots FRESH;
- *       the node-anchor detects it.</li>
- * </ol>
- *
- * <p><b>Digest boot semantics.</b> A strict "any digest change ⇒ REFUSE" would brick the node on
- * every legal crash, because a shard's {@code lastDurableIndex} legitimately advances between the
- * periodic node-anchor ticks - a forward move in the un-anchored window, and a design that bricks a
- * node on every legal crash fails just as surely as one that misses a real attack. The rule actually
- * enforced is narrower: a shard RESET TO INDEX 0 changes the digest ⇒ REFUSE. So the check is the
- * node-level parallel of the per-shard {@code W<A}/{@code W>A} recovery asymmetry:
- *
- * <ul>
- *   <li>digest matches ⇒ PROCEED;</li>
- *   <li>digest differs AND some shard booted FRESH (its {@code raft-anchor} was absent - the
- *       signature of a wipe, since a legal node never deletes a per-shard anchor) ⇒ REFUSE;</li>
- *   <li>digest differs AND no shard is FRESH ⇒ a legitimate forward advance (per-shard recovery already
- *       refused any {@code W<A} on a present anchor) ⇒ accept-forward: re-anchor + PROCEED.</li>
- * </ul>
- *
- * This detects a shard that was wiped and reset to FRESH; a shard rolled back to an older-but-still-
- * valid anchor slot is a harder attack that only the external {@code AnchorWitness} peer-quorum check
- * can catch, and is out of scope here. To hide a wipe this way an attacker would also have to roll the
- * node-anchor itself back to a digest that never existed - i.e. forge or replay the node-anchor, which
- * needs the signing key or defeats the witness.
- *
- * <p>Off the ack path: neither the boot cross-check nor the refresh touches consensus commit/ack. A
- * failed node-anchor refresh is logged and retried - it is NOT the fail-closed halt the per-shard
- * {@code raft-anchor} fsync is.
- */
+
 final class NodeAnchorService {
 
     private static final Logger LOG = Logger.getLogger(NodeAnchorService.class.getName());
 
-    /** Per-shard owner-thread read budget for a periodic digest refresh (best-effort, off the ack path). */
+    
     private static final long OWNER_READ_TIMEOUT_MS = 500L;
 
     private NodeAnchorService() {
     }
 
-    /**
-     * Boot cross-check + first-boot mint. Opens (or mints) the node-anchor and, when it already exists,
-     * cross-checks topology, audit head, and shard-liveness digest fail-closed (see the class javadoc).
-     *
-     * @param dataDir          the data directory (holds {@code node-anchor})
-     * @param integrity        the Raft integrity envelope (same {@code K_integrity} as the WAL)
-     * @param topologyEpoch    the deploy-time topology epoch (from the TopologyDescriptor)
-     * @param shardCount       the deploy-time shard count N
-     * @param bootDurableIndex gid → this shard's recovered {@code raft-anchor.lastDurableIndex}
-     *                         (captured on the boot thread, before owner binding - race-free)
-     * @param freshShards      the gids whose {@code raft-anchor} was ABSENT at open (booted FRESH)
-     * @param auditLog         the security audit log, or {@code null} when auth is disabled
-     * @return the opened, verified (or minted) node-anchor - the caller owns it and must {@code close()}
-     * @throws IllegalStateException on any cross-check failure (refuse to start, fail-closed)
-     */
+    
     static NodeAnchorFile enforceNodeAnchor(Path dataDir, IntegrityEnvelope integrity,
             long topologyEpoch, int shardCount, Map<Integer, Long> bootDurableIndex,
             Set<Integer> freshShards, AuditLog auditLog) {
@@ -175,32 +120,14 @@ final class NodeAnchorService {
         return nodeAnchor;
     }
 
-    /**
-     * A stateful periodic refresh task: on the K-records-or-T-ms cadence it binds the current audit head
-     * and shard-liveness digest into a new node-anchor slot (one 512-B slot write + {@code fdatasync}).
-     * Runs on its own single scheduler thread, off the ack path.
-     *
-     * @param nodeAnchor          the opened node-anchor (written only by this refresher after boot)
-     * @param auditLog            the security audit log, or {@code null} when auth is disabled
-     * @param durableIndexSource  supplies gid → {@code lastDurableIndex} for every shard, or
-     *                            {@code null} when a shard could not be read this poll (retry next tick);
-     *                            in production {@link #readDurableIndexOnOwners} (owner-thread dispatch)
-     * @param intervalMs          T: refresh at least this often (bounds the un-anchored tail window)
-     * @param kRecords            K: also refresh once this many audit records accrue since the last write
-     * @return the {@link Runnable} to schedule at a sub-T poll period
-     */
+    
     static Runnable newRefresher(NodeAnchorFile nodeAnchor, AuditLog auditLog,
             java.util.function.Supplier<Map<Integer, Long>> durableIndexSource,
             long intervalMs, int kRecords) {
         return new Refresher(nodeAnchor, auditLog, durableIndexSource, intervalMs, kRecords);
     }
 
-    /**
-     * Reads every shard's {@code lastDurableIndex} ON its owner thread (single-owner-confined) via the
-     * driver's owner-executor dispatch, returning the {@code gid → lastDurableIndex} map, or {@code null}
-     * if any shard could not be read within the budget (busy owner / shutting down) - in which case the
-     * refresh is skipped and retried next tick. This is the production {@code durableIndexSource}.
-     */
+    
     static Map<Integer, Long> readDurableIndexOnOwners(MultiRaftDriver driver, int[] gids) {
         try {
             Map<Integer, Future<Long>> futures = new LinkedHashMap<>(gids.length * 2);
@@ -229,17 +156,12 @@ final class NodeAnchorService {
         }
     }
 
-    /** Whether the anchored head is genesis (all-zero) - nothing to cross-check. */
+    
     private static boolean isGenesis(byte[] hash) {
         return MessageDigest.isEqual(hash, NodeAnchorRecord.ZERO_HASH);
     }
 
-    /**
-     * Whether the anchored head {@code recordHash} is still present in the persisted chain. Present ⇒
-     * the chain reached at least that far (records after it are the un-anchored tail); absent ⇒
-     * the log was truncated below the anchored head. The anchored head is always a recent record, so a
-     * legitimate rotation (which drops only the OLDEST records) never removes it.
-     */
+    
     private static boolean auditChainReachesHead(List<AuditLog.Record> persisted, byte[] anchoredHead) {
         for (AuditLog.Record r : persisted) {
             if (MessageDigest.isEqual(r.recordHash(), anchoredHead)) {
@@ -255,7 +177,7 @@ final class NodeAnchorService {
         return list;
     }
 
-    /** The periodic refresh state machine (single-thread confined to the node-anchor scheduler). */
+    
     private static final class Refresher implements Runnable {
         private final NodeAnchorFile nodeAnchor;
         private final AuditLog auditLog;

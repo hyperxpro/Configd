@@ -10,13 +10,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyStore;
 
-/**
- * Generates the PKCS12 key/trust material the TLS tests need, via {@code keytool} (the same approach as
- * {@code TlsManagerTest}) — no test-scope crypto dependency. It mints a CA-less self-signed set: a server cert
- * with SAN {@code localhost} (so {@code HTTPS} endpoint identification passes), a "bad" server cert whose SAN
- * is a different host (so endpoint identification fails), and a client cert for mTLS. Trust stores are
- * cross-imported so each side trusts the other.
- */
 final class CertFixtures {
 
     static final char[] PASSWORD = "changeit".toCharArray();

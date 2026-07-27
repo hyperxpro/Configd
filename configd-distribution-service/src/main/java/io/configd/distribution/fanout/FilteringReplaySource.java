@@ -51,20 +51,10 @@ final class FilteringReplaySource implements ReplaySource {
         this.delegate = Objects.requireNonNull(delegate, "delegate");
     }
 
-    /**
-     * Sets the filter to a watch drain-owner's target. A {@code null} or
-     * {@linkplain WatchTarget#isMatchAll() match-all} (FULL / {@code full_chain_verify}) target
-     * leaves the snapshot whole (passthrough). Preserves the watch-plane behavior exactly.
-     */
     void setTarget(WatchTarget target) {
         this.predicate = (target == null || target.isMatchAll()) ? null : target::matches;
     }
 
-    /**
-     * Sets the filter to an arbitrary key predicate - the filtered legacy SUBSCRIBE session's
-     * prefix-plus-strong-read matcher. A {@code null} predicate leaves the snapshot
-     * whole (passthrough).
-     */
     void setPredicate(Predicate<String> predicate) {
         this.predicate = predicate;
     }

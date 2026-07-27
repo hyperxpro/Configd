@@ -79,13 +79,10 @@ class RedTeamCoalescedWirePoCTest {
         }
     }
 
-    // Type confusion, both directions, must fail closed.
-
     @Test
     void genericDecodeRejectsCoalescedFrame() {
         FrameCodec.Frame coalesced =
                 RaftMessageCodec.encodeCoalescedHeartbeat(Map.of(3, hb(1L, 0L, 0L, 0L)));
-        // A coalesced frame must NOT be silently misparsed as some RaftMessage via the generic decode().
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> RaftMessageCodec.decode(coalesced));
         assertTrue(ex.getMessage().contains("decodeCoalescedHeartbeat"),
@@ -94,15 +91,11 @@ class RedTeamCoalescedWirePoCTest {
 
     @Test
     void coalescedDecodeFailsClosedOnNonCoalescedPayload() {
-        // Reverse misroute: hand a REQUEST_VOTE frame's bytes to the coalesced decoder. It must reject,
-        // not return a bogus map or throw an uncaught BufferUnderflowException.
         FrameCodec.Frame requestVote = RaftMessageCodec.encode(
                 new io.configd.raft.RequestVoteRequest(5L, LEADER, 1L, 1L, false), 0);
         assertThrows(IllegalArgumentException.class,
                 () -> RaftMessageCodec.decodeCoalescedHeartbeat(requestVote));
     }
-
-    // MAX_COALESCED_GROUPS boundary: exactly-max accepted, one byte short must be a clean IAE.
 
     @Test
     void exactlyMaxGroupsAccepted_oneByteShortRejectedCleanly() {
@@ -115,26 +108,22 @@ class RedTeamCoalescedWirePoCTest {
                 assertDoesNotThrow(() -> RaftMessageCodec.decodeCoalescedHeartbeat(frame));
         assertEquals(RaftMessageCodec.MAX_COALESCED_GROUPS, out.size());
 
-        // Drop the final byte: the declared count no longer fits -> the pre-check must reject with a
-        // clean IllegalArgumentException, NOT an uncaught BufferUnderflowException.
         byte[] truncated = new byte[frame.payload().length - 1];
         System.arraycopy(frame.payload(), 0, truncated, 0, truncated.length);
         assertThrows(IllegalArgumentException.class,
                 () -> RaftMessageCodec.decodeCoalescedHeartbeat(coalescedFrame(truncated)));
     }
 
-    // Sign safety: negative groupId / leaderId decode without crashing.
-
     @Test
     void negativeGroupIdAndLeaderIdDecodeWithoutCrash() {
         ByteBuffer buf = ByteBuffer.allocate(4 + RECORD);
-        buf.putInt(1);                       // count
-        buf.putInt(-1);                      // groupId (negative - unregistered downstream, dropped there)
-        buf.putLong(0L);                     // term
-        buf.putInt(Integer.MIN_VALUE);       // leaderId (extreme negative)
-        buf.putLong(-5L);                    // prevLogIndex (negative; record does no validation)
-        buf.putLong(0L);                     // prevLogTerm
-        buf.putLong(0L);                     // leaderCommit
+        buf.putInt(1);
+        buf.putInt(-1);
+        buf.putLong(0L);
+        buf.putInt(Integer.MIN_VALUE);
+        buf.putLong(-5L);
+        buf.putLong(0L);
+        buf.putLong(0L);
         Map<Integer, AppendEntriesRequest> out =
                 assertDoesNotThrow(() -> RaftMessageCodec.decodeCoalescedHeartbeat(coalescedFrame(buf.array())));
         assertEquals(1, out.size());
@@ -142,15 +131,11 @@ class RedTeamCoalescedWirePoCTest {
         assertEquals(Integer.MIN_VALUE, out.get(-1).leaderId().id());
     }
 
-    // Integer-overflow count (count*40 wraps 32-bit) must be rejected.
-
     @Test
     void overflowingCountRejected() {
-        // 0x40000000 * 40 overflows a 32-bit int (to a small/negative value); the long-cast pre-check
-        // AND the prior MAX_COALESCED_GROUPS gate must both refuse it.
         ByteBuffer buf = ByteBuffer.allocate(8);
-        buf.putInt(0x40000000); // 1,073,741,824 groups
-        buf.putInt(0);          // a few stray bytes so remaining() > 0
+        buf.putInt(0x40000000);
+        buf.putInt(0);
         assertThrows(IllegalArgumentException.class,
                 () -> RaftMessageCodec.decodeCoalescedHeartbeat(coalescedFrame(buf.array())));
     }

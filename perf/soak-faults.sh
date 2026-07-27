@@ -1,32 +1,11 @@
 #!/usr/bin/env bash
 # soak-faults.sh — companion fault injector for perf/soak.sh.
-#
-# Operates on the soak's already-running 3-node cluster (same SOAK_BASE, ports,
-# jar, signing key). On a schedule it injects faults that stress recovery under
-# sustained load, so the soak can show whether repeated recovery events leak
-# resources or accumulate churn over time. Every fault is timestamped to the
-# schedule log. Faults are spaced (one per FAULT_INTERVAL_SEC) so the system
-# settles and drift is observable between events.
-#
-# Faults rotated: (1) leader kill + rejoin — election + WAL-replay recovery;
-# (2) follower restart + rejoin — WAL-replay recovery; (3) single-node clock
-# skew via libfaketime — RaftNode timing is tick-count-driven (not wall-clock),
-# so a skewed node is a timestamp/staleness fault, not an election fault; the
-# skew is cleared the next time that node is restarted by another fault.
-#
-# NOT injected here, stated honestly rather than faked: cert / keyring rotation.
-# This soak runs auth-off plaintext loopback so the open-loop driver can drive
-# (the June-30 plaintext methodology), and rotation is an ADMIN-gated operation
-# the driver cannot authenticate; rotation-under-load is covered by the auth
-# arc's live E2E, not this leak/drift soak.
-#
-# GC-log caveat: soak.sh parses per-node -Xlog:gc files for cumulative GC. A
-# node relaunched by this injector is NOT relaunched with -Xlog:gc (that would
-# overwrite the frozen pre-kill log), so its GC-cumulative stops growing after a
-# restart while its heap/RSS/FD/thread signals (re-discovered by live PID) stay
-# correct. GC degradation is therefore read within the between-fault windows,
-# not across a restart. The leak-defining signals (jstat heap-used, RSS, FD,
-# threads) are unaffected.
+# Faults rotated: (1) leader kill + rejoin (election + WAL-replay), (2) follower restart (WAL-replay),
+# (3) clock-skew via libfaketime (tick-count-driven Raft, so skew is timestamp/staleness fault not election).
+# Faults spaced (one per FAULT_INTERVAL_SEC) so system settles, drift observable between events.
+# GC-log caveat: relaunched nodes NOT relaunched with -Xlog:gc (would overwrite pre-kill log),
+# so GC-cumulative stops after restart; leak signals (jstat heap-used, RSS, FD, threads) unaffected.
+
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -50,8 +29,7 @@ SKEW_SEC="${FAULT_SKEW_SEC:-8}"
 LOG="${FAULT_LOG:-${BASE%/*}/fault-schedule.log}"
 
 api()      { echo "127.0.0.1:$((API_BASE + $1))"; }
-# The node's PID = the java process for this data-dir. Prefer comm==java so a
-# clock-skew wrapper (whose cmdline also carries the data-dir) is never picked.
+# Prefer comm==java over clock-skew wrapper (whose cmdline also has data-dir).
 node_pid() {
   local k="$1" p
   for p in $(pgrep -f -- "--data-dir $BASE/n$k " 2>/dev/null); do
@@ -78,8 +56,7 @@ launch_node() { # launch_node <k> [faketime_offset e.g. +8s]
   local k="$1" ft="${2:-}" peers dd pre=""
   peers=$(echo "1 2 3" | tr ' ' '\n' | grep -v "^$k$" | paste -sd,)
   dd="$BASE/n$k"; mkdir -p "$dd"
-  # Clock skew via LD_PRELOAD on the java process itself (no wrapper process, so
-  # the trend sampler and node_pid still see exactly one process per node).
+  # LD_PRELOAD on java process itself (not wrapper, so trend sampler sees exactly one process per node).
   [ -n "$ft" ] && pre="env FAKETIME=$ft FAKETIME_NO_CACHE=1 LD_PRELOAD=$FAKETIME_LIB"
   $pre java $GCFLAGS $HEAP $JVM_EXTRA --enable-preview \
     -jar "$JAR" --node-id "$k" --data-dir "$dd" --peers "$peers" \
@@ -88,7 +65,6 @@ launch_node() { # launch_node <k> [faketime_offset e.g. +8s]
     --peer-addresses "$PEERS_ADDR" >> "$BASE/n$k.log" 2>&1 &
 }
 
-# Pick a follower (not the leader) that currently has a live PID. Echoes id or empty.
 pick_follower() {
   local L="$1" k
   for k in 1 2 3; do

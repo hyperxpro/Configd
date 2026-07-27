@@ -8,10 +8,6 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link ReplicationPipeline} - batching by size, bytes, time,
- * and explicit flush.
- */
 class ReplicationPipelineTest {
 
     private static final int MAX_BATCH_SIZE = 4;

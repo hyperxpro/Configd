@@ -17,13 +17,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * {@code configd.auth.mode=none} must be the OPEN GATE - byte-identical to the historical auth-disabled
- * posture - not a chain that 401s every credential-less request. This boots a real server with
- * {@code mode=none} and proves credential-less requests are allowed (reads open; a reserved {@code _acl/}
- * WRITE is still refused as 403, NOT 401 - the discriminator that distinguishes the open gate from a chain
- * that would deny for a missing credential), and that the loud auth-disabled warning fires.
- */
 @Timeout(30)
 class NoAuthModeBootTest {
 

@@ -17,17 +17,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * {@link RaftMessageCodec#encodeCoalescedHeartbeat} /
- * {@link RaftMessageCodec#decodeCoalescedHeartbeat} round-trip + adversarial bounds. The coalesced
- * payload is a count-bounded fixed-size-record format; a hostile peer's frame is bounded BEFORE any
- * map allocation and rejected on every malformation (bad count, truncation, duplicate gid, padding).
- */
 class CoalescedHeartbeatCodecTest {
 
     private static final NodeId LEADER = NodeId.of(7);
 
-    /** A heartbeat = an AppendEntries with empty entries. Distinct fields per group to catch swaps. */
     private static AppendEntriesRequest heartbeat(long term, long prevIdx, long prevTerm, long commit) {
         return new AppendEntriesRequest(term, LEADER, prevIdx, prevTerm, List.of(), commit);
     }

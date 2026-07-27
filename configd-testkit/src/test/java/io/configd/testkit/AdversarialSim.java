@@ -43,12 +43,6 @@ final class AdversarialSim implements ClusterView {
     private final List<VersionedConfigStore> stores = new ArrayList<>();
     private final List<ConfigStateMachine> stateMachines = new ArrayList<>();
     private final List<CrashStorageHandle> storages = new ArrayList<>();
-    /**
-     * Per-node skewed clock. Retained so a composing harness can read the
-     * PUBLISHING node's clock for its commit timestamp - matching production, where the
-     * leader's (skewed) clock stamps the commit on the apply thread; without it, the only
-     * timestamp surface a composer could reach is the global unskewed {@link #currentTime()}.
-     */
     private final List<SkewedClock> skewedClocks = new ArrayList<>();
     private final SimInvariants invariants;
     private final Activity activity = new Activity();
@@ -59,7 +53,6 @@ final class AdversarialSim implements ClusterView {
     private int scheduleCursor;
     private int opCursor;
 
-    /** Owner binding is done once, on the first tick (the drive thread). */
     private boolean ownersBound;
 
     AdversarialSim(long seed, int nodeCount, int totalTicks) {
@@ -130,34 +123,18 @@ final class AdversarialSim implements ClusterView {
         return activity;
     }
 
-    // Additive, read-only accessors for composition (EdgeFanOutSim).
-    // No behavior change: these expose existing per-node objects so the edge
-    // harness can wire the production fan-out listener + read the CP clock.
-    // Existing tests (digests, gate sweep) are unaffected - nothing here is
-    // called on the CP-only path.
-
-    /** The {@link ConfigStateMachine} for CP node {@code i} (additive accessor). */
     ConfigStateMachine stateMachine(int i) {
         return stateMachines.get(i);
     }
 
-    /**
-     * The per-node {@link SkewedClock} for CP node {@code i} (additive accessor). A
-     * composing harness reads this node's {@code currentTimeMillis()} as the commit
-     * timestamp when that node publishes - mirroring production's "leader's skewed clock on
-     * the apply thread", so the +/-50 ms skew error term the contract names as the only
-     * residual error is actually present on the fan-out stream.
-     */
     SkewedClock skewedClock(int i) {
         return skewedClocks.get(i);
     }
 
-    /** The CP {@link AdversarialNetwork} (additive accessor - same instance). */
     AdversarialNetwork network() {
         return network;
     }
 
-    /** The current CP sim logical time in ms (additive accessor). */
     long currentTime() {
         return currentTimeMs;
     }
@@ -195,7 +172,6 @@ final class AdversarialSim implements ClusterView {
         return -1;
     }
 
-    /** Runs the whole scheduled simulation, checking safety after every tick. */
     void run() {
         for (int t = 0; t < schedule.totalTicks(); t++) {
             tick();
@@ -205,7 +181,6 @@ final class AdversarialSim implements ClusterView {
         }
     }
 
-    /** One adversarial tick: advance time, apply due faults/ops, tick nodes, check. */
     void tick() {
         currentTimeMs += 1;
         tickIndex++;
@@ -229,16 +204,6 @@ final class AdversarialSim implements ClusterView {
         invariants.checkAll();
     }
 
-    /**
-     * Owner-thread bind rule made executable in the adversarial sim: bind every node's owner to the single
-     * drive thread as the first action on that thread (NOT during construction). The sim is
-     * single-threaded, so this thread owns every node; the {@code assertOwnerThread()} tripwire is
-     * now ACTIVE and, via {@link #throwingChecker()} -> {@link SimInvariants#throwingNodeChecker()},
-     * turns any off-drive-thread {@link RaftNode} access into a {@link SimInvariants.SafetyViolation}
-     * - failing the seed deterministically, so {@code raft_owner_thread} joins the in-node safety
-     * invariants checked under every adversarial schedule. Crash faults arm but do not rebuild node
-     * objects (see {@code applyDueFaults}), so a one-time bind is complete.
-     */
     private void bindOwnersIfNeeded() {
         if (ownersBound) {
             return;

@@ -24,13 +24,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Unit matrix for {@link FanOutSessionCore}: SUBSCRIBE_OK mode decision, drain and batch
- * boundaries, gap to snapshot to resume cursor continuity, heartbeat cadence, and ack
- * accounting. Uses a real {@link FanOutBuffer} and {@link SnapshotReplaySource} with a
- * controllable {@link RecordingTransportSink} and {@link FakeClock} (no threads, no wall
- * clock).
- */
 class FanOutSessionCoreTest {
 
     private final FakeClock clock = new FakeClock(1_000L);

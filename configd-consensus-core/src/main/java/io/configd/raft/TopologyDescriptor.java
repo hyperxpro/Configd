@@ -5,32 +5,10 @@ import io.configd.common.IntegrityEnvelope;
 import java.nio.ByteBuffer;
 
 /**
- * The authenticated, versioned deploy-time topology descriptor - the frozen-format replacement
- * for the plaintext {@code raft-shard-count.meta} marker. It serves BOTH the fixed-N deploy guard
- * (a different {@code N} on restart is a loud reshard rejection) AND the topology-epoch authority
- * that {@code ShardMap.epoch()} returns.
- *
- * <p>The descriptor is a node-level {@link IntegrityEnvelope} record under {@link RaftArtifactMagic#TOPO_MAGIC}
- * ("RTOP"), scoped {@link IntegrityEnvelope#NODE_SCOPE}, over an 18-byte payload:
- *
- * <pre>
- *   [formatVersion:u16 = 1][shardCount N:u32][topologyEpoch:u64][reserved:u32 = 0 MBZ]
- * </pre>
- *
- * <p>Wrapping it in the same {@code K_integrity} envelope the WAL uses makes the deploy guard
- * <b>tamper-evident</b>: under a key the MAC/GCM tag refuses an attacker who edits {@code N} (to
- * bypass the reshard refusal) or {@code topologyEpoch}; in the keyless posture it is CRC-only, per
- * the uniform posture rules (keyless carries no adversarial guarantee). Unknown magic / rolled
- * {@code formatVersion} / a non-zero reserved field / {@code topologyEpoch = 0} (reserved-illegal,
- * "pre-epoch") all fail loud - the same refuse-to-start class as the old corrupt-marker refusal.
- *
- * <p><b>Magic single-sourcing.</b> {@link RaftArtifactMagic#TOPO_MAGIC} is the frozen registry value
- * and is package-private; this codec lives in the SAME package so it reads that value directly - one
- * source of truth, no cross-module mirror (unlike {@code WAL_FILE_MAGIC}, whose authoritative
- * definition sits in {@code configd-common} and must be mirrored). {@code RaftArtifactMagicTest} pins
- * the value distinct and non-zero.
- *
- * <p>Immutable and stateless beyond its two fields; safe to share.
+ * Deploy-time topology descriptor (fixed-N deploy guard + topology-epoch authority).
+ * Authenticated via K_integrity envelope (MAC/GCM tamper-evident under key; CRC-only keyless).
+ * Reserved-illegal values (N<1, epoch=0, unknown magic/version) fail loud (refuse-to-start).
+ * Immutable; safe to share.
  */
 public final class TopologyDescriptor {
 

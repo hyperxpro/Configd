@@ -19,11 +19,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * The module's discovery + fail-closed configuration boundary: the ServiceLoader entry is well-formed and
- * found (so naming {@code oidc} in the provider chain wires this module), and malformed config is refused at
- * boot rather than silently building a weaker validator.
- */
 final class OidcModuleWiringTest {
 
     private static final String P = "configd.auth.oidc.issuer.kc.";
@@ -32,7 +27,6 @@ final class OidcModuleWiringTest {
         Map<String, String> cfg = new LinkedHashMap<>();
         cfg.put(P + "uri", "https://idp.example/realms/configd");
         cfg.put(P + "audience", "configd-api");
-        // A direct https jwksUri means no discovery and no network fetch at construction (the source is lazy).
         cfg.put(P + "jwksUri", "https://idp.example/realms/configd/protocol/openid-connect/certs");
         return cfg;
     }
@@ -48,8 +42,6 @@ final class OidcModuleWiringTest {
 
     @Test
     void chainBuildWiresOidcByName() {
-        // Exercises AuthenticatorChain.discoverFactories() -> the module is registered by ServiceLoader and
-        // 'oidc' resolves to it. No network: a directly-configured https jwksUri source is lazy.
         AuthenticatorChain chain = AuthenticatorChain.build(List.of("oidc"), new MapConfigSource(validConfig()));
         assertEquals(List.of("oidc"), chain.providerTypes());
     }
@@ -106,7 +98,6 @@ final class OidcModuleWiringTest {
         return cfg;
     }
 
-    /** A trivial in-memory {@link ConfigSource} over a flat map (getString + keysWithPrefix are primitive). */
     private record MapConfigSource(Map<String, String> values) implements ConfigSource {
         @Override
         public Optional<String> getString(String key) {

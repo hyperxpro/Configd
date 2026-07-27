@@ -8,27 +8,6 @@
 # every step asserts a REAL result and FAILS if its summary line is absent
 # (non-vacuity).
 #
-# WHAT A GREEN GATE-6 PROVES (locks in the operability bar):
-#   (b) metric-contract  EVERY dashboard panel + alert series is PROVEN EMITTED
-#                        (EdgeMetricsContractTest.everyDashboardAndAlertSeriesIs
-#                        ProvenEmitted) and the SLO series are RECORDED with real
-#                        data on their real paths (MetricsWiringContractTest) —
-#                        no blind dashboards, no series hardwired to zero.
-#   (c) alert-tests      every alert rule FIRES on its injected condition and STAYS
-#                        QUIET on normal operation (promtool test rules) + rules lint.
-#   (d) wire-compat      serialized messages are byte-stable within the wire version
-#                        (WireCompatGoldenBytesTest + EdgeFrameCodecGoldenFixtureTest)
-#                        — the N↔N+1 mixed-version interop proof (a wire change is
-#                        forced to bump the version).
-#   (e) bootstrap        a TRUE zero-state cold start forms a cluster and self-elects
-#                        (BootstrapColdStartTest) — and the live exporter renders the
-#                        SLO histogram buckets the alerts query.
-#   (f) backup-restore   snapshot → restore into a FRESH state machine is STATE-EQUAL
-#                        key-for-key incl. overwrite+delete (BackupRestoreRoundTripTest).
-#   (g) drill            the alert→runbook→recovery loop CLOSES for at least one
-#                        scenario (GameDayDrillTest: lagging edge → staleness alert →
-#                        catch-up runbook → recovery). The full multi-node drill is
-#                        the nightly/ops lane (gates/game-day-drill.sh), captured.
 #
 # Environment knobs (CI must not set the skips on a full local run):
 #   GATE6_SKIP_GATE5=1   skip step (a) — LOUD (CI runs gate-5 as its own job).

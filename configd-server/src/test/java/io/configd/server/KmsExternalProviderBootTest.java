@@ -20,15 +20,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Proves the {@code ConfigdServer} EXTERNAL-custody encryption boot path end-to-end (without a live backend)
- * via the ServiceLoader-registered {@link InMemoryTestKmsProviderFactory} ({@code test-kms}): a first boot
- * discovers the provider, provisions + persists the sealed carrier ({@code raft-kms-root}), and mints the
- * keyring from the unsealed secret; a second boot reads that carrier, unseals the SAME secret, and decrypts a
- * record the first boot wrote. This is the {@code unsealKeyringCustodySecret} -> {@link KmsSealedRootStore} ->
- * {@code provider.unwrap} -> keyring seam that {@code vault-transit} rides. It also locks the fail-closed
- * behaviour of the sealed-root carrier file.
- */
 class KmsExternalProviderBootTest {
 
     private static final String ENABLE = "configd.raft.encryption.enabled";

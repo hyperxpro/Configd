@@ -6,15 +6,6 @@
 # watch propagation is covered by the edge gates (gate-3 Compose E2E +
 # gate-mswatch), not here.
 #
-# WHAT IT PROVES (exits non-zero on ANY failure):
-#   - 3-node localhost cluster comes up, all /health/ready == 200
-#   - a leader is elected (one node commit-confirms a PUT with 200)
-#   - PUT a config -> 200 (ADR-0033: 200 == "Committed: seq=S", returned
-#     ONLY after quorum commit + apply; the write blocks until commit or the
-#     5s write deadline, so probe/write curls allow for commit-wait latency)
-#   - read it back from ALL 3 nodes (default GET) and linearizably from leader
-#   - kill -9 the leader, a NEW leader is elected within budget
-#   - write again to a survivor, read it back
 #
 # Budget ~60s. No sudo. Idempotent (cleans up its own ports/dirs on entry+exit).
 # Requires: a built shaded jar at the path below (mvn -pl configd-server package).

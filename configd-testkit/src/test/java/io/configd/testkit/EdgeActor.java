@@ -62,24 +62,14 @@ final class EdgeActor {
     private final LongSupplier timeSource;
     private final Clock clock;
 
-    /**
-     * The monotonic-read guarantee monitor wired into the core's read store. Test mode
-     * ({@code testMode = true}) makes a {@code monotonic_read} violation throw an
-     * {@link AssertionError} that fails the seed. One registry per actor (counts are
-     * diagnostic only).
-     */
     private final InvariantMonitor monitor;
 
-    /** Diagnostic registry shared by the monitor and the core's implausible-frontier counter. */
     private final MetricsRegistry metrics;
 
-    /** The real production edge-client engine (rebuilt on every incarnation). */
     private EdgeClientCore core;
 
-    /** Deterministic FIFO inbox; messages are delivered by the edge network. */
     private final Deque<EdgeStream> inbox = new ArrayDeque<>();
 
-    /** Incarnation counter - bumped on every crash (models a cache reincarnation). */
     private int incarnation;
 
     private boolean alive = true;

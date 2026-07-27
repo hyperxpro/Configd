@@ -11,32 +11,19 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * Hosts several {@link WatchSession}s on ONE shared edge connection — the multiplex that makes per-connection
- * watch fan-out real. Only <b>from-now</b> watches may share (a cursored watch is refused at creation: a
- * shared drain has a single position, so honouring an independent resume is impossible). It demultiplexes
- * each inbound frame to the owning watch by {@code watch_id}, and — the point of the whole exercise —
- * terminates a per-watch reject on ONLY that watch, leaving the connection and its sibling watches streaming.
- *
- * <p>Installed as the shared {@link EdgeSession}'s inbound handler + post-auth hook: {@link #onConnected} (re)creates
- * every hosted watch with a fresh {@code watch_id}; a transparent reconnect re-creates them all.
+ * Multiplex several from-now watches on one shared connection. Demultiplexes by watch_id; per-watch
+ * terminals affect only that watch, leave siblings streaming.
  */
 public final class WatchMultiplexHandler implements InboundFrameHandler {
 
     private final ConcurrentHashMap<Long, WatchSession> byWatchId = new ConcurrentHashMap<>();
     private final List<WatchSession> all = new CopyOnWriteArrayList<>();
-    /** One watch_id sequence for the whole connection, so every hosted watch's id is unique here. */
     private final java.util.concurrent.atomic.AtomicLong watchIdSeq = new java.util.concurrent.atomic.AtomicLong(1);
     private volatile EdgeConnection connection;
 
-    /** Binds the already-live connection when a dedicated session is converted to a multiplex in flight. */
     public void bindConnection(EdgeConnection conn) {
         this.connection = conn;
     }
-
-    /**
-     * Adopts an already-live watch (the original dedicated watch whose connection is being shared): installs the
-     * shared-mode hooks on it and registers its CURRENT {@code watch_id}. It keeps streaming uninterrupted.
-     */
     public void adopt(WatchSession watch) {
         // Keep the shared sequence ahead of the id the host already minted while dedicated (avoid a collision).
         watchIdSeq.updateAndGet(cur -> Math.max(cur, watch.watchId() + 1));
@@ -45,23 +32,20 @@ public final class WatchMultiplexHandler implements InboundFrameHandler {
         byWatchId.put(watch.watchId(), watch); // its id was already assigned while dedicated
     }
 
-    /** Adds a from-now watch. If the connection is already live, creates it now; else {@link #onConnected} will. */
     public void add(WatchSession watch) {
         all.add(watch);
         watch.shareOn(err -> terminateOne(watch, err), id -> byWatchId.put(id, watch), watchIdSeq::getAndIncrement);
         EdgeConnection c = connection;
         if (c != null) {
-            watch.onConnected(c); // mints a fresh watch_id (registered via the shareOn sink) and sends WATCH_CREATE
+            watch.onConnected(c);
         }
     }
 
-    /** Removes a watch (the caller already sent WATCH_CANCEL); the connection + siblings stay. */
     public void remove(WatchSession watch) {
         byWatchId.values().remove(watch);
         all.remove(watch);
     }
 
-    /** Post-(re)authentication: (re)create every hosted watch on the fresh connection with new watch_ids. */
     public void onConnected(EdgeConnection conn) {
         this.connection = conn;
         byWatchId.clear();

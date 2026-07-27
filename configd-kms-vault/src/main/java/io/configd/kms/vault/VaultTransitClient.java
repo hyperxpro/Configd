@@ -20,20 +20,8 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
 
 /**
- * A hand-rolled Vault HTTP client over the JDK {@link HttpClient}, scoped to the Transit seal-custodian
- * surface Configd uses. It is deliberately tiny: login, and the four Transit calls that seal / unseal / rotate
- * a single per-node secret. The security-critical crypto happens INSIDE Vault; this client only shuttles
- * base64 blobs, so no vendor SDK is needed and the core stays Vault-free.
- *
- * <h2>Seal model (why encrypt, not datakey)</h2>
- * The per-node custody secret is generated with the JDK {@link java.security.SecureRandom} and sealed with
- * {@code transit/encrypt} carrying {@code associated_data} (the node AAD). Both {@code encrypt} and
- * {@code decrypt} honour {@code associated_data} on every Vault version, so a relocated/copied blob whose AAD
- * does not match FAILS to unseal - the node-binding defence. ({@code transit/datakey} would have Vault mint the
- * entropy but does not bind AEAD associated-data the same way.) Vault still holds the KEK and only ever returns
- * a small {@code vault:vN:} wrapped blob; Configd derives all keyring keys locally.
- *
- * <p>Not thread-safe by contract need: the provider calls it once at boot, then drops it.
+ * JDK HttpClient-based Vault Transit client for seal/unseal/rotate. Crypto happens in Vault only;
+ * client shuttles base64 blobs. Node AAD (associated_data) binding: relocated/copied blob fails unseal.
  */
 final class VaultTransitClient implements AutoCloseable {
 
@@ -49,7 +37,6 @@ final class VaultTransitClient implements AutoCloseable {
         this.http = b.build();
     }
 
-    /** Authenticates to Vault and returns the client token (AppRole login, or a raw token for dev). */
     String login() {
         VaultConfig.Auth auth = cfg.auth();
         return switch (auth.method()) {
@@ -66,10 +53,6 @@ final class VaultTransitClient implements AutoCloseable {
         };
     }
 
-    /**
-     * Seals {@code plaintext} under the Transit key with the node AAD, returning the {@code vault:vN:}
-     * ciphertext. Used to provision the per-node secret and to re-seal it on KEK rotation.
-     */
     String encrypt(String token, byte[] plaintext) {
         String body = Json.object(
                 "plaintext", b64(plaintext),

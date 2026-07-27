@@ -1,36 +1,16 @@
 #!/usr/bin/env bash
-# soak.sh — real-cluster soak workload (leak / drift detector)
-#
-# Wires a real 3-node control-plane cluster (same launch shape as
-# gates/smoke-multinode.sh / perf/wsB-live-write.sh), drives it at a
-# box-sustainable write rate, and every ~SAMPLE_SEC appends a trend line so
-# heap creep, fd leaks, thread leaks, GC degradation, and commit-latency
-# drift are visible over the run.
-#
-# Honesty: this is a real-duration workload. A short run is a smoke, never a
-# soak — pass --duration=300 (5 min) to validate the harness; production runs
-# go for 24h+ so they outlive any single session.
-#
-# Why not drive at the top-line write SLO: the box's sustainable end-to-end
-# commit rate tops out around 136-172/s (see wsB-calibrate.txt), so a much
-# higher target rate is env-blocked on this hardware. A soak detects leaks
-# and drift, which are rate-independent — a steady ~100/s with headroom over
-# that floor is the right, sustainable soak rate. This harness does not
-# measure throughput; it watches for resource creep at a constant,
-# comfortably-sustainable load.
+# soak.sh — real-cluster soak workload (leak / drift detector).
+# 3-node cluster, box-sustainable rate (~100/s for headroom over 136-172/s ceiling).
+# Detects leaks/drift (rate-independent); does not measure throughput.
+# Real-duration: --duration=300 for smoke (5min validation), 24h+ for production.
 #
 # Usage:
-#   perf/soak.sh [--duration=<sec>] [--rate=<commits/s>] [--seed=<int>] \
+#   perf/soak.sh [--duration=<sec>] [--rate=<commits/s>] [--seed=<int>]
 #                [--sample=<sec>] [--out=<dir>]
-#
 # Examples:
-#   perf/soak.sh --duration=300                                  # 5-min smoke (validation)
+#   perf/soak.sh --duration=300                                  # 5-min smoke
 #   perf/soak.sh --duration=86400 --out=perf/results/soak-24h    # 24h run
-#
-# Requires: freshly-built shaded server jar + benchmarks.jar.
-#   ./mvnw -pl configd-server -am package
-#   ./mvnw -pl configd-testkit -am package
-# Idempotent: cleans up its own ports/dirs on entry + exit.
+
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

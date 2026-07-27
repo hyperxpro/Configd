@@ -14,16 +14,11 @@ package io.configd.client;
  */
 public final class Sanitize {
 
-    /** The maximum retained length of a sanitized diagnostic; longer input is truncated with an ellipsis. */
     public static final int MAX_LEN = 512;
 
     private Sanitize() {
     }
 
-    /**
-     * Returns a printable, bounded, control-character-free rendering of {@code raw}. A {@code null} input
-     * yields the empty string.
-     */
     public static String message(String raw) {
         if (raw == null || raw.isEmpty()) {
             return "";

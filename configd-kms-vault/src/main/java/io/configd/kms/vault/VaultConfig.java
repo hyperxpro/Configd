@@ -12,19 +12,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * The resolved, validated configuration for {@link VaultTransitKmsProvider}, parsed from
- * {@code configd.kms.vault.*}. A missing required setting fails loud ({@link ConfigException}) so the boot
- * refuses to start rather than build a misconfigured custodian.
- *
- * @param address       the Vault base address, e.g. {@code https://vault.internal:8200} (TLS in production)
- * @param transitMount  the Transit engine mount path (default {@code transit})
- * @param keyName       the named Transit key that seals the per-node root (required)
- * @param namespace     the Vault Enterprise namespace header, if any (else {@code null})
- * @param auth          how this node authenticates to Vault
- * @param caFile        a PEM CA to pin Vault's server cert (else the JDK default trust store)
- * @param aadContext    the base64-authenticated associated-data binding the seal to this node
- * @param bits          the datakey size in bits (256 for AES-256)
- * @param timeout       the per-call HTTP timeout (fail closed on expiry)
+ * Resolved Vault Transit KMS config. Fail-closed parsing: missing required settings throw ConfigException at boot.
  */
 record VaultConfig(
         String address,
@@ -39,13 +27,10 @@ record VaultConfig(
 
     static final String PREFIX = "configd.kms.vault.";
 
-    /** The authentication method + its credentials. AppRole is the portable default. */
     record Auth(Method method, String roleId, String secretId, String token) {
 
         enum Method {
-            /** RoleID + SecretID (the machine default). SecretID delivered directly or from a file. */
             APPROLE,
-            /** A raw Vault token in config - dev/test only; the secret-zero with no mitigation. */
             TOKEN
         }
     }

@@ -140,10 +140,6 @@ class RaftLogRecoveryChecksTest {
                         + ex.getMessage());
     }
 
-    // Recovery-time structural checks (contiguity / term monotonicity / snapshot-join). Each
-    // record below is individually well-formed and authentic; only the whole-log check catches
-    // the tampering - which is exactly what makes reorder/splice detection real.
-
     @Test
     void contiguityGapRefused(@TempDir Path tempDir) {
         Storage storage = Storage.file(tempDir);

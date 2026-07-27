@@ -30,16 +30,6 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Integration tests for {@link ConfigdServer}.
- * <p>
- * Each test uses a temporary data directory that is cleaned up automatically.
- * All server tests carry a 60-second timeout: a cold-JVM server boot does real CPU work (class-load,
- * Netty/TLS init, Raft groups, HTTP, snapshot replay), and on a CPU-credit-throttled box that can take
- * far longer than usual, so a short timeout would flake rather than catch a real hang.
- * The API port is set to 0 (ephemeral) so tests can run in parallel without
- * port conflicts.
- */
 @Timeout(60)
 class ConfigdServerTest {
 
@@ -101,11 +91,6 @@ class ConfigdServerTest {
         }
     }
 
-    /**
-     * Creates a minimal config with ephemeral API port (0) to avoid port conflicts.
-     * No peer addresses are configured, so the server uses a no-op transport
-     * (single-node / test mode).
-     */
     private ServerConfig minimalConfig(Path dataDir) {
         return ServerConfig.parse(new String[]{
             "--node-id", "0",
@@ -307,27 +292,6 @@ class ConfigdServerTest {
         server.shutdown();
     }
 
-    /**
-     * The tick loop must keep running after a routed-message task throws.
-     * <p>
-     * This injects a throwable through the real inbound seam
-     * ({@link ConfigdServer#raftInboundHandler}) - a routed message whose
-     * {@code routeMessage -> node.handleMessage -> transport.send} throws - on the
-     * same single-thread Raft/tick executor that also runs a fixed-rate tick task,
-     * and asserts:
-     * <ol>
-     *   <li>The throwable does NOT propagate to the caller: the inbound handler has no
-     *       try/catch, so the {@code routeMessage} exception is captured into the
-     *       {@code ScheduledThreadPoolExecutor}'s discarded Future (the disk-failing
-     *       follower goes mute, no ack/log/metric). The inbound {@code accept} must
-     *       return normally.</li>
-     *   <li>The separately-scheduled fixed-rate tick task keeps running after the routed
-     *       task threw: its counter advances past where it stood at injection time. An
-     *       STPE cancels a task that throws in its own run, but a one-shot {@code execute}
-     *       throwing must not cancel the independent {@code scheduleAtFixedRate} tick task
-     *       - the zombie-tick property this test guards against.</li>
-     * </ol>
-     */
     @Test
     void tickLoopContinuesAfterDriverException() throws Exception {
         final int GROUP = 1;
@@ -400,20 +364,6 @@ class ConfigdServerTest {
         }
     }
 
-    /**
-     * The linearizable read protocol must actually wait for leadership confirmation before serving
-     * reads.
-     * <p>
-     * A confirmer wired as {@code () -> raftNode.readIndex() >= 0} would be insufficient: it starts
-     * the ReadIndex protocol but never waits for heartbeat confirmation or state machine catch-up, so
-     * it could serve a stale read. The correct confirmer dispatches readIndex() to the tick thread,
-     * then polls isReadReady() until confirmed or timeout (150ms).
-     * <p>
-     * This test reproduces the scenario at the component level: it creates a RaftNode that is NOT an
-     * elected leader (3-node cluster, no transport), puts data directly into the config store, then
-     * constructs a ConfigReadService with a confirmer that uses readIndex() - the same code path the
-     * server uses. The linearizable read must return null (not leader) rather than serving stale data.
-     */
     @Test
     void linearizableReadReturnsNullWhenNotLeader() throws Exception {
         Path dataDir = tempDir.resolve("linearizable-read-test");
@@ -663,13 +613,6 @@ class ConfigdServerTest {
         }
     }
 
-    /**
-     * The TcpRaftTransport constructor must retain the TlsManager passed in, and expose it via
-     * tlsManager(). This is the primitive the ConfigdServer fail-closed check depends on:
-     * {@code config.tlsEnabled() && tcpTransport.tlsManager() == null} -> refuse to start. If the
-     * getter ever stops reflecting the constructor argument, the fail-closed guard silently becomes a
-     * no-op.
-     */
     // 120s is a generous hang-detection budget, not a performance assertion. The expensive keytool
     // keystore generation is hoisted to @BeforeAll (cached in keyStorePath/trustStorePath/certFile), so
     // the timed body here only constructs a TlsManager/TcpRaftTransport and reads a getter. The
@@ -705,12 +648,6 @@ class ConfigdServerTest {
         }
     }
 
-    /**
-     * The ConfigdServer production boot path must fail-closed when TLS is configured but the
-     * transport ends up with a null TlsManager. Verified by a grep-level guard on the source file so
-     * a future refactor that silently drops the argument is caught at CI time, without requiring a
-     * full TLS stack in tests.
-     */
     @Test
     void find0050_configdServerFailClosedCheckIsPresent() throws Exception {
         // Resolve the main source file from either the module or repo root invocation of `mvn test`.

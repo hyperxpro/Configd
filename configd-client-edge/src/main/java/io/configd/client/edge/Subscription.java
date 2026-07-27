@@ -247,8 +247,6 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
                 case EdgeFrame.SnapshotChunk chunk -> reassembler.chunk(chunk);
                 case EdgeFrame.SnapshotEnd end -> handleSnapshotEnd(end);
                 default -> {
-                    // A watch frame (0x0A+) on a legacy subscribe connection is unexpected; ignore benignly —
-                    // the watch plane handles the 0x02 wire separately. Other business frames are handled above.
                 }
             }
         } catch (ConfigdException fatal) {
@@ -259,16 +257,9 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
     @Override
     public void onHeartbeat(EdgeFrame.Heartbeat heartbeat) {
         this.latestServerSeq = heartbeat.latestSeq();
-        // On a filtered (0x03) session HEARTBEAT.latestSeq is the DRAINED-THROUGH covered-S — everything
-        // matching this edge's prefixes through it has been delivered or filtered, not
-        // the raw buffer tip. Advance the dense covered/resume cursor MONOTONICALLY so a reconnect resumes near
-        // head (the forward-only apply bridges the view when the next in-prefix delta lands) and the ack
-        // watermark climbs past the filtered-out skips, so a correctly-filtered narrow edge is not demoted for
-        // ack-lag while only out-of-prefix commits pass. A regressed covered-S is ignored — the covered cursor
-        // never moves backward. The ack itself stays demand-gated through drainToSubscriber, so the reactive
-        // backpressure holds unchanged: a stalled subscriber that is not draining still stalls its own ack
-        // watermark (and, once its delivery buffer fills, parks the reader — no further heartbeats, no acks).
-        // On the classic (0x01/0x02) path this is a no-op: filtered is false, matching the legacy contract.
+        // On filtered (0x03) session, latestSeq is the drained-through covered-S (everything matching prefixes
+        // has been delivered or filtered out, not the raw buffer tip). Advance the dense cursor monotonically
+        // so reconnect resumes near head and the ack watermark climbs past filtered-out skips.
         if (filtered && heartbeat.latestSeq() > cursor) {
             cursor = heartbeat.latestSeq();
             persistCursor();
@@ -278,17 +269,12 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
 
     @Override
     public void onCatchUp() {
-        // DEMOTED_TO_CATCHUP: a snapshot flow follows to heal us; keep the connection and ingest it.
         this.snapshotExpected = true;
     }
 
     @Override
     public void onTerminal(ConfigdException terminal) {
-        // Per-connection teardown. A reconnectable terminal (gap / unavailable) is resumed by onConnected on
-        // the next connection, so the reactive stream is NOT errored here — only when the client gives up
-        // (onClientGaveUp). A gap / superseded-topology terminal (server-sent or client-detected) forces the
-        // resume to re-bootstrap from scratch (cursor 0). Reset per-connection reassembly so a resume starts
-        // clean.
+        // Gap or topology change: force re-bootstrap from cursor 0 on next reconnect.
         if (terminal instanceof GapUnrecoverableException
                 || terminal instanceof io.configd.client.StaleTopologyException) {
             forceRebootstrap = true;
@@ -298,8 +284,6 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
 
     @Override
     public boolean wantsMoreFrames() {
-        // Backpressure: stop reading when the delivery buffer is full (a slow reactive subscriber). With no
-        // subscriber, demand is unbounded and the buffer never fills.
         synchronized (deliverLock) {
             return deliveryBuffer.size() < deliveryBufferCap;
         }
@@ -307,28 +291,21 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
 
     private void handleSubscribeOk(EdgeFrame.SubscribeOk ok) {
         this.latestServerSeq = ok.latestSeq();
-        // The server's confirm selects the filtered-stream apply mode — a dense covered-S resume
-        // cursor and forward-only gap detection. A 0x01/0x02 SUBSCRIBE_OK always decodes filtered=false, and a
-        // 0x03 edge talking to a filter-OFF server also gets filtered=false, so both stay on the strict classic
-        // path. Gate every filtered behaviour on this bit (not on the negotiated wire version) so the byte-for-
-        // byte classic contract holds whenever the server is not actually filtering this session.
+        // Server's confirm selects filtered-stream mode: dense covered-S cursor and forward-only gap detection.
+        // Gate filtered behaviour on this bit so classic sessions keep strict-contiguity byte-for-byte.
         this.filtered = ok.filtered();
         if (ok.mode() == EdgeFrame.Mode.TAIL) {
-            // Resume-from-cursor: the current view IS the hydrated state (for a fresh subscribe it is empty at
-            // cursor 0). A snapshot does not follow.
             if (!hydrated.isDone()) {
                 hydrated.complete(cursor);
             }
         } else {
-            // SNAPSHOT_FIRST: a snapshot flow follows; hydration completes at SNAPSHOT_END.
             snapshotExpected = true;
         }
     }
 
     private void handleSnapshotEnd(EdgeFrame.SnapshotEnd end) {
-        ConfigSnapshot snapshot = reassembler.end(end); // throws on caps/truncation → failConnection
+        ConfigSnapshot snapshot = reassembler.end(end);
         if (snapshot.version() < cursor) {
-            // Backward snapshot: never regress; re-ack the real cursor so the server stops re-sending.
             sendCursorAck(cursor);
             return;
         }
@@ -346,22 +323,15 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
     private void handleNotify(EdgeFrame.Notify notify) {
         for (CommitNotification notification : notify.notifications()) {
             ConfigDelta delta = notification.delta();
-            verifier.verify(delta); // ChainVerificationException → failConnection (fail-closed)
+            verifier.verify(delta);
 
             long currentVersion = view.currentVersion();
             if (delta.toVersion() <= currentVersion) {
-                continue; // stale / re-delivered — idempotent, cursor unchanged
+                continue;
             }
-            // Gap detection. The classic (0x01/0x02) chain is contiguous, so any fromVersion other than the
-            // applied version is a gap. On a server-side-filtered (0x03) session the delivered chain is
-            // intentionally non-contiguous — the server drops whole out-of-prefix signed deltas and advances a
-            // dense covered-S cursor — so a FORWARD jump (fromVersion > applied) is the
-            // expected shape of an interleaved out-of-prefix commit and must be APPLIED, not re-bootstrapped;
-            // only a REGRESSION below the applied version is a genuine gap. The forward jump applies cleanly
-            // because LocalConfigView.applyDelta stamps the store to delta.toVersion() regardless of fromVersion
-            // (it does not require contiguity), so no separate bridged-apply is needed. Per-delta signature
-            // verification already ran above, so a forward-applied delta is verified exactly like a contiguous
-            // one — the filtered relaxation touches only the position check, never the crypto.
+            // Classic (0x01/0x02): gap if fromVersion != applied. Filtered (0x03): forward jump is OK
+            // (out-of-prefix deltas dropped), only regression below applied is a gap. Forward-applied deltas
+            // apply cleanly via applyDelta stamps to toVersion regardless of fromVersion.
             boolean gap = filtered
                     ? delta.fromVersion() < currentVersion
                     : delta.fromVersion() != currentVersion;
@@ -381,7 +351,6 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
         sendCursorAck(acked);
     }
 
-    /** Buffers a delta's changes for reactive delivery; the last one carries the ack seq. */
     private void bufferChanges(ConfigDelta delta, long notifSeq) {
         List<ConfigMutation> mutations = delta.mutations();
         synchronized (deliverLock) {
@@ -395,28 +364,22 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
                 deliveryBuffer.addLast(new Buffered(change, last ? notifSeq : -1L));
             }
             if (mutations.isEmpty()) {
-                // An empty (election / no-op) delta still advances the cursor; record the ack seq directly.
                 deliveredSeqNoSubscriber(notifSeq);
             }
         }
     }
 
-    /** When no reactive subscriber is attached, an empty delta's seq is immediately "delivered" for acking. */
     private void deliveredSeqNoSubscriber(long notifSeq) {
         if (subscriber.get() == null) {
             deliveredSeq = Math.max(deliveredSeq, notifSeq);
         }
     }
 
-    /**
-     * Delivers buffered changes to the reactive subscriber up to the current demand and returns the seq to ack.
-     * With no subscriber, everything is "delivered" (drain-promptly) and the applied cursor is the ack seq.
-     */
     private long drainToSubscriber() {
         Flow.Subscriber<? super ConfigChange> sub = subscriber.get();
         synchronized (deliverLock) {
             if (sub == null) {
-                deliveryBuffer.clear(); // no reactive consumer — the view is the read model; drop the feed
+                deliveryBuffer.clear();
                 deliveredSeq = Math.max(deliveredSeq, cursor);
                 return cursor;
             }
@@ -445,7 +408,6 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
         try {
             c.send(new EdgeFrame.CursorAck(seq), wireVersion);
         } catch (IOException io) {
-            // The connection is going away; the reconnect path re-subscribes and re-acks.
         }
     }
 
@@ -474,7 +436,6 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
         return cursor.components().isEmpty() ? 0L : cursor.components().get(0).s();
     }
 
-    /** The verified read view (also reachable via {@link #view()}); convenience for a get. */
     public Optional<byte[]> get(String key) {
         return view.get(key);
     }

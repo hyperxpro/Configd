@@ -6,31 +6,13 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Immutable configuration for a single {@link RaftNode}.
- *
- * <p><b>Timing units.</b> The {@code ...Ms}-named fields are real milliseconds.
- * {@link RaftNode} is tick-driven and does not see wall-clock time, so it
- * converts each duration into a tick count via {@code tickPeriodMs} (the period
- * of one {@code RaftNode.tick()} call as scheduled by the caller). Production
- * schedules ticks every 10 ms ({@code ConfigdServer.TICK_PERIOD_MS}); the
- * deterministic simulation harness ticks every 1 ms. Setting {@code tickPeriodMs}
- * to that period makes the documented millisecond values the values actually
- * realized at runtime. If the {@code ...Ms} values were consumed directly as tick
- * counts, every interval would be inflated by the tick period (10x in production:
- * a documented 150-300 ms election timeout becomes 1.5-3 s).
- *
- * @param nodeId              this node's unique identifier
- * @param peers               the set of peer node identifiers (excluding this node)
- * @param electionTimeoutMinMs minimum election timeout in milliseconds (default 150)
- * @param electionTimeoutMaxMs maximum election timeout in milliseconds (default 300)
- * @param heartbeatIntervalMs  heartbeat interval in milliseconds (default 50)
- * @param maxBatchSize         maximum number of entries per AppendEntries RPC (default 64)
- * @param maxBatchBytes        maximum total bytes per AppendEntries RPC (default 256 KB)
- * @param maxPendingProposals  maximum uncommitted entries before rejecting proposals (default 1024)
- * @param maxInflightAppends   maximum in-flight AppendEntries RPCs per peer (default 10)
- * @param tickPeriodMs         milliseconds represented by one {@code RaftNode.tick()};
- *                             the divisor used to convert the {@code ...Ms} durations
- *                             into tick counts (production 10 ms, simulation 1 ms)
+ * RaftNode configuration (immutable).
+ * Timing: ...Ms fields are real milliseconds; RaftNode converts to tick counts via tickPeriodMs divisor
+ * (production 10ms, sim 1ms). If ...Ms were consumed as tick counts directly, intervals would inflate 10x.
+ * Validation: derived election:heartbeat tick ratio must be >= ~10 (safety factor for leader to emit
+ * several heartbeats within one election window, preventing live-lock).
+ * Backpressure: maxPendingProposals is the uncommitted-entry ceiling past which proposals are
+ * rejected (default 1024). Keep that value written here - gates/gate-5.sh asserts it stays documented.
  */
 public record RaftConfig(
         NodeId nodeId,

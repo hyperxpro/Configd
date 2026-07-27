@@ -29,30 +29,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.BiFunction;
 
-/**
- * Transport-agnostic decision core for the admin / control-plane HTTP API.
- *
- * <p>Both the JDK {@link HttpApiServer} adapter and the Netty {@code NettyHttpApiServer} adapter
- * delegate to this single source of truth, mapping their transport's request to an {@link AdminRequest}
- * and writing back the returned {@link AdminResponse}. Every security control - authn (Bearer/401), authz
- * (ACL/403), audit, replay (401/409), 429 overload, strong-read fail-closed, the {@code /metrics}
- * Bearer gate, method 405 - is therefore decided once and re-proven by the identical contract on each
- * transport (equivalence by construction, not by hopeful re-implementation).
- *
- * <p><b>Path handling (load-bearing, do not weaken).</b> The strong-read key is derived
- * from {@link URI#getPath()} - the percent-<em>decoded</em> path - and that SAME decoded key is used
- * both to classify the key (strong vs. ordinary) and to resolve the value from the store, so the two
- * cannot diverge by an encoding trick. Both adapters build that {@link URI} the identical way
- * ({@code java.net.URI}: the JDK exchange's {@code getRequestURI()}, and {@code new URI(request.uri())}
- * on Netty), so the classification is byte-identical across transports. The path is NOT raw, NOT
- * normalized (no {@code ..} collapsing), and NOT lower-cased - {@code StrongReadFailClosedTest} pins
- * each evasion vector (percent-encoded prefix, encoded slash, dot-dot, double-slash, query string).
- *
- * <p><b>Routing is exact-match for the fixed endpoints</b> ({@code /health/live}, {@code /health/ready},
- * {@code /metrics}) and prefix-match for {@code /v1/config/}; the admin surface is deliberately
- * tightened so a suffix variant (e.g. {@code /metricsZ}) cannot reach the Prometheus exposition. Unknown
- * paths return 404 {@code "Not Found"}.
- */
+
 public final class AdminApiHandler {
 
     private final HealthService healthService;
@@ -163,66 +140,38 @@ public final class AdminApiHandler {
         this.keyringRotator = keyringRotator;
     }
 
-    /**
-     * A transport's view of one request, reduced to what the decision logic needs. Both adapters
-     * MUST build {@link #uri()} via {@code java.net.URI} (see the path-handling note on the class) so
-     * path decoding is identical. {@link #body()} is read lazily - the decision logic only invokes it
-     * for a PUT, and only after auth + replay have passed, so an unauthenticated caller's body is never
-     * drained.
-     */
+    
     public interface AdminRequest {
         String method();
 
         URI uri();
 
-        /** First value of {@code name} (case-insensitive), or {@code null} if absent. */
+        
         String header(String name);
 
-        /** The full request body; only called for an authenticated, replay-cleared PUT. */
+        
         byte[] body() throws IOException;
 
-        /**
-         * The VERIFIED client-certificate chain from the TLS session (leaf first), or empty if the peer
-         * presented none / the connection is plain HTTP. Populated by an adapter only when the admin TLS
-         * requested a client certificate (mTLS mode); it feeds the {@code mtls} authenticator on the HTTP
-         * plane. Default empty so every non-TLS caller and every test request is unaffected.
-         */
+        
         default java.util.List<java.security.cert.X509Certificate> peerCertificates() {
             return java.util.List.of();
         }
     }
 
-    /**
-     * The decided response: status, the exact headers to set (including {@code Content-Type}), and the
-     * body bytes. A 0-length body is written as such (the incumbent behaviour for an empty config value).
-     */
+    
     public record AdminResponse(int status, Map<String, String> headers, byte[] body) {
     }
 
-    /**
-     * The mechanism seam for the ADMIN-gated leadership-transfer endpoint. The decision core stays
-     * transport- AND driver-agnostic: it decides routing, the ADMIN gate, and the response mapping, then
-     * delegates the {@code RaftNode} mechanism (owner-thread posting, the transfer itself) here. The
-     * production implementation ({@code DriverLeadershipAdmin}) is backed by the multi-Raft driver; tests
-     * supply a fake. A {@code null} seam disables the endpoint (the route falls through to 404).
-     */
+    
     public interface LeadershipAdmin {
-        /** Whether the group is registered on this node (an unknown group is a 400 request). */
+        
         boolean hasGroup(int groupId);
 
-        /**
-         * Initiates a leadership transfer of {@code groupId} to {@code target} through the built
-         * {@link AdminService} guard, returning its {@link AdminService.AdminResult}. Runs the owner-confined
-         * {@code RaftNode} touch on the group's owner thread. Throws {@link LeadershipTransferTimeout} if
-         * the owner thread does not confirm within its bounded wait (mapped to 503).
-         */
+        
         AdminService.AdminResult transferLeadership(int groupId, NodeId target);
     }
 
-    /**
-     * The owner thread did not confirm a leadership transfer within the bounded wait. Surfaced as 503
-     * (unknown-but-retryable), distinct from a precondition {@link AdminService.AdminResult.Failure} (409).
-     */
+    
     public static final class LeadershipTransferTimeout extends RuntimeException {
         public LeadershipTransferTimeout(int groupId, long awaitMillis) {
             super("leadership transfer for group " + groupId
@@ -230,40 +179,19 @@ public final class AdminApiHandler {
         }
     }
 
-    /**
-     * The mechanism seam for the ADMIN-gated Raft cluster endpoints (status + add-server). Same split of
-     * responsibilities as {@link LeadershipAdmin}: the decision core owns routing, the ADMIN gate, replay,
-     * audit, and the response mapping; this seam owns the {@code RaftNode} mechanism, including the
-     * owner-thread-confined reads (a group's voter set) and the joint-consensus membership proposal. The
-     * production implementation ({@code DriverRaftClusterAdmin}) is backed by the multi-Raft driver; tests
-     * supply a fake. A {@code null} seam leaves the {@code /v1/admin/raft/} namespace unrouted (404).
-     */
+    
     public interface RaftClusterAdmin {
-        /** Whether the group is registered on this node (an unknown group is a 400 request). */
+        
         boolean hasGroup(int groupId);
 
-        /**
-         * The status of every Raft group this node hosts, resolved with owner-confined reads for the voter
-         * set and off-owner-safe reads for role/leader/term/commit/applied. Throws {@link RaftAdminTimeout}
-         * (mapped to 503) if a group owner does not confirm its read within the bounded wait.
-         */
+        
         List<GroupStatus> status();
 
-        /**
-         * Proposes adding {@code target} as a voter of {@code groupId} via joint consensus (Raft
-         * reconfiguration), driven through the built {@link AdminService} guard. Resolves the current voter
-         * set owner-confined; a target that is already a voter is a precondition
-         * {@link AdminService.AdminResult.Failure} (mapped to 409). Throws {@link RaftAdminTimeout} (503) if
-         * the owner thread does not confirm within the bounded wait.
-         */
+        
         AdminService.AdminResult addServer(int groupId, NodeId target);
     }
 
-    /**
-     * One Raft group's status for {@code GET /v1/admin/raft/status}. {@code role} is the string form of the
-     * node's role for this group; {@code leaderId} is null when no leader is known; {@code voters} is the
-     * committed voter set (owner-confined read).
-     */
+    
     public record GroupStatus(int groupId, String role, NodeId leaderId, long currentTerm,
                               long commitIndex, long lastApplied, Set<NodeId> voters) {
         public GroupStatus {
@@ -271,30 +199,20 @@ public final class AdminApiHandler {
         }
     }
 
-    /**
-     * A group owner did not confirm an owner-confined admin read/propose within the bounded wait. Surfaced
-     * as 503 (unknown-but-retryable), never a 500 or an indefinite block on the HTTP thread.
-     */
+    
     public static final class RaftAdminTimeout extends RuntimeException {
         public RaftAdminTimeout(String operation, long awaitMillis) {
             super(operation + " was not confirmed within " + awaitMillis + "ms");
         }
     }
 
-    /**
-     * The mechanism seam for the ADMIN-gated keyring term-rotation trigger. The decision core owns the
-     * ADMIN gate, replay, and audit; this seam performs the durable, non-destructive term rotation (open
-     * the persisted keyring, append a fresh per-term root, advance the active term, persist, close) and
-     * returns the new active term. Implementations MUST serialize concurrent rotations. A rotation failure
-     * throws (mapped to a fail-closed 503, audited) - never a silent success. A {@code null} rotator leaves
-     * {@code /v1/admin/keyring/rotate} unrouted (404).
-     */
+    
     public interface KeyringRotationAdmin {
-        /** Performs one durable, non-destructive term rotation and returns the new active term. */
+        
         int rotate();
     }
 
-    /** Routes a request to the owning endpoint and returns the decided response. */
+    
     public AdminResponse handle(AdminRequest req) throws IOException {
         String path = req.uri().getPath();
         if ("/health/live".equals(path)) {
@@ -455,11 +373,7 @@ public final class AdminApiHandler {
         return new AdminResponse(200, h, result.value());
     }
 
-    /**
-     * The fail-closed response: 503 with a distinguishing body and
-     * {@code X-Fail-Closed: strong-read} header, plus {@code X-Leader-Hint} when a leader is known.
-     * The local/stale value is NEVER served for a strong-read key on this path.
-     */
+    
     private AdminResponse failClosed(ConfigScope scope, String key, String reason) {
         Map<String, String> h = jsonHeaders();
         h.put("X-Fail-Closed", "strong-read");
@@ -558,10 +472,7 @@ public final class AdminApiHandler {
         return writeResult(result);
     }
 
-    /**
-     * HTTP mapping. 200 is returned ONLY after quorum commit + local apply
-     * (the {@code Committed} variant); no other path returns 200.
-     */
+    
     private AdminResponse writeResult(ConfigWriteService.WriteResult result) {
         return switch (result) {
             case ConfigWriteService.WriteResult.Committed c -> json(200, "Committed: seq=" + c.seq());
@@ -602,18 +513,7 @@ public final class AdminApiHandler {
     private static final String RAFT_ADD_SERVER_PATH = "/v1/admin/raft/add-server";
     private static final String KEYRING_ROTATE_PATH = "/v1/admin/keyring/rotate";
 
-    /**
-     * {@code POST /v1/admin/groups/{groupId}/transfer-leadership?target=<nodeId>} - an operator-initiated,
-     * ADMIN-gated request to place group {@code groupId}'s Raft leadership on node {@code target}. This is
-     * a control operation, deliberately NOT modelled as a {@code /v1/config/} write or a reserved-key write
-     * (which would conflate it with config apply/audit/replay semantics). It is idempotent-ish and its
-     * effect is asynchronous: a 200 means the transfer was INITIATED (a TimeoutNow was sent), not that the
-     * leader has moved - the caller confirms via a follow-up leader read.
-     *
-     * <p>The group id is parsed from the path (the caller's own input, so a malformed id is a 400 decided
-     * before the ADMIN gate, leaking no server state); group EXISTENCE is checked only AFTER the gate so an
-     * unauthorized caller cannot probe which groups exist.
-     */
+    
     private AdminResponse transferLeadership(AdminRequest req, String path) {
         if (!path.endsWith(TRANSFER_LEADERSHIP_SUFFIX)) {
             return json(404, "Not Found"); // an unknown sub-resource under the admin-groups namespace
@@ -694,11 +594,7 @@ public final class AdminApiHandler {
         }
     }
 
-    /**
-     * Maps an {@link AdminService.AdminResult} to HTTP: {@code Success} -> 200 (initiated, asynchronous);
-     * {@code NotLeader} -> 503 + {@code X-Leader-Hint} (retry the group leader); {@code Failure} -> 409
-     * (a transfer precondition failed - target == self / not a voter / a config change is pending).
-     */
+    
     private AdminResponse transferResult(String actor, String resourceKey, int groupId, NodeId target,
                                          AdminService.AdminResult result) {
         return switch (result) {
@@ -724,7 +620,7 @@ public final class AdminApiHandler {
         };
     }
 
-    /** Routes the {@code /v1/admin/raft/} sub-resources; an unknown sub-path is 404. */
+    
     private AdminResponse raftAdmin(AdminRequest req, String path) {
         if (RAFT_STATUS_PATH.equals(path)) {
             return raftStatus(req);
@@ -735,13 +631,7 @@ public final class AdminApiHandler {
         return json(404, "Not Found"); // an unknown sub-resource under the admin-raft namespace
     }
 
-    /**
-     * {@code GET /v1/admin/raft/status} - an ADMIN-gated read of every Raft group this node hosts: role,
-     * leader, term, commit/apply indices, and the voter set. The voter set is resolved via owner-confined
-     * reads (never off-owner), so a wedged/overloaded owner surfaces as 503 (retryable) rather than a torn
-     * value or an indefinite block. The gate is the strict fail-closed ADMIN posture (denied when auth is
-     * off): the cluster topology this exposes is control-plane state, not public.
-     */
+    
     private AdminResponse raftStatus(AdminRequest req) {
         if (!"GET".equals(req.method())) {
             return json(405, "Method Not Allowed");
@@ -763,17 +653,7 @@ public final class AdminApiHandler {
         }
     }
 
-    /**
-     * {@code POST /v1/admin/raft/add-server?group={groupId}&node={nodeId}} - an operator-initiated,
-     * ADMIN-gated, replay-guarded request to add {@code nodeId} as a voter of {@code groupId} through Raft
-     * joint-consensus reconfiguration. The effect is asynchronous: a 200 means the config change was
-     * PROPOSED, not that the new voter has committed - confirm via {@code GET /v1/admin/raft/status}.
-     *
-     * <p>{@code group} and {@code node} are the caller's own query input, so a malformed value is a 400
-     * decided BEFORE the ADMIN gate (leaking no server state); {@code group} defaults to 0 when absent,
-     * {@code node} is required. Group EXISTENCE is checked only AFTER the gate so an unauthorized caller
-     * cannot probe which groups exist.
-     */
+    
     private AdminResponse raftAddServer(AdminRequest req) {
         if (!"POST".equals(req.method())) {
             return json(405, "Method Not Allowed");
@@ -833,12 +713,7 @@ public final class AdminApiHandler {
         }
     }
 
-    /**
-     * Maps an {@link AdminService.AdminResult} for add-server to HTTP: {@code Success} -> 200 (the config
-     * change was proposed, asynchronous); {@code NotLeader} -> 503 + {@code X-Leader-Hint} (retry the group
-     * leader); {@code Failure} -> 409 (a precondition failed - already a voter / a config change is pending
-     * / no-op not yet committed in this term).
-     */
+    
     private AdminResponse addServerResult(String actor, String resourceKey, int groupId, NodeId target,
                                           AdminService.AdminResult result) {
         return switch (result) {
@@ -865,15 +740,7 @@ public final class AdminApiHandler {
         };
     }
 
-    /**
-     * {@code POST /v1/admin/keyring/rotate} - an ADMIN-gated, replay-guarded trigger for a durable,
-     * non-destructive at-rest keyring TERM rotation. It appends a fresh per-term root and advances the
-     * keyring's active term on disk; because the active write term is read at boot, new writes adopt the new
-     * term after the next (rolling) restart, and old-term data still decrypts (all retained roots load). The
-     * gate is the strict fail-closed ADMIN posture (refused when auth is off - a key rotation must never be
-     * issuable during an insecure bring-up). A rotation failure is surfaced fail-closed (503, audited),
-     * never a silent success; the previous keyring stays intact (the rotation is crash-atomic).
-     */
+    
     private AdminResponse keyringRotate(AdminRequest req) {
         if (!"POST".equals(req.method())) {
             return json(405, "Method Not Allowed");
@@ -904,7 +771,7 @@ public final class AdminApiHandler {
         }
     }
 
-    /** Serializes the group statuses into a JSON object {@code {"groups":[...]}}. */
+    
     private static String formatRaftStatus(List<GroupStatus> groups) {
         StringBuilder sb = new StringBuilder();
         sb.append("{\"groups\":[");
@@ -933,21 +800,7 @@ public final class AdminApiHandler {
         return sb.toString();
     }
 
-    /**
-     * The ADMIN gate for a privileged control operation. Reuses the SAME authn (Bearer) + authz
-     * (ACL {@link AclService.Permission#ADMIN}) primitives as {@link #checkAuth}, but with a STRICTER
-     * fail-closed posture appropriate to a control op:
-     * <ul>
-     *   <li><b>Auth disabled</b> -> DENIED. A privileged control op (a leadership transfer, a membership
-     *       change, a key rotation) must never be issuable during an insecure auth-off bring-up -
-     *       identity/policy is meaningless without auth, and these operations are too dangerous to leave
-     *       open (mirrors the reserved-prefix WRITE refusal, which likewise refuses a privileged mutation
-     *       while auth is off).</li>
-     *   <li><b>Authenticated but no ACL service</b> -> DENIED: ADMIN cannot be evaluated, so fail closed
-     *       rather than fall through to allowed.</li>
-     *   <li><b>Authenticated, ACL present</b> -> requires ADMIN on the group's reserved control resource.</li>
-     * </ul>
-     */
+    
     private AuthCheck checkAdmin(AdminRequest req, String resourceKey) {
         if (chain != null) {
             return checkAdminViaChain(req, resourceKey);
@@ -993,11 +846,7 @@ public final class AdminApiHandler {
         }
     }
 
-    /**
-     * Maps a non-OK {@link AuthCheck} to its HTTP denial: {@code UNAUTHENTICATED} -> 401 +
-     * {@code WWW-Authenticate: Bearer} (RFC 7235 section 3.1); {@code FORBIDDEN} -> 403;
-     * {@code UNAVAILABLE} -> 503 (a configured authenticator's backend is down - retryable, fail-closed).
-     */
+    
     private AdminResponse authDenial(AuthCheck check) {
         return switch (check.decision()) {
             case UNAUTHENTICATED -> {
@@ -1011,33 +860,7 @@ public final class AdminApiHandler {
         };
     }
 
-    /**
-     * Authentication + ACL. A missing/blank/malformed/invalid credential is AUTHENTICATION failure ->
-     * {@link AuthDecision#UNAUTHENTICATED} (401); an authenticated principal the ACL does not permit ->
-     * {@link AuthDecision#FORBIDDEN} (403). When auth is not configured the gate is open.
-     *
-     * <p><b>The reserved-prefix ADMIN gate.</b> A key under a reserved namespace
-     * ({@link #isReserved}: {@code _acl/} or {@code _system/}) requires {@link AclService.Permission#ADMIN}
-     * for <b>every</b> method (GET/PUT/DELETE), overriding the GET->READ / PUT|DELETE->WRITE mapping - this
-     * closes both policy MUTATION and policy DISCLOSURE (a non-ADMIN read of {@code _acl/} would leak the
-     * access structure; the {@code ADMIN} enum doc states it "reaches the reserved subtrees"). The gate is
-     * <b>fail-closed</b>: a reserved key whose ADMIN cannot be evaluated (no ACL service, or - defensively -
-     * a non-authenticated result) is DENIED, never allowed to fall through to {@link AuthCheck#ok}. It is
-     * byte-identical in production: only {@code root} touches {@code _acl/}, and {@code root} holds
-     * {@code ADMIN} via its {@code allOf} grant, so no production decision changes.
-     *
-     * <p><b>Predicate-alignment invariant.</b> The gate keys off
-     * {@code key.startsWith(PolicySerializer.ACL_PREFIX)} on the SAME post-strip key that the loader
-     * ({@code AclConfigPolicyLoader}) and the store ({@code VersionedConfigStore}) use verbatim - so a key
-     * that slips the gate is also invisible to the loader and is a distinct store key. "Evades the gate"
-     * and "is real policy" are therefore mutually exclusive. Do NOT add write-path key normalization here
-     * without applying the identical transform to this predicate.
-     *
-     * <p><b>Auth-off footgun:</b> when auth is disabled (the loudly-warned non-production mode) the gate is
-     * otherwise open, but a WRITE to a reserved prefix is still refused - an {@code _acl/} key written
-     * during an auth-off bring-up would PERSIST and be seeded into policy on the first SECURED boot,
-     * possibly fail-closed-freezing it. Policy is meaningless without auth.
-     */
+    
     private AuthCheck checkAuth(AdminRequest req, String key, AclService.Permission permission) {
         boolean reserved = isReserved(key);
 
@@ -1092,16 +915,10 @@ public final class AdminApiHandler {
         return AuthCheck.ok("-");
     }
 
-    /** Forward-compat reserved namespace gated to ADMIN alongside {@code _acl/} (no real keys yet). */
+    
     private static final String SYSTEM_PREFIX = "_system/";
 
-    /**
-     * Whether {@code key} (the post-strip config key) is under a reserved namespace that requires
-     * {@link AclService.Permission#ADMIN} for every method. Reuses the
-     * {@link PolicySerializer#ACL_PREFIX} CONSTANT so the gate, the policy loader, and the store key off
-     * the SAME predicate on the SAME verbatim key (the predicate-alignment invariant - see {@link
-     * #checkAuth}); {@code _system/} is reserved forward-compat.
-     */
+    
     private static boolean isReserved(String key) {
         return key.startsWith(PolicySerializer.ACL_PREFIX) || key.startsWith(SYSTEM_PREFIX);
     }
@@ -1114,13 +931,7 @@ public final class AdminApiHandler {
         return null;
     }
 
-    /**
-     * Resolves a credential through the authenticator chain and WIPES its secret material afterward (the
-     * Basic password {@code char[]}), so a verified password does not linger on the heap. A null credential
-     * (no / malformed / unrecognized-scheme Authorization header) maps to the same {@code NO_CREDENTIAL}
-     * Denied the inline sites used. The Basic {@code new String(decoded)} in {@link #credentialFrom} cannot
-     * be wiped in place (Strings are immutable); only its {@code char[]} copy on the credential is.
-     */
+    
     private io.configd.common.auth.AuthResult resolveAndWipe(Credential cred) {
         if (cred == null) {
             return new io.configd.common.auth.AuthResult.Denied(
@@ -1133,13 +944,7 @@ public final class AdminApiHandler {
         }
     }
 
-    /**
-     * Builds a {@link Credential} from the request for the SPI chain. An {@code Authorization} header takes
-     * precedence: a Bearer token or HTTP Basic (RFC 7617) user+password. When there is NO usable
-     * Authorization header, a verified client certificate ({@link AdminRequest#peerCertificates()}, mTLS
-     * mode) is used instead. Returns {@code null} when nothing usable is presented (the chain path then
-     * treats it as "no credential" -&gt; 401).
-     */
+    
     private static Credential credentialFrom(AdminRequest req) {
         String authHeader = req.header("Authorization");
         if (authHeader != null) {
@@ -1172,11 +977,7 @@ public final class AdminApiHandler {
         return null;
     }
 
-    /**
-     * The SPI-chain analogue of {@link #checkAuth}: resolves the credential through the authenticator chain,
-     * mapping {@code Unavailable} -&gt; 503, {@code Denied} -&gt; 401, and {@code Authenticated} -&gt; the
-     * SAME authorization check ({@code aclService.isAllowed(id, roles, key, permission)}) the legacy path uses.
-     */
+    
     private AuthCheck checkAuthViaChain(AdminRequest req, String key, AclService.Permission permission, boolean reserved) {
         Credential cred = credentialFrom(req);
         io.configd.common.auth.AuthResult r = resolveAndWipe(cred);
@@ -1205,7 +1006,7 @@ public final class AdminApiHandler {
         return AuthCheck.ok(p.id());
     }
 
-    /** The SPI-chain analogue of {@link #checkAdmin} (ADMIN-gated control op): same stricter fail-closed posture. */
+    
     private AuthCheck checkAdminViaChain(AdminRequest req, String resourceKey) {
         Credential cred = credentialFrom(req);
         io.configd.common.auth.AuthResult r = resolveAndWipe(cred);
@@ -1227,12 +1028,7 @@ public final class AdminApiHandler {
         return AuthCheck.ok(p.id());
     }
 
-    /**
-     * Records a mutating attempt (or its denial) if an audit log is configured. The actor is the
-     * resolved principal, or {@code "-"} when unauthenticated. NEVER receives a credential. A
-     * persistence failure propagates (fail-loud): for a tamper-evident control, an inability to
-     * record an event is itself security-relevant and must not be silently dropped.
-     */
+    
     private void audit(String actor, String action, String key, String outcome) {
         if (auditLog != null) {
             auditLog.record(actor == null ? "-" : actor, action, key, outcome);
@@ -1250,11 +1046,7 @@ public final class AdminApiHandler {
         };
     }
 
-    /**
-     * Applies the replay guard (if enabled) to an already-authenticated mutating request. Returns the
-     * rejection {@link AdminResponse} when the request is rejected, or {@code null} when accepted /
-     * the guard is off. A stale/future stamp or missing headers -> 401; a replayed nonce -> 409.
-     */
+    
     private AdminResponse replayRejected(AdminRequest req, String actor, String action, String key) {
         if (replayGuard == null) {
             return null; // opt-in: default off
@@ -1277,18 +1069,10 @@ public final class AdminApiHandler {
         };
     }
 
-    /**
-     * The parsed {@code ?scope=} result: a valid {@link ConfigScope}, or a
-     * {@code null} scope carrying an {@code error} reason for an unrecognized value (mapped to 400).
-     */
+    
     private record ScopeResult(ConfigScope scope, String error) {}
 
-    /**
-     * Parses the optional {@code ?scope=} query parameter case-insensitively into a
-     * {@link ConfigScope}. Absent/blank defaults to {@link ConfigScope#GLOBAL}. An unrecognized value
-     * yields an error (mapped to 400 by the caller) - fail-closed, never a silent coercion that could
-     * mis-route the request to the wrong scope. Scope is a typed field, never a path segment.
-     */
+    
     private static ScopeResult parseScope(AdminRequest req) {
         String raw = queryParam(req.uri().getQuery(), "scope");
         if (raw == null || raw.isBlank()) {
@@ -1302,11 +1086,7 @@ public final class AdminApiHandler {
         }
     }
 
-    /**
-     * The key-validation gate. Enforces non-blank and &lt;= 1024 bytes UTF-8 (the deployed key-length
-     * limit). Returns the rejection reason, or {@code null} when the key is acceptable. The key is NOT
-     * rewritten/normalized - the strong-read classification depends on the raw decoded key.
-     */
+    
     private static String keyValidationReason(String key) {
         // Length-before-blank mirrors ConfigWriteService.put's order, so a key that is both yields the
         // same 400 reason at the edge and in the write service.
@@ -1319,11 +1099,7 @@ public final class AdminApiHandler {
         return null;
     }
 
-    /**
-     * Returns the first value of query parameter {@code name} from the (already percent-decoded)
-     * {@link URI#getQuery()} string, or {@code null} if the parameter is absent. A present parameter with
-     * no {@code =} yields an empty string. Parameter names are matched exactly (case-sensitive).
-     */
+    
     private static String queryParam(String query, String name) {
         if (query == null) {
             return null;

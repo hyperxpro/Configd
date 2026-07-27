@@ -51,10 +51,6 @@ public final class PrometheusExporter {
             this.cutoffs = cutoffs.clone();
         }
 
-        /**
-         * Builds a schedule from an ordered map of le-label to cutoff value.
-         * Iteration order of the supplied map is preserved.
-         */
         public static BucketSchedule of(Map<String, Long> labelsToCutoffs) {
             Objects.requireNonNull(labelsToCutoffs, "labelsToCutoffs must not be null");
             String[] ls = labelsToCutoffs.keySet().toArray(new String[0]);
@@ -83,30 +79,15 @@ public final class PrometheusExporter {
         this(registry, Collections.emptyMap());
     }
 
-    /**
-     * Creates an exporter that emits {@code _bucket{le="X"}} lines for the
-     * histograms named in {@code schedules}. Histograms without a schedule
-     * fall back to quantile lines (existing behavior).
-     */
     public PrometheusExporter(MetricsRegistry registry, Map<String, BucketSchedule> schedules) {
         this.registry = Objects.requireNonNull(registry, "registry must not be null");
         this.schedules = Map.copyOf(Objects.requireNonNull(schedules, "schedules must not be null"));
     }
 
-    /**
-     * The backing registry this exporter reads. Exposed so a component that already receives the exporter
-     * (e.g. the HTTP server, for its own reject counters) can register/increment on the same shared
-     * registry without threading a second handle through its constructor.
-     */
     public MetricsRegistry registry() {
         return registry;
     }
 
-    /**
-     * Exports all metrics in Prometheus text format.
-     *
-     * @return the metrics text (UTF-8, newline-terminated)
-     */
     public String export() {
         MetricsRegistry.MetricsSnapshot snapshot = registry.snapshot();
         StringBuilder sb = new StringBuilder(4096);
@@ -126,8 +107,6 @@ public final class PrometheusExporter {
                     BucketSchedule schedule = schedules.get(name);
                     MetricsRegistry.Histogram hist = registry.histogram(name);
                     if (schedule != null) {
-                        // Emit cumulative bucket lines so SLO alert expressions
-                        // querying {le="X"} have actual time series to read.
                         sb.append("# TYPE ").append(promName).append(" histogram\n");
                         long[] cutoffs = new long[schedule.size()];
                         for (int i = 0; i < cutoffs.length; i++) cutoffs[i] = schedule.cutoffAt(i);
@@ -158,9 +137,6 @@ public final class PrometheusExporter {
             }
         });
 
-        // Info gauges: a string value carried in a label, rendered as `name{label="value"} 1`
-        // (the Prometheus convention for exporting a string, e.g. a state digest). One line per
-        // registration - only the current value, so a changing value does not accrete series.
         for (MetricsRegistry.InfoSample info : registry.infoGaugeSamples()) {
             String promName = sanitizeName(info.name());
             sb.append("# TYPE ").append(promName).append(" gauge\n");
@@ -171,10 +147,6 @@ public final class PrometheusExporter {
         return sb.toString();
     }
 
-    /**
-     * Escapes a Prometheus label value per the text exposition format: backslash, double-quote, and
-     * newline are backslash-escaped. A null value renders as empty.
-     */
     private static String escapeLabelValue(String value) {
         if (value == null) {
             return "";
@@ -192,10 +164,6 @@ public final class PrometheusExporter {
         return sb.toString();
     }
 
-    /**
-     * Sanitizes a metric name for Prometheus compatibility.
-     * Prometheus metric names must match {@code [a-zA-Z_:][a-zA-Z0-9_:]*}.
-     */
     private static String sanitizeName(String name) {
         StringBuilder sb = new StringBuilder(name.length());
         for (int i = 0; i < name.length(); i++) {

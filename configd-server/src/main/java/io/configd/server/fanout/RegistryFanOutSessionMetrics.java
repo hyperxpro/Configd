@@ -8,35 +8,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-/**
- * {@link FanOutSessionMetrics} backed by the server's {@link MetricsRegistry}. Mirrors the leaf-module metrics-sink idiom: the
- * distribution-service stays observability-free behind the {@link FanOutSessionMetrics}
- * interface, and the live server bridges each callback to a registry counter / gauge here.
- *
- * <h2>Eager registration</h2>
- * Every series this class can ever write is registered in the constructor - including the
- * per-reason demotion / close counters and the connected-subscribers / queue-depth gauges -
- * so {@code PrometheusExporter} emits a zero-valued time series from the first scrape rather
- * than a metric that only blinks into existence after the first event (no
- * metric that production code never writes, and conversely no metric a scrape can't find until
- * it first fires).
- *
- * <h2>Label encoding</h2>
- * {@link MetricsRegistry} has no native label support, so the design's
- * {@code edge_fanout_demotions_total{reason=ack_lag}} becomes a distinct counter per reason
- * (e.g. {@code edge.fanout.demotions.ack_lag} -> {@code edge_fanout_demotions_ack_lag_total}).
- * An unknown reason falls back to an {@code other} bucket so a new reason can never silently
- * vanish.
- *
- * <h2>Per-session gauges</h2>
- * {@code edge_fanout_queue_depth} is process-wide here (the max observed across live sessions),
- * not per-session - the registry is a flat process registry with no per-session label. The
- * connected-subscribers gauge is the live count. Both are honest process-level aggregates; a
- * per-session breakdown would need a label-capable backend (priced, not built).
- *
- * <p>Thread-safe: counters are themselves thread-safe; the gauge backing fields are atomics
- * written from session/writer virtual threads and read by the exporter snapshot thread.
- */
+
 public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics {
 
     private final MetricsRegistry.Counter heartbeats;
@@ -171,39 +143,32 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
 
     // Session lifecycle hooks the FanOutServer drives directly, not through the session interface.
 
-    /** A subscriber connected (FanOutServer drives this on accept+subscribe). */
+    
     public void onSubscriberConnected() {
         connectedSubscribers.incrementAndGet();
     }
 
-    /** A connection refused at the admission bound ({@code maxSessions}), pre-handshake. */
+    
     public void onSessionRefused() {
         sessionsRefused.increment();
     }
 
-    /**
-     * An admitted (post-mTLS) connection was reaped for missing the pre-SUBSCRIBE first-frame
-     * deadline (a slow-loris). Driven by the transport (both FanOutServer and NettyFanOutServer),
-     * not the session core, so it lives here alongside {@link #onSessionRefused()}.
-     */
+    
     public void onFirstFrameTimeout() {
         firstFrameTimeouts.increment();
     }
 
-    /** A subscriber disconnected (FanOutServer drives this on teardown). */
+    
     public void onSubscriberDisconnected() {
         connectedSubscribers.updateAndGet(v -> v > 0 ? v - 1 : 0);
     }
 
-    /**
-     * An edge client cert was ADMITTED fail-open because the revocation responder was unreachable under
-     * LAX (a degraded-revocation posture). Driven by {@link EdgeCertGate#admit} on both transports.
-     */
+    
     public void onRevocationFailOpenAdmit() {
         revocationFailOpenAdmits.increment();
     }
 
-    /** Current connected-subscriber count (for tests / diagnostics). */
+    
     public int connectedSubscribers() {
         return connectedSubscribers.get();
     }

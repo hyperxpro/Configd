@@ -8,15 +8,6 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Direct, discriminating unit tests for {@link RaftLog}'s query, mutation,
- * boundary-arithmetic, and recovery logic: {@code entriesFrom}, {@code entriesBatch},
- * {@code termAt}, {@code compact}, {@code appendEntries}, {@code truncateFrom},
- * {@code setCommitIndex}, {@code setLastApplied}, {@code isAtLeastAsUpToDate}, and the
- * recovery constructor. Each test pins the exact behavior a flipped boundary, a
- * removed conditional, or a replaced arithmetic op would change. No sleeps; all
- * in-process and deterministic.
- */
 class RaftLogUnitTest {
 
     private static LogEntry entry(long index, long term) {
@@ -30,8 +21,6 @@ class RaftLogUnitTest {
         }
         return log;
     }
-
-    // termAt: sentinel, snapshot boundary, in-range, out-of-range
 
     @Nested
     class TermAt {

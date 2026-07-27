@@ -1,9 +1,5 @@
 package io.configd.transport;
 
-/**
- * Wire protocol message types for the Configd data plane.
- * Each type maps to a single byte on the wire.
- */
 public enum MessageType {
     APPEND_ENTRIES(0x01),
     APPEND_ENTRIES_RESPONSE(0x02),

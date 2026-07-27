@@ -24,22 +24,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * The node-join fail-closed default at the server boot level: an authenticated cluster with TLS on the
- * Raft interior must enumerate its peers, else the server refuses to start. Without an allow-list, any
- * client certificate the CA trusts could forge a peer's {@code senderId} and join consensus - exactly
- * the hole this gate closes.
- *
- * <p>Proves both directions at the real {@code ConfigdServer.start} boot:
- * <ul>
- *   <li>auth-enabled + TLS + <b>no</b> allow-list &rarr; boot error (the gate fires before the transport
- *       binds);</li>
- *   <li>auth-enabled + TLS + an enumerated allow-list &rarr; boots (the intended production posture);</li>
- *   <li>auth-<b>disabled</b> + TLS + no allow-list &rarr; boots (the legacy loud-warning escape stays
- *       byte-identical - dev/test/shared-cert fleets are unchanged).</li>
- * </ul>
- * The predicate itself is additionally unit-proven by {@code PeerIdentityPolicyTest.bootGate*}.
- */
 class NodeJoinBootGateTest {
 
     private static final String ALLOWED = PeerIdentityPolicy.ALLOWED_NODES_PROP;
@@ -176,11 +160,6 @@ class NodeJoinBootGateTest {
         }
     }
 
-    /**
-     * A TLS-enabled config with a configured peer address (so the Raft transport wiring - and the node-join
-     * gate - is exercised) and an ephemeral bind/API port. The peer never connects; boot only needs the
-     * transport wiring to run. {@code auth} toggles the legacy {@code --auth-token}.
-     */
     private ServerConfig tlsConfig(Path dataDir, boolean auth) {
         java.util.List<String> args = new java.util.ArrayList<>(java.util.List.of(
                 "--node-id", "0",

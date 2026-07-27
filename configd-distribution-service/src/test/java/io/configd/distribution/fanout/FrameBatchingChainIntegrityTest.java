@@ -26,24 +26,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Frame-level batching chain integrity. The <b>exact invariant</b> this property proves,
- * for arbitrary publish/ack/tick interleavings:
- *
- * <blockquote>
- * The concatenation of all NOTIFY batches a {@link FanOutSessionCore} emits is a
- * strictly-ascending, contiguous subsequence of the published applied-mutation seq chain
- * - NO duplicate, NO merge (every emitted notification is a verbatim published one), NO
- * skip - <b>except across an explicit DEMOTED+SNAPSHOT boundary</b>. At such a boundary
- * the stream jumps to the snapshot seq S (announced by SNAPSHOT_BEGIN/END), and the
- * NOTIFY batches that follow are again strictly-ascending and contiguous starting from
- * the first published seq &gt; S.
- * </blockquote>
- *
- * "Contiguous over the published chain" means: consecutive emitted seqs are consecutive
- * <em>in the published sequence</em> (the publish stream itself can have natural seq gaps
- * from no-op/RCFG entries, so contiguity is over the published list's index order, not raw
- * seq arithmetic - every published notification between two emitted ones must also be
- * emitted).
+ * Exact invariant: emitted NOTIFY batches form a strictly-ascending, contiguous subsequence
+ * of published seqs (verbatim, no dupe/merge/skip), except across DEMOTED+SNAPSHOT boundary
+ * where stream jumps to snapshot seq S then resumes contiguously from first published seq > S.
+ * Contiguity is over published-list order (not raw arithmetic), accounting for natural seq gaps.
  */
 class FrameBatchingChainIntegrityTest {
 

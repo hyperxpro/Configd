@@ -39,31 +39,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
-/**
- * The integrated N&gt;1 sweep - the proof that the production pieces compose.
- * The component proofs each cover one surface ({@code MultiGroupBringupTest} = real bring-up + per-shard
- * store isolation; {@code ShardedFanOutTest} = the sharded fan-out on synthetic runtimes;
- * {@code SharedNodeFaultIsolationLiveTest} = cross-shard fault isolation). This closes the integration
- * gap: it drives the real production bring-up ({@link ConfigdServer#buildRaftGroup}) for N&gt;1 groups on a
- * real {@link MultiRaftDriver} + a shared-owner pool (P&lt;N), wires the real sharded fan-out
- * ({@link ConfigdServer#registerShardedFanOut}) over those runtimes, and proves they work together:
- *
- * <ul>
- *   <li><b>Per-shard store isolation</b> - a committed write to shard k lands in shard k's store only;
- *       siblings never see it.</li>
- *   <li><b>Fan-out, integrated</b> - each shard's committed write also lands in that shard's fan-out
- *       buffer (per-shard seq, monotone), and in no other shard's buffer (cross-shard fan-out
- *       isolation).</li>
- *   <li><b>Shared-owner fidelity</b> - N=4 groups on P=2 owners (owner0={0,2}, owner1={1,3}), the
- *       production shape where groups co-own threads.</li>
- * </ul>
- *
- * <p>The thread-safety net's non-vacuity (missed-hop + starvation) is proven by
- * {@code OwnerIsolationMultiOwnerTest} + {@code SharedNodeFaultIsolationLiveTest}; the coalesced-heartbeat
- * flat-in-N property by {@code HeartbeatCoalescingTest}. Together these form the cumulative proof that
- * N&gt;1 is correct. The server still boot-refuses N&gt;1 at this point; this sweep is what justifies lifting
- * that guard.
- */
 class MultiShardIntegratedSweepTest {
 
     private static final NodeId NODE = NodeId.of(1);

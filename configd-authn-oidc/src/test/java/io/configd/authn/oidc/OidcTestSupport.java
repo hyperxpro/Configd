@@ -24,12 +24,6 @@ import java.util.Date;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * Test-only helpers for the OIDC authenticator: it mints RS256/ES256 (and adversarial {@code alg:none} /
- * RS-HS-confusion) access tokens against generated keys and exposes an in-memory JWKS the authenticator can
- * resolve without a socket. A {@link CountingJWKSetSource} counts and controls JWKS retrievals so rotation
- * and rate-limit behaviour can be asserted deterministically.
- */
 final class OidcTestSupport {
 
     static final String ISSUER = "https://idp.example/realms/configd";
@@ -51,7 +45,6 @@ final class OidcTestSupport {
         return new JWKSet(List.of(keys)).toPublicJWKSet();
     }
 
-    /** A standard, currently-valid claims set for {@link #ISSUER}/{@link #AUDIENCE}. */
     static JWTClaimsSet.Builder claims(String subject) {
         long now = System.currentTimeMillis();
         return new JWTClaimsSet.Builder()
@@ -81,16 +74,10 @@ final class OidcTestSupport {
                 claims, new ECDSASigner(key));
     }
 
-    /** An {@code alg:none} (plaintext) JWT - the attack RFC 9068 §4 forbids. */
     static String algNone(JWTClaimsSet claims) {
         return new PlainJWT(claims).serialize();
     }
 
-    /**
-     * The algorithm-confusion attack (RFC 8725 §2.1): an HS256 token signed using the RSA public key's
-     * encoded bytes as the HMAC secret, carrying the legitimate key's {@code kid}. A vulnerable server that
-     * fed the JWKS RSA public key to an HMAC verifier would accept it.
-     */
     static String hs256WithRsaPublicKey(RSAKey key, JWTClaimsSet claims) throws Exception {
         byte[] secret = key.toPublicKey().getEncoded(); // X.509 SPKI DER, > 32 bytes
         return sign(new JWSHeader.Builder(JWSAlgorithm.HS256).keyID(key.getKeyID()).type(AT_JWT).build(),

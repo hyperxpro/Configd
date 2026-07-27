@@ -21,10 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The unified {@link Configd} facade (the configd-client aggregator) vends BOTH plane clients over one shared
- * config + scheduler and closes them on {@link Configd#close()}: {@link Configd#edge()} against a real loopback
- * edge server (the reused {@code MockEdgeServer} fixture) and {@link Configd#http()} against a real loopback
- * HTTP server.
+ * Unified Configd facade vends both plane clients over one shared config + scheduler and closes them on close().
+ * Configd.edge() against real loopback edge server; Configd.http() against real loopback HTTP server.
  */
 @Timeout(30)
 class ConfigdFacadeTest {
@@ -42,7 +40,6 @@ class ConfigdFacadeTest {
                 edge.connectAndAuthenticate().get(10, TimeUnit.SECONDS);
                 assertEquals(EdgeConnectionState.AUTHENTICATED, edge.state());
             }
-            // The facade's close() closed the vended edge client.
             assertEquals(EdgeConnectionState.CLOSED, edge.state());
         }
     }

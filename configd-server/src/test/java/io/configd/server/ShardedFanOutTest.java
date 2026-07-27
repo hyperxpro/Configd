@@ -55,7 +55,6 @@ class ShardedFanOutTest {
         return s.getBytes(StandardCharsets.UTF_8);
     }
 
-    /** Builds N minimal runtimes (groupId + state machine + store; the helper touches only those). */
     private static List<ConfigdServer.RaftGroupRuntime> runtimes(int n) {
         List<ConfigdServer.RaftGroupRuntime> rts = new ArrayList<>(n);
         for (int gid = 0; gid < n; gid++) {
@@ -70,7 +69,6 @@ class ShardedFanOutTest {
         return new MetricsRegistry().counter("fanout.buffer.dropped");
     }
 
-    /** Reads every retained notification (cursor 0 => everything) as an OK run. */
     private static List<CommitNotification> drain(FanOutBuffer buffer) {
         Result r = buffer.readSince(0);
         assertFalse(r.isGap(), "buffer should not GAP within capacity");
@@ -95,7 +93,6 @@ class ShardedFanOutTest {
         assertEquals(2, out.size(), "both commits published to the primary buffer");
         assertEquals(1, out.get(0).seq());
         assertEquals(2, out.get(1).seq());
-        // Compactor retained both snapshots (versions 1 and 2).
         assertEquals(2, fan.compactors().get(0).snapshotCount());
     }
 

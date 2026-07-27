@@ -54,12 +54,6 @@ final class EdgeFaultSchedule {
 
     private final List<EdgeFault> faults;
 
-    /**
-     * @param seed       master seed (same as the CP sim's)
-     * @param edgeCount  number of edges
-     * @param totalTicks total run length
-     * @param faultCount number of edge faults to schedule (0 => a no-fault run)
-     */
     EdgeFaultSchedule(long seed, int edgeCount, int totalTicks, int faultCount) {
         this.faults = expand(seed, edgeCount, totalTicks, faultCount);
     }

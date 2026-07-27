@@ -1,46 +1,14 @@
 #!/usr/bin/env bash
-# -----------------------------------------------------------------------------
-# restore-conformance-check.sh — verifies that a restored Configd cluster
-# matches the snapshot used to bootstrap it.
+# restore-conformance-check.sh — verifies restored cluster matches snapshot
 #
-# Referenced from: ops/runbooks/restore-from-snapshot.md (Verification block)
-# Invoked by:      ops/scripts/restore-snapshot.sh
-#
-# Snapshot file layout (see ConfigStateMachine#snapshot in
-# configd-config-store/src/main/java/io/configd/store/ConfigStateMachine.java):
-#
+# Snapshot layout, as written by ConfigStateMachine#snapshot — the parser below depends on it:
 #     [8-byte sequence counter][4-byte entry count]
-#     for each entry:
-#         [4-byte key length][key bytes][4-byte value length][value bytes]
-#
-# The 8-byte sequence counter at the head of the snapshot is, by the state
-# machine's own contract, equal to the lastIncludedIndex / last applied
-# version that the snapshot represents (ConfigStateMachine.java:373 sets
-# this.sequenceCounter = restoredSequence after restore).
-#
-# This script verifies three properties:
-#   1. The post-restore Raft applied index matches the snapshot's
-#      sequence counter (lastIncludedIndex).
-#   2. The post-restore state-machine hash (SHA-256 over the canonical
-#      key/value layout) matches the hash computed locally over the
-#      snapshot file's payload.
-#   3. A small read-traffic sample succeeds against the cluster's
-#      readiness endpoint.
-#
-# Output:
-#   PASS                          — all three checks succeeded.
-#   FAIL: <reason>                — one or more checks failed.
-#
-# Exit codes:
-#   0  PASS
-#   1  FAIL
-# -----------------------------------------------------------------------------
+#     per entry: [4-byte key length][key bytes][4-byte value length][value bytes]
+# The 8-byte counter equals the lastIncludedIndex the snapshot represents, which is what makes
+# comparing it against the post-restore applied index a valid check.
 
 set -euo pipefail
 
-# -----------------------------------------------------------------------------
-# Logging helpers
-# -----------------------------------------------------------------------------
 log() {
   printf '%s [restore-conformance] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2
 }
@@ -55,9 +23,6 @@ emit_fail() {
   exit 1
 }
 
-# -----------------------------------------------------------------------------
-# Defaults
-# -----------------------------------------------------------------------------
 SNAPSHOT_PATH=""
 TARGET_CLUSTER=""
 CLUSTER_ENDPOINT="${CONFIGD_CLUSTER_ENDPOINT:-http://localhost:8080}"
@@ -112,9 +77,6 @@ done
 
 log "snapshot=$SNAPSHOT_PATH cluster=$TARGET_CLUSTER endpoint=$CLUSTER_ENDPOINT dry-run=$DRY_RUN"
 
-# -----------------------------------------------------------------------------
-# Read snapshot header — sequence counter (== lastIncludedIndex) + entry count.
-# -----------------------------------------------------------------------------
 HEADER_HEX="$(od -An -N12 -tx1 "$SNAPSHOT_PATH" | tr -d ' \n')"
 [ "${#HEADER_HEX}" -eq 24 ] || emit_fail "could not read 12-byte snapshot header"
 SNAPSHOT_LAST_INDEX=$(( 16#${HEADER_HEX:0:16} ))
@@ -122,10 +84,6 @@ SNAPSHOT_ENTRY_COUNT=$(( 16#${HEADER_HEX:16:8} ))
 
 log "snapshot lastIncludedIndex=$SNAPSHOT_LAST_INDEX entries=$SNAPSHOT_ENTRY_COUNT"
 
-# Hash over the snapshot's payload region (after the 12-byte header). This
-# is the canonical state-machine hash for restore conformance: equal bytes
-# in produce equal hashes, and ConfigStateMachine#snapshot() emits entries
-# in HamtMap.forEach() order (deterministic for equal logical contents).
 SNAPSHOT_PAYLOAD_HASH="$(tail -c +13 "$SNAPSHOT_PATH" | sha256sum | awk '{print $1}')"
 log "snapshot payload sha256=$SNAPSHOT_PAYLOAD_HASH"
 
@@ -134,9 +92,6 @@ if [ "$DRY_RUN" = "true" ]; then
   emit_pass
 fi
 
-# -----------------------------------------------------------------------------
-# Helper: cluster GET with explicit failure semantics.
-# -----------------------------------------------------------------------------
 fetch() {
   local path="$1"
   local extra=()
@@ -156,22 +111,12 @@ fetch_status() {
     "${extra[@]}" "${CLUSTER_ENDPOINT}${path}"
 }
 
-# -----------------------------------------------------------------------------
-# Check 1 — readiness probe must be 200.
-# -----------------------------------------------------------------------------
 log "check 1: GET /health/ready"
 READY_CODE="$(fetch_status /health/ready || true)"
 if [ "$READY_CODE" != "200" ]; then
   emit_fail "cluster is not ready (HTTP $READY_CODE from /health/ready)"
 fi
 
-# -----------------------------------------------------------------------------
-# Check 2 — applied index matches snapshot lastIncludedIndex.
-#
-# The applied index is read from the Prometheus exposition on /metrics
-# (the configd_raft_last_applied_index gauge). A restored node must have
-# replayed the log at least as far as the snapshot's sequence counter.
-# -----------------------------------------------------------------------------
 log "check 2: post-restore applied index"
 METRICS_CODE="$(fetch_status /metrics || true)"
 if [ "$METRICS_CODE" != "200" ]; then
@@ -186,7 +131,6 @@ if [ -z "$APPLIED_INDEX" ]; then
   emit_fail "metric configd_raft_last_applied_index not present on /metrics"
 fi
 
-# Strip a possible trailing decimal (Prom counters/gauges may print "1.0").
 APPLIED_INDEX_INT="${APPLIED_INDEX%.*}"
 if ! [[ "$APPLIED_INDEX_INT" =~ ^[0-9]+$ ]]; then
   emit_fail "could not parse applied index value: '$APPLIED_INDEX'"
@@ -198,14 +142,6 @@ fi
 
 log "applied index $APPLIED_INDEX_INT >= snapshot lastIncludedIndex $SNAPSHOT_LAST_INDEX"
 
-# -----------------------------------------------------------------------------
-# Check 3 — state-machine hash matches snapshot.
-#
-# The live node exposes its state digest as the configd_state_machine_hash info
-# gauge (a label-encoded SHA-256 over the snapshot payload region, computed by
-# ConfigStateMachine.stateMachineHashHex); we byte-compare it against the hash
-# computed above over the snapshot file's payload.
-# -----------------------------------------------------------------------------
 log "check 3: post-restore state-machine hash"
 LIVE_HASH="$(printf '%s\n' "$METRICS_TEXT" \
   | awk -F'"' '/^configd_state_machine_hash\{/ {print $2; exit}')"
@@ -219,24 +155,11 @@ if [ "$LIVE_HASH" != "$SNAPSHOT_PAYLOAD_HASH" ]; then
 fi
 log "state-machine hash matches snapshot payload"
 
-# -----------------------------------------------------------------------------
-# Check 4 — small read traffic against the cluster.
-#
-# We probe up to PROBE_KEYS_LIMIT keys from the snapshot. We reuse the
-# snapshot reader pattern: skip 12-byte header, then for each entry parse
-# [4-byte key length][key bytes][4-byte value length][value bytes]. The
-# key bytes are UTF-8 (per ConfigStateMachine.java:277 / .java:350). A
-# 200 from /v1/config/<key> is sufficient — value comparison is the
-# state-hash check above.
-# -----------------------------------------------------------------------------
 log "check 4: read traffic probe (up to $PROBE_KEYS_LIMIT keys)"
 
 probe_one_key() {
   local key="$1"
-  # URL-encode the key the cheap way: we only escape '/' and a few
-  # commonly-problematic chars. Configd treats the key as the URL path
-  # segment after /v1/config/, so '/' is intentionally permitted as part
-  # of the key name and we leave it alone.
+  # '/' is part of the key name per URL path segment; don't escape it.
   local code
   code="$(fetch_status "/v1/config/${key}")"
   if [ "$code" = "200" ] || [ "$code" = "404" ]; then

@@ -3,21 +3,10 @@ package io.configd.raft;
 import io.configd.common.Storage;
 
 /**
- * A {@link AnchorIO} that carries the anchor image as a single self-durable {@link Storage}
- * value. It exists so the durability crash tests - which model a power loss through a
- * {@code Storage} crash model ({@code CrashStorage}) rather than a real device - capture the
- * anchor's durability at the same fidelity as the WAL.
- *
- * <p>The 1032-byte image (identical bytes to {@link FileAnchorIO}) is mirrored in memory; an
- * in-place {@link #writeAt} mutates the mirror but is NOT durable, and {@link #sync()} publishes
- * the whole mirror with a self-durable {@code Storage.put}. So the durability point is the
- * {@code put} at {@code sync()}: a crash between a slot's {@code writeAt} and its {@code sync}
- * discards the mirror and recovery reads back the last {@code put} image - the un-synced stale
- * slot is lost and the live slot survives, exactly as an un-{@code fdatasync}'d slot on a real
- * device. (Whole-image {@code put} is atomic, so this backend does not model a torn SLOT - that
- * byte-level case is covered by a dedicated {@link FileAnchorIO} test.)
- *
- * <p>Not thread-safe (single owner thread).
+ * AnchorIO variant: anchor image as self-durable Storage value (for crash-model durability tests).
+ * In-memory mirror mutated by writeAt() but NOT durable; sync() publishes via atomic put().
+ * Crash between writeAt() and sync() discards mirror; recovery reads last put() (un-synced slot lost, live slot survives).
+ * Single-threaded (owner thread only).
  */
 final class StorageAnchorIO implements AnchorIO {
 

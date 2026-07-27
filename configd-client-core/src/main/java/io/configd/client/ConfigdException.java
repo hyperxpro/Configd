@@ -5,39 +5,26 @@ import io.configd.distribution.wire.ErrorCode;
 import java.util.Optional;
 
 /**
- * The root of the reference client's exception hierarchy. Each concrete subtype <b>is</b> the normative
- * reaction to a class of outcomes (see {@code 07-errors.md}): a caller branches on the exception
- * <b>type</b>, never on a parsed message. The base is unchecked because a driver-protocol failure is rarely
- * something a caller can handle inline at the call site — it is handled by a policy (retry / re-auth /
- * reconnect) keyed on the type.
- *
- * <p>When an exception originates from a binary edge {@link ErrorCode}, that numeric code is carried on
- * {@link #edgeCode()} for observability, and the server's diagnostic — which is untrusted, may carry
- * control/ANSI bytes, and MUST NOT be machine-parsed — is carried, <b>already sanitized</b>, on
- * {@link #serverMessage()}. Neither is a control signal; the type is.
+ * Root of the reference-client exception hierarchy. Each subtype IS the normative reaction to a class of
+ * outcomes: callers branch on type, never on message. Unchecked because protocol failures are handled by
+ * policy (retry/re-auth/reconnect) keyed on type, not handled inline. Edge error codes carried on
+ * {@link #edgeCode()} for observability; server diagnostic is sanitized on {@link #serverMessage()}.
  */
 public abstract class ConfigdException extends RuntimeException {
 
     private final transient ErrorCode edgeCode;
     private final transient String serverMessage;
 
-    /** A client-originated failure (no server error code / diagnostic). */
     protected ConfigdException(String message) {
         this(message, null, null, null);
     }
 
-    /** A client-originated failure wrapping a transport/codec cause. */
     protected ConfigdException(String message, Throwable cause) {
         this(message, cause, null, null);
     }
 
     /**
-     * A failure carrying an edge {@link ErrorCode} and the server's (already-sanitized) diagnostic.
-     *
-     * @param message       the client-facing message (safe; not the raw server text)
-     * @param cause         the underlying cause, or {@code null}
-     * @param edgeCode      the originating wire {@link ErrorCode}, or {@code null} if not edge-originated
-     * @param serverMessage the SANITIZED server diagnostic, or {@code null} — never the raw wire bytes
+     * Edge-originated failure: edgeCode and serverMessage must already be sanitized.
      */
     protected ConfigdException(String message, Throwable cause, ErrorCode edgeCode, String serverMessage) {
         super(message, cause);
@@ -45,14 +32,12 @@ public abstract class ConfigdException extends RuntimeException {
         this.serverMessage = serverMessage;
     }
 
-    /** The originating binary-edge {@link ErrorCode}, when this failure came from an edge terminal frame. */
     public final Optional<ErrorCode> edgeCode() {
         return Optional.ofNullable(edgeCode);
     }
 
     /**
-     * The server's diagnostic string, <b>already sanitized</b> for safe logging (control/ANSI/NUL bytes
-     * escaped or stripped). Diagnostic only — a caller MUST NOT branch on it.
+     * The server's diagnostic: already sanitized for safe logging. Diagnostic only — do not branch on it.
      */
     public final Optional<String> serverMessage() {
         return Optional.ofNullable(serverMessage);

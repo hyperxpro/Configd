@@ -12,28 +12,6 @@
 # that performs the attack and asserts it is REFUSED — never by reading its
 # config. Every test below is such a negative test.
 #
-# WHAT A GREEN GATE-7 PROVES:
-#   (a) at-rest   tampered snapshot byte / tampered WAL record / forged version /
-#                 algId=NONE downgrade / forged DurableRaftState / forged
-#                 install-snapshot → all REFUSED (HMAC at-rest integrity, ADR-0042);
-#                 AND the durability cells still pass (no regression — torn tail
-#                 still tolerated, not mistaken for tamper).
-#   (b) mTLS      plaintext / expired-cert / wrong-SAN / TLSv1.2-downgrade → REFUSED
-#                 on BOTH planes (control-plane Raft + data-plane edge fan-out).
-#   (c) fuzz      arbitrary/malformed/oversized/length-lie wire input → bounded
-#                 reject, no crash/OOM/unbounded-alloc/hang (resource oracle).
-#   (d) API       unauthenticated mutating call → 401; read-scoped → write → 403;
-#                 verbatim replay → 409; every mutating op + auth failure → a
-#                 KEYED-HMAC tamper-evident audit record (defeats a log editor).
-#   (e) SBOM      the committed CycloneDX SBOM matches a freshly-generated one
-#                 (no dependency-graph drift).
-#   (f) repro     project.build.outputTimestamp is set (reproducible-build config);
-#                 the byte-identical two-build proof runs on the nightly/full path.
-#   (g) CVE       OWASP dependency-check fails the build on CVSS>=7 — runs where an
-#                 NVD_API_KEY + network exist (CI nightly); ENV-BLOCKED loud-skip
-#                 otherwise (never assumed-passing).
-#   (h) secret    gitleaks over repo+history — runs where the binary exists (CI);
-#                 ENV-BLOCKED loud-skip otherwise.
 #
 # Environment knobs (CI must not set the test skips on a full run):
 #   GATE7_SKIP_GATE6=1   skip step (cumulative) — LOUD (CI runs gate-6 as its own job).

@@ -22,27 +22,10 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-/**
- * A {@link ConfigSource} backed by a YAML file - the operator-facing config document named by
- * {@code --config} (or {@code configd.config.file} / {@code CONFIGD_CONFIG}). It carries the only YAML
- * parser dependency in the reactor, which is why it lives in {@code configd-server} rather than in the
- * zero-heavy-dep {@code configd-common} alongside the other sources.
- *
- * <p>The document is loaded SAFELY: a {@link SafeConstructor} builds only plain {@code Map}/{@code List}/
- * scalar values (never arbitrary Java types), and {@link LoaderOptions} caps alias expansion, nesting
- * depth, and total input size so a hostile or accidental alias-bomb / deeply-nested / huge file is
- * rejected rather than exhausting memory. A malformed file, an I/O error, or a non-mapping top level is a
- * {@link ConfigException} - a config store fails its boot rather than starting on unreadable config.
- *
- * <p>The nested document is flattened onto the flat dotted keyspace so it layers with the other sources:
- * a nested mapping {@code a: {b: 1}} becomes {@code a.b=1}; a sequence becomes a comma-joined scalar
- * ({@code p: [x, y]} becomes {@code p=x,y}, read back by {@link ConfigSource#getList}); scalars become
- * their string form. Sequences are expected to hold scalars (a comma-joined element is ambiguous
- * otherwise). The parse happens once, at construction; reads are pure map lookups.
- */
+
 public final class YamlConfigSource implements ConfigSource {
 
-    /** SafeConstructor limits (resource-exhaustion guards): alias expansion, nesting depth, input size. */
+    
     private static final int MAX_ALIASES_FOR_COLLECTIONS = 50;
     private static final int NESTING_DEPTH_LIMIT = 50;
     private static final int CODE_POINT_LIMIT = 4 * 1024 * 1024;
@@ -53,7 +36,7 @@ public final class YamlConfigSource implements ConfigSource {
         this.flat = Map.copyOf(flat);
     }
 
-    /** Loads and flattens {@code path}. Fails closed ({@link ConfigException}) on I/O or parse errors. */
+    
     public static YamlConfigSource fromFile(Path path) {
         try (InputStream in = Files.newInputStream(path)) {
             return parse(in, path.toString());
@@ -62,7 +45,7 @@ public final class YamlConfigSource implements ConfigSource {
         }
     }
 
-    /** Parses {@code content} directly; for tests and callers that already hold the document text. */
+    
     public static YamlConfigSource fromYaml(String content, String sourceLabel) {
         return parse(new StringReader(content), sourceLabel);
     }

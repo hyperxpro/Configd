@@ -29,7 +29,6 @@ class LeaderBalanceMetricsTest {
         assertNotNull(metrics.get("configd.raft.autobalance.skipped_unstable.term_churn"));
         assertNotNull(metrics.get("configd.raft.autobalance.skipped_unstable.cooldown"));
 
-        // All counters start at 0 (they emit from the first scrape rather than appearing lazily).
         assertEquals(0L, metrics.get("configd.raft.autobalance.transfers_initiated").value());
         assertEquals(0L, metrics.get("configd.raft.autobalance.skipped_unstable.term_churn").value());
     }

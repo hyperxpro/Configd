@@ -9,19 +9,8 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
 /**
- * The production {@link AnchorIO}: a real {@code raft-anchor} file, written with
- * fixed-offset {@code pwrite} + {@code fdatasync} (the frozen write protocol). The file lives
- * in the SAME directory as the group's WAL - required so the anchor and the WAL it references
- * share one device / failure domain.
- *
- * <p>{@link #createPreallocated} lays the whole 1032-byte image down at once and
- * {@code force(true)}s it (data) plus a directory fsync (the file's existence), so every later
- * {@link #writeAt} is an in-place overwrite of already-allocated blocks - no metadata change, so
- * {@link #sync()} is the cheaper {@code force(false)}/{@code fdatasync}, and ENOSPC is impossible
- * after boot on ext4/xfs.
- *
- * <p>Not thread-safe; the anchor is touched only by the group's single owner thread (the same
- * thread that owns the WAL), so no synchronization is used.
+ * Production AnchorIO: real raft-anchor file, pwrite + fdatasync. Preallocated (no ENOSPC after boot);
+ * later writes are in-place, cheaper fdatasync (no metadata change). Single-threaded (WAL owner thread).
  */
 final class FileAnchorIO implements AnchorIO {
 
@@ -29,19 +18,13 @@ final class FileAnchorIO implements AnchorIO {
 
     private final Path dir;
     private final Path file;
-    /** Open lazily on first create/write; kept open across the process lifetime for in-place writes. */
-    private FileChannel channel;
+    private FileChannel channel; // Lazy; kept open for in-place writes.
 
-    /** The per-shard {@code raft-anchor} in {@code dir} (the group's WAL directory). */
     FileAnchorIO(Path dir) {
         this(dir, ANCHOR_FILE_NAME);
     }
 
-    /**
-     * A slotted anchor file named {@code fileName} in {@code dir}. Same fixed-offset {@code pwrite} +
-     * {@code fdatasync} transport as the per-shard anchor; the node-anchor reuses it with a distinct
-     * name ({@code node-anchor}) in {@code dataDir}, so the proven dual-slot mechanics live in one place.
-     */
+    /** Slotted anchor file with custom name; reused for node-anchor. */
     FileAnchorIO(Path dir, String fileName) {
         this.dir = dir;
         this.file = dir.resolve(fileName);

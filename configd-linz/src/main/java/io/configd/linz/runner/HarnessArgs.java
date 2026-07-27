@@ -6,7 +6,6 @@ import io.configd.linz.cluster.Cluster;
 import java.util.HashMap;
 import java.util.Map;
 
-/** Small shared helpers for the runner mains. */
 final class HarnessArgs {
 
     static Map<String, String> parse(String[] args) {
@@ -19,7 +18,9 @@ final class HarnessArgs {
         return m;
     }
 
-    /** Polls for an elected leader; returns its node id or -1 on timeout. */
+    /**
+     * Polls for elected leader via probeLeader; returns node id or -1 on timeout.
+     */
     static int awaitLeader(Cluster cluster, long timeoutMs) throws InterruptedException {
         ConfigClient c = new ConfigClient();
         long deadline = System.nanoTime() + timeoutMs * 1_000_000L;

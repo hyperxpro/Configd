@@ -32,7 +32,6 @@ class LeaderBalancePlannerTest {
         return s;
     }
 
-    /** Builds a snapshot where group g is led by {@code leaders[g]} (all at term 1). */
     private static LeaderView.Snapshot snapshot(NodeId self, int candidateCount, int... leaders) {
         List<LeaderView.GroupLeader> groups = new ArrayList<>();
         for (int g = 0; g < leaders.length; g++) {
@@ -43,7 +42,6 @@ class LeaderBalancePlannerTest {
 
     @Test
     void allOnOneNode_maxHolderShedsOneToAMin() {
-        // G=8 all led by node 0, M=4. Node 0 is the sole max; it must shed exactly one group to a min.
         int[] led = {0, 0, 0, 0, 0, 0, 0, 0};
         LeaderView.Snapshot snap = snapshot(NodeId.of(0), 4, led);
         LeaderBalancePlanner.Plan plan = LeaderBalancePlanner.plan(snap, CLEAR, 2, new Random(1));
@@ -53,13 +51,11 @@ class LeaderBalancePlannerTest {
         assertEquals(0, plan.move().groupId()); // lowest gid this node leads
         assertTrue(nodes(4).contains(plan.move().target()));
         assertFalse(plan.move().target().equals(NodeId.of(0))); // never sheds to self
-        // target is a strict minimum (count 0 here)
         assertTrue(plan.move().target().id() != 0);
     }
 
     @Test
     void nonMaxHolder_doesNotShed() {
-        // Distribution {0:4, 1:2, 2:1, 3:1}; from node 1's perspective (count 2, max is 4) it must not act.
         int[] led = {0, 0, 0, 0, 1, 1, 2, 3};
         LeaderView.Snapshot snap = snapshot(NodeId.of(1), 4, led);
         LeaderBalancePlanner.Plan plan = LeaderBalancePlanner.plan(snap, CLEAR, 2, new Random(1));
@@ -70,7 +66,6 @@ class LeaderBalancePlannerTest {
 
     @Test
     void optimalUneven_belowThreshold_noAction() {
-        // G=5, M=3, optimal {2,2,1}: spread 1 < threshold 2, so nothing to do (the >=2 rule).
         int[] led = {0, 0, 1, 1, 2};
         for (int self = 0; self < 3; self++) {
             LeaderView.Snapshot snap = snapshot(NodeId.of(self), 3, led);

@@ -8,15 +8,6 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-/**
- * Verifies the repeat-quarantine escalation policy: the {@code quarantineLimit}-th
- * quarantine within {@code unhealthyWindowMs} escalates to UNHEALTHY (alert-grade
- * {@code edge_fanout_unhealthy_total}); SUBSCRIBEs are refused for
- * {@code unhealthyCooldownMs}, after which the identity is AUTOMATICALLY readmitted with
- * the snapshot-first re-bootstrap forced - the cooldown alone is a sufficient exit
- * (UNHEALTHY is never a permanent lockout; operator reset is additional). Clock-driven
- * (explicit nowMillis), no sleeps.
- */
 class RepeatQuarantineUnhealthyTest {
 
     private static final String EDGE = "CN=edge-4,O=configd";
@@ -24,19 +15,16 @@ class RepeatQuarantineUnhealthyTest {
     private static final long HOUR = 3_600_000L;
 
     private static SlowConsumerPolicyConfig config() {
-        // Defaults: demoteLimit 3 / 60 s window; quarantineLimit 3 / 1 h window;
-        // quarantine cooldown 60 s; unhealthy cooldown 1 h.
         return SlowConsumerPolicyConfig.defaults();
     }
 
-    /** Drives one full quarantine cycle starting at {@code at}: 3 demotions + readmission. */
     private static long quarantineCycle(SlowConsumerGovernor governor, long at) {
         for (int i = 0; i < 3; i++) {
             governor.onDemotion(EDGE,
                     new DemotionEvent(100 + i, 90, DemotionEvent.REASON_ACK_LAG),
                     at + i * 1_000L);
         }
-        return at + 2_000; // the quarantine timestamp (the 3rd demotion)
+        return at + 2_000;
     }
 
     @Test
@@ -45,20 +33,17 @@ class RepeatQuarantineUnhealthyTest {
         SlowConsumerGovernor governor =
                 new SlowConsumerGovernor(config(), probe, probe::onTransition);
 
-        // Quarantine #1 at ~T0; readmit after its 60 s cooldown.
         long q1 = quarantineCycle(governor, T0);
         assertEquals(ConsumerState.QUARANTINED, governor.state(EDGE));
         governor.admit(EDGE, q1 + 60_000);
         assertEquals(ConsumerState.CATCHUP, governor.state(EDGE));
 
-        // Quarantine #2; readmit again.
         long q2 = quarantineCycle(governor, q1 + 120_000);
         assertEquals(ConsumerState.QUARANTINED, governor.state(EDGE));
         assertEquals(2, probe.quarantines);
         assertEquals(0, probe.unhealthy, "two quarantines in the hour are not yet UNHEALTHY");
         governor.admit(EDGE, q2 + 60_000);
 
-        // Quarantine #3 inside the same hour: UNHEALTHY, alert-grade metric.
         quarantineCycle(governor, q2 + 120_000);
         assertEquals(ConsumerState.UNHEALTHY, governor.state(EDGE));
         assertEquals(3, probe.quarantines, "the escalating event still counts as a quarantine");

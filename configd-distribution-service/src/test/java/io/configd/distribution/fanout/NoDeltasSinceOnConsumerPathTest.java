@@ -18,63 +18,22 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-/**
- * Static source scan: never consume {@code FanOutBuffer.deltasSince} (the legacy
- * non-atomic read) on any production drain or sim-driver call site - only
- * {@code readSince}. The legacy method is kept public solely for the pre-existing fan-out
- * tests.
- *
- * <h3>Why a static scan, not a runtime assertion</h3>
- * The defect is structural - a specific call shape - so a static scan is deterministic,
- * timing-free, runs in milliseconds, and catches the regression at the exact site
- * regardless of test coverage.
- *
- * <h3>Scope is DERIVED, not enumerated</h3>
- * The roots are derived from the reactor pom's {@code <modules>} list - every module's
- * {@code src/main/java} - plus {@code configd-testkit/src/test/java} (the sim drivers
- * live in test scope there). A module may only escape via {@link #EXEMPT_MODULES}, each
- * entry carrying its justification, and the
- * {@link #everyReactorModuleIsScannedOrExplicitlyExempted() tripwire} asserts
- * scanned-set == reactor-modules minus exemptions, so a future module can never silently
- * escape the guard.
- *
- * <p><b>File-level exemptions:</b> {@code FanOutBuffer.java} itself (it defines and
- * retains the legacy method) and the legacy {@code FanOutBufferTest.java} (the only
- * sanctioned caller).
- */
 class NoDeltasSinceOnConsumerPathTest {
 
-    /**
-     * Reactor modules exempted from the main-source scan, each with a one-line reason.
-     * EMPTY today - and that is the point: every module's {@code src/main/java} is
-     * scanned, including ones with no conceivable consumer (the scan is milliseconds and
-     * a vacuous scan is cheaper than a stale enumeration). Add an entry ONLY with a
-     * reason a reviewer can audit; the tripwire fails on stale entries.
-     */
     private static final Map<String, String> EXEMPT_MODULES = Map.of(
-            // A test-only module (the protocol conformance suite) has no src/main/java to scan - it
-            // carries only src/test/java that drives a live server. Nothing to guard on a main path.
             "configd-conformance", "test-only module (conformance suite); no src/main/java to scan"
     );
 
-    /**
-     * Extra scan roots beyond the derived {@code <module>/src/main/java} set:
-     * configd-testkit's TEST tree carries the sim drivers (EdgeActor, EdgeFanOutSim,
-     * C1StreamDriver) that are production-shaped consumers of the boundary.
-     */
     private static final List<String> EXTRA_SCAN_ROOTS =
             List.of("configd-testkit/src/test/java");
 
-    /** Files allowed to mention {@code deltasSince} (the definition + its sanctioned test). */
     private static final List<String> EXEMPT_FILE_NAMES = List.of(
-            "FanOutBuffer.java",       // defines + retains the legacy method
-            "FanOutBufferTest.java");  // the only sanctioned legacy caller
+            "FanOutBuffer.java",
+            "FanOutBufferTest.java");
 
-    /** Any reference to the {@code deltasSince} member (call or method ref). */
     private static final Pattern DELTAS_SINCE =
             Pattern.compile("\\bdeltasSince\\s*\\(|::\\s*deltasSince\\b");
 
-    /** Matches one {@code <module>...</module>} entry in the reactor pom. */
     private static final Pattern POM_MODULE =
             Pattern.compile("<module>\\s*([^<\\s]+)\\s*</module>");
 
@@ -101,25 +60,18 @@ class NoDeltasSinceOnConsumerPathTest {
         }
     }
 
-    /**
-     * THE TRIPWIRE: the set of scanned modules must equal the reactor's
-     * {@code <modules>} list minus {@link #EXEMPT_MODULES} - a new module is therefore
-     * either scanned or loudly accounted for, never silently invisible.
-     */
     @Test
     void everyReactorModuleIsScannedOrExplicitlyExempted() throws IOException {
         Set<String> modules = reactorModules();
         assertTrue(modules.contains("configd-distribution-service"),
                 "reactor pom parse sanity: expected the owning module in " + modules);
 
-        // No stale exemptions: every exempt entry must still be a reactor module.
         for (String exempt : EXEMPT_MODULES.keySet()) {
             assertTrue(modules.contains(exempt),
                     "stale EXEMPT_MODULES entry (not a reactor module anymore): " + exempt
                             + " — " + EXEMPT_MODULES.get(exempt));
         }
 
-        // Scanned == modules − exemptions, and every scanned root exists on disk.
         Set<String> expectedScanned = new LinkedHashSet<>(modules);
         expectedScanned.removeAll(EXEMPT_MODULES.keySet());
         Set<String> actuallyScanned = new LinkedHashSet<>();
@@ -136,14 +88,12 @@ class NoDeltasSinceOnConsumerPathTest {
                 "scanned-module set must equal reactor modules minus exemptions; scanned="
                         + actuallyScanned + " expected=" + expectedScanned);
 
-        // The extra (non-derived) roots must exist too, or the sim drivers go unguarded.
         for (String extra : EXTRA_SCAN_ROOTS) {
             assertTrue(Files.isDirectory(root.resolve(extra)),
                     "extra scan root must exist: " + extra);
         }
     }
 
-    /** Every non-exempt {@code <module>/src/main/java} plus the extra roots. */
     private static List<Path> scanRoots() throws IOException {
         Path root = reactorRoot();
         List<Path> roots = new ArrayList<>();
@@ -159,7 +109,6 @@ class NoDeltasSinceOnConsumerPathTest {
         return roots;
     }
 
-    /** Parses the reactor pom's {@code <modules>} list (XML comments stripped first). */
     private static Set<String> reactorModules() throws IOException {
         Path pom = reactorRoot().resolve("pom.xml");
         String xml = Files.readString(pom, StandardCharsets.UTF_8)
@@ -178,10 +127,6 @@ class NoDeltasSinceOnConsumerPathTest {
         return modules;
     }
 
-    /**
-     * Resolves the reactor root: walks up from the working directory (surefire runs in
-     * the module dir) to the first pom.xml containing a {@code <modules>} block.
-     */
     private static Path reactorRoot() throws IOException {
         for (Path dir = Path.of("").toAbsolutePath(); dir != null; dir = dir.getParent()) {
             Path pom = dir.resolve("pom.xml");
@@ -213,7 +158,6 @@ class NoDeltasSinceOnConsumerPathTest {
         }
     }
 
-    /** Drops line/block comments and string/char literals (line-local, best effort). */
     private static String stripCommentsAndStrings(String line) {
         StringBuilder sb = new StringBuilder(line.length());
         boolean inStr = false, inChar = false;

@@ -22,107 +22,32 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Codec that serializes {@link RaftMessage} to {@link FrameCodec.Frame}
- * and deserializes back. Bridges the consensus-core sealed message types
- * with the transport wire protocol.
- * <p>
- * Payload formats (all big-endian):
- * <ul>
- *   <li>AppendEntriesRequest: [4B leaderId][8B prevLogIndex][8B prevLogTerm]
- *       [8B leaderCommit][4B numEntries][entries...] where each entry is
- *       [8B index][8B term][4B cmdLen][cmdBytes]</li>
- *   <li>AppendEntriesResponse: [1B success][8B matchIndex][4B from]</li>
- *   <li>RequestVoteRequest: [4B candidateId][8B lastLogIndex][8B lastLogTerm]</li>
- *   <li>RequestVoteResponse: [1B voteGranted][4B from]</li>
- *   <li>InstallSnapshotRequest: [4B leaderId][8B lastIncludedIndex][8B lastIncludedTerm]
- *       [4B offset][1B done][4B dataLen][data][4B configLen][configData]</li>
- *   <li>InstallSnapshotResponse: [1B success][4B from][8B lastIncludedIndex]
- *       [4B nextExpectedOffset] (the last field is optional-trailing: absent decodes to 0)</li>
- *   <li>TimeoutNowRequest: [4B leaderId]</li>
- * </ul>
- */
+
 public final class RaftMessageCodec {
 
-    /**
-     * Hard upper bound on the number of entries in a single
-     * AppendEntries RPC. Anything beyond this is taken as
-     * adversarial / corruption and rejected without allocation -
-     * blocks a "32-byte attacker frame, multi-GB heap" amplification.
-     * The legitimate Raft path batches at most a few hundred entries.
-     */
+    
     public static final int MAX_ENTRIES_PER_APPEND = 10_000;
 
-    /**
-     * Hard upper bound on a single LogEntry command in bytes
-     * (1 MiB). The configd write path commits configs that fit
-     * comfortably in a single TCP segment; anything past this is
-     * rejected.
-     */
+    
     public static final int MAX_COMMAND_LEN = 1 * 1024 * 1024;
 
-    /**
-     * Hard upper bound on a single InstallSnapshot CHUNK's data blob OR its
-     * cluster-config blob. This is a per-CHUNK ceiling, not a total-snapshot
-     * one: the sender ({@code RaftNode.sendSnapshotChunk}) splits a large
-     * snapshot into ordered chunks each at most this size, lifting the old
-     * single-frame ceiling on total snapshot size. The total is NOT unbounded,
-     * though - the receiver reassembles the snapshot in heap to apply it, so it
-     * is bounded by the follower's memory and the fail-closed reassembly cap
-     * ({@code RaftNode.maxReassembledSnapshotBytes}), not by disk.
-     *
-     * <p>Per-blob ceiling alone is insufficient: a chunk carries TWO blobs
-     * (data + clusterConfigData, the latter only on the final chunk). The
-     * encoder additionally enforces the combined-fits-in-frame constraint
-     * via {@link #checkInstallSnapshotFitsFrame} so that a maximally-
-     * sized chunk is provably encodable AND decodable.
-     *
-     * <p>4 MiB per blob leaves headroom for both blobs (= 8 MiB) plus
-     * the InstallSnapshot fixed header (33 B) plus the FrameCodec
-     * header+trailer ({@code HEADER_SIZE + TRAILER_SIZE}), all comfortably
-     * under {@link FrameCodec#MAX_FRAME_SIZE} = 16 MiB. The sender's default
-     * chunk size ({@code RaftNode.DEFAULT_SNAPSHOT_CHUNK_BYTES}) sits well
-     * below this cap; a chunk that trips this bound is a chunk-size
-     * misconfiguration, not legitimate traffic.
-     */
+    
     public static final int MAX_SNAPSHOT_BLOB_LEN = 4 * 1024 * 1024;
 
-    /**
-     * Hard upper bound on the number of groups in a single coalesced
-     * heartbeat - a defensive allocation bound on a hostile peer's count claim (mirrors
-     * {@link #MAX_ENTRIES_PER_APPEND}). The production ceiling is the shard count (<=16); 1024 is
-     * generous headroom that still bounds the per-frame map allocation.
-     */
+    
     public static final int MAX_COALESCED_GROUPS = 1024;
 
-    /**
-     * Fixed per-group record in a coalesced-heartbeat payload (bytes):
-     * groupId(4) + term(8) + leaderId(4) + prevLogIndex(8) + prevLogTerm(8) + leaderCommit(8).
-     * Every coalesced entry is a heartbeat (empty AppendEntries), so no entries are carried.
-     */
+    
     private static final int COALESCED_GROUP_RECORD = 4 + 8 + 4 + 8 + 8 + 8;
 
-    /** Fixed-size portion of an InstallSnapshot payload (in bytes). */
+    
     private static final int INSTALL_SNAPSHOT_FIXED_HEADER =
             4 + 8 + 8 + 4 + 1 + 4 + 4; // leaderId+lastIdx+lastTerm+offset+done+dataLen+configLen
 
-    /**
-     * Fixed anchor-witness body (bytes): {@code selfAnchorSeq(8) + selfTerm(8) + selfVotedFor(4)
-     * + seenOfYouSeq(8) + flags(1)} = 29. The sender id is NOT in the body - it is the transport's
-     * 4-byte {@code senderId} prefix, injected from {@code InboundMessage.from} at decode (see
-     * {@link #decodeWitness}).
-     *
-     * <p>That prefix is <em>cryptographically bound</em> to the peer's TLS certificate identity
-     * <b>only when a peer-identity allow-list is configured</b> ({@code PeerIdentityPolicy}): the
-     * transport verifies the accepted peer's cert and drops any frame
-     * whose {@code senderId} differs from the connection's authorized {@code NodeId}. When no allow-list
-     * is configured (default) the prefix is CA-chain-validated but self-declared, so a cert-valid peer
-     * could forge it - the transport logs a one-time warning in that posture. Shared by
-     * {@link MessageType#RAFT_WITNESS} and {@link MessageType#RAFT_WITNESS_REPLY}.
-     */
+    
     private static final int WITNESS_BODY_LEN = 8 + 8 + 4 + 8 + 1;
 
-    /** {@code flags} bit0: this witness carries the boot QUERY (recipient should reply). */
+    
     private static final int WITNESS_FLAG_QUERY = 0x01;
 
     private RaftMessageCodec() {}
@@ -151,14 +76,7 @@ public final class RaftMessageCodec {
         }
     }
 
-    /**
-     * Strict-end: a fixed-shape decoder consumes exactly its declared payload, so any bytes
-     * left in the buffer are padding a hostile peer appended - reject them (bounded by frame length,
-     * but a real grammar violation). Uniform with the strict-end already enforced by
-     * {@link #decodeAppendEntries}, {@link #decodeInstallSnapshot} and
-     * {@link #decodeCoalescedHeartbeat}. Call AFTER the last field - including any optional trailing
-     * field - has been read, so it never rejects the legitimate absence of an optional field.
-     */
+    
     private static void rejectTrailingBytes(ByteBuffer buf, String field) {
         if (buf.hasRemaining()) {
             throw new IllegalArgumentException(
@@ -203,13 +121,7 @@ public final class RaftMessageCodec {
         }
     }
 
-    /**
-     * Encodes a RaftMessage into a FrameCodec.Frame.
-     *
-     * @param message the Raft message to encode
-     * @param groupId the Raft group this message belongs to
-     * @return the encoded frame
-     */
+    
     public static FrameCodec.Frame encode(RaftMessage message, int groupId) {
         return switch (message) {
             case AppendEntriesRequest req -> encodeAppendEntries(req, groupId);
@@ -224,13 +136,7 @@ public final class RaftMessageCodec {
         };
     }
 
-    /**
-     * Decodes a FrameCodec.Frame into a RaftMessage.
-     *
-     * @param frame the frame to decode
-     * @return the decoded Raft message
-     * @throws IllegalArgumentException if the message type is not a Raft message
-     */
+    
     public static RaftMessage decode(FrameCodec.Frame frame) {
         return switch (frame.messageType()) {
             case APPEND_ENTRIES -> decodeAppendEntries(frame);
@@ -257,24 +163,7 @@ public final class RaftMessageCodec {
         };
     }
 
-    /**
-     * Encodes a coalesced heartbeat - the per-group empty {@link AppendEntriesRequest}s one node
-     * drained for a single peer in one tick - into ONE {@link MessageType#RAFT_COALESCED_HEARTBEAT}
-     * frame. Dormant at N=1 (the drain there always has exactly one group and sends a plain
-     * AppendEntries instead); emitted only at N&gt;1.
-     *
-     * <p>The sending node's id is NOT in the payload - the transport already carries it as the
-     * sender-id prefix ({@code RaftWireProtocol}), so the receiver gets {@code from} from the
-     * {@code InboundMessage}. The frame-header groupId/term are sentinels (0): the real per-group
-     * ids/terms are in the payload, and the inbound demux dispatches this type by message type, never
-     * by {@code frame.groupId()}.
-     *
-     * @param groupHeartbeats per-group {@code groupId -> empty AppendEntriesRequest} (>=1 entry)
-     * @return the encoded coalesced-heartbeat frame
-     * @throws IllegalArgumentException if the map is empty, exceeds {@link #MAX_COALESCED_GROUPS}, or
-     *                                  any entry carries a non-empty AppendEntries (only heartbeats
-     *                                  may be coalesced)
-     */
+    
     public static FrameCodec.Frame encodeCoalescedHeartbeat(Map<Integer, AppendEntriesRequest> groupHeartbeats) {
         int n = groupHeartbeats.size();
         if (n == 0) {
@@ -305,17 +194,7 @@ public final class RaftMessageCodec {
         return new FrameCodec.Frame(MessageType.RAFT_COALESCED_HEARTBEAT, 0, 0L, buf.array());
     }
 
-    /**
-     * Decodes a {@link MessageType#RAFT_COALESCED_HEARTBEAT} frame back into the per-group
-     * {@code groupId -> empty AppendEntriesRequest} map. The caller demuxes each entry onto ITS
-     * group's owner thread (see {@code RaftTransportAdapter}); preserves group order for deterministic
-     * replay.
-     *
-     * @param frame a frame whose {@code messageType()} is {@link MessageType#RAFT_COALESCED_HEARTBEAT}
-     * @return the per-group heartbeats (insertion-ordered, distinct group ids)
-     * @throws IllegalArgumentException on a malformed/adversarial payload (bad count, truncation,
-     *                                  duplicate group id, or trailing bytes)
-     */
+    
     public static Map<Integer, AppendEntriesRequest> decodeCoalescedHeartbeat(FrameCodec.Frame frame) {
         // Defense-in-depth: the sole production caller routes by type, but a type guard here makes the
         // method fail-closed against any future second caller (mirrors the directional throw in decode()).
@@ -651,17 +530,7 @@ public final class RaftMessageCodec {
         return new FrameCodec.Frame(type, groupId, selfTerm, buf.array());
     }
 
-    /**
-     * Decodes a {@link MessageType#RAFT_WITNESS} / {@link MessageType#RAFT_WITNESS_REPLY} frame,
-     * injecting the transport-authenticated {@code from} as the message {@code sender} (the body does
-     * not carry it - the receiver keys its witness tables on the authenticated origin, not a spoofable
-     * body field). Fail-closed: rejects a wrong type or a truncated body.
-     *
-     * @param frame a witness frame (its {@code messageType()} must be one of the two witness types)
-     * @param from  the transport-authenticated sender ({@code InboundMessage.from})
-     * @return the decoded {@link WitnessMessage} or {@link WitnessReply}
-     * @throws IllegalArgumentException on a wrong type or a malformed/truncated body
-     */
+    
     public static RaftMessage decodeWitness(FrameCodec.Frame frame, NodeId from) {
         MessageType type = frame.messageType();
         if (type != MessageType.RAFT_WITNESS && type != MessageType.RAFT_WITNESS_REPLY) {

@@ -23,22 +23,6 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Proves that routing the encryption boot path through the KMS SPI keeps the {@code local} posture
- * byte-identical, so an existing encrypted deployment's on-disk keyring and records still decrypt.
- *
- * <p>Fully self-contained - no committed key material (the repo convention is to generate all key
- * material at runtime). A test signing key is generated in {@code @BeforeAll}, then a {@code
- * raft-keyring} and an encrypted record are minted using the frozen keyring-key derivation hard-coded in
- * this test - HKDF over the signing-key IKM with salt = the 16-byte keyId and the two info strings
- * {@code configd/keyring-mac/v1} and {@code configd/keyring-wrap/v1}. That hard-coded formula is
- * computed independently of {@link ConfigdServer}, so if the boot's {@code local} KEK derivation ever
- * drifted by a single bit it would fail to unseal this keyring and the test would fail. The {@code local}
- * boot must decrypt the record byte-for-byte.
- *
- * <p>The encryption-OFF byte-identity and the encrypting-envelope round-trip are separately locked by
- * {@link EncryptionAtRestWiringTest}.
- */
 class KmsBootByteIdentityTest {
 
     private static final String ENABLE = "configd.raft.encryption.enabled";

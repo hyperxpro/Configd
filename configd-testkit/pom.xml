@@ -23,12 +23,7 @@
             <artifactId>configd-consensus-core</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <!--
-          Consume consensus-core's test-jar so the adversarial simulation can
-          reuse the crash-capable durability fixtures (CrashStorage,
-          KvStateMachine) instead of duplicating them. Test scope: only the sim's
-          own tests use these fixtures.
-        -->
+        <!-- Test-jar: reuse durability fixtures (CrashStorage, KvStateMachine) without duplication. -->
         <dependency>
             <groupId>io.configd</groupId>
             <artifactId>configd-consensus-core</artifactId>
@@ -41,12 +36,7 @@
             <artifactId>configd-config-store</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <!--
-          Multi-Raft Phase 1: the sharding/routing layer (ShardMap, StaticShardMap, MultiRaftDriver)
-          lives here. The multi-shard deterministic sim (MultiShardSim) imports ShardMap directly;
-          declared explicitly rather than relied upon transitively via configd-server. configd-server
-          already depends on configd-replication-engine, so this introduces no new cycle.
-        -->
+        <!-- MultiShardSim imports ShardMap directly; declared explicitly (no new cycle). -->
         <dependency>
             <groupId>io.configd</groupId>
             <artifactId>configd-replication-engine</artifactId>
@@ -62,24 +52,13 @@
             <artifactId>configd-distribution-service</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <!--
-          LivePropagationProbeMain's edge mode starts a real in-process
-          EdgeNodeMain (the commit->edge-visibility leg). Acyclic: configd-edge-node
-          does not depend on configd-testkit.
-        -->
+        <!-- LivePropagationProbeMain edge mode starts a real EdgeNodeMain (acyclic: edge-node doesn't depend on testkit). -->
         <dependency>
             <groupId>io.configd</groupId>
             <artifactId>configd-edge-node</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <!--
-          LivePropagationProbeMain starts an in-process
-          single-node ConfigdServer and tails its ADR-0034 commit-notification boundary
-          to measure live commit->boundary propagation. This is an internal reactor
-          module (no new external dependency); configd-server does NOT depend on
-          configd-testkit in any scope, so the reactor simply topologically orders
-          configd-server before configd-testkit — no cycle.
-        -->
+        <!-- Probe measures commit→boundary propagation via in-process ConfigdServer (no cycle). -->
         <dependency>
             <groupId>io.configd</groupId>
             <artifactId>configd-server</artifactId>
@@ -90,14 +69,7 @@
             <artifactId>configd-transport</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <!--
-          The synthetic propagation probe records
-          staleness distributions via HdrHistogram (PropagationProbe, io.configd.probe).
-          Version is pinned in the root pom dependencyManagement (2.2.2); this is an
-          already-managed dependency, NOT a new external one. It is already present
-          transitively on the test classpath (observability → LatencyUtils), declared
-          here explicitly because the probe lives in src/main/java.
-        -->
+        <!-- HdrHistogram: declared explicitly because probe (src/main/java) uses it. -->
         <dependency>
             <groupId>org.hdrhistogram</groupId>
             <artifactId>HdrHistogram</artifactId>
@@ -106,12 +78,7 @@
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
         </dependency>
-        <!--
-          JMH benchmarks live under src/main/java/io/configd/bench so
-          they can be bundled into an executable uber-jar (benchmarks.jar).
-          JMH is therefore a compile-scope dependency. We mark it optional so
-          consumers of the thin testkit jar do not pull it transitively.
-        -->
+        <!-- JMH: compile-scope (benchmarks in src/main/java), optional so thin jar doesn't leak it. -->
         <dependency>
             <groupId>org.openjdk.jmh</groupId>
             <artifactId>jmh-core</artifactId>
@@ -122,12 +89,7 @@
             <artifactId>jmh-generator-annprocess</artifactId>
             <optional>true</optional>
         </dependency>
-        <!--
-          Netty 4.2 — JDK-vs-Netty head-to-head ONLY (docs/jdk-vs-netty/). Confined to this
-          bench module; NO production module depends on Netty (research, not a
-          migration). Marked optional (like JMH) so the thin testkit jar does not leak Netty
-          transitively; the shade plugin still bundles them into benchmarks.jar.
-        -->
+        <!-- Netty: JDK-vs-Netty bench only (research); optional so thin jar doesn't leak it. -->
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-transport</artifactId>
@@ -181,11 +143,6 @@
                     </annotationProcessorPaths>
                 </configuration>
             </plugin>
-            <!--
-              Bundle benchmarks + jmh-core into an executable uber-jar so CI and
-              docs can run them via:
-                java -jar configd-testkit/target/benchmarks.jar <regex>
-            -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
@@ -202,10 +159,7 @@
                                     <mainClass>org.openjdk.jmh.Main</mainClass>
                                 </transformer>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
-                                <!--
-                                  JMH-generated metadata files must be concatenated
-                                  across jars, not clobbered.
-                                -->
+                                <!-- JMH metadata: concatenate, not clobber. -->
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
                                     <resource>META-INF/BenchmarkList</resource>
                                 </transformer>

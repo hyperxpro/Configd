@@ -6,25 +6,10 @@ import java.util.Map;
 /**
  * Tracks pending linearizable read requests using the ReadIndex protocol.
  * <p>
- * When a client requests a linearizable read, the leader must confirm it
- * still holds authority before serving the read. The protocol is:
- * <ol>
- *   <li>Record the current commit index as the "read index".</li>
- *   <li>Send a heartbeat round to confirm leadership (a majority must respond).</li>
- *   <li>Wait until {@code lastApplied >= readIndex}.</li>
- *   <li>Execute the read against the state machine.</li>
- * </ol>
- * <p>
- * This class is designed for single-threaded access from the Raft I/O
- * thread. No synchronization is used.
- *
- * @see RaftNode#readIndex()
+ * Single-threaded access from the Raft I/O thread. No synchronization is used.
  */
 public final class ReadIndexState {
 
-    /**
-     * Internal state of a single pending read request.
-     */
     private record PendingRead(long readIndex, long term, int ackCount, boolean leadershipConfirmed) {
 
         PendingRead withAck(int newAckCount) {
@@ -40,55 +25,26 @@ public final class ReadIndexState {
     private long nextReadId;
 
     /**
-     * Starts a new read request. Records the current commit index as the
-     * threshold that must be applied before the read can be served, and the
-     * leader's term at request time (so a served read can be checked against
-     * the node's current term  -  the ReadIndexSpec NoStaleLeaderServe twin).
-     *
-     * @param commitIndex the current commit index at the time of the read request
-     * @param term        the leader's current term at the time of the read request
-     * @return a unique read ID used to track this request
+     * Records the term so a read that is ready to serve can be rejected if the node's term has
+     * since advanced, which means leadership was lost after the heartbeat confirmation.
      */
     public long startRead(long commitIndex, long term) {
         long readId = nextReadId++;
-        pendingReads.put(readId, new PendingRead(commitIndex, term, 1, false)); // 1 = self
+        pendingReads.put(readId, new PendingRead(commitIndex, term, 1, false)); // ackCount 1 = self
         return readId;
     }
 
-    /**
-     * Convenience overload that records term 0 (unknown). Retained for existing
-     * tests that do not exercise the term-based stale-leader twin.
-     *
-     * @param commitIndex the current commit index at the time of the read request
-     * @return a unique read ID used to track this request
-     */
+    /** Records term 0, meaning unknown: the caller opts out of the stale-leader term check. */
     public long startRead(long commitIndex) {
         return startRead(commitIndex, 0L);
     }
 
-    /**
-     * Returns the term recorded when the given read was started, or -1 if the
-     * read ID is not found. Used by the NoStaleLeaderServe runtime twin.
-     *
-     * @param readId the read request identifier
-     * @return the read's recorded term, or -1 if unknown
-     */
+    /** Returns the term recorded when the read started, or -1 if the read ID is not found. */
     public long termOf(long readId) {
         PendingRead pending = pendingReads.get(readId);
         return pending != null ? pending.term() : -1;
     }
 
-    /**
-     * Confirms leadership for a pending read after a heartbeat round.
-     * <p>
-     * Called when heartbeat responses arrive. Once {@code ackCount >= quorumSize},
-     * the read's leadership is confirmed and it can proceed once the state
-     * machine has caught up.
-     *
-     * @param readId     the read request identifier
-     * @param ackCount   total acknowledgement count (including self)
-     * @param quorumSize the majority threshold
-     */
     public void confirmLeadership(long readId, int ackCount, int quorumSize) {
         PendingRead pending = pendingReads.get(readId);
         if (pending == null) {
@@ -101,20 +57,6 @@ public final class ReadIndexState {
         pendingReads.put(readId, updated);
     }
 
-    /**
-     * Checks whether the read can be served.
-     * <p>
-     * A read is ready when:
-     * <ol>
-     *   <li>Leadership has been confirmed via a heartbeat majority.</li>
-     *   <li>The state machine has applied all entries up through the read index
-     *       ({@code lastApplied >= readIndex}).</li>
-     * </ol>
-     *
-     * @param readId      the read request identifier
-     * @param lastApplied the current lastApplied index from the log
-     * @return true if the read can be safely served
-     */
     public boolean isReady(long readId, long lastApplied) {
         PendingRead pending = pendingReads.get(readId);
         if (pending == null) {
@@ -123,42 +65,23 @@ public final class ReadIndexState {
         return pending.leadershipConfirmed() && lastApplied >= pending.readIndex();
     }
 
-    /**
-     * Returns the read index (commit index at the time of the read request)
-     * for the given read ID, or -1 if the read ID is not found.
-     *
-     * @param readId the read request identifier
-     * @return the read index, or -1 if unknown
-     */
+    /** Returns the recorded read index, or -1 if the read ID is not found. */
     public long readIndex(long readId) {
         PendingRead pending = pendingReads.get(readId);
         return pending != null ? pending.readIndex() : -1;
     }
 
-    /**
-     * Removes a completed (or cancelled) read from the pending set.
-     *
-     * @param readId the read request identifier
-     */
     public void complete(long readId) {
         pendingReads.remove(readId);
     }
 
-    /**
-     * Returns the number of pending read requests.
-     */
     public int pendingCount() {
         return pendingReads.size();
     }
 
     /**
-     * Confirms leadership for all pending reads that have not yet been confirmed.
-     * Called after the caller has already verified that a quorum is active
-     * (e.g., via {@code clusterConfig.isQuorum(activeSet)}).
-     * <p>
-     * The caller is responsible for the quorum check because during joint
-     * consensus, quorum requires dual-majority validation that cannot be
-     * expressed as a simple count comparison.
+     * The caller must have already verified quorum. The check cannot be done here because under
+     * joint consensus quorum requires dual-majority validation, not a count comparison.
      */
     public void confirmAllLeadership() {
         pendingReads.replaceAll((id, pending) ->
@@ -166,13 +89,8 @@ public final class ReadIndexState {
     }
 
     /**
-     * Confirms leadership for all pending reads that have not yet been confirmed.
-     * Called after a successful heartbeat round demonstrates quorum.
-     *
-     * @param ackCount   total acknowledgement count (including self)
-     * @param quorumSize the majority threshold
-     * @deprecated Use {@link #confirmAllLeadership()} after an external quorum check
-     *             via {@code clusterConfig.isQuorum()} for correct joint consensus handling.
+     * @deprecated Use {@link #confirmAllLeadership()} after an external {@code clusterConfig.isQuorum()}
+     *             check, which handles joint consensus correctly.
      */
     @Deprecated
     public void confirmAll(int ackCount, int quorumSize) {
@@ -182,10 +100,6 @@ public final class ReadIndexState {
         confirmAllLeadership();
     }
 
-    /**
-     * Clears all pending reads. Called when the node steps down from leadership,
-     * since reads cannot be served by a non-leader.
-     */
     public void clear() {
         pendingReads.clear();
     }

@@ -9,17 +9,6 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.random.RandomGenerator;
 
-/**
- * Measures single Raft group commit throughput using an in-memory
- * deterministic simulation.
- * <p>
- * Sets up a 3-node Raft cluster with in-memory transport and state machines.
- * Elects a leader, then measures the cost of proposing entries and ticking
- * them through to commit.
- * <p>
- * This benchmark exercises the full Raft protocol path:
- * propose -> append -> broadcast -> replicate -> commit -> apply.
- */
 @BenchmarkMode(Mode.Throughput)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 @State(Scope.Thread)
@@ -99,10 +88,6 @@ public class RaftCommitBenchmark {
         }
     }
 
-    /**
-     * Proposes a single entry and ticks the cluster until it commits.
-     * Measures the full commit cycle cost.
-     */
     @Benchmark
     public void proposeAndCommit(Blackhole bh) {
         RaftNode leader = nodes.get(leaderId);
@@ -123,9 +108,6 @@ public class RaftCommitBenchmark {
         bh.consume(leader.log().commitIndex());
     }
 
-    /**
-     * In-memory transport that directly routes messages between nodes.
-     */
     private static final class InMemoryTransport implements RaftTransport {
         private final NodeId localId;
         private final List<PendingMsg> outbox = new ArrayList<>();
@@ -162,9 +144,6 @@ public class RaftCommitBenchmark {
         record PendingMsg(NodeId target, RaftMessage message) {}
     }
 
-    /**
-     * Minimal state machine that does nothing on apply.
-     */
     private static final class NoOpStateMachine implements StateMachine {
         @Override
         public long apply(long index, long term, byte[] command) {

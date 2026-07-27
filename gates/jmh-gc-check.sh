@@ -4,19 +4,6 @@
 # The CT-34 gate row cannot pass on Javadoc-recorded numbers — it needs a
 # mechanical `-prof gc` run with a saved artifact.
 #
-# WHAT A GREEN RUN PROVES (CT-34 — the inherited hot-path law on the edge
-# read path):
-#   ZERO steady-state allocation on the in-process edge read path
-#   (LocalConfigStore), measured by JMH's GC profiler on:
-#     - getMiss     the miss path (pre-allocated ReadResult.NOT_FOUND singleton)
-#     - getIntoHit  the VDR-0001 strict-zero-alloc hit path (caller buffer)
-#   Asserted mechanically: gc.alloc.rate.norm < 1 B/op for BOTH legs (JMH
-#   reports true zero as "≈ 10⁻⁴" infrastructure noise; >= 1 B/op means a real
-#   per-op allocation crept in). The plain get() hit legs allocate exactly one
-#   ReadResult record by design (the documented, accepted nursery allocation —
-#   see ReadResult's javadoc and the benchmark's) and are captured in the
-#   artifact for trend visibility but NOT gated.
-#
 # SCOPE (the signed law boundary): the law binds the IN-PROCESS read path
 # only. The HTTP serving shell above it (EdgeHttpServer) allocates per
 # request and is out of scope by design; do NOT point this gate at the HTTP

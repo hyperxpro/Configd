@@ -21,14 +21,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Drives {@link NodeAnchorService#enforceNodeAnchor} (the boot cross-check + first-boot mint) and the
- * periodic refresher directly, without standing up a whole server - the same pattern
- * {@code ShardCountConfigTest} uses for {@code enforceTopologyDescriptor}. Covers: first-boot mint,
- * clean second boot, topology rollback (epoch / N), audit-head reach vs truncation (plus the
- * un-anchored tail), the shard-wipe REFUSE, forward-advance accept-forward (no false refuse), and the
- * refresh advance.
- */
 class NodeAnchorBootTest {
 
     private static final long EPOCH = 5L;

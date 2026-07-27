@@ -107,13 +107,6 @@ public final class PolicySerializer {
     private PolicySerializer() {
     }
 
-    /**
-     * Parses an {@code _acl/} subtree (full flat keys -> raw value bytes) into a {@link ConfigPolicy}.
-     *
-     * @param aclSubtree the {@code _acl/}-prefixed key->value entries (non-null; values non-null)
-     * @return the parsed config-policy
-     * @throws PolicyParseException if any entry is structurally malformed (fail-closed - reject whole load)
-     */
     public static ConfigPolicy parse(Map<String, byte[]> aclSubtree) {
         Objects.requireNonNull(aclSubtree, "aclSubtree must not be null");
 
@@ -129,9 +122,6 @@ public final class PolicySerializer {
             String text = new String(value, StandardCharsets.UTF_8);
 
             if (key.equals(FORMAT_KEY)) {
-                // Validate the grammar version first, then drop it: it is metadata, not a role/binding, so it
-                // contributes nothing to roles/bindings. An unsupported version fails closed here (whole-load
-                // reject), which is what lets an old node refuse a newer policy instead of misparsing it.
                 parseFormatVersion(text);
             } else if (key.startsWith(ROLES_PREFIX)) {
                 String roleName = key.substring(ROLES_PREFIX.length());
@@ -155,11 +145,6 @@ public final class PolicySerializer {
         return new ConfigPolicy(roles, bindings);
     }
 
-    /**
-     * Parses and validates the {@code _acl/format} value: the supported grammar version, or fail closed. The
-     * value is stripped (a trailing newline / surrounding whitespace is tolerated, consistent with the line-
-     * oriented text format); a blank, non-integer, or unsupported value throws so the whole load is rejected.
-     */
     private static void parseFormatVersion(String text) {
         String token = text.strip();
         int format;
@@ -204,11 +189,11 @@ public final class PolicySerializer {
             String capsToken;
             String prefix;
             if (sp2 < 0) {
-                capsToken = rest;   // no prefix field -> empty prefix (matches every key)
+                capsToken = rest;
                 prefix = "";
             } else {
                 capsToken = rest.substring(0, sp2);
-                prefix = rest.substring(sp2 + 1);  // VERBATIM remainder (may be empty / may contain spaces)
+                prefix = rest.substring(sp2 + 1);
             }
 
             Set<AclService.Permission> caps = parseCaps(roleName, line, capsToken);
@@ -239,11 +224,6 @@ public final class PolicySerializer {
                         "unknown capability '" + capName + "' in role '" + roleName + "' rule '" + line
                                 + "' (expected one of READ,WRITE,WATCH,ADMIN)");
             }
-            // LIST is a reserved, non-grantable capability: there is deliberately no list/enumerate
-            // operation for it to gate, so a policy may neither allow nor deny it. The enum value survives
-            // only to keep the frozen ordinal stable (see AclService.Permission). Rejecting the token here -
-            // the single parse chokepoint shared by write-time validateAclWrite and the reload path - keeps
-            // both paths identical, so LIST is uniformly non-grantable and can never split write vs reload.
             if (cap == AclService.Permission.LIST) {
                 throw new PolicyParseException(
                         "capability 'LIST' is reserved and not grantable (no list/enumerate operation exists"
@@ -261,14 +241,11 @@ public final class PolicySerializer {
             if (isIgnorable(line)) {
                 continue;
             }
-            // A binding line is a single verbatim role name. A non-blank line that is whitespace-only is
-            // caught by isIgnorable (blank); anything else is taken verbatim as the role name.
             roleNames.add(line);
         }
         return roleNames;
     }
 
-    /** Splits on '\n' (the trailing '\r' of a CRLF line is stripped per-line by {@link #stripTrailingCr}). */
     private static String[] splitLines(String text) {
         return text.split("\n", -1);
     }
@@ -279,7 +256,6 @@ public final class PolicySerializer {
                 : line;
     }
 
-    /** A line is ignorable if it is blank or its first non-whitespace character is '#'. */
     private static boolean isIgnorable(String line) {
         return line.isBlank() || line.stripLeading().startsWith("#");
     }

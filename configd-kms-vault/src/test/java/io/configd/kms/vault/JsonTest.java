@@ -9,7 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Tests the hand-rolled {@link Json} reader/writer against the shapes Vault returns. */
 class JsonTest {
 
     @Test

@@ -17,21 +17,9 @@ import java.security.spec.X509EncodedKeySpec;
 import java.util.UUID;
 
 /**
- * Persistent Ed25519 signing key store: loads a stable keypair from an operator-supplied file so
- * edges can verify signatures across leader restarts, and a key can be rotated deliberately. A
- * keypair generated fresh on every boot would break signature continuity for edges and rule out
- * rotation entirely.
- * <p>
- * <b>File format</b> (v1):
- * <pre>
- *   [4 bytes: magic 0xC0DF_51C5]
- *   [2 bytes: version = 1]
- *   [16 bytes: key-id (random UUID big-endian most / least)]
- *   [4 bytes: private key DER length] [private key DER (PKCS#8)]
- *   [4 bytes: public  key DER length] [public  key DER (X.509)]
- * </pre>
- * POSIX file mode is forced to 0600 on generation so the file is readable only
- * by the owning process account.
+ * Persistent key enables signature continuity across leader restarts + deliberate rotation.
+ * File format (v1): [magic][version][uuid][priv-len][priv-DER][pub-len][pub-DER].
+ * Mode 0600 on generation (POSIX only; best-effort non-POSIX).
  */
 public final class SigningKeyStore {
 
@@ -55,14 +43,6 @@ public final class SigningKeyStore {
         return keyId;
     }
 
-    /**
-     * Loads a keypair from {@code path} if the file exists; otherwise generates
-     * a fresh keypair, assigns a random {@code keyId}, and writes the file with
-     * mode {@code 0600} (best-effort on POSIX, silently skipped elsewhere).
-     *
-     * @param path persistent key file path (non-null)
-     * @return a loaded or freshly generated {@link SigningKeyStore}
-     */
     public static SigningKeyStore loadOrCreate(Path path) throws GeneralSecurityException, IOException {
         if (Files.exists(path)) {
             return load(path);
@@ -117,12 +97,8 @@ public final class SigningKeyStore {
             Files.createDirectories(parent);
         }
 
-        // Durable, crash-safe write: fill a temp file, fsync it, restrict it to 0600 while it
-        // is still private, then atomically rename it into place and fsync the directory. A
-        // bare Files.write is not fsynced and not atomic - a crash mid-write leaves a torn key
-        // file that then "exists", so the next boot's load() reads a truncated key and fails.
-        // No REPLACE_EXISTING on the rename: an existing signing key must NEVER be silently
-        // overwritten (loadOrCreate only reaches here when the file is absent).
+        // Durable crash-safe: temp file + fsync + chmod 0600 + atomic rename + fsync dir.
+        // Bare Files.write loses on crash mid-write (torn key). No REPLACE_EXISTING (never overwrite).
         Path tmp = path.resolveSibling(path.getFileName().toString() + ".tmp");
         try (FileChannel channel = FileChannel.open(tmp,
                 StandardOpenOption.CREATE,
@@ -141,7 +117,6 @@ public final class SigningKeyStore {
         return new SigningKeyStore(keyPair, keyId);
     }
 
-    /** Serializes a keypair + id into the v1 on-disk layout (magic, version, keyId, DER pair). */
     private static byte[] encode(KeyPair keyPair, UUID keyId) {
         byte[] privBytes = keyPair.getPrivate().getEncoded();
         byte[] pubBytes = keyPair.getPublic().getEncoded();
@@ -159,9 +134,7 @@ public final class SigningKeyStore {
     }
 
     /**
-     * Best-effort POSIX 0600 (owner read/write only). On a non-POSIX filesystem this throws
-     * {@link UnsupportedOperationException}, which we ignore - the operator audits permissions
-     * out-of-band there.
+     * Best-effort POSIX 0600; non-POSIX UnsupportedOperationException ignored.
      */
     private static void restrictToOwner(Path path) throws IOException {
         try {
@@ -171,7 +144,6 @@ public final class SigningKeyStore {
         }
     }
 
-    /** Fsyncs {@code dir} so a freshly renamed file's directory entry is itself durable. */
     private static void fsyncDirectory(Path dir) throws IOException {
         if (dir == null) {
             return; // no parent to fsync (e.g. a bare relative filename); best-effort
@@ -182,8 +154,7 @@ public final class SigningKeyStore {
     }
 
     /**
-     * Writes an arbitrary keypair and id - test-only helper. Applies the same 0600 restriction
-     * as {@link #generateAndWrite} so a test fixture matches the production file's permissions.
+     * Test helper: matches production 0600 restriction.
      */
     static void writeForTest(Path path, KeyPair keyPair, UUID keyId) throws IOException {
         Files.write(path, encode(keyPair, keyId),
@@ -193,7 +164,6 @@ public final class SigningKeyStore {
         restrictToOwner(path);
     }
 
-    /** Formats a UUID without dashes; no in-repo caller yet. */
     public static String format(UUID id) {
         return id.toString().replace("-", "");
     }

@@ -3,10 +3,6 @@ package io.configd.transport;
 import java.nio.file.Path;
 import java.util.Objects;
 
-/**
- * Configuration for TLS transport security. Supports mTLS with
- * certificate rotation via periodic SslContext rebuild.
- */
 public record TlsConfig(
     Path certPath,
     Path keyPath,
@@ -25,9 +21,6 @@ public record TlsConfig(
         }
     }
 
-    /**
-     * Creates a TlsConfig with an empty store password.
-     */
     public TlsConfig(Path certPath, Path keyPath, Path trustStorePath,
                      boolean requireClientAuth,
                      java.util.List<String> ciphers,

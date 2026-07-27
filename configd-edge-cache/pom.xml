@@ -23,23 +23,12 @@
             <artifactId>configd-config-store</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <!--
-          InvariantMonitor is used by StalenessTracker and LocalConfigStore to emit
-          monotonic-read / staleness-bound violations.
-        -->
         <dependency>
             <groupId>io.configd</groupId>
             <artifactId>configd-observability</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <!--
-          EdgeClientCore consumes the edge wire types (EdgeFrame, EdgeSnapshotCodec,
-          CommitNotification) from the distribution service. No cycle:
-          configd-distribution-service does NOT depend on configd-edge-cache (verified —
-          its deps are common/config-store/transport/agrona/jctools only), so this
-          edge→distribution edge is acyclic. The transport-agnostic wire model carries no
-          java.net/socket types, so EdgeClientCore stays transport-free.
-        -->
+        <!-- EdgeClientCore consumes wire types; no cycle (distribution-service doesn't depend on edge-cache). -->
         <dependency>
             <groupId>io.configd</groupId>
             <artifactId>configd-distribution-service</artifactId>
@@ -48,31 +37,7 @@
     </dependencies>
 
     <profiles>
-        <!--
-          Mutation-testing discipline. Activated with the parent `-Pmutation`. Scoped
-          explicitly to this module's edge data-plane classes rather than a blanket package
-          glob, so the score is not dragged down by pre-existing edge classes with lower
-          coverage.
-
-          targetClasses (held to 65):
-            EdgeClientCore        — the transport-agnostic client session engine, including
-                                    the gap/DISCONNECTED resubscribe directives and the
-                                    poison-pill wiring;
-            StalenessTracker      — the covered-frontier staleness measure;
-            EdgeConfigClient      — the storage filter + frontier wiring;
-            PrefixStorageFilter   — the storage-filter helper;
-            StrongReadKeyClass    — the shared strong-read predicate;
-            DeltaApplier          — the commit-timestamp-driven apply/gap logic;
-            PoisonPillPolicy      — the bounded-retry/quarantine/terminal ladder.
-                                    PoisonPillDetector is referenced by it but its own code
-                                    is unchanged, so it keeps its pre-existing tests and is
-                                    not itself a target.
-
-          Pre-existing edge classes NOT raised here (LocalConfigStore, PrefixSubscription,
-          VersionCursor, EdgeMetrics) are out of scope; their bars stay where their own
-          coverage put them. PIT glob `Foo*` does NOT recurse subpackages, but io.configd.edge
-          is flat, so the explicit class names suffice.
-        -->
+        <!-- Explicit targetClasses (65): EdgeClientCore, StalenessTracker, EdgeConfigClient, PrefixStorageFilter, StrongReadKeyClass, DeltaApplier, PoisonPillPolicy. -->
         <profile>
             <id>mutation</id>
             <build>

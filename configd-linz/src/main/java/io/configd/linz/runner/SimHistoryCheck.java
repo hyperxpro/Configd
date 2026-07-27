@@ -10,32 +10,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Checks a <b>simulation-produced</b> op-history with the same trusted Porcupine
- * checker the real-binary harness uses.
- *
- * <p>The adversarial deterministic sim (configd-testkit {@code AdversarialSim} +
- * {@code HistoryRecorder}) emits a checker-neutral JSON-Lines history (fields
- * {@code client_id, op_type, key, arg, ret, invoke_ts, response_ts, status,
- * consistency}). This adapter reads that {@code .jsonl}, maps each line to the linz
- * {@link Op} model, and runs it through the very same {@link PorcupineChecker} ->
- * {@code porcupine-check} binary that gates the real-binary runs. So the cheap,
- * fully-replayable sim history is checked by the same trusted third-party checker,
- * not a second hand-rolled one.
- *
- * <p>Mapping (identical semantics to the real harness):
- * <ul>
- *   <li>{@code op_type} PUT/DELETE -> write; READ -> read.</li>
- *   <li>{@code status} ok->OK, info->INFO, fail->FAIL (the checker-neutral kinds).</li>
- *   <li>a write's value is its {@code arg} token; a read's value is its {@code ret}
- *       (observed token, or {@code ""} for bottom/absent).</li>
- *   <li>{@code invoke_ts}/{@code response_ts} are the real-time backbone
- *       (the sim's monotonic, total {@code SimulatedClock}).</li>
- * </ul>
- * The downstream {@link io.configd.linz.history.PorcupineHistoryWriter} then applies
- * the identical drop/float/confirm-bound encoding pinned by the checker self-test.
- *
- * <p>Usage: {@code SimHistoryCheck <history.jsonl>}. Exit 0 LINEARIZABLE,
- * 1 NON-LINEARIZABLE, 2 INDETERMINATE/IO.
+ * Sim-produced op-history checked via same trusted Porcupine as real harness.
+ * Sim (testkit AdversarialSim) emits JSON-Lines; adapter maps to linz Op model,
+ * runs through real PorcupineChecker (not hand-rolled). Encoding pinned by self-test.
+ * Exit: 0 LINEARIZABLE, 1 NON-LINEARIZABLE, 2 INDETERMINATE/IO.
  */
 public final class SimHistoryCheck {
 
@@ -59,7 +37,6 @@ public final class SimHistoryCheck {
                 : r.verdict() == Verdict.NON_LINEARIZABLE ? 1 : 2);
     }
 
-    /** Parses the sim's checker-neutral JSON-Lines into linz {@link Op}s. */
     static List<Op> parse(List<String> lines) {
         List<Op> ops = new ArrayList<>(lines.size());
         for (String line : lines) {
@@ -68,8 +45,8 @@ public final class SimHistoryCheck {
             }
             String opType = strField(line, "op_type");
             String key = strField(line, "key");
-            String arg = strField(line, "arg");          // write token (null for reads)
-            String ret = strField(line, "ret");          // observed token (null for writes / bottom)
+            String arg = strField(line, "arg");
+            String ret = strField(line, "ret");
             String status = strField(line, "status");
             int client = (int) longField(line, "client_id");
             long invoke = longField(line, "invoke_ts");
@@ -87,7 +64,7 @@ public final class SimHistoryCheck {
                 case "fail" -> Op.Status.FAIL;
                 default -> throw new IllegalArgumentException("unknown status: " + status + " in " + line);
             };
-            // A write carries its arg token; a read carries the observed ret (bottom => "").
+            // Write carries arg token; read carries observed ret ("" for bottom)
             String value = (type == Op.Type.READ)
                     ? (ret == null ? "" : ret)
                     : (arg == null ? "" : arg);
@@ -95,8 +72,6 @@ public final class SimHistoryCheck {
         }
         return ops;
     }
-
-    /** Extracts a JSON string field's value, or null for a JSON {@code null}. */
     private static String strField(String line, String field) {
         String needle = '"' + field + "\":";
         int i = line.indexOf(needle);
@@ -138,7 +113,6 @@ public final class SimHistoryCheck {
         return sb.toString();
     }
 
-    /** Extracts a JSON numeric field's value. */
     private static long longField(String line, String field) {
         String needle = '"' + field + "\":";
         int i = line.indexOf(needle);

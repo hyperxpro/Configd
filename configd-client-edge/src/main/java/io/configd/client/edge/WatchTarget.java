@@ -7,26 +7,16 @@ import java.nio.charset.StandardCharsets;
 import java.util.EnumSet;
 import java.util.Objects;
 
-/**
- * What a watch observes: a {@code (scope, kind, path)} address plus the request {@link Flag}s. A KEY watch
- * addresses exactly one shard; a PREFIX (subtree) or FULL watch scatters across all shards. The path is
- * validated <b>client-side</b>: absolute, UTF-8, ≤ 1024 bytes, empty iff FULL.
- */
+/** Watch target: (scope, kind, path) address plus flags. KEY addresses one shard; PREFIX/FULL scatter all. */
 public record WatchTarget(int scope, Kind kind, String path, EnumSet<Flag> flags) {
 
-    /** The whole store is {@code /} for FULL; KEY/PREFIX paths are absolute. Max 1024 bytes. */
     public static final int MAX_PATH_BYTES = 1024;
 
-    /** The three target forms. */
     public enum Kind {KEY, PREFIX, FULL}
 
-    /** The {@code WATCH_CREATE} request flag bits. */
     public enum Flag {
-        /** Stream the verbatim signed chain; the client verifies + filters locally. Requires root scope. */
         FULL_CHAIN_VERIFY(EdgeFrame.WATCH_FLAG_FULL_CHAIN_VERIFY),
-        /** Request the pre-image of each change (etcd {@code prev_kv}); may be unsupported by the server. */
         PREV_VALUE(EdgeFrame.WATCH_FLAG_PREV_VALUE),
-        /** Request the existing state before tailing — the only way to get current state. */
         WITH_INITIAL_SNAPSHOT(EdgeFrame.WATCH_FLAG_WITH_INITIAL_SNAPSHOT);
 
         final int bit;
@@ -53,17 +43,14 @@ public record WatchTarget(int scope, Kind kind, String path, EnumSet<Flag> flags
         }
     }
 
-    /** A KEY watch on {@code path} in GLOBAL scope, from-now, no flags. */
     public static WatchTarget key(String path) {
         return new WatchTarget(0, Kind.KEY, path, EnumSet.noneOf(Flag.class));
     }
 
-    /** A PREFIX (subtree) watch on {@code prefix} in GLOBAL scope. */
     public static WatchTarget prefix(String prefix) {
         return new WatchTarget(0, Kind.PREFIX, prefix, EnumSet.noneOf(Flag.class));
     }
 
-    /** A FULL (whole-scope) watch in GLOBAL scope. Requires root scope. */
     public static WatchTarget full() {
         return new WatchTarget(0, Kind.FULL, "", EnumSet.noneOf(Flag.class));
     }
@@ -84,7 +71,6 @@ public record WatchTarget(int scope, Kind kind, String path, EnumSet<Flag> flags
         return flags.contains(Flag.WITH_INITIAL_SNAPSHOT);
     }
 
-    /** The {@code target_kind} byte (0=KEY, 1=PREFIX, 2=FULL). */
     public int targetKindByte() {
         return switch (kind) {
             case KEY -> EdgeFrame.WATCH_TARGET_KEY;
@@ -93,7 +79,6 @@ public record WatchTarget(int scope, Kind kind, String path, EnumSet<Flag> flags
         };
     }
 
-    /** The OR of the flag bits for the {@code WATCH_CREATE} frame. */
     public int flagBits() {
         int bits = 0;
         for (Flag f : flags) {
@@ -102,12 +87,10 @@ public record WatchTarget(int scope, Kind kind, String path, EnumSet<Flag> flags
         return bits;
     }
 
-    /** UTF-8 path bytes (empty for FULL). */
     public byte[] pathBytes() {
         return path.getBytes(StandardCharsets.UTF_8);
     }
 
-    /** True iff {@code key} is under this target (client-side filter for full_chain_verify mode). */
     public boolean matches(String key) {
         return switch (kind) {
             case FULL -> true;
@@ -128,9 +111,6 @@ public record WatchTarget(int scope, Kind kind, String path, EnumSet<Flag> flags
             throw new IllegalArgumentException(
                     "watch path exceeds " + MAX_PATH_BYTES + " bytes: " + bytes.length);
         }
-        // Reject a non-canonical / non-seg-char path client-side. A PREFIX subtree target's trailing
-        // slash is tolerated (kept for startsWith matching); '.'/'..'/'//' and illegal bytes are rejected so the
-        // driver never puts an aliasing key on the wire.
         PathGrammar.validateCanonical(path);
     }
 }

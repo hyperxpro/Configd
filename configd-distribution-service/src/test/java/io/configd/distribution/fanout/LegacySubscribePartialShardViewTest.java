@@ -22,25 +22,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * The legacy whole-store SUBSCRIBE refusal at N&gt;1, proven at the driver. The legacy SUBSCRIBE
- * plane is <b>primary-shard-only</b> - it drains {@code cores.get(primaryGid)} alone, so at N&gt;1
- * it is a partial keyspace view. The driver therefore refuses a legacy SUBSCRIBE <b>per
- * connection</b> at N&gt;1 with {@code BAD_SUBSCRIBE} and zero data frames, unless the operator sets
- * {@code allowPartialShardView}. The multi-shard {@code WATCH} plane is complete and is NEVER
- * refused here. At N=1 the refusal never fires (one shard is the whole keyspace) - the flag is
- * never consulted, so the legacy plane is byte-identical to a non-sharded build.
- *
- * <p>Drives {@link FanOutConnectionDriver} over N in-memory {@link FanOutBuffer}s + a recording
- * {@link RecordingTransportSink} - no threads, no I/O - the same harness family as
- * {@link MultiShardCoordinatorTest} and {@link LegacySubscribeAuthzTest}.
- */
 class LegacySubscribePartialShardViewTest {
 
-    /** Authorizes WATCH over any target - the SUBSCRIBE half stays default-closed. */
     private static final WatchAuthorizer ALLOW_WATCH = (p, r, t) -> true;
 
-    /** Grants SUBSCRIBE (and WATCH) - used to prove the partial-view refusal fires BEFORE the authz gate. */
     private static WatchAuthorizer grantSubscribe(String... allowed) {
         Set<String> ok = Set.of(allowed);
         return new WatchAuthorizer() {
@@ -77,7 +62,6 @@ class LegacySubscribePartialShardViewTest {
             gids[g] = g;
         }
         int[] allGids = gids;
-        // Mirror the production ShardMapResolver: FULL / full_chain_verify scatters to every shard.
         ShardResolver resolver = t -> t.isMatchAll() ? allGids.clone() : new int[]{0};
         SlowConsumerGovernor gov =
                 new SlowConsumerGovernor(SlowConsumerPolicyConfig.defaults(), FanOutSessionMetrics.NOOP);
@@ -87,7 +71,6 @@ class LegacySubscribePartialShardViewTest {
                 FanOutSessionMetrics.NOOP, clock, gov, "edge-1", (c, m) -> teardowns.add(c), auth);
     }
 
-    /** Posts a frame and runs any resulting session command on the test thread. */
     private void feed(EdgeFrame frame) {
         driver.onInboundFrame(frame);
         driver.drainInboundCommands();
@@ -95,8 +78,6 @@ class LegacySubscribePartialShardViewTest {
 
     @Test
     void nGreaterThanOneLegacySubscribeWithoutOptInIsRefusedBadSubscribeWithZeroFrames() {
-        // The authorizer WOULD grant this subscribe, proving the SPLIT guard - not the authz gate -
-        // is what refuses: the teardown is BAD_SUBSCRIBE (the partial-view guard), never NOT_AUTHORIZED.
         setup(3, false, grantSubscribe("edge-1"));
         feed(subscribe());
 
@@ -109,12 +90,6 @@ class LegacySubscribePartialShardViewTest {
 
     @Test
     void staleEpochLegacySubscribeIsRefusedStaleTopologyBeforePartialViewGuard() {
-        // The coordinator starts at the initial epoch (1). A SUBSCRIBE whose resume token binds a
-        // superseded epoch (2) is refused STALE_TOPOLOGY (the etcd ErrCompacted model - the client drops
-        // its cursor and re-hydrates). This is checked before the N>1 partial-view guard, so
-        // STALE_TOPOLOGY wins over BAD_SUBSCRIBE (the whole cursor generation is invalid regardless of
-        // the partial-view posture). The authorizer would grant it, proving the epoch gate - not authz -
-        // is what refuses.
         setup(3, false, grantSubscribe("edge-1"));
         feed(new EdgeFrame.Subscribe(true, List.of(), 2L, 0L, -1L, "edge-1", false));
         assertEquals(List.of(ErrorCode.STALE_TOPOLOGY), teardowns,
@@ -136,7 +111,6 @@ class LegacySubscribePartialShardViewTest {
 
     @Test
     void nGreaterThanOneWatchIsAdmittedAndCoversAllShardsRegardlessOfTheFlag() {
-        // The multi-shard WATCH plane is complete; the partial-view flag (OFF here) never gates it.
         setup(3, false, ALLOW_WATCH);
         feed(new EdgeFrame.WatchCreate(1L, 0, EdgeFrame.WATCH_TARGET_FULL, new byte[0],
                 WatchCursor.fromNow(), 0));
@@ -151,15 +125,12 @@ class LegacySubscribePartialShardViewTest {
 
     @Test
     void nEquals1LegacySubscribeIsByteIdenticalWithTheFlagOffOrOn() {
-        // At N=1 (allGids.length==1) the guard's `allGids.length > 1` is false, so the branch is never
-        // taken and the flag is never consulted: flag OFF and flag ON emit the identical frame list.
         setup(1, false, grantSubscribe("edge-1"));
         feed(subscribe());
         List<EdgeFrame> flagOff = List.copyOf(out.sent());
         assertEquals(1, out.sentOfType(EdgeFrame.SubscribeOk.class).size(), "N=1 flag OFF: admitted");
         assertTrue(teardowns.isEmpty(), "N=1 flag OFF: no teardown");
 
-        // Fresh driver (setup installs a fresh sink), flag ON, everything else identical.
         setup(1, true, grantSubscribe("edge-1"));
         feed(subscribe());
         List<EdgeFrame> flagOn = List.copyOf(out.sent());

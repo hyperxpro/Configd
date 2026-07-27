@@ -9,9 +9,6 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link BurnRateAlertEvaluator} - burn-rate alerting on SLO breaches.
- */
 class BurnRateAlertEvaluatorTest {
 
     private SloTracker tracker;
@@ -29,7 +26,6 @@ class BurnRateAlertEvaluatorTest {
     @Test
     void noAlertsWhenSlosAreHealthy() {
         tracker.defineSlo("healthy.slo", 0.99, Duration.ofHours(1));
-        // Record 100 successes, 0 failures -> 100% compliance
         for (int i = 0; i < 100; i++) {
             tracker.recordSuccess("healthy.slo");
         }
@@ -51,9 +47,6 @@ class BurnRateAlertEvaluatorTest {
 
     @Test
     void warningAlertOnSlowBurn() {
-        // Target 99% -> error budget = 1%
-        // To get a burn rate between 1.0 and 14.4, we need error rate between 1% and 14.4%
-        // With 100 events: 5 failures = 5% error rate -> burn rate = 5.0 (slow burn)
         tracker.defineSlo("slow.burn.slo", 0.99, Duration.ofHours(1));
         for (int i = 0; i < 95; i++) {
             tracker.recordSuccess("slow.burn.slo");
@@ -79,8 +72,6 @@ class BurnRateAlertEvaluatorTest {
 
     @Test
     void criticalAlertOnFastBurn() {
-        // Target 99% -> error budget = 1%
-        // With 100 events: 20 failures = 20% error rate -> burn rate = 20.0 (fast burn, >= 14.4)
         tracker.defineSlo("fast.burn.slo", 0.99, Duration.ofHours(1));
         for (int i = 0; i < 80; i++) {
             tracker.recordSuccess("fast.burn.slo");
@@ -108,12 +99,9 @@ class BurnRateAlertEvaluatorTest {
     void multipleSlosCanFireIndependently() {
         tracker.defineSlo("slo.a", 0.99, Duration.ofHours(1));
         tracker.defineSlo("slo.b", 0.99, Duration.ofHours(1));
-
-        // SLO A: healthy
         for (int i = 0; i < 100; i++) {
             tracker.recordSuccess("slo.a");
         }
-        // SLO B: breaching
         for (int i = 0; i < 80; i++) {
             tracker.recordSuccess("slo.b");
         }

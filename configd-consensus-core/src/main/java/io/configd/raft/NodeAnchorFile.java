@@ -12,38 +12,10 @@ import java.util.Objects;
 import static io.configd.raft.RaftArtifactMagic.NODE_ANCHOR_MAGIC;
 
 /**
- * The node-level {@code node-anchor}: a dual-slot, authenticated, anti-rollback anchor that binds the
- * node-wide durability facts a boot must cross-check - the topology descriptor's
- * {@code (topologyEpoch, shardCount)}, the security-audit chain head, and the per-shard liveness
- * {@code shardAnchorDigest} (the {@link NodeAnchorRecord} payload). It sits in {@code dataDir} beside
- * the topology descriptor and keyring, one per node, and authenticates under {@code scopeId =}
- * {@link IntegrityEnvelope#NODE_SCOPE} (never a per-shard {@code gid}).
- *
- * <p><b>Same frozen dual-slot mechanics as the per-shard {@link AnchorFile}.</b> It reuses the proven dual-slot
- * transport ({@link AnchorIO} / {@link FileAnchorIO}) and the frozen slot geometry (this file shares
- * {@code AnchorFile}'s package-private geometry constants so the two can never drift): an 8-byte
- * unauthenticated container header then two 512-byte slots, file size 1032 B, fully preallocated.
- * A node variant rather than a reuse of {@code AnchorFile} because {@code AnchorFile} structurally
- * <em>forbids</em> {@link IntegrityEnvelope#NODE_SCOPE} (a per-shard anchor must never stamp it) and
- * carries a per-shard write API ({@code writeTermVote}/{@code writeDurableHead}/{@code writeSnapshot});
- * the node payload and its write API are different, so the dual-slot orchestration is mirrored here.
- *
- * <pre>
- *   [ container header @ 0, 8 B ]  [NODE_ANCHOR_MAGIC:4][fileVersion:u8=1][flags:u8=0][reserved:u16=0]
- *   Slot 0 @ offset 8 ; Slot 1 @ offset 520.   File size = 8 + 2*512 = 1032 B (preallocated).
- *   Each slot: [recordLen:4][ envelopedNodeAnchorRecord : recordLen ][ zero-pad to 512 ]
- *   envelopedNodeAnchorRecord = integrity.wrap(NODE_ANCHOR_MAGIC, NODE_SCOPE, NodeAnchorRecord.encodePayload())
- * </pre>
- *
- * <p><b>Write protocol.</b> Identical to the per-shard anchor's: overwrite the slot holding the LOWER valid
- * {@code nodeAnchorSeq} with {@code seq = maxValid + 1}, then {@code fdatasync}. Only one slot is ever
- * mutated per update, so a torn write damages only the stale slot and the live slot survives one seq
- * behind. Recovery parses both slots and takes the highest valid {@code nodeAnchorSeq}.
- *
- * <p><b>Threading.</b> Off the ack path. The node-anchor is written by exactly one thread at a time:
- * the {@code main} boot thread (mint / re-anchor) during startup, and thereafter the single node-anchor
- * refresh scheduler thread. The two never overlap (boot completes before the scheduler starts). Not
- * thread-safe, exactly like {@link AnchorFile}.
+ * Node-level node-anchor: dual-slot crash-atomic file. Binds topology (epoch, shardCount),
+ * audit chain head, and per-shard liveness (shardAnchorDigest) for boot cross-check (fail-closed).
+ * Same frozen dual-slot mechanics as per-shard anchor; only one slot mutated per update,
+ * recovery takes highest valid seq. Single-threaded (boot + scheduler, never overlap).
  */
 public final class NodeAnchorFile implements Closeable {
 

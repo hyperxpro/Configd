@@ -1,28 +1,9 @@
 #!/usr/bin/env bash
-# setup-secrets.sh generates the mTLS and signing key material for the
-# Docker-Compose E2E topology into deploy/compose/secrets/.
+# setup-secrets.sh — generates mTLS and signing key material for Docker-Compose E2E.
 #
-# Pattern: the FanOutServerMtlsTest / EdgeNodeIntegrationTest keytool fixture
-# (EC secp256r1 self-signed certs, cross-imported trust), adapted for the
-# production CLI TLS path: TlsConfig.mtls hard-codes an empty store password
-# and keytool refuses passwords < 6 chars, so every keytool-built store is
-# repacked to an empty-password PKCS12 via SecretsTool.java (which also
-# verifies each artifact loads exactly the way TlsManager will load it).
+# Idempotent: complete secrets/ dir is left alone; FORCE=1 regenerates.
+# Requires: keytool + java (JDK 25) on PATH, and configd-server shaded jar.
 #
-# Identity model: the mTLS client-cert Subject DN is the authoritative edge
-# identity -- each edge gets CN=edge-N and passes the same string as
-# --edge-id. The single server cert carries SANs for cp1/cp2/cp3 (the edge
-# client enforces HTTPS endpoint identification) and is also trusted by the
-# server trust store (CP nodes present it as the client cert in Raft peer
-# mTLS).
-#
-# The Ed25519 signing key is minted once and mounted into all three CP nodes
-# (--signing-key-file): each node signs its own fan-out stream at apply time,
-# so a per-node key would break edge verification at the first failover.
-#
-# Idempotent: a complete secrets/ dir is left alone; FORCE=1 regenerates.
-# Requires: keytool + java (JDK 25) on PATH, and the configd-server shaded jar
-# (pass via SERVER_JAR or build with: ./mvnw -pl configd-server -am clean package).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -48,13 +29,13 @@ mkdir -p "$SECRETS"
 SCRATCH="$(mktemp -d)"
 trap 'rm -rf "$SCRATCH"' EXIT
 
-gen_keypair() { # <scratch-ks> <alias> <dname> <san>
+gen_keypair() {
     keytool -genkeypair -alias "$2" -keyalg EC -groupname secp256r1 \
         -sigalg SHA256withECDSA -validity 30 -dname "$3" -ext "san=$4" \
         -storetype PKCS12 -keystore "$1" -storepass "$PASS" -keypass "$PASS" >/dev/null
 }
 
-export_pem() { # <scratch-ks> <alias> <out.pem>
+export_pem() {
     keytool -exportcert -alias "$2" -keystore "$1" -storepass "$PASS" -rfc -file "$3" >/dev/null 2>&1
 }
 

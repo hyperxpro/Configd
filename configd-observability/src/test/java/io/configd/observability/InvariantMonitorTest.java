@@ -9,9 +9,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link InvariantMonitor} - runtime invariant checking.
- */
 class InvariantMonitorTest {
 
     private MetricsRegistry metrics;
@@ -51,7 +48,6 @@ class InvariantMonitorTest {
             try {
                 monitor.check("version.monotonic", false, "fail");
             } catch (AssertionError ignored) {
-                // Expected
             }
 
             Map<String, Long> violations = monitor.violations();
@@ -63,7 +59,6 @@ class InvariantMonitorTest {
             try {
                 monitor.check("version.monotonic", false, "fail");
             } catch (AssertionError ignored) {
-                // Expected
             }
 
             long count = metrics.counter("invariant.violation.version.monotonic").get();

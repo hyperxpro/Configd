@@ -81,27 +81,8 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
 
     private static final Logger LOG = Logger.getLogger(TcpRaftTransport.class.getName());
 
-    /**
-     * Bounded TCP connect timeout (ms). Short because consensus traffic is intra-cluster
-     * (low RTT) and a stuck connect simply causes a re-attempt on the next tick. Owned by
-     * {@link RaftWireProtocol} so the JDK and Netty transports apply the identical bound.
-     */
     static final int CONNECT_TIMEOUT_MS = RaftWireProtocol.CONNECT_TIMEOUT_MS;
-
-    /**
-     * Bounded TLS handshake timeout (ms), applied via {@code setSoTimeout}
-     * for the duration of {@code startHandshake()} and then cleared. Without
-     * it a peer that completes the TCP connect but stalls mid-handshake would
-     * park the connector thread indefinitely. Shared via {@link RaftWireProtocol}.
-     */
     static final int HANDSHAKE_TIMEOUT_MS = RaftWireProtocol.HANDSHAKE_TIMEOUT_MS;
-
-    /**
-     * Per-peer bounded outbound queue capacity (frames). When full, the oldest
-     * undeliverable frames are dropped (counted) rather than blocking the
-     * caller. Sized to absorb a short replication burst without unbounded growth.
-     * Shared via {@link RaftWireProtocol}.
-     */
     static final int OUTBOUND_QUEUE_CAPACITY = RaftWireProtocol.OUTBOUND_QUEUE_CAPACITY;
 
     private final NodeId self;
@@ -111,11 +92,8 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
     private final Consumer<InboundMessage> inboundHandler;
     private final ConnectionManager connectionManager;
 
-    /** Cert-identity &harr; NodeId binding policy. Default {@link PeerIdentityPolicy#unenforced()}. */
     private final PeerIdentityPolicy peerIdentityPolicy;
-    /** Security-event sink (peer-identity rejections). Default {@link RaftTransportMetrics#NOOP}. */
     private final RaftTransportMetrics transportMetrics;
-    /** Guards the one-time "peer-identity verification unconfigured" warning (unenforced-but-TLS posture). */
     private final AtomicBoolean unconfiguredWarningEmitted = new AtomicBoolean(false);
 
     /**
@@ -147,10 +125,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
      */
     private final ScheduledExecutorService connectExecutor;
 
-    /** Frames dropped because no connection was established or the per-peer queue was full. */
     private final AtomicLong framesDropped = new AtomicLong();
-
-    /** Inbound connections refused because the accepted live-set hit {@link #maxInboundConnections}. */
     private final AtomicLong inboundConnectionsRefused = new AtomicLong();
 
     /**
@@ -172,15 +147,6 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
     private volatile ServerSocket serverSocket;
     private volatile RaftTransport.MessageHandler messageHandler;
 
-    /**
-     * Creates a new TCP Raft transport.
-     *
-     * @param self           this node's identity
-     * @param bindAddress    the address to listen on for inbound connections
-     * @param peerAddresses  map of peer NodeIds to their listen addresses
-     * @param tlsManager     TLS manager for encrypted connections, or null for plaintext
-     * @param inboundHandler callback invoked when a message arrives (may be null if using registerHandler)
-     */
     public TcpRaftTransport(
             NodeId self,
             InetSocketAddress bindAddress,
@@ -233,12 +199,6 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
         }
     }
 
-    /**
-     * Starts the transport: opens the server socket and begins accepting
-     * inbound connections on a virtual thread.
-     *
-     * @throws IOException if the server socket cannot be bound
-     */
     @Override
     public void start() throws IOException {
         if (!running.compareAndSet(false, true)) {

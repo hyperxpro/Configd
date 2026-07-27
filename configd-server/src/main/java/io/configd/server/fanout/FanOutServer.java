@@ -49,104 +49,48 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-/**
- * The live mTLS edge fan-out endpoint. It accepts
- * long-lived edge subscriber connections on {@code --edge-port} and drives the SAME
- * {@link FanOutSessionCore} the simulator drives - no logic exists only on this path.
- *
- * <h2>Stack</h2>
- * JDK {@link ServerSocket} / {@link SSLServerSocket} via {@link TlsManager} (the identical
- * mTLS classes the Raft transport uses - {@code setNeedClientAuth(true)}, TLSv1.3, bounded
- * handshake), virtual-thread-per-connection. When the server has no {@link TlsManager} it
- * accepts plaintext (test / single-node), exactly mirroring the Raft transport's TLS policy.
- *
- * <h2>Per-connection threading (3 virtual threads)</h2>
- * <ul>
- *   <li><b>reader</b>: decodes inbound frames via {@link EdgeFrameCodec} (peekLength
- *       discipline). The first frame MUST be {@code SUBSCRIBE}; the edge identity is bound to
- *       the mTLS client-cert principal (see {@link #resolveEdgeIdentity}). Subsequent frames
- *       are {@code CURSOR_ACK}s routed to the session. Any garbage -> close with the mapped
- *       {@link ErrorCode} ({@code FRAME_CORRUPT} / {@code PROTOCOL_VIOLATION} / ...).</li>
- *   <li><b>writer</b>: drains a per-connection <b>bounded</b> {@link ArrayBlockingQueue}
- *       ({@code edge.fanout.transport.queueFrames}, default 64) of encoded frames onto the
- *       socket. The {@link TransportSink#offer} is {@code queue.offer} (non-blocking; a full
- *       queue returns {@code false}, which the session reads as transport backpressure and
- *       demotes - never an unbounded buffer, never a blocked apply path).</li>
- *   <li><b>session</b>: drives {@code session.tick(clock.millis())} with the
- *       {@link FanOutConfig#idlePollMs()} adaptive backoff (busy re-poll while data flows,
- *       park up to {@code idlePollMs} when idle). It PULLS via {@code readSince}/replay only.</li>
- * </ul>
- *
- * <p><b>Teardown.</b> When any of the three threads exits (EOF, error, session CLOSED), the
- * connection is torn down once: socket closed, session closed, writer/session signalled,
- * {@code onSessionClosed} + {@code onSubscriberDisconnected} metrics fired. Nothing is
- * unbounded; no work ever runs on the Raft apply path (the session only reads
- * {@code readSince}/{@code replaySource}).
- */
+
 public final class FanOutServer implements FanOutEndpoint {
 
     private static final Logger LOG = Logger.getLogger(FanOutServer.class.getName());
 
-    /** Bounded TLS handshake timeout (ms), mirroring {@code TcpRaftTransport.HANDSHAKE_TIMEOUT_MS}. */
+    
     static final int HANDSHAKE_TIMEOUT_MS = 2_000;
 
-    /**
-     * Bounded deadline (ms) for the best-effort teardown bye-write. A stuck peer's write is force-closed
-     * after this so it can neither block the caller nor park an FD indefinitely (Java blocking sockets
-     * have no write timeout).
-     */
+    
     static final int BYE_WRITE_TIMEOUT_MS = 2_000;
 
-    /**
-     * System property: the pre-SUBSCRIBE first-frame deadline (ms) for an admitted (post-mTLS)
-     * edge connection. Mirrors {@code configd.raft.inboundReadTimeoutMs}; the slow-loris
-     * test sets a short value.
-     */
+    
     public static final String FIRST_FRAME_DEADLINE_PROP = "configd.edge.firstFrameDeadlineMs";
 
-    /**
-     * Default pre-SUBSCRIBE first-frame deadline (ms). Generous ({@value}) so a healthy subscriber
-     * always sends its SUBSCRIBE / WATCH_CREATE well within it; a peer that completes mTLS then
-     * sends nothing is reaped after this window. AFTER the first routed frame the deadline is
-     * DISARMED - an established subscriber is idle by design (server pushes; the existing
-     * server->client HEARTBEAT is its liveness), so it is never read-idle-reaped.
-     */
+    
     public static final int DEFAULT_FIRST_FRAME_DEADLINE_MS = 10_000;
 
-    /**
-     * The configured pre-SUBSCRIBE first-frame deadline (ms), tunable via
-     * {@value #FIRST_FRAME_DEADLINE_PROP} (default {@link #DEFAULT_FIRST_FRAME_DEADLINE_MS}).
-     * Shared by both the JDK and Netty edge transports.
-     */
+    
     public static int firstFrameDeadlineMs() {
         return Integer.getInteger(FIRST_FRAME_DEADLINE_PROP, DEFAULT_FIRST_FRAME_DEADLINE_MS);
     }
 
-    /** Named config: per-connection outbound transport queue depth (frames). */
+    
     public static final int DEFAULT_TRANSPORT_QUEUE_FRAMES = 64;
 
-    /**
-     * Named config {@code edge.fanout.transport.maxSessions}: maximum concurrently accepted edge
-     * connections, INCLUDING connections still mid-handshake (the bound is applied BEFORE the
-     * handshake, so half-open slowloris connections cannot exhaust file descriptors / virtual threads).
-     * Refusals are counted on {@code edge_fanout_sessions_refused_total}.
-     */
+    
     public static final int DEFAULT_MAX_SESSIONS = 1_024;
 
-    /** The single-shard resolver the single-source constructors bind: every target -> gid 0. */
+    
     private static final ShardResolver SINGLE_SHARD = t -> new int[]{0};
 
     private final InetSocketAddress bindAddress;
     private final TlsManager tlsManager;
-    /** gid -> that shard's commit source; single-entry {@code {0 -> source}} for the single-shard ctors. */
+    
     private final Map<Integer, CommitNotificationSource> shardSources;
-    /** gid -> that shard's replay source; single-entry for the single-shard ctors. */
+    
     private final Map<Integer, ReplaySource> shardReplaySources;
-    /** The connection's shard set, ascending ({@code [0, N)}); {@code {0}} for the single-shard ctors. */
+    
     private final int[] allGids;
-    /** Resolves a watch target to its covered shard set; {@link #SINGLE_SHARD} for the single-shard ctors. */
+    
     private final ShardResolver shardResolver;
-    /** The server's topology epoch ({@code ShardMap.epoch()}), threaded into every session driver. */
+    
     private final long topologyEpoch;
     private final FanOutConfig config;
     private final int transportQueueFrames;
@@ -155,37 +99,16 @@ public final class FanOutServer implements FanOutEndpoint {
     private final RegistryFanOutSessionMetrics metrics;
     private final Clock clock;
 
-    /**
-     * The authorization gate, or {@code null} when no principal model is wired. It gates both
-     * {@code WATCH_CREATE} (per-target) and the legacy full-store {@code SUBSCRIBE} (whole-store READ).
-     * A {@code null} authorizer fails CLOSED for watches (every {@code WATCH_CREATE} ->
-     * {@code NOT_AUTHORIZED}) but admits {@code SUBSCRIBE} (auth off). The pre-watch constructors pass
-     * {@code null}; {@code ConfigdServer} threads a real authorizer.
-     */
+    
     private final WatchAuthorizer authorizer;
 
-    /**
-     * The edge token-authentication posture, or {@code null} for the mTLS-only / plaintext posture
-     * (byte-identical to the pre-token edge). When non-null the blocking reader gates every connection
-     * on an accepted {@code AUTH} frame (unless a verified client cert authenticated it at the
-     * handshake), the frame reader enforces the pre-auth ceiling, and the listen socket is
-     * {@code wantClientAuth}.
-     */
+    
     private final EdgeAuthConfig edgeAuth;
 
-    /**
-     * The edge client-cert validity gate ({@link EdgeCertGate#OFF} = no online revocation + no active cert
-     * expiry, byte-identical). Applied at admission on BOTH the mTLS-only path and the token-edge cert path.
-     * Never constructed for the Raft interior, so the {@code exemptInterNode} invariant holds by construction.
-     */
+    
     private final EdgeCertGate certGate;
 
-    /**
-     * The one-shot credential-expiry scheduler, shared by all connections that arm an expiry (token TTL, or
-     * mTLS cert {@code notAfter} when {@link EdgeCertGate#enforcesCertExpiry()}); {@code null} when neither
-     * is in play (no allocation on the byte-identical path). A fired task closes the socket, so the blocking
-     * reader unwinds into the teardown path.
-     */
+    
     private final ScheduledExecutorService authExpiryScheduler;
 
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
@@ -221,13 +144,7 @@ public final class FanOutServer implements FanOutEndpoint {
                 metrics, clock);
     }
 
-    /**
-     * Full constructor with an explicit {@link SlowConsumerGovernor}: the per-identity
-     * slow-consumer policy consulted at SUBSCRIBE (quarantine/unhealthy refusal, forced
-     * snapshot-first readmission) and fed by the per-session demotion / ack-progress /
-     * queue-pressure signals. The delegating constructors build one with
-     * {@link SlowConsumerPolicyConfig#defaults()}.
-     */
+    
     public FanOutServer(InetSocketAddress bindAddress,
                         TlsManager tlsManager,
                         CommitNotificationSource source,
@@ -242,15 +159,7 @@ public final class FanOutServer implements FanOutEndpoint {
                 governor, metrics, clock, null);
     }
 
-    /**
-     * Full constructor with the authorization gate ({@code authorizer}). A {@code null} authorizer
-     * fails CLOSED for watches (rejected {@code NOT_AUTHORIZED}) and admits the legacy full-store
-     * {@code SUBSCRIBE} (auth off); a wired authorizer additionally gates {@code SUBSCRIBE} on
-     * whole-store READ. {@code ConfigdServer} threads the {@code AclServiceWatchAuthorizer} here. The
-     * JDK transport is retained as a drop-in {@code FanOutEndpoint} (the Netty transport is
-     * production); both drive the SAME {@link FanOutConnectionDriver}, so the wiring is identical and
-     * the contract proves both.
-     */
+    
     public FanOutServer(InetSocketAddress bindAddress,
                         TlsManager tlsManager,
                         CommitNotificationSource source,
@@ -269,15 +178,7 @@ public final class FanOutServer implements FanOutEndpoint {
                 EdgeCertGate.OFF);
     }
 
-    /**
-     * The multi-shard constructor: the per-shard commit sources + replay sources + shard set +
-     * resolver the fan-out/fan-in coordinator fans a watch across. At {@code N = 1} the single-source
-     * constructors delegate here with single-entry maps and the single-shard resolver, so one core is
-     * the single-shard drain (byte-identical). {@code ConfigdServer} threads the real per-shard maps.
-     *
-     * @param edgeAuth the edge token-authentication posture, or {@code null} for the mTLS-only /
-     *                 plaintext posture (byte-identical to the pre-token edge)
-     */
+    
     public FanOutServer(Map<Integer, CommitNotificationSource> shardSources,
                         Map<Integer, ReplaySource> shardReplaySources,
                         int[] allGids,
@@ -332,12 +233,12 @@ public final class FanOutServer implements FanOutEndpoint {
                 : null;
     }
 
-    /** The slow-consumer governor this endpoint enforces (for tests/diagnostics). */
+    
     public SlowConsumerGovernor governor() {
         return governor;
     }
 
-    /** Binds the listen socket and starts the accept loop on a virtual thread. */
+    
     public void start() throws IOException {
         if (!running.compareAndSet(false, true)) {
             throw new IllegalStateException("FanOutServer already started");
@@ -349,13 +250,13 @@ public final class FanOutServer implements FanOutEndpoint {
                 + (tlsManager != null ? " (mTLS)" : " (PLAINTEXT)"));
     }
 
-    /** The actual bound port (useful when binding to an ephemeral port 0). */
+    
     public int localPort() {
         ServerSocket ss = serverSocket;
         return (ss != null) ? ss.getLocalPort() : -1;
     }
 
-    /** Stops the endpoint: unblocks accept, closes all live connections, drains threads. */
+    
     public void close() {
         if (!running.compareAndSet(true, false)) {
             return;
@@ -464,7 +365,7 @@ public final class FanOutServer implements FanOutEndpoint {
         conn.run();
     }
 
-    /** The verified peer certificate chain, or {@code null} if the peer presented none (certless). */
+    
     private static List<X509Certificate> verifiedPeerChain(Socket socket) {
         if (!(socket instanceof SSLSocket ssl)) {
             return null; // plaintext token connection: certless, must AUTH
@@ -483,22 +384,7 @@ public final class FanOutServer implements FanOutEndpoint {
         }
     }
 
-    /**
-     * Resolves the AUTHORITATIVE edge identity for a connection.
-     *
-     * <h3>Decision: the mTLS client-cert principal is authoritative</h3>
-     * Over an mTLS connection the identity is the verified client-certificate Subject DN
-     * ({@code SSLSession.getPeerPrincipal()}). The {@code SUBSCRIBE.edgeId} carried on the wire
-     * is attacker-controllable and is therefore treated as <b>advisory only</b>: the server
-     * binds the session to the cert principal and, if the wire {@code edgeId} differs, records
-     * the cert principal as authoritative (never trusts the wire field for authorization). This
-     * is the secure choice - the certificate is verified by the TLS layer against the trust
-     * store; the wire field is not. Plaintext mode (no TLS - test/single-node) has no cert, so
-     * the wire {@code edgeId} is used as-is.
-     *
-     * @return the authoritative edge identity (cert Subject DN, or {@code "plaintext"} marker)
-     * @throws IOException if the peer presented no verifiable certificate over mTLS
-     */
+    
     private static String resolveEdgeIdentity(Socket socket) throws IOException {
         if (socket instanceof SSLSocket ssl) {
             try {
@@ -550,74 +436,42 @@ public final class FanOutServer implements FanOutEndpoint {
         }
     }
 
-    /**
-     * One edge subscriber connection: owns the socket, the reader / writer / session virtual
-     * threads, and the bounded outbound queue. All session logic - inbound routing, cert-identity
-     * binding, admission, the tick + governor-feed loop, demotion handling - lives in the shared
-     * {@link FanOutConnectionDriver}, identical to the Netty fan-out transport's. This
-     * class is the JDK-socket <em>body</em>; the driver is the transport-agnostic <em>brain</em>.
-     */
+    
     private final class Connection implements TransportSink {
 
         private final Socket socket;
-        /**
-         * The bound edge identity. For a cert-authenticated or non-token connection it is known at
-         * construction (byte-identical to before); for a certificate-less token connection it is
-         * {@code null} until the {@code AUTH} frame resolves it, at which point the session starts
-         * bound to the token principal's id.
-         */
+        
         private final String edgeIdentity;
-        /**
-         * True when this connection must authenticate via an {@code AUTH} frame before any business
-         * frame (a certificate-less token connection). The driver + writer + session threads start
-         * lazily on that authentication. False for the cert / non-token path, which starts eagerly and
-         * is byte-identical to the pre-token reader.
-         */
+        
         private final boolean authGated;
-        /**
-         * The wall-clock close deadline for an mTLS cert connection's {@code notAfter} enforcement, or
-         * {@link AuthState#NO_EXPIRY} when disabled (byte-identical). Armed once, eagerly, in {@link #run()}
-         * for a cert connection (the token path arms its own deadline on the AUTH frame instead).
-         */
+        
         private final long certCloseDeadlineMillis;
         private final ArrayBlockingQueue<byte[]> outbound;
         private final AtomicBoolean alive = new AtomicBoolean(true);
 
-        /** The transport-agnostic session brain (created eagerly, or lazily on token auth). */
+        
         private volatile FanOutConnectionDriver driver;
 
-        /** The writer / session threads (fields so a token connection can start them lazily). */
+        
         private Thread writer;
         private Thread sessionThread;
 
-        /** Whether {@code onSubscriberConnected} was counted (pairs the disconnect; token-gated pre-auth
-         * connections never connect, so their teardown must not emit a phantom disconnect). */
+        
         private volatile boolean connectedCounted;
 
-        /** Reader-thread-only: the per-connection auth state (only meaningful when {@link #authGated}). */
+        
         private AuthState authState = AuthState.UNAUTHENTICATED;
 
-        /** Reader-thread-only: whether the first BUSINESS frame (which pins the outbound version) was seen. */
+        
         private boolean firstBusinessRouted;
 
-        /** The token-TTL expiry one-shot, armed on token auth and re-armed on {@code REFRESH_AUTH}. */
+        
         private volatile ScheduledFuture<?> expiryTask;
 
-        /**
-         * Negotiated OUTBOUND edge wire version. Default {@code 0x01} (legacy); flipped to
-         * {@code 0x02} by the reader when the FIRST inbound frame is a {@code WATCH_CREATE} (a watch
-         * connection), so {@link #offer} stamps {@code 0x02} and a {@code 0x02} client can decode the
-         * server's {@code WATCH_*} frames. Written by the reader thread, read by the session
-         * thread (in {@code offer}) and teardown -> {@code volatile}. A legacy connection never flips it
-         * -> stays {@code 0x01} -> byte-identical.
-         */
+        
         private volatile byte wireVersion = EdgeFrameCodec.EDGE_WIRE_VERSION;
 
-        /**
-         * The negotiated INBOUND wire version pin, or {@code 0} until the first frame establishes it.
-         * Reader-thread-only. The first frame is decoded accepting either version, then pinned
-         * to its stamp; subsequent frames decode under the pin (a mismatched version -> BAD_WIRE_VERSION).
-         */
+        
         private byte inboundNegotiatedVersion;
 
         Connection(Socket socket, String edgeIdentity, boolean authGated, long certCloseDeadlineMillis) {
@@ -647,13 +501,7 @@ public final class FanOutServer implements FanOutEndpoint {
             }
         }
 
-        /**
-         * Creates the session brain and starts the writer + session threads, bound to {@code identity}.
-         * The driver is created before the reader routes SUBSCRIBE so {@code onSubscribe} (on the
-         * session thread) can emit SUBSCRIBE_OK, and its demotion arm tears the connection down with the
-         * on-wire {@code QUARANTINED} + socket close when policy trips. Called exactly once per
-         * connection - eagerly for a cert / non-token connection, or lazily on the first token auth.
-         */
+        
         private void startSessionThreads(String identity, Set<String> roles) {
             this.driver = new FanOutConnectionDriver(shardSources, shardReplaySources, allGids,
                     shardResolver, topologyEpoch, this, config, metrics, clock, governor, identity, roles,
@@ -739,13 +587,7 @@ public final class FanOutServer implements FanOutEndpoint {
             }
         }
 
-        /**
-         * Routes a business frame to the session, flipping the outbound wire version on the FIRST such
-         * frame: a WATCH_CREATE-first connection stamps 0x02 (the client decodes the server's WATCH_*
-         * frames); a 0x03-stamped SUBSCRIBE stamps 0x03 (the filtered-fan-out confirm); a plain
-         * 0x01 SUBSCRIBE stays 0x01 (byte-identical). On a token connection the first business frame
-         * arrives after the AUTH, so the flip is decoupled from the pre-auth first-frame deadline.
-         */
+        
         private void routeBusinessFrame(EdgeFrame frame) {
             if (!firstBusinessRouted) {
                 firstBusinessRouted = true;
@@ -759,12 +601,7 @@ public final class FanOutServer implements FanOutEndpoint {
             driver.onInboundFrame(frame);
         }
 
-        /**
-         * Admits the single pre-auth frame of a token connection: only an AUTH frame is accepted, and a
-         * rejected AUTH closes the connection (so a retry costs a fresh handshake, bounding the pre-auth
-         * verification cost). On success the session starts lazily, bound to the token principal's id,
-         * and the TTL expiry is armed.
-         */
+        
         private void admitPreAuth(EdgeFrame frame) {
             if (frame instanceof EdgeFrame.Auth authFrame) {
                 Credential credential = authFrame.credential();
@@ -793,11 +630,7 @@ public final class FanOutServer implements FanOutEndpoint {
             }
         }
 
-        /**
-         * Handles an AUTH-family control frame on an already-authenticated token connection: a
-         * REFRESH_AUTH re-resolves the credential and re-arms the expiry (CREDENTIAL_EXPIRED on any
-         * non-acceptance); a stray AUTH is a PROTOCOL_VIOLATION. A refresh never re-binds the identity.
-         */
+        
         private void handlePostAuthControl(EdgeFrame frame) {
             if (frame instanceof EdgeFrame.RefreshAuth refresh) {
                 Credential credential = refresh.credential();
@@ -830,12 +663,7 @@ public final class FanOutServer implements FanOutEndpoint {
             }
         }
 
-        /**
-         * Arms (or re-arms) the token-expiry one-shot from the connection's {@link AuthState} close
-         * deadline: a fired task tears the connection down with the on-wire {@code CREDENTIAL_EXPIRED},
-         * which closes the socket and unwinds the blocking reader. The delay is
-         * {@code max(0, deadline - now)}; a {@link AuthState#NO_EXPIRY} deadline arms nothing.
-         */
+        
         private void armExpiry() {
             cancelExpiry();
             if (!(authState instanceof AuthState.Authenticated a) || a.expiresAtMillis() == AuthState.NO_EXPIRY) {
@@ -847,11 +675,7 @@ public final class FanOutServer implements FanOutEndpoint {
                     delay, TimeUnit.MILLISECONDS);
         }
 
-        /**
-         * Arms the mTLS cert-{@code notAfter} expiry one-shot for a cert connection: a fired task tears the
-         * connection down {@code CREDENTIAL_EXPIRED} (a reconnect signal - a cert cannot refresh in-band).
-         * {@link AuthState#NO_EXPIRY} (enforcement off) arms nothing.
-         */
+        
         private void armCertExpiry() {
             if (certCloseDeadlineMillis == AuthState.NO_EXPIRY) {
                 return;
@@ -862,12 +686,7 @@ public final class FanOutServer implements FanOutEndpoint {
                     delay, TimeUnit.MILLISECONDS);
         }
 
-        /**
-         * Runs an expiry-fired teardown OFF the shared single-threaded {@code authExpiryScheduler}.
-         * teardown does a best-effort BLOCKING bye-write; running it on the scheduler thread would let one
-         * stuck peer head-of-line-block every OTHER connection's expiry. A virtual thread keeps the
-         * scheduler free (the write is separately bounded by teardown's watchdog).
-         */
+        
         private void tearDownOffScheduler(ErrorCode code, String message) {
             Thread.ofVirtual().name("edge-expiry-teardown").start(() -> teardown(code, message));
         }
@@ -880,15 +699,7 @@ public final class FanOutServer implements FanOutEndpoint {
             }
         }
 
-        /**
-         * Reads one frame: length prefix (peekLength-bounded BEFORE allocation), then the body.
-         * Returns null on a clean EOF.
-         *
-         * @param deadlineNanos the ABSOLUTE first-frame deadline ({@link System#nanoTime()} basis), or
-         *                      {@code 0} to read unbounded (post-first-frame, disarmed). When non-zero
-         *                      every underlying read is bounded to the REMAINING budget so a byte-per-
-         *                      window slow-loris cannot reset the deadline.
-         */
+        
         private EdgeFrame readFrame(DataInputStream in, long deadlineNanos) throws IOException {
             byte[] header4 = new byte[4];
             if (deadlineNanos != 0L) {
@@ -951,17 +762,7 @@ public final class FanOutServer implements FanOutEndpoint {
             return EdgeFrameCodec.decode(frameBytes, inboundNegotiatedVersion);
         }
 
-        /**
-         * Reads exactly {@code len} bytes into {@code dst[off..off+len)}, re-arming the socket read
-         * timeout to the REMAINING first-frame budget before EVERY underlying read (see
-         * {@link #armReadBudget}). This makes the deadline ABSOLUTE: a slow-loris that dribbles
-         * >=1 byte per window cannot reset it, because the budget shrinks monotonically and
-         * {@code armReadBudget} throws {@link SocketTimeoutException} once it is exhausted.
-         *
-         * @return {@code true} if all {@code len} bytes were read; {@code false} iff a clean EOF occurs
-         *         BEFORE any byte is read (an idle peer that closed). A partial-then-EOF throws
-         *         {@link EOFException} (a truncated frame).
-         */
+        
         private boolean readBounded(DataInputStream in, byte[] dst, int off, int len, long deadlineNanos)
                 throws IOException {
             int read = 0;
@@ -980,12 +781,7 @@ public final class FanOutServer implements FanOutEndpoint {
             return true;
         }
 
-        /**
-         * Shrinks the socket read timeout to the REMAINING first-frame budget so the deadline is
-         * absolute. A non-positive remaining budget throws {@link SocketTimeoutException}, reaping
-         * the connection. The remaining budget is rounded UP to at least 1 ms so we never set
-         * {@code soTimeout(0)} (= infinite) from a sub-millisecond remainder.
-         */
+        
         private void armReadBudget(long deadlineNanos) throws IOException {
             long remainingNanos = deadlineNanos - System.nanoTime();
             if (remainingNanos <= 0L) {
@@ -1047,11 +843,7 @@ public final class FanOutServer implements FanOutEndpoint {
             teardown(code, message, code.name());
         }
 
-        /**
-         * Teardown with an explicit {@code metricReason} decoupled from the on-wire {@code code}. Lets an
-         * {@code Unavailable} (IdP/JWKS outage) land in its own {@code AUTH_UNAVAILABLE} series while the
-         * wire still closes with the golden-pinned {@code AUTH_FAIL}.
-         */
+        
         private void teardown(ErrorCode code, String message, String metricReason) {
             if (!alive.compareAndSet(true, false)) {
                 return; // already torn down
@@ -1110,6 +902,6 @@ public final class FanOutServer implements FanOutEndpoint {
         }
     }
 
-    /** Sentinel pushed to the outbound queue to unblock the writer's blocking {@code take()}. */
+    
     private static final byte[] POISON = new byte[0];
 }

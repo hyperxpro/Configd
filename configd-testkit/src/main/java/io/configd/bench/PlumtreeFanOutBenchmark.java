@@ -50,10 +50,6 @@ public class PlumtreeFanOutBenchmark {
         versionCounter = 0;
     }
 
-    /**
-     * Broadcasts a message to all eager peers and drains the outbox.
-     * Measures: message creation + outbox drain cost.
-     */
     @Benchmark
     public void broadcastAndDrain(Blackhole bh) {
         versionCounter++;
@@ -64,10 +60,6 @@ public class PlumtreeFanOutBenchmark {
         bh.consume(outbox.size());
     }
 
-    /**
-     * Broadcasts a message without draining the outbox.
-     * Isolates the cost of the broadcast fan-out logic itself.
-     */
     @Benchmark
     public void broadcastOnly(Blackhole bh) {
         versionCounter++;
@@ -76,10 +68,6 @@ public class PlumtreeFanOutBenchmark {
         bh.consume(versionCounter);
     }
 
-    /**
-     * Simulates receiving an eager push from a peer and forwarding
-     * to all other eager peers. This is the relay hot path.
-     */
     @Benchmark
     public void receiveAndForward(Blackhole bh) {
         versionCounter++;

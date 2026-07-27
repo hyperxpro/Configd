@@ -13,14 +13,9 @@ import java.util.Arrays;
 import java.util.HexFormat;
 
 /**
- * Reproduces, byte-for-byte, the raw snapshot() output of a live N=1 Configd node
- * that has applied the 20-key reference keyset (rst/key0..19 = restore-val-0..19).
- *
- * The ConfigStateMachine is wired EXACTLY as ConfigdServer wires it in the
- * signing-key deployment: (store, clock, invariantChecker=null, signer). The
- * signer only advances signingEpoch (folded into the snapshot TLV trailer that the
- * state-machine hash covers); the Ed25519 signature bytes themselves never enter
- * the snapshot, so any valid keypair yields the identical snapshot.
+ * Reproduces byte-for-byte snapshot() of N=1 node with 20 reference keys (rst/key0..19).
+ * ConfigStateMachine wired exactly as ConfigdServer: only signingEpoch affects snapshot
+ * (in TLV trailer), not Ed25519 signature bytes, so any valid keypair yields identical snapshot.
  */
 public final class SnapReproducer {
     public static void main(String[] args) throws Exception {
@@ -31,9 +26,7 @@ public final class SnapReproducer {
         var store = new VersionedConfigStore();
         var sm = new ConfigStateMachine(store, Clock.system(), null, signer);
 
-        // Apply the same 20 PUTs. index/term are Raft-log positions; snapshot() keys
-        // off the state machine's own sequenceCounter, so only the count of mutating
-        // applies matters here (matches the server's 20 committed PUTs).
+        // index/term are Raft-log positions; snapshot() uses sequenceCounter only, so just the apply count matters.
         long index = 1;
         for (int k = 0; k < 20; k++) {
             byte[] cmd = CommandCodec.encodePut(

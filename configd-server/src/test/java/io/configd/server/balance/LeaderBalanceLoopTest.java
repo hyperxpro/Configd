@@ -33,8 +33,6 @@ class LeaderBalanceLoopTest {
 
     @Test
     void convergesFromAllOnOneNode_thenStops() {
-        // G=8, M=4, every leader on node 0. Node 0 is the only max, so running just its loop converges the
-        // whole cluster to spread <= 1 and then STOPS.
         FakeCluster cluster = new FakeCluster(4);
         cluster.placeAllOn(8, NodeId.of(0));
         MutableClock clock = new MutableClock();
@@ -54,7 +52,6 @@ class LeaderBalanceLoopTest {
             }
             assertTrue(convergedCadence >= 0, "cluster should converge to spread <= 1");
             assertTrue(cluster.spread() <= 1, "final spread must be <= 1, was " + cluster.spread());
-            // Once balanced it must not keep transferring.
             assertEquals(appliedAtConvergence, cluster.transfersApplied,
                     "no further transfers may occur after convergence");
         }
@@ -62,8 +59,6 @@ class LeaderBalanceLoopTest {
 
     @Test
     void noThrashOnOptimalUneven() {
-        // G=5, M=3, optimal {2,2,1}: spread 1 < threshold 2. Running every node's loop must move NOTHING
-        // (the >=2 threshold at work).
         FakeCluster cluster = new FakeCluster(3);
         cluster.place(0, NodeId.of(0));
         cluster.place(1, NodeId.of(0));

@@ -43,7 +43,6 @@ public final class RaftWireProtocol {
         // utility class
     }
 
-    /** Size of the big-endian sender-id prefix that precedes each {@link FrameCodec} frame. */
     public static final int SENDER_ID_SIZE = 4;
 
     /**
@@ -90,16 +89,6 @@ public final class RaftWireProtocol {
         return Integer.getInteger(MAX_INBOUND_CONNECTIONS_PROP, 1_024);
     }
 
-    /**
-     * Encodes a frame into its on-wire byte sequence: {@code [4B BE senderId] || FrameCodec frame}.
-     * The single source of truth for the JDK adapter's outbound bytes; the Netty in-pipeline encoder
-     * writes the byte-identical sequence directly into a pooled {@code ByteBuf}, pinned by
-     * the golden-bytes test.
-     *
-     * @param senderId this node's id (big-endian prefix)
-     * @param frame    the frame to encode
-     * @return the wire bytes (sender id + encoded frame)
-     */
     public static byte[] encodeWire(int senderId, FrameCodec.Frame frame) {
         Objects.requireNonNull(frame, "frame must not be null");
         byte[] encoded = FrameCodec.encode(

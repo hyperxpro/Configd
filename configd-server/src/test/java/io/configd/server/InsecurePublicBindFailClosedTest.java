@@ -14,17 +14,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Footgun guard: an UNAUTHENTICATED store must not bind a NON-LOOPBACK interface SILENTLY (the
- * Redis/etcd "default-open" class). This is deliberately NOT "auth required by default": a no-auth
- * deployment stays possible via the {@code configd.security.allowInsecurePublicBind} override - the guard
- * only refuses the accidental, unacknowledged case. Default behavior is REFUSE TO START.
- * <p>
- * Mirrors {@link D1FailClosedTest}: the direct-enforcement tests drive
- * {@link ConfigdServer#enforceBindNotSilentlyPublic} with plain values (immune to ambient config), and the
- * end-to-end tests set the override explicitly to exercise the real startup refusal / the acknowledged
- * warn-and-proceed path.
- */
 @Timeout(30)
 class InsecurePublicBindFailClosedTest {
 

@@ -30,10 +30,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class Configd implements AutoCloseable {
 
-    private final ConfigdClientConfig config;      // nullable: edge() requires it (edge endpoints configured)
-    private final NodeEndpoints httpNodes;         // nullable: http() requires it
+    private final ConfigdClientConfig config;
+    private final NodeEndpoints httpNodes;
     private final boolean replayGuard;
-    // Shared HTTP-plane primitives (credential / TLS / retry / plaintext) — usable even with no edge config.
     private final CredentialSource httpCredential;
     private final io.configd.client.tls.ClientTls httpTls;
     private final RetryPolicy httpRetry;
@@ -59,23 +58,19 @@ public final class Configd implements AutoCloseable {
         });
     }
 
-    /** Opens a facade over an already-built configuration (edge plane; HTTP requires {@code httpNodes} via the builder). */
     public static Configd open(ConfigdClientConfig config) {
         return new Configd(config, null, false, config.credentialSource().orElse(null),
                 config.tls().orElse(null), config.retryPolicy(), config.allowPlaintext());
     }
 
-    /** A fluent builder that yields a {@link Configd} directly. */
     public static Builder builder() {
         return new Builder();
     }
 
-    /** The edge (watch / fan-out) plane client, sharing this facade's scheduler. Requires edge endpoints. */
     public ConfigdEdgeClient edge() {
         return edge(null);
     }
 
-    /** The edge plane client with an inbound-frame handler (the gates' extension point). */
     public ConfigdEdgeClient edge(InboundFrameHandler handler) {
         ensureOpen();
         if (config == null) {
@@ -86,11 +81,6 @@ public final class Configd implements AutoCloseable {
         return client;
     }
 
-    /**
-     * The HTTP (control) plane client, sharing this facade's credential / TLS / retry configuration. Requires
-     * {@link Builder#httpNodes} to have been configured (the api-port endpoints, distinct from the edge
-     * endpoints).
-     */
     public ConfigdHttpClient http() {
         ensureOpen();
         if (httpNodes == null) {
@@ -108,7 +98,6 @@ public final class Configd implements AutoCloseable {
         return client;
     }
 
-    /** The shared configuration. */
     public ConfigdClientConfig config() {
         return config;
     }
@@ -122,7 +111,6 @@ public final class Configd implements AutoCloseable {
             try {
                 client.close();
             } catch (Exception ignored) {
-                // best-effort close of every vended plane client
             }
         }
         scheduler.shutdownNow();
@@ -134,18 +122,11 @@ public final class Configd implements AutoCloseable {
         }
     }
 
-    /**
-     * A convenience builder over {@link ConfigdClientConfig.Builder} plus the HTTP-plane endpoints. Configure
-     * whichever planes you use: {@link #endpoint} for the edge plane, {@link #httpNodes} for the HTTP plane
-     * (at least one; a pure-single-plane user may instead use {@code ConfigdEdgeClient}/{@code ConfigdHttpClient}
-     * directly). The credential / TLS / retry / plaintext settings are shared by both planes.
-     */
     public static final class Builder {
         private final ConfigdClientConfig.Builder delegate = ConfigdClientConfig.builder();
         private int edgeEndpoints;
         private NodeEndpoints httpNodes;
         private boolean replayGuard;
-        // Shared primitives mirrored locally so http() works even when no edge endpoints are configured.
         private CredentialSource credentialSource;
         private io.configd.client.tls.ClientTls tls;
         private RetryPolicy retryPolicy = RetryPolicy.defaults();
@@ -154,7 +135,6 @@ public final class Configd implements AutoCloseable {
         private Builder() {
         }
 
-        /** An edge (streaming) endpoint. */
         public Builder endpoint(String host, int port) {
             delegate.endpoint(host, port);
             edgeEndpoints++;
@@ -167,13 +147,11 @@ public final class Configd implements AutoCloseable {
             return this;
         }
 
-        /** The HTTP-plane (control) api-port endpoints, enabling {@link Configd#http()}. */
         public Builder httpNodes(NodeEndpoints httpNodes) {
             this.httpNodes = httpNodes;
             return this;
         }
 
-        /** Enable the optional replay guard on the HTTP plane's mutations. */
         public Builder replayGuard(boolean enabled) {
             this.replayGuard = enabled;
             return this;
@@ -237,7 +215,6 @@ public final class Configd implements AutoCloseable {
             if (edgeEndpoints == 0 && httpNodes == null) {
                 throw new IllegalStateException("configure at least one plane: endpoint(...) or httpNodes(...)");
             }
-            // Build the edge config only when edge endpoints are present (ConfigdClientConfig requires them).
             ConfigdClientConfig edgeConfig = edgeEndpoints > 0 ? delegate.build() : null;
             return new Configd(edgeConfig, httpNodes, replayGuard, credentialSource, tls, retryPolicy, allowPlaintext);
         }

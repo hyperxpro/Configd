@@ -75,7 +75,6 @@ public final class FrameCodec {
      */
     public static final int HEADER_SIZE = 26;
 
-    /** Trailer size: 4 bytes for the CRC32C checksum. */
     public static final int TRAILER_SIZE = 4;
 
     /**
@@ -125,14 +124,6 @@ public final class FrameCodec {
         }
     }
 
-    /**
-     * A decoded frame from the wire.
-     *
-     * @param messageType the protocol message type
-     * @param groupId     the Raft group this frame belongs to
-     * @param term        the Raft term
-     * @param payload     message-specific payload bytes (may be empty, never null)
-     */
     public record Frame(
             MessageType messageType,
             int groupId,
@@ -145,15 +136,6 @@ public final class FrameCodec {
         }
     }
 
-    /**
-     * Encodes a frame into a newly allocated byte array.
-     *
-     * @param messageType the message type
-     * @param groupId     the Raft group identifier
-     * @param term        the Raft term
-     * @param payload     the payload bytes (may be empty)
-     * @return the encoded frame bytes (length includes header + payload + trailer)
-     */
     public static byte[] encode(MessageType messageType, int groupId, long term, byte[] payload) {
         Objects.requireNonNull(messageType, "messageType must not be null");
         Objects.requireNonNull(payload, "payload must not be null");
@@ -179,17 +161,6 @@ public final class FrameCodec {
         return frame;
     }
 
-    /**
-     * Encodes a frame into the given {@link ByteBuffer}. The buffer
-     * must have at least {@link #frameSize(int)} remaining capacity
-     * for the supplied payload.
-     *
-     * @param buf         the destination buffer
-     * @param messageType the message type
-     * @param groupId     the Raft group identifier
-     * @param term        the Raft term
-     * @param payload     the payload bytes
-     */
     public static void encode(ByteBuffer buf, MessageType messageType,
                               int groupId, long term, byte[] payload) {
         Objects.requireNonNull(buf, "buf must not be null");
@@ -329,24 +300,6 @@ public final class FrameCodec {
         return new Frame(type, groupId, term, payload);
     }
 
-    /**
-     * Reads the frame length from the first 4 bytes without consuming
-     * further data. Useful for framing in a streaming decoder - the
-     * reader uses this to size its buffer before pulling the rest of
-     * the frame off the socket.
-     *
-     * <p>The returned value is bound-checked against the same
-     * {@code [HEADER_SIZE + TRAILER_SIZE, MAX_FRAME_SIZE]} range as
-     * {@link #decode}, so a caller can trust it to size its read
-     * buffer without a separate validation step. This blocks an
-     * adversary from inducing a multi-GiB allocation by claiming a
-     * giant length in the first 4 bytes.
-     *
-     * @param data buffer containing at least 4 bytes
-     * @return the total frame length in bytes
-     * @throws IllegalArgumentException if the buffer is too short or the
-     *                                  declared length is out of range
-     */
     public static int peekLength(byte[] data) {
         if (data.length < 4) {
             throw new IllegalArgumentException("Need at least 4 bytes to read frame length");
@@ -361,10 +314,6 @@ public final class FrameCodec {
         return length;
     }
 
-    /**
-     * Returns the required frame size for the given payload length.
-     * Always {@code HEADER_SIZE + payloadLength + TRAILER_SIZE}.
-     */
     public static int frameSize(int payloadLength) {
         return HEADER_SIZE + payloadLength + TRAILER_SIZE;
     }

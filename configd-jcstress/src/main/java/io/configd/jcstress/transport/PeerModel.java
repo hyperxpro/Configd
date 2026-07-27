@@ -33,10 +33,9 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class PeerModel {
 
-    /** Mirrors {@code OUTBOUND_QUEUE_CAPACITY}. Small here so eviction is reachable in a race. */
+    /** Small capacity so eviction is reachable in race (mirrors {@code OUTBOUND_QUEUE_CAPACITY}). */
     private final int capacity;
 
-    /** A published output stream identity (stands in for the DataOutputStream {@code out}). */
     public record StreamRef(int id) {
     }
 
@@ -46,14 +45,9 @@ public final class PeerModel {
     volatile StreamRef socket;   // mirrors volatile Socket
     volatile StreamRef out;      // mirrors volatile DataOutputStream
 
-    /** Mirrors {@code framesDropped} (transport-wide in source; per-peer here is equivalent for the race). */
     public final AtomicLong framesDropped = new AtomicLong();
-
-    /** Number of distinct writer tasks started; used to assert "never two writers on one stream". */
     public final AtomicInteger writersStarted = new AtomicInteger();
-    /** Set if a writer was ever started against a null stream (a publish/visibility bug). */
-    public final AtomicBoolean writerSawNullStream = new AtomicBoolean(false);
-    /** Number of connects actually handed to the (modelled) connector (monotonic, lifetime). */
+    public final AtomicBoolean writerSawNullStream = new AtomicBoolean(false); // publish/visibility bug
     public final AtomicInteger scheduledConnects = new AtomicInteger();
     /**
      * Connects currently PENDING (scheduled-but-not-yet-run): incremented when a
@@ -63,9 +57,8 @@ public final class PeerModel {
      * a lost reschedule. Lets the (2) test detect BOTH failure shapes.
      */
     public final AtomicInteger pendingConnects = new AtomicInteger();
-    /** A monotonic id generator for published streams. */
     private final AtomicInteger streamIds = new AtomicInteger();
-    /** "running" flag - true for the lifetime of a test (close() flips closed, not this). */
+    // Separate from closed: close() stops serving, running keeps it true for test lifetime.
     private final AtomicBoolean running = new AtomicBoolean(true);
 
     public PeerModel(int capacity) {
@@ -81,7 +74,6 @@ public final class PeerModel {
         return out;
     }
 
-    // enqueueOrDrop - verbatim algorithm from PeerConnection.enqueueOrDrop
     public void enqueueOrDrop(byte[] wire) {
         if (closed.get()) {
             framesDropped.incrementAndGet();
@@ -99,7 +91,6 @@ public final class PeerModel {
         }
     }
 
-    // scheduleConnect - verbatim CAS gate
     public void scheduleConnect() {
         if (closed.get() || !running.get()) {
             return;
@@ -112,11 +103,6 @@ public final class PeerModel {
         pendingConnects.incrementAndGet(); // a connect is now pending until the connector runs it
     }
 
-    /**
-     * Models the connector picking up a scheduled connect and running
-     * {@code connectAndStartWriter} to a SUCCESSFUL connection: publish the
-     * stream (in source order) and start exactly one writer, then run the finally.
-     */
     public void connectAndStartWriterSuccess() {
         pendingConnects.decrementAndGet(); // the connector picked up the scheduled connect
         boolean connected = false;
@@ -126,7 +112,7 @@ public final class PeerModel {
             }
             StreamRef s = new StreamRef(streamIds.incrementAndGet());
             StreamRef o = s; // one stream per socket
-            // Publish BEFORE starting the writer (source order: this.socket=s; this.out=o;)
+            // Publish in source order BEFORE starting writer (socket before out).
             this.socket = s;
             this.out = o;
             // "submit writer" - model it inline: the writer reads the published o.
@@ -140,10 +126,6 @@ public final class PeerModel {
         }
     }
 
-    /**
-     * Models {@code connectAndStartWriter} taking the FAILURE path (IOException):
-     * no publish, run the finally (reset flag, reschedule if frames remain).
-     */
     public void connectAndStartWriterFailure() {
         pendingConnects.decrementAndGet(); // the connector picked up the scheduled connect
         boolean connected = false;
@@ -151,7 +133,6 @@ public final class PeerModel {
             if (closed.get() || !running.get()) {
                 return;
             }
-            // createClientSocket throws - nothing published.
         } finally {
             connectInFlight.set(false);
             if (!connected && !closed.get() && running.get() && !queue.isEmpty()) {
@@ -160,7 +141,6 @@ public final class PeerModel {
         }
     }
 
-    /** Models the writer task start: it reads the published stream {@code o}. */
     private void startWriter(StreamRef o) {
         if (o == null) {
             writerSawNullStream.set(true); // a publish/visibility bug would land here
@@ -169,26 +149,21 @@ public final class PeerModel {
         writersStarted.incrementAndGet();
     }
 
-    // teardown - verbatim identity guard
     public void teardown(StreamRef s) {
         boolean wasLive = (this.socket == s);     // identity guard
         if (wasLive) {
             this.out = null;
             this.socket = null;
         }
-        // closeQuietly(s) - no-op in the model
         if (wasLive && !closed.get()) {
-            // markDisconnected - modelled by the reschedule decision only
             if (!queue.isEmpty() && running.get()) {
                 scheduleConnect();
             }
         }
     }
 
-    // close - verbatim
     public void close() {
         closed.set(true);
-        // closeQuietly(out/socket)
         out = null;
         socket = null;
         queue.clear();

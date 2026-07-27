@@ -14,11 +14,6 @@
 # on gate-B, so GATE_PHASE1_SKIP_CHAIN=1 relies on that coverage (LOUD) instead of
 # re-running the multi-hour chain. Locally / in a full manual run it runs the chain.
 #
-# WHAT A GREEN gate-phase1 PROVES (beyond the cumulative chain):
-#   - the sharding ownership model is correct + the invariants are non-vacuous;
-#   - the DISCLAIM cross-shard guard rejects a multi-key write spanning > 1 shard;
-#   - the Phase 1 milestone artifacts EXIST (non-vacuity: a deleted class / sim /
-#     design note FAILS this gate, never a silent pass).
 #
 # Environment knobs:
 #   GATE_PHASE1_SKIP_CHAIN=1   skip the cumulative gate-B chain (CI supplies it via

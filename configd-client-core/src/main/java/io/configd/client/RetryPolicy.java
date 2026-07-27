@@ -28,15 +28,10 @@ public record RetryPolicy(Duration base, Duration max, int maxAttempts) {
         }
     }
 
-    /** A sensible default: 200 ms base, 30 s ceiling, up to 10 attempts. */
     public static RetryPolicy defaults() {
         return new RetryPolicy(Duration.ofMillis(200), Duration.ofSeconds(30), 10);
     }
 
-    /**
-     * The full-jittered backoff before attempt {@code attempt} (1-based). Deterministically bounded by
-     * {@code max}; the jitter draws from {@link ThreadLocalRandom}.
-     */
     public Duration backoff(int attempt) {
         if (attempt < 1) {
             throw new IllegalArgumentException("attempt must be >= 1: " + attempt);

@@ -8,10 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * The edge fan-out prefix-filter posture flag ({@code configd.edge.fanout.filter}) resolves on/off
- * and fails LOUD on any other value - never a silent default.
- */
 class EdgeFilterPostureTest {
 
     @AfterEach

@@ -35,14 +35,7 @@
 
     <build>
         <plugins>
-            <!--
-              Publish this module's TEST classes as a test-jar so configd-testkit's
-              adversarial simulation can consume the crash-capable durability
-              fixtures (CrashStorage, KvStateMachine) without duplicating them.
-              testkit(main/test) -> consensus-core(test-jar) is acyclic; the reverse
-              direction would cycle, so the test-jar must be produced here and
-              consumed there.
-            -->
+            <!-- Test-jar for testkit to consume durability fixtures (testkit → core-jar is acyclic). -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
@@ -59,40 +52,7 @@
     </build>
 
     <profiles>
-        <!--
-          Consensus-core mutation thresholds.
-          Activated with the parent `-Pmutation` profile, which supplies the
-          shared PIT/JaCoCo plugin config; this module adds the targetClasses
-          split and the enforced thresholds.
-
-          TWO enforced runs (gate-2 step (e) runs both):
-            * `mutation`        — MODULE-WIDE, enforced floor 70 over the whole
-                                  consensus package.
-            * `mutation-kernel` — the SAFETY KERNEL only, enforced floor 70
-                                  (80 is the aspiration; see the per-profile comment).
-          See the per-profile comments below for the verified scores and the
-          provably-equivalent-mutant residual.
-
-          SAFETY-KERNEL DEFINITION (the "election/log/commit/persistence"
-          classes, by class because the whole module is one package
-          io.configd.raft):
-            RaftNode          — election, commit-rule (§5.4.2), leader/append,
-                                ReadIndex dispatch, snapshot install.
-            RaftLog           — the log + WAL persistence/truncation/compaction
-                                (durable-prefix).
-            DurableRaftState  — term + vote persistence (Election Safety).
-            ReadIndexState    — linearizable-read commit/confirmation state.
-            ClusterConfig     — quorum / joint-consensus membership math.
-          The remaining classes are the sealed RaftMessage records, enums
-          (RaftRole), the small value types (LogEntry, SnapshotState,
-          CommitOutcome, ProposeOutcome, ProposalResult, RaftConfig,
-          RaftMetrics) and the RaftTransport/StateMachine SAM interfaces —
-          boilerplate/value carriers, not the safety logic; they count toward
-          the 70 module-wide bar but are NOT held to the 80 kernel bar.
-
-          No shelfware is excluded here: every consensus-core class is live on
-          the consensus path.
-        -->
+        <!-- Safety-kernel profiles: RaftNode/RaftLog/DurableRaftState/ReadIndexState/ClusterConfig. -->
         <profile>
             <id>mutation</id>
             <build>
@@ -107,14 +67,7 @@
                             <targetTests>
                                 <param>io.configd.raft.*</param>
                             </targetTests>
-                            <!--
-                              Enforced floor 70, module-wide (io.configd.raft.*). The
-                              floor sits just under the verified clean score (73.1%) so
-                              it fails the build on any regression without flaking on PIT
-                              run-to-run jitter. Verify RUN_ERROR==0 when re-measuring:
-                              concurrent surefire forks produce RUN_ERRORs that skew the
-                              score.
-                            -->
+                            <!-- Enforced floor 70 (just under 73.1% clean score; fails on regression without flaking). -->
                             <mutationThreshold>70</mutationThreshold>
                             <failWhenNoMutations>true</failWhenNoMutations>
                         </configuration>
@@ -140,16 +93,7 @@
                             <targetTests>
                                 <param>io.configd.raft.*</param>
                             </targetTests>
-                            <!--
-                              Enforced floor 70 for the safety kernel (RaftNode/RaftLog/
-                              DurableRaftState/ReadIndexState/ClusterConfig). The floor
-                              sits just under the verified clean score (72.8%) so it
-                              fails on regression without flaking. The gap to the 80
-                              aspiration is dominated by provably-equivalent mutants
-                              (guard-masked boundary flips, WAL-cross-validation-masked
-                              recovery fallback, crash-only persist-call removals,
-                              commit-outcome NO_COVERAGE machinery), not gaming.
-                            -->
+                            <!-- Enforced floor 70 for kernel (just under 72.8%; gap to 80 = provably-equivalent mutants). -->
                             <mutationThreshold>70</mutationThreshold>
                             <failWhenNoMutations>true</failWhenNoMutations>
                         </configuration>

@@ -28,20 +28,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * The client-side watch state machine over one {@code 0x02} edge connection — one {@code watch_id},
- * potentially multi-shard (the server aggregating endpoint fans a PREFIX/FULL watch across all shards over
- * this one connection). It implements the driver merge: dedup by {@code (gid, S)} (drop a
- * {@code WATCH_EVENT} iff {@code S ≤ cursor[gid]}), advance the per-shard cursor vector, advance idle
- * components on {@code WATCH_PROGRESS} bookmarks (component-wise max-merge), and present the events as a
- * per-key/per-shard-ordered stream (NEVER a cross-shard order). Catch-up reuses {@link SnapshotReassembler}
- * keyed per {@code gid} (only the lagging shard snapshots; siblings keep tailing). {@code full_chain_verify}
- * receives the verbatim signed chain as {@code NOTIFY} and verifies + filters locally.
- *
- * <p>Delivery is a single-subscriber {@link Flow.Publisher Flow.Publisher&lt;WatchEvent&gt;} with {@code request(n)}
- * backpressure gating reads (a slow subscriber parks the reader → the connection-level governor demotes it;
- * there is no per-watch flow isolation yet); {@code CURSOR_ACK} is the connection-level scalar (the max
- * applied {@code S} across shards — with a single static shard this is just that shard's S). A blocking
- * {@link #awaitCreated} + {@code poll} facade serves the reference/conformance driver.
+ * Watch state machine over one connection: one watch_id, potentially multi-shard. Driver merge: dedup by
+ * (gid,S), advance per-shard cursors, per-key/per-shard-ordered events only. Request(n) backpressure.
  */
 public final class WatchSession implements InboundFrameHandler, Flow.Publisher<WatchEvent> {
 
@@ -49,34 +37,26 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
     private static final int DELIVERY_BUFFER_CAP = 4096;
 
     private final WatchTarget target;
-    private final SignedChainVerifier verifier;   // used only in full_chain_verify mode
+    private final SignedChainVerifier verifier;
     private final io.configd.client.HostileServerLimits limits;
     private final CursorStore cursorStore;
-    private final String cursorKey;               // null = ephemeral
+    private final String cursorKey;
 
     private final AtomicLong watchIdSeq = new AtomicLong(1);
-    /** Mints the next watch_id. Own sequence when dedicated; the multiplex's shared sequence when shared, so
-     * watch_ids stay UNIQUE per connection across all hosted watches (no reuse). */
     private volatile java.util.function.LongSupplier watchIdMinter = watchIdSeq::getAndIncrement;
     private volatile long watchId;
     private volatile EdgeConnection connection;
     private volatile boolean forceRebootstrap;
 
-    // Termination routing. On a DEDICATED connection (the default) a per-watch terminal fails the whole
-    // connection (its only watch) so the EdgeSession reconnect logic runs. On a SHARED connection the multiplex
-    // installs a per-watch terminator that ends only this watch and leaves the siblings streaming, and
-    // resetCursorOnConnect forces from-now on every (re)connect (a shared drain has no independent resume).
     private volatile java.util.function.Consumer<ConfigdException> onWatchTerminal = this::failConnection;
     private volatile java.util.function.LongConsumer onWatchIdAssigned = id -> {
     };
     private volatile boolean resetCursorOnConnect;
 
-    /** The per-shard cursor vector (gid → highest applied S). Concurrent map; built into a WatchCursor on send. */
     private final ConcurrentHashMap<Integer, Long> cursor = new ConcurrentHashMap<>();
     private final Map<Integer, SnapshotReassembler> catchUp = new ConcurrentHashMap<>();
 
     private final java.util.concurrent.CompletableFuture<Void> created = new java.util.concurrent.CompletableFuture<>();
-    /** Completes exceptionally when THIS watch ends (even if its shared connection lives on), normally on cancel. */
     private final java.util.concurrent.CompletableFuture<Void> watchTerminal = new java.util.concurrent.CompletableFuture<>();
     private final AtomicBoolean closed = new AtomicBoolean(false);
 

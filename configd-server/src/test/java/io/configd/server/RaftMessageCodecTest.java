@@ -13,10 +13,6 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link RaftMessageCodec}: verifies round-trip encode/decode
- * for every {@link RaftMessage} variant.
- */
 class RaftMessageCodecTest {
 
     private static final int GROUP_ID = 42;
@@ -174,8 +170,6 @@ class RaftMessageCodecTest {
 
         @Test
         void midStreamChunkRoundTrip() {
-            // An intermediate chunk of a chunked transfer: nonzero offset, not the final chunk, and
-            // no cluster config (config rides only on the final chunk).
             byte[] data = {5, 6, 7, 8};
             var req = new InstallSnapshotRequest(8L, NodeId.of(1), 100L, 7L, 4096, data, false);
             FrameCodec.Frame frame = RaftMessageCodec.encode(req, GROUP_ID);
@@ -189,9 +183,6 @@ class RaftMessageCodecTest {
 
         @Test
         void chunkExceedingPerChunkCapIsRejectedOnEncode() {
-            // A single chunk larger than the per-chunk data ceiling is rejected on encode: the
-            // sender's chunk size must stay at or below this cap. The TOTAL snapshot is unbounded
-            // (it streams as many chunks), but no single chunk may exceed one frame.
             byte[] tooBig = new byte[RaftMessageCodec.MAX_SNAPSHOT_BLOB_LEN + 1];
             var req = new InstallSnapshotRequest(8L, NodeId.of(1), 100L, 7L, 0, tooBig, true);
             assertThrows(IllegalArgumentException.class, () -> RaftMessageCodec.encode(req, GROUP_ID));
@@ -214,9 +205,6 @@ class RaftMessageCodecTest {
 
     @Test
     void installSnapshotResponseDefaultsOffsetWhenAbsentOnWire() {
-        // An InstallSnapshotResponse frame WITHOUT the trailing nextExpectedOffset field (the 13-byte
-        // pre-chunking layout) must still decode, defaulting the offset to 0. This is the optional-
-        // trailing-field contract the decoder relies on.
         ByteBuffer legacy = ByteBuffer.allocate(1 + 4 + 8);
         legacy.put((byte) 1);            // success
         legacy.putInt(NodeId.of(3).id());
@@ -253,11 +241,6 @@ class RaftMessageCodecTest {
         assertEquals(42L, frame.term());
     }
 
-    /**
-     * Codec-strictness checks: negative InstallSnapshot offsets, and strict-end trailing-byte
-     * rejection on the request-side fixed-shape decoders. Every check rejects only a malformed
-     * frame; the round-trip tests above prove well-formed frames are unaffected.
-     */
     @Nested
     class CodecStrictness {
 
@@ -282,7 +265,6 @@ class RaftMessageCodecTest {
 
         @Test
         void appendEntriesHeartbeatRejectsTrailingBytes() {
-            // An empty heartbeat (0 entries) is the tightest fixed shape: any trailing byte is padding.
             var req = new AppendEntriesRequest(5L, NodeId.of(1), 10L, 4L, List.of(), 9L);
             FrameCodec.Frame bad = withTrailing(RaftMessageCodec.encode(req, GROUP_ID), 4);
             assertThrows(IllegalArgumentException.class, () -> RaftMessageCodec.decode(bad));
@@ -290,7 +272,6 @@ class RaftMessageCodecTest {
 
         @Test
         void installSnapshotRejectsTrailingBytesAfterConfig() {
-            // Trailing bytes past the optional configData blob are rejected.
             byte[] data = {1, 2, 3};
             byte[] config = {9, 8, 7};
             var req = new InstallSnapshotRequest(8L, NodeId.of(1), 100L, 7L, 0, data, true, config);
@@ -304,7 +285,6 @@ class RaftMessageCodecTest {
 
         @Test
         void installSnapshotRejectsTrailingBytesWithNoConfig() {
-            // The no-config shape (encoder writes configLen=0) must also reject padding after it.
             byte[] data = {5, 6, 7, 8};
             var req = new InstallSnapshotRequest(8L, NodeId.of(1), 100L, 7L, 4096, data, false);
             FrameCodec.Frame bad = withTrailing(RaftMessageCodec.encode(req, GROUP_ID), 1);
@@ -313,8 +293,6 @@ class RaftMessageCodecTest {
 
         @Test
         void installSnapshotRejectsNegativeOffset() {
-            // A negative chunk offset is rejected at decode (symmetry with the response's
-            // nextExpectedOffset check). Build a raw payload with offset = -1, dataLen = 0.
             ByteBuffer p = ByteBuffer.allocate(4 + 8 + 8 + 4 + 1 + 4);
             p.putInt(NodeId.of(1).id());
             p.putLong(100L); // lastIncludedIndex
@@ -330,8 +308,6 @@ class RaftMessageCodecTest {
 
         @Test
         void installSnapshotResponseStillToleratesAbsentTrailingOffset() {
-            // Negative control: the response's nextExpectedOffset is a DELIBERATE optional
-            // trailing field and must NOT be made strict-end. A 13-byte legacy response still decodes.
             ByteBuffer legacy = ByteBuffer.allocate(1 + 4 + 8);
             legacy.put((byte) 1);
             legacy.putInt(NodeId.of(3).id());
@@ -364,7 +340,6 @@ class RaftMessageCodecTest {
 
         @Test
         void preVoteRejectsTrailingBytes() {
-            // PreVote shares decodeRequestVote; a trailing byte on the PRE_VOTE type is rejected too.
             var req = new RequestVoteRequest(5L, NodeId.of(2), 10L, 4L, true);
             FrameCodec.Frame good = RaftMessageCodec.encode(req, GROUP_ID);
             assertDoesNotThrow(() -> RaftMessageCodec.decode(good)); // control
@@ -407,9 +382,6 @@ class RaftMessageCodecTest {
 
         @Test
         void witnessRejectsTrailingBytes() {
-            // The witness body is exactly WITNESS_BODY_LEN; a trailing byte is rejected, matching
-            // every other fixed-shape Raft decoder. decodeWitness needs the authenticated sender,
-            // so it is exercised directly rather than via decode().
             var from = NodeId.of(2);
             var msg = new io.configd.raft.WitnessMessage(from, 11L, 9L, 3, 4L, true);
             FrameCodec.Frame good = RaftMessageCodec.encode(msg, GROUP_ID);

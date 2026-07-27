@@ -34,10 +34,8 @@ public final class Cluster implements AutoCloseable {
     }
 
     /**
-     * Creates a cluster where each node's posture is supplied by {@code postureFor(nodeId)}.
-     * This is how the clock-skew cell skews a single node (only relative skew is meaningful):
-     * {@code id -> id == 1 ? skewed : base}. For uniform postures (encryption/auth) use the
-     * {@link #create(int, int, int, Path, Path, ClusterNode.TlsFiles, ClusterNode.Posture)} overload.
+     * Per-node posture via {@code postureFor(nodeId)}: allows selective skew (e.g., node 1 only).
+     * For uniform postures, use the simpler overload.
      */
     public static Cluster create(int n, int raftBase, int apiBase, Path baseDir, Path jar,
                                  ClusterNode.TlsFiles tls,
@@ -45,11 +43,6 @@ public final class Cluster implements AutoCloseable {
         String peerAddresses = IntStream.rangeClosed(1, n)
                 .mapToObj(k -> k + "=127.0.0.1:" + (raftBase + k))
                 .collect(Collectors.joining(","));
-        // Each node's Ed25519 signing key lives OUTSIDE its data dir - in a sibling secrets/ dir
-        // under the cluster baseDir - so the server's co-location guard is SATISFIED rather than
-        // disabled. SigningKeyStore.loadOrCreate auto-generates a missing key; the path is
-        // per-node and stable, so a kill -9 + restart recovers the WAL against the same signing key
-        // and the at-rest integrity chain stays valid.
         Path secretsDir = baseDir.resolve("secrets");
         Files.createDirectories(secretsDir);
         List<ClusterNode> ns = new ArrayList<>();

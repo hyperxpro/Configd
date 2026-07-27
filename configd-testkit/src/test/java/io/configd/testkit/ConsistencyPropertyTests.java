@@ -17,25 +17,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Property tests verifying the consistency contract invariants defined in
- * {@code docs/operations/consistency-contract.md}.
- * <p>
- * Each nested class corresponds to a formal invariant (INV-V1, INV-V2, etc.)
- * and exercises the real Raft consensus, config store, and edge cache
- * infrastructure in deterministic simulation.
- * <p>
- * Tests use seeded PRNG for full reproducibility: same seed = same execution.
- */
 class ConsistencyPropertyTests {
 
-    /**
-     * A fully-wired simulated Raft cluster with N nodes, each backed by a
-     * {@link ConfigStateMachine} and {@link VersionedConfigStore}.
-     * <p>
-     * All communication flows through the {@link SimulatedNetwork}. Time is
-     * driven by the {@link SimulatedClock}. Single-threaded, deterministic.
-     */
     static final class ClusterHarness implements ClusterView {
 
         private final RaftSimulation sim;
@@ -43,32 +26,13 @@ class ConsistencyPropertyTests {
         private final List<RaftLog> logs;
         private final List<ConfigStateMachine> stateMachines;
         private final List<VersionedConfigStore> stores;
-        /**
-         * One heartbeat coalescer per node (each node is a single group in this cross-node sim). Wiring
-         * the coalesce-to-drain pipeline here means the no-spurious-election sweeps exercise it every
-         * tick - a drain that drops or delays a heartbeat surfaces as a spurious election (the sweep goes
-         * red). One group per node means each drain sends a plain AppendEntries (identical payload; the
-         * per-seed schedule is a re-established baseline, see drainHeartbeats).
-         */
         private final List<HeartbeatCoalescer> coalescers;
         private final int nodeCount;
 
-        /**
-         * Heartbeat-drain fault injection (test-the-tester). {@link #NONE} is the real coalescing drain.
-         * {@link #DROP} models a broken coalescer that loses coalesced heartbeats (they are drained from
-         * the buffer but never sent); {@link #DELAY} sends them {@code hbFaultDelayMs} later (modelling a
-         * coalescing window that holds a heartbeat past the election timeout). Either fault must drive
-         * election churn - that is what proves the no-spurious-election sweep is non-vacuous (a correct
-         * drain stays green, a broken one goes red).
-         */
         enum HeartbeatFault { NONE, DROP, DELAY }
         private HeartbeatFault hbFault = HeartbeatFault.NONE;
         private long hbFaultDelayMs = 0;
-        /** When non-null with {@link HeartbeatFault#DROP}, drop heartbeats only to THIS peer (the single-
-         *  peer / partial-aggregate starvation fault); null drops to all peers. */
         private NodeId hbDropVictim = null;
-        /** Per-node count of PreVote requests sent - the starvation signal: a follower denied heartbeats
-         *  times out and churns PreVotes (which PreVote shields from becoming a spurious election). */
         private int[] preVotesSent;
 
         /** Owner binding is done once, on the first tick (the drive thread). */
@@ -78,14 +42,6 @@ class ConsistencyPropertyTests {
             this(seed, nodeCount, RaftNode.InvariantChecker.NOOP);
         }
 
-        /**
-         * Builds a cluster whose nodes report in-node invariant breaches to the
-         * supplied {@link RaftNode.InvariantChecker}. The default 2-arg form passes
-         * {@link RaftNode.InvariantChecker#NOOP} so {@code ConsistencyPropertyTests} and
-         * {@code SeedSweepTest} stay silent; the adversarial harness passes a throwing
-         * checker so the named in-node checks (plus {@code durable_prefix_no_gap}) fire
-         * at their mutation sites.
-         */
         ClusterHarness(long seed, int nodeCount, RaftNode.InvariantChecker invariantChecker) {
             this.sim = new RaftSimulation(seed, nodeCount);
             this.nodeCount = nodeCount;
@@ -155,10 +111,6 @@ class ConsistencyPropertyTests {
         @Override public VersionedConfigStore store(int i) { return stores.get(i); }
         @Override public int nodeCount() { return nodeCount; }
 
-        /**
-         * Single simulation step: advance clock by 1ms, deliver due messages,
-         * then tick every RaftNode.
-         */
         void tick() {
             bindOwnersIfNeeded();
             sim.tick();
@@ -175,14 +127,6 @@ class ConsistencyPropertyTests {
             }
         }
 
-        /**
-         * Send node {@code i}'s coalesced heartbeats (one group per node, so each drained peer carries a
-         * single AppendEntries) via the same {@link SimulatedNetwork} path as a normal send, at the
-         * current clock - identical payload. On a tick that mixes a buffered heartbeat with an
-         * immediately-sent entry-carrying AppendEntries, the cross-tick PRNG draw order can shift, since
-         * heartbeats drain after in-tick entry sends - so a run exercising this path is a re-established
-         * baseline (green on the new trajectory), not the identical prior schedule.
-         */
         private void drainHeartbeats(int i, HeartbeatCoalescer hc) {
             Map<NodeId, Map<Integer, AppendEntriesRequest>> drained = hc.drainAndEndTick();
             NodeId from = NodeId.of(i);

@@ -44,33 +44,7 @@
     </dependencies>
 
     <profiles>
-        <!--
-          Activated with the parent -Pmutation flag. This module mixes a live control
-          plane, the commit-notification boundary plus the active watch and
-          dissemination path, with shelfware: edge-data-plane fan-out and gossip
-          machinery that is blocked on a future implement-or-descope decision.
-
-          The control plane is held to mutationThreshold 65. The shelfware is excluded
-          explicitly and listed here, never silently omitted, so an exclusion can never
-          quietly mask a real coverage gap.
-
-          Control-plane targetClasses (held to 65):
-            CommitNotification, CommitNotificationSource, FanOutBuffer,
-            FanOutMetrics, ReplaySource, SnapshotReplaySource (the commit-notification
-                boundary, the control plane consumed downstream);
-            WatchService, WatchCoalescer, WatchEvent, SubscriptionManager,
-            PlumtreeNode, RolloutController (the active watch, dissemination, and
-                rollout control plane);
-            io.configd.distribution.wire.* (the edge protocol model plus
-                EdgeFrameCodec and EdgeSnapshotCodec);
-            io.configd.distribution.fanout.* (FanOutSessionCore plus its config,
-                sink, metrics, and demotion seams).
-
-          Excluded shelfware (no consumer-facing wire path exists yet, so it is
-          tracked here but not held to a bar):
-            HyParViewOverlay - gossip membership overlay; failure-repair machinery
-                               untested, pending the edge data plane.
-        -->
+        <!-- Control plane (65): CommitNotification*, WatchService*, SubscriptionManager*, wire.*, fanout.*. Excludes shelfware: HyParViewOverlay (untested). -->
         <profile>
             <id>mutation</id>
             <build>

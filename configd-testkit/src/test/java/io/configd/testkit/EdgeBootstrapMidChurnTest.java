@@ -13,47 +13,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-/**
- * A zero-state edge bootstraps while the CP LEADER is killed MID-TRANSFER, writes
- * continuing on the re-elected cluster. Three legs:
- * <ul>
- *   <li><b>Leader killed, source healthy (the production-shaped case):</b> the joiner
- *       subscribes to a FOLLOWER; the cluster leader dies while the joiner's transfer is
- *       in flight. The bootstrap completes from the follower, the new leader repairs and
- *       keeps replicating to it, and the joiner converges byte-equal to the post-churn
- *       cluster state.</li>
- *   <li><b>The SOURCE is the killed leader:</b> the joiner subscribed to the leader
- *       itself. It bootstraps from the deposed node's frozen-but-COMMITTED state (applied
- *       = committed, so nothing uncommitted can ever be served) and converges byte-equal
- *       to its source - the fan-out session's per-source contract - while the per-tick
- *       monotonicity invariants run throughout. Full-cluster convergence for this edge is
- *       deliberately NOT asserted: the deposed node itself never reconverges, which is a
- *       CP-layer liveness wedge this test surfaced (see below), not an edge defect.</li>
- *   <li><b>Transfer lost AND leader killed (the full chaos):</b> the joiner's channel is
- *       also cut before delivery; after the edge heals, the self-healing re-send
- *       bootstraps it from the (healthy, repaired) follower to full convergence.</li>
- * </ul>
- *
- * <h2>CP finding surfaced by this test (out of scope for this test to fix)</h2>
- * A deposed-then-healed leader NEVER catches up within any sim timescale (observed: 10k
- * quiet ticks, still at its isolation-time version): {@code RaftNode.inflightCount} is
- * incremented per send (sendAppendEntries/sendInstallSnapshot), decremented ONLY by
- * responses, and reset ONLY at {@code becomeLeader} - so {@code maxInflightAppends}
- * messages dropped by a partition (or any loss) permanently gate
- * {@code sendAppendEntries} for that peer until the leadership term changes. The
- * consensus kernel is CP-owner territory with its own verification regime; this test
- * quarantines the dependency instead of drive-by-patching it.
- *
- * <h2>Scope, named</h2>
- * "Edge resubscribes to ANOTHER node" re-homing is multi-endpoint failover -
- * the edge PROCESS shell's job, proven over real sockets by {@code EdgeFailoverTest}
- * (configd-edge-node); the sim pins the mid-churn bootstrap safety/convergence claims on
- * the fixed-subscription topology. "Kill" follows the {@link EdgeLeaderKillScenarioTest}
- * model: full CP isolation the surviving majority re-elects around (the edge channel is
- * a separate network, so the deposed node keeps serving its frozen committed state - 
- * the interesting case; the dead edge channel is leg 3). Tick-driven, seed-deterministic,
- * no sleeps.
- */
 class EdgeBootstrapMidChurnTest {
 
     private static final int CP_NODES = 5;

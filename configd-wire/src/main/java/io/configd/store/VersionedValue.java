@@ -4,20 +4,11 @@ import java.util.Arrays;
 import java.util.Objects;
 
 /**
- * An immutable versioned config value stored in the HAMT.
- * <p>
- * The value bytes are defensively copied on construction to guarantee
- * immutability. Version is the monotonic sequence number from the Raft log;
- * timestamp is the applying node's local wall-clock millis at apply - a freshness
- * stamp only, NOT a cross-shard HLC or a global order. Because every replica applies
- * the committed log independently, the timestamp is non-deterministic across replicas
- * and MUST NOT be used to order events across shards (there is no cross-shard clock;
- * see RFC section 2 W3-3 / W6-2a).
- *
- * @param value     raw config bytes (never null, never mutated after construction)
- * @param version   monotonic sequence number (ADR-0004)
- * @param timestamp the applying node's local wall-clock millis at apply (freshness
- *                  only, not a cross-shard order - see above)
+ * Immutable versioned config value stored in HAMT. Value bytes defensively copied
+ * on construction. Version is monotonic Raft log sequence; timestamp is applying node's
+ * local wall-clock (freshness-only, NOT cross-shard HLC or global order). Each replica
+ * applies log independently, so timestamp is non-deterministic across replicas; MUST NOT
+ * be used to order events across shards (RFC §2 W3-3/W6-2a).
  */
 public record VersionedValue(byte[] value, long version, long timestamp) {
 
@@ -33,19 +24,15 @@ public record VersionedValue(byte[] value, long version, long timestamp) {
         value = value.clone();
     }
 
-    /**
-     * Returns a copy of the value bytes. Caller may mutate the returned array
-     * without affecting this record.
-     */
+    /** Returns defensive copy; caller may mutate without affecting this record. */
     @Override
     public byte[] value() {
         return value.clone();
     }
 
     /**
-     * Returns the raw internal array WITHOUT copying. Only for internal
-     * read-path use where zero-allocation is critical and the caller
-     * guarantees not to mutate the returned array.
+     * Returns internal array without copying: zero-allocation read-path use only.
+     * Caller MUST NOT mutate returned array.
      */
     public byte[] valueUnsafe() {
         return value;

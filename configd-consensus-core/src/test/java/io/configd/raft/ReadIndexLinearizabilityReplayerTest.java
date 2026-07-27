@@ -17,27 +17,6 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Replays the safety invariants of {@code spec/ReadIndexSpec.tla} against
- * the live {@link ReadIndexState} implementation.
- *
- * <p>Closes the spec-to-code link for read-index linearizability. The TLA+
- * model proves the protocol-level invariants over an abstract state
- * machine; this replayer drives the concrete Java implementation through
- * a randomised sequence of model-equivalent actions and asserts the same
- * invariants hold step-by-step.
- *
- * <p>Invariants checked (mirroring the TLA spec):
- * <ul>
- *   <li><b>ReadIndexBoundedByMaxIndex</b> - every recorded readIndex is
- *       &le; the maxCommitIndex visible at the time the read was started.</li>
- *   <li><b>ReadFreshness</b> - a read can only become {@code isReady}
- *       once {@code lastApplied >= readIndex} AND leadership has been
- *       confirmed.</li>
- *   <li><b>NoStaleLeaderServe</b> - after a step-down ({@code clear()}),
- *       no previously-pending read can become ready.</li>
- * </ul>
- */
 class ReadIndexLinearizabilityReplayerTest {
 
     /** Abstract action drawn from the spec's Next predicate. */

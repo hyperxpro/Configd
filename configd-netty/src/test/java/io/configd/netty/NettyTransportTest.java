@@ -15,12 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Transport selector tests. Pins: a coherent (factory, channel-class) triple per tier; the
- * {@code nio} floor is always available; an unknown forced tier and a forced-but-unavailable tier
- * both fail loud (no silent downgrade - the property that keeps an "we ran on io_uring/epoll"
- * claim honest).
- */
+/** Transport tier selector: coherent triples, always-available nio, fail-loud on unavailable forced tier. */
 class NettyTransportTest {
 
     private String saved;
@@ -52,8 +47,6 @@ class NettyTransportTest {
 
     @Test
     void autoSelectPrefersEpollAndNeverIoUring() {
-        // io_uring is NOT auto-selected: measured no throughput benefit and a ~2x fan-out
-        // regression vs Epoll; auto-selects epoll -> nio. io_uring is opt-in only.
         String expected = Epoll.isAvailable() ? "epoll" : "nio";
         assertEquals(expected, NettyTransport.select().tier());
         assertNotEquals("io_uring", NettyTransport.select().tier(),

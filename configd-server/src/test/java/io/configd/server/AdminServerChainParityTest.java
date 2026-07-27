@@ -26,13 +26,6 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-/**
- * Both HTTP adapters (JDK {@link HttpApiServer} and Netty {@link NettyHttpApiServer}) enforce the SPI
- * authenticator chain IDENTICALLY - the codebase principle that all security logic lives in the shared
- * {@link AdminApiHandler} and is re-proven on both transports (so the documented Netty-&gt;JDK fast-revert
- * cannot silently drop SPI auth). Boots both servers with the same Basic chain + ACL and asserts every
- * request yields the same status on both, and the expected status.
- */
 @Timeout(30)
 class AdminServerChainParityTest {
 

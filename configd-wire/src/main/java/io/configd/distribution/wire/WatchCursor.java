@@ -50,14 +50,11 @@ public record WatchCursor(long topologyEpoch, List<Component> components) {
      */
     public static final long INITIAL_TOPOLOGY_EPOCH = 1L;
 
-    /** Reserved-illegal epoch ("unset / pre-epoch"); rejected on construction and on decode. */
     public static final long EPOCH_UNSET = 0L;
 
     /**
-     * A cursor over {@code components} at the static topology epoch
-     * ({@link #INITIAL_TOPOLOGY_EPOCH}). Convenience for the common single-epoch case (tests /
-     * static-N tooling); a caller tracking multiple topology epochs MUST use the canonical
-     * constructor with the live epoch.
+     * Cursor at static topology epoch (INITIAL_TOPOLOGY_EPOCH). Convenience for single-epoch
+     * case; caller tracking multiple epochs MUST use canonical constructor with live epoch.
      */
     public WatchCursor(List<Component> components) {
         this(INITIAL_TOPOLOGY_EPOCH, components);
@@ -82,49 +79,37 @@ public record WatchCursor(long topologyEpoch, List<Component> components) {
         }
     }
 
-    /**
-     * The "from now per shard" cursor at the static topology epoch - an empty vector
-     * ({@code count == 0}; W3-4). See {@link #INITIAL_TOPOLOGY_EPOCH} on the epoch default.
-     */
+    /** Empty "from now per shard" cursor (count==0; W3-4) at static topology epoch. */
     public static WatchCursor fromNow() {
         return fromNow(INITIAL_TOPOLOGY_EPOCH);
     }
 
-    /** The "from now per shard" cursor bound to {@code topologyEpoch} (W3-4). */
+    /** "From now per shard" cursor (W3-4) bound to topologyEpoch. */
     public static WatchCursor fromNow(long topologyEpoch) {
         return new WatchCursor(topologyEpoch, List.of());
     }
 
-    /**
-     * A single-component cursor at the static topology epoch - the {@code N = 1} form is
-     * {@code of(0, S)} (W3-5). See {@link #INITIAL_TOPOLOGY_EPOCH} on the epoch default.
-     */
+    /** Single-component cursor at static topology epoch; N=1 form is of(0, S) (W3-5). */
     public static WatchCursor of(int gid, long s) {
         return of(INITIAL_TOPOLOGY_EPOCH, gid, s);
     }
 
-    /** A single-component cursor {@code (gid, S)} bound to {@code topologyEpoch} (W3-5). */
+    /** Single-component cursor (gid, S) bound to topologyEpoch (W3-5). */
     public static WatchCursor of(long topologyEpoch, int gid, long s) {
         return new WatchCursor(topologyEpoch, List.of(new Component(gid, s)));
     }
 
-    /** True iff this is the empty "from now per shard" cursor (W3-4); independent of the epoch. */
+    /** True iff empty "from now per shard" cursor (W3-4), independent of epoch. */
     public boolean isFromNow() {
         return components.isEmpty();
     }
 
     /**
-     * One {@code (gid, S)} cursor component.
-     *
-     * @param gid the shard group id - a {@code uint32}; the raw 32 bits are stored in this
-     *            {@code int} and MUST be compared/ordered as <b>unsigned</b>
-     *            ({@link #gidUnsigned()}). Opaque full {@code uint32} range (not range-checked).
-     * @param s   the applied-mutation sequence {@code S} already processed (the per-shard
-     *            analogue of etcd's revision, W3-2). <b>Validated non-negative</b>, so its
-     *            effective range is {@code [0, 2^63)} even though the wire field is a
-     *            {@code uint64}: a high-bit-set value decodes as {@link ErrorCode#FRAME_CORRUPT}.
-     *            A cross-language (Rust/Go) driver using a true {@code u64} MUST keep {@code S}
-     *            (and the other sequence/timestamp fields) within {@code [0, 2^63)}.
+     * (gid, S) cursor component. gid is uint32 stored as int, MUST be compared/ordered as
+     * unsigned (see gidUnsigned()). S is applied-mutation sequence already processed
+     * (per-shard etcd revision analogue, W3-2), validated non-negative: effective range [0, 2^63)
+     * (high-bit-set wire value = FRAME_CORRUPT). Cross-language (Rust/Go) drivers using true
+     * u64 MUST keep S and other sequence/timestamp fields within [0, 2^63).
      */
     public record Component(int gid, long s) {
         public Component {
@@ -133,7 +118,7 @@ public record WatchCursor(long topologyEpoch, List<Component> components) {
             }
         }
 
-        /** The {@code gid} as an unsigned value (the raw {@code uint32} widened to a long). */
+        /** gid as unsigned value (uint32 widened to long). */
         public long gidUnsigned() {
             return Integer.toUnsignedLong(gid);
         }

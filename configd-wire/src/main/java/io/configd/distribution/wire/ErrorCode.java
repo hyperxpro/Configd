@@ -1,15 +1,9 @@
 package io.configd.distribution.wire;
 
 /**
- * The fixed ERROR/CLOSE code taxonomy for the edge streaming protocol. The set is closed and
- * the numeric codes are pinned by the {@code EdgeFrameCodecGoldenFixtureTest} golden fixture;
- * no free-form error strings ride the wire as a structured cause.
- *
- * <p>The numeric {@link #code()} (1..13) is the byte that goes on the wire in an
- * {@link EdgeFrame.ErrorClose} payload (and a {@link EdgeFrame.WatchCanceled} per-watch
- * terminal); the human-readable {@code message} field of the frame is diagnostic only.
- * Changing any code value is a wire-format change and MUST bump
- * {@link EdgeFrameCodec#EDGE_WIRE_VERSION}.
+ * Fixed ERROR/CLOSE code taxonomy (closed set, numeric codes pinned by
+ * EdgeFrameCodecGoldenFixtureTest). No free-form error strings on wire. Changing any value
+ * is wire-format change: MUST bump EdgeFrameCodec.EDGE_WIRE_VERSION.
  */
 public enum ErrorCode {
 
@@ -91,18 +85,11 @@ public enum ErrorCode {
         this.code = code;
     }
 
-    /** The on-wire numeric code (1..13). */
     public int code() {
         return code;
     }
 
-    /**
-     * Resolves an on-wire code back to its {@link ErrorCode}.
-     *
-     * @param code the numeric code read from the wire
-     * @return the matching {@link ErrorCode}
-     * @throws IllegalArgumentException if {@code code} is not a defined taxonomy value
-     */
+    /** Resolve on-wire code back to ErrorCode; throws if not a defined value. */
     public static ErrorCode fromCode(int code) {
         for (ErrorCode ec : VALUES) {
             if (ec.code == code) {
@@ -112,6 +99,6 @@ public enum ErrorCode {
         throw new IllegalArgumentException("Unknown edge error code: " + code);
     }
 
-    /** Cached values array - avoids the defensive copy {@link #values()} allocates per call. */
+    /** Cached values array: avoids defensive copy in values() per call. */
     private static final ErrorCode[] VALUES = values();
 }

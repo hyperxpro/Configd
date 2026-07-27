@@ -13,39 +13,10 @@ import java.util.Objects;
 import static io.configd.raft.RaftArtifactMagic.KEYRING_MAGIC;
 
 /**
- * The node-level {@code raft-keyring}: a dual-slot, crash-atomic file holding the term-versioned
- * wrapped roots (layout frozen in {@code docs/architecture/frozen-format-v1.md}). It sits in {@code dataDir} beside the node-anchor and topology
- * descriptor, one per node, and its body rides an outer HMAC {@link IntegrityEnvelope} under
- * {@code K_keyringMac} (scopeId = {@link IntegrityEnvelope#NODE_SCOPE}).
- *
- * <p><b>Same dual-slot mechanics as {@link AnchorFile}/{@link NodeAnchorFile}, wider slots.</b> It
- * reuses the proven {@link AnchorIO}/{@link FileAnchorIO} transport (fixed-offset {@code pwrite} +
- * {@code fdatasync}) and the shared container-header geometry, but its slot stride is FROZEN at 64 KiB
- * (a keyring holds ~900 retained local terms), so it defines its own slot geometry rather than reusing
- * {@code AnchorFile}'s 512-byte constants.
- *
- * <pre>
- *   [ container header @ 0, 8 B ]  [KEYRING_MAGIC:4][fileVersion:u8=1][flags:u8=0][reserved:u16=0]
- *   Slot 0 @ offset 8 ; Slot 1 @ offset 8 + 65536.   File size = 8 + 2*65536 = 131080 B (preallocated).
- *   Each slot: [recordLen:4][ envelopedKeyring : recordLen ][ zero-pad to 65536 ]
- *   envelopedKeyring = K_keyringMac.wrap(KEYRING_MAGIC, NODE_SCOPE, KEYRING_BODY)  (always algId=1 HMAC)
- * </pre>
- *
- * <p><b>Write protocol (crash-atomic).</b> Identical to the anchor's: overwrite the slot holding the LOWER
- * valid {@code keyringSeq} with the caller's already-bumped {@code keyringSeq}, then {@code fdatasync}.
- * Only one slot is mutated per update, so a torn write damages only the stale slot and the live slot
- * survives. Recovery parses both slots and takes the highest valid {@code keyringSeq}. This is what
- * makes term rotation and the signing-key rewrap-before-swap handover crash-atomic: a torn new slot
- * fails its outer MAC/CRC and the intact prior slot wins, so the node boots on a consistent keyring
- * (old or new, never torn) with no key lost.
- *
- * <p><b>Presence gate.</b> No file at open ({@link #existedAtOpen()} false) = first boot / enable-
- * encryption migration; the caller mints a fresh keyring. File present but BOTH slots invalid
- * ({@link #hasValidRecord()} false) = tamper OR "keyring is under a prior KEK" (a half-finished
- * signing-key rotation) - the caller REFUSES, distinct from a first boot.
- *
- * <p><b>Threading.</b> Written by exactly one thread at a time (the boot thread at start-up; an admin
- * rotation is a serialized operator action). Not thread-safe, exactly like {@link AnchorFile}.
+ * Node-level raft-keyring: dual-slot crash-atomic file (layout frozen in docs/architecture/frozen-format-v1.md).
+ * Slot stride 64 KiB (holds ~900 retained terms). Only one slot mutated per update; recovery takes highest valid seq.
+ * Presence gate: no file = first boot; file + both slots invalid = tamper OR half-finished signing-key rotation (REFUSE).
+ * Single-threaded (boot thread + serialized admin rotations).
  */
 final class KeyringFile implements Closeable {
 

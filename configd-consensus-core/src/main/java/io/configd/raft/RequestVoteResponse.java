@@ -3,12 +3,7 @@ package io.configd.raft;
 import io.configd.common.NodeId;
 
 /**
- * Raft RequestVote RPC response (Raft section 5.2), extended with PreVote (section 9.6).
- *
- * @param term         current term of the responding node
- * @param voteGranted  true if the vote (or pre-vote) was granted
- * @param from         the node sending this response
- * @param preVote      true if this is a response to a PreVote request
+ * Raft RequestVote RPC response (Raft §5.2) extended with PreVote (§9.6).
  */
 public record RequestVoteResponse(
         long term,

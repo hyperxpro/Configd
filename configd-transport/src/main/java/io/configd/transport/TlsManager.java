@@ -43,7 +43,6 @@ public final class TlsManager {
      * Creates a TLS manager and immediately builds the initial {@link SSLContext}. No separate peer trust
      * anchor: {@link #peerContext()} equals {@link #currentContext()}.
      *
-     * @param config TLS configuration (non-null)
      * @throws GeneralSecurityException if key/trust material cannot be loaded
      * @throws IOException              if cert/key files cannot be read
      */
@@ -57,11 +56,6 @@ public final class TlsManager {
      * own key material plus that trust store; when null, {@link #peerContext()} is the same context as
      * {@link #currentContext()} (byte-identical to the single-arg constructor).
      *
-     * @param config                 TLS configuration (non-null)
-     * @param peerTrustStorePath     a distinct PKCS12 trust store for peer (Raft) connections, or null to
-     *                               share {@code config}'s trust store
-     * @param peerTrustStorePassword the peer trust store password, or null to reuse {@code config}'s
-     *                               store password
      * @throws GeneralSecurityException if key/trust material cannot be loaded
      * @throws IOException              if cert/key/trust files cannot be read
      */
@@ -82,7 +76,6 @@ public final class TlsManager {
      * store is loaded from a PKCS12 file at {@code trustStorePath}. Both use
      * the store password from config. The SSLContext is initialized with TLSv1.3.
      *
-     * @return a freshly built SSLContext
      * @throws GeneralSecurityException if cryptographic operations fail
      * @throws IOException              if files cannot be read
      */
@@ -165,11 +158,6 @@ public final class TlsManager {
         return peerContext;
     }
 
-    /**
-     * Returns the TLS configuration used by this manager.
-     *
-     * @return the TlsConfig (never null)
-     */
     public TlsConfig config() {
         return config;
     }

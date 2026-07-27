@@ -145,28 +145,13 @@ public final class AclService {
         }
     }
 
-    // prefix -> (principal -> GrantEntry{allow, deny})
-    // Sorted in natural (lexicographic) order so the matching ancestor prefixes of a key can be
-    // navigated via floorKey()/lowerKey().
     private final ConcurrentSkipListMap<String, ConcurrentHashMap<String, GrantEntry>> acls =
             new ConcurrentSkipListMap<>();
 
-    // roleName -> Role definition. Empty by default; typically populated at boot (see defineRole).
-    // When empty the role layer contributes nothing to isAllowed.
     private final ConcurrentHashMap<String, Role> roleDefinitions = new ConcurrentHashMap<>();
 
-    // principal -> ACL-static role names, additive to the authn-asserted roles passed to isAllowed.
-    // Empty by default; each value is an immutable snapshot swapped wholesale on assignRole.
     private final ConcurrentHashMap<String, Set<String>> principalRoles = new ConcurrentHashMap<>();
 
-    // The config-sourced policy (roles + principal-to-role bindings loaded from the reserved `_acl/`
-    // subtree) plus the store version it was derived from, in one immutable holder published via a
-    // single AtomicReference swap: a get() is a volatile-acquire read, and isAllowed reads it exactly
-    // once, so a concurrent reload is never observed half-applied. This is a separate, additive layer;
-    // the static imperative layer above (acls / roleDefinitions / principalRoles) is untouched. The
-    // version makes the publish monotonic: an out-of-order rebuild (e.g. a slow boot seed racing a
-    // concurrent apply-thread rebuild) carrying an older store version is ignored, so it can never
-    // clobber a newer policy with stale state.
     private record VersionedConfigPolicy(long version, ConfigPolicy policy) {
         static final VersionedConfigPolicy EMPTY = new VersionedConfigPolicy(Long.MIN_VALUE, ConfigPolicy.EMPTY);
     }
@@ -193,9 +178,6 @@ public final class AclService {
             if (principalMap == null) {
                 principalMap = new ConcurrentHashMap<>();
             }
-            // The inner compute is the atomic swap point: it replaces this principal's whole GrantEntry,
-            // preserving any existing DENY (an orthogonal effect). A concurrent isAllowed reader sees
-            // either the old or the new entry, never a torn (allow, deny) pair.
             principalMap.compute(principal,
                     (p, existing) -> (existing == null ? GrantEntry.EMPTY : existing).withAllow(allow));
             return principalMap;
@@ -223,7 +205,6 @@ public final class AclService {
             if (principalMap == null) {
                 principalMap = new ConcurrentHashMap<>();
             }
-            // Atomic swap (see grant): replaces the whole GrantEntry, preserving any existing ALLOW.
             principalMap.compute(principal,
                     (p, existing) -> (existing == null ? GrantEntry.EMPTY : existing).withDeny(deny));
             return principalMap;
@@ -270,8 +251,6 @@ public final class AclService {
     public void assignRole(String principal, String roleName) {
         Objects.requireNonNull(principal, "principal must not be null");
         Objects.requireNonNull(roleName, "roleName must not be null");
-        // Swap an immutable snapshot wholesale (mirrors the GrantEntry discipline): a concurrent
-        // isAllowed reader observes either the old or the new set, never a half-mutated one.
         principalRoles.compute(principal, (k, v) -> {
             Set<String> updated = new HashSet<>(v == null ? Set.of() : v);
             updated.add(roleName);
@@ -417,19 +396,13 @@ public final class AclService {
         EnumSet<Permission> allow = EnumSet.noneOf(Permission.class);
         EnumSet<Permission> deny = EnumSet.noneOf(Permission.class);
 
-        // (1) The principal's OWN per-prefix grants - the union-of-ancestors walk.
         accumulateOwnGrants(principal, key, allow, deny);
 
-        // (2) Role grants. Effective roles = authn-asserted (the `roles` argument) union ACL-static
-        // bindings (assignRole / principalRoles); both empty by default. Each resolved, DEFINED role's
-        // flattened PolicyRules whose literal prefix matches the key fold ALLOW/DENY into the SAME
-        // accumulators, so a role ALLOW composes with own ALLOWs and a role DENY is subtracted with the
-        // same absolute precedence below.
         Set<String> staticRoles = principalRoles.getOrDefault(principal, Set.of());
         if (!roles.isEmpty() || !staticRoles.isEmpty()) {
             Set<String> effectiveRoles;
             if (staticRoles.isEmpty()) {
-                effectiveRoles = roles;            // common path: no static bindings, no extra allocation
+                effectiveRoles = roles;
             } else if (roles.isEmpty()) {
                 effectiveRoles = staticRoles;
             } else {
@@ -449,16 +422,7 @@ public final class AclService {
             }
         }
 
-        // (3) Config-sourced role grants - an ADDITIVE layer over the static imperative role layer (2),
-        // held behind a single volatile snapshot. Read the reference EXACTLY ONCE (cp) so a concurrent
-        // reload is observed all-old or all-new, never torn. Effective config roles = authn-asserted
-        // (`roles`) union this principal's CONFIG bindings; each DEFINED config role's matching PolicyRules
-        // fold ALLOW/DENY into the SAME accumulators (config ALLOW composes; config DENY keeps the absolute
-        // precedence applied below). The outer guard short-circuits on an EMPTY snapshot, so an unconfigured
-        // policy contributes nothing here. (The config role layer and the imperative role layer (2) are
-        // independent additive sub-layers - a name is resolved against the source it was bound through,
-        // while an authn-asserted name is resolved against both - see ConfigPolicy.)
-        ConfigPolicy cp = this.configPolicyRef.get().policy();   // single acquire read - never torn
+        ConfigPolicy cp = this.configPolicyRef.get().policy();
         if (!cp.roles().isEmpty() || !cp.bindings().isEmpty()) {
             Set<String> cfgBindings = cp.bindings().getOrDefault(principal, Set.of());
             if (!roles.isEmpty() || !cfgBindings.isEmpty()) {
@@ -485,20 +449,8 @@ public final class AclService {
             }
         }
 
-        // Deny has absolute precedence (subtract it ONCE from the combined own+role allow); default-deny
-        // falls out of the empty initial allow set. `allow` is now the effective set eff = allow − deny.
         allow.removeAll(deny);
 
-        // WATCH-requires-READ enforcement point. A watch is a streaming read, so effective WATCH is
-        // floored by READ: WATCH is authorized only when BOTH WATCH and READ survive in eff. Consequences -
-        // a WATCH-without-READ grant yields no watch authz; a deny of READ (or of WATCH) at any matching
-        // ancestor (own OR role) also removes effective WATCH. NOTE this floors a SINGLE KEY: the
-        // accumulation above unions only `key`'s ANCESTOR grants, so it cannot see a READ/WATCH deny on
-        // a DESCENDANT of `key`. A subtree/FULL watch is therefore NOT authorized by one
-        // isAllowed(p, subtreeRoot, WATCH) call - the watch-subscribe path must apply this floor over
-        // the WHOLE target (per delivered key, or a whole-target cover-check via coversTarget), else it
-        // would over-expose a denied descendant. Every other capability (READ/LIST/WRITE/ADMIN) is
-        // decided by exact membership.
         if (permission == Permission.WATCH) {
             return allow.contains(Permission.WATCH) && allow.contains(Permission.READ);
         }
@@ -548,9 +500,6 @@ public final class AclService {
 
         List<PolicyRule> rules = new ArrayList<>();
 
-        // (1) Own per-prefix grants - the COMPLETE set of this principal's prefixes (coversTarget filters by
-        // the ancestor-or-equal / interior prefix relationship, so completeness is what makes the
-        // interior-DENY term observable). Mirrors accumulateOwnGrants' source, lifted from one key to all.
         for (Map.Entry<String, ConcurrentHashMap<String, GrantEntry>> e : acls.entrySet()) {
             GrantEntry entry = e.getValue().get(principal);
             if (entry != null && (!entry.allow().isEmpty() || !entry.deny().isEmpty())) {
@@ -558,8 +507,6 @@ public final class AclService {
             }
         }
 
-        // (2) Imperative role grants - effective roles = asserted union ACL-static bindings, resolved against
-        // the defined roles (the SAME resolution isAllowed performs).
         Set<String> staticRoles = principalRoles.getOrDefault(principal, Set.of());
         if (!roles.isEmpty() || !staticRoles.isEmpty()) {
             for (String roleName : unionRoleNames(roles, staticRoles)) {
@@ -570,9 +517,6 @@ public final class AclService {
             }
         }
 
-        // (3) Config-sourced role grants - read the snapshot EXACTLY ONCE (never torn). Effective config
-        // roles = asserted union config bindings, resolved against the config roles (the SAME resolution
-        // isAllowed performs).
         ConfigPolicy cp = this.configPolicyRef.get().policy();
         if (!cp.roles().isEmpty() || !cp.bindings().isEmpty()) {
             Set<String> cfgBindings = cp.bindings().getOrDefault(principal, Set.of());
@@ -730,7 +674,6 @@ public final class AclService {
      */
     private void accumulateOwnGrants(String principal, String key,
                                      EnumSet<Permission> allow, EnumSet<Permission> deny) {
-        // Union ALL matching ancestor grants (not longest-match-only). floorKey(key) is the greatest
         // prefix <= key; walking back with lowerKey visits every stored prefix <= key in descending
         // order, and key.startsWith(candidate) selects the ones that are ancestors of the key.
         String candidate = acls.floorKey(key);

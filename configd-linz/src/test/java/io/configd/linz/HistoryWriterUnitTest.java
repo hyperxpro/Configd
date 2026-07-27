@@ -16,9 +16,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Pure-Java coverage of the recorder/serializer policy. Runs in the default
- * {@code ./mvnw test} (no Go toolchain needed) so the encoding rules that the
- * Porcupine self-test relies on are also regression-guarded in CI.
+ * Pure-Java coverage of recorder/serializer policy (regression-guarded in CI).
+ * Runs in default ./mvnw test (no Go toolchain).
  */
 class HistoryWriterUnitTest {
 
@@ -37,7 +36,7 @@ class HistoryWriterUnitTest {
             assertEquals(2, json.split("\"client\"").length - 1, json);
             assertFalse(json.contains("\"rejected\""), "FAIL op must be dropped");
             assertFalse(json.contains("\"type\":\"read\",\"value\":\"\""), "INFO read must be dropped");
-            // confirm-bound: the write is pinned to the observing read's ret (30), not END
+            // Write pinned to observing read's ret (30), not END
             assertTrue(json.contains("\"type\":\"put\",\"value\":\"tok\",\"call\":10,\"ret\":30"), json);
             assertTrue(json.contains("\"type\":\"read\",\"value\":\"tok\",\"call\":20,\"ret\":30"), json);
         } finally {
@@ -56,7 +55,7 @@ class HistoryWriterUnitTest {
         try {
             PorcupineHistoryWriter.write(ops, tmp);
             String json = Files.readString(tmp);
-            // END = max kept ts + 1 = 41; the unobserved put floats to 41
+            // END = max-ts+1 = 41; unobserved write floats to END
             assertTrue(json.contains("\"type\":\"put\",\"value\":\"never\",\"call\":40,\"ret\":41"), json);
             assertTrue(json.contains("\"type\":\"put\",\"value\":\"seen\",\"call\":10,\"ret\":30"), json);
         } finally {

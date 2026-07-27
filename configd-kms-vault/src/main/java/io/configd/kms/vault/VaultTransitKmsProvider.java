@@ -12,39 +12,13 @@ import java.util.Arrays;
 import java.util.Map;
 
 /**
- * A {@link KmsProvider} that uses HashiCorp Vault's Transit engine as a SEAL CUSTODIAN for one per-node
- * keyring-custody secret. Vault holds the KEK; this provider seals ({@code wrap}) and unseals
- * ({@code unwrap}) a single 32-byte secret and never asks Vault to touch a config record - the missing
- * per-record method is the whole point. At boot the core calls {@link #unwrap} once, caches the secret,
- * and drops this provider; if Vault is unreachable it throws {@link KmsUnavailableException} and the node
- * FAILS CLOSED - never a fallback.
- *
- * <h2>Provision / unseal / rotate</h2>
- * <ul>
- *   <li>{@link #generateRootKey()} (once, first boot): mint {@code S} with {@link SecureRandom}, seal it via
- *       {@code transit/encrypt} with the node AAD, return {@code S} plus the {@code vault:vN:} carrier to
- *       persist. Needs the one-time {@code transit/encrypt} permission.</li>
- *   <li>{@link #unwrap(WrappedKey)} (every boot): {@code transit/decrypt} the carrier with the same AAD.</li>
- *   <li>{@link #wrap(RootKey)} (KEK rotation, rare): re-seal {@code S} under the current key version. Old
- *       carriers still decrypt because Vault selects the version from the {@code vault:vN:} prefix, so a
- *       rotate needs NO action for existing data.</li>
- * </ul>
- *
- * <h2>Auth</h2>
- * AppRole is the portable default (RoleID + SecretID); a raw token is dev-only. Kubernetes / TLS-cert / JWT
- * auth are extension points (present the platform identity to the matching Vault auth mount). Login happens
- * once per backend call and the token is dropped with the provider, so no renewal daemon exists.
+ * Vault Transit engine as KMS seal custodian for per-node keyring-custody secret. Vault holds KEK;
+ * provider seals/unseals single 32-byte secret. Boot unwraps once, caches, drops provider.
+ * Vault outage = KmsUnavailableException, fail-closed (never fallback). Node AAD binding.
  */
 public final class VaultTransitKmsProvider implements KmsProvider {
 
-    /** Discovery discriminator; also the {@code providerType} stamped into every {@link KeyId}. */
     static final String TYPE = "vault-transit";
-
-    /**
-     * The custody secret is a SINGLE generation (Configd's keyring holds the term-versioned data roots, not
-     * this provider), so its {@link KeyId} term is fixed at 1; the Vault key version lives, decoupled, in the
-     * {@code vault:vN:} ciphertext prefix.
-     */
     private static final int CUSTODY_TERM = 1;
 
     private final VaultConfig cfg;

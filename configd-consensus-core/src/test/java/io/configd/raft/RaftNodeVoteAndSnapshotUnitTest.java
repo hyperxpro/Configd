@@ -11,16 +11,6 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link RaftNode}'s vote-decision logic ({@code handleRequestVote}), the local
- * snapshot trigger ({@code triggerSnapshot}), and the joint-side voter-count bound of
- * {@code deserializeConfigChange}.
- * <p>
- * Each test pins one branch's observable outcome (a vote granted or denied, a snapshot taken
- * or skipped), covering the non-voter/stale-term/higher-term/can-vote branches of vote decisions
- * and the boundary guards of snapshot triggering. Driven through the public
- * {@code handleMessage}/{@code triggerSnapshot} seams; deterministic.
- */
 class RaftNodeVoteAndSnapshotUnitTest {
 
     private static final NodeId N1 = NodeId.of(1);

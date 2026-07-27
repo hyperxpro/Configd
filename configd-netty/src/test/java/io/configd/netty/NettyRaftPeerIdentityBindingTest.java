@@ -37,13 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Netty twin of {@code RaftTransportMtlsAttackTest}'s peer-identity coverage: the identity binding
- * must reject the same hostile inputs on {@link NettyRaftTransport} as on the JDK
- * {@code TcpRaftTransport}. Mirrors the four scenarios in {@code RaftPeerIdentityBindingTest}; the
- * attacker is a raw mTLS {@link SSLSocket}, so the client side is transport-agnostic and only the
- * server pipeline differs.
- */
+/** Peer-identity binding rejection tests: same hostile inputs rejected on Netty and JDK transports. */
 class NettyRaftPeerIdentityBindingTest {
 
     private static Path fixtureDir;
@@ -52,11 +46,8 @@ class NettyRaftPeerIdentityBindingTest {
     private static Path node2Ks;
     private static Path clientKs;
     private static Path trustStore;
-    /** A SEPARATE peer trust store containing ONLY the real node leaves (node1, node2). */
     private static Path peerTrust;
-    /** An impostor {@code CN=raft-node-1} with a DIFFERENT key, NOT in {@link #peerTrust}. */
     private static Path impostorKs;
-    /** A node cert whose identity is carried in a SAN URI (SPIFFE), not the CN (SAN-URI marker mode). */
     private static Path sanNode2Ks;
     private static final char[] PASS = "changeit".toCharArray();
 
@@ -90,16 +81,11 @@ class NettyRaftPeerIdentityBindingTest {
         importCert(trustStore, "node1", node1Cert);
         importCert(trustStore, "node2", node2Cert);
         importCert(trustStore, "client", clientCert);
-
-        // Separate peer trust anchor: trusts ONLY the real node leaves. An impostor CN=raft-node-1
-        // (different key) is not in it, so it fails the peer handshake despite the matching CN.
         peerTrust = fixtureDir.resolve("peer-trust.p12");
         impostorKs = fixtureDir.resolve("impostor-ks.p12");
         importCert(peerTrust, "node1", node1Cert);
         importCert(peerTrust, "node2", node2Cert);
-        genKeyPair(impostorKs, "impostor", "CN=raft-node-1,O=configd-test"); // same CN, different key
-
-        // SAN-URI marker fixture: identity in a SAN URI (SPIFFE), CN deliberately raft-client.
+        genKeyPair(impostorKs, "impostor", "CN=raft-node-1,O=configd-test");
         sanNode2Ks = fixtureDir.resolve("san-node2-ks.p12");
         Path sanNode2Cert = fixtureDir.resolve("san-node2.pem");
         genKeyPairWithSan(sanNode2Ks, "sannode2", "CN=raft-client,O=configd-test",
@@ -118,7 +104,6 @@ class NettyRaftPeerIdentityBindingTest {
                 try {
                     Files.deleteIfExists(p);
                 } catch (IOException ignored) {
-                    // best-effort temp cleanup
                 }
             });
         }
@@ -134,7 +119,6 @@ class NettyRaftPeerIdentityBindingTest {
             try {
                 ss.close();
             } catch (IOException ignored) {
-                // best-effort
             }
         }
         maliciousServers.clear();

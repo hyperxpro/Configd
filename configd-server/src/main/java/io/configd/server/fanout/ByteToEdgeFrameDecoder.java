@@ -10,50 +10,21 @@ import io.netty.util.AttributeKey;
 
 import java.util.List;
 
-/**
- * Inbound: accumulates the length-prefixed edge wire and emits one {@link EdgeFrame} per complete
- * frame, preserving the JDK reader's {@code peekLength} discipline - <b>the declared length is
- * bounds-checked before the frame buffer is allocated</b> ({@link EdgeFrameCodec#peekLength}), so an
- * adversary cannot induce a giant allocation by lying in the 4-byte prefix. A bad length or a
- * structural decode failure throws {@link EdgeFrameCodec.CodecException}, which the pipeline's
- * {@code exceptionCaught} maps to a teardown with the frame's {@link io.configd.distribution.wire.ErrorCode}
- * - identical to the JDK server's {@code readFrame} -> {@code close(e.code(), ...)} path.
- *
- * <p><b>Per-connection inbound version pin.</b> This decoder is per-channel
- * (stateful), so it tracks the connection's negotiated wire version: the first frame is decoded
- * accepting {@code 0x01}, {@code 0x02}, or {@code 0x03} (CRC-validated), then the connection is pinned
- * to that frame's stamped version; every subsequent frame is decoded under the pin, so a
- * version-mismatched frame mid-connection (a frame stamped with any other accepted version) fails
- * closed with {@link io.configd.distribution.wire.ErrorCode#BAD_WIRE_VERSION}. A legacy
- * SUBSCRIBE-first connection pins to {@code 0x01} and remains byte-identical to the pre-watch path
- * for all real (single-version) traffic; only a mixed-version adversary is newly rejected.
- *
- * <p>On the server the only inbound frames are tiny SUBSCRIBE / CURSOR_ACK / WATCH_CREATE /
- * WATCH_CANCEL (one per connection / per ack / per watch), so this path is cold; the hot server->edge
- * NOTIFY / WATCH_EVENT path is the {@link EdgeFrameToByteEncoder}.
- */
+
 final class ByteToEdgeFrameDecoder extends ByteToMessageDecoder {
 
-    /**
-     * Per-connection auth state (set by the {@code EdgeAuthGateHandler}); read here to decide the pre-auth
-     * frame ceiling. Absent / {@code UNAUTHENTICATED} means the tighter {@link #preAuthMaxFrame} cap
-     * applies; {@code AUTHENTICATED} lifts it to the steady-state {@code MAX_EDGE_FRAME_SIZE}.
-     */
+    
     static final AttributeKey<AuthState> AUTH_STATE = AttributeKey.valueOf("configd.edge.authState");
 
-    /**
-     * The connection's negotiated inbound wire version, or {@code 0} until the first business frame
-     * establishes it (a successfully-decoded 0x01/0x02/0x03 frame; a 0x04 auth-phase frame is version-pin
-     * exempt and never sets this). Per-channel state (the decoder is not sharable).
-     */
+    
     private byte negotiatedVersion;
 
-    /** True when token/basic auth is configured: the pre-auth frame ceiling applies until AUTHENTICATED. */
+    
     private final boolean authGated;
-    /** The pre-auth declared-length ceiling (bytes) while UNAUTHENTICATED (an AUTH frame is small). */
+    
     private final int preAuthMaxFrame;
 
-    /** The mTLS-only / plaintext (non-token) decoder: byte-identical to before - no pre-auth ceiling. */
+    
     ByteToEdgeFrameDecoder() {
         this(false, EdgeFrameCodec.MAX_EDGE_FRAME_SIZE);
     }
@@ -63,7 +34,7 @@ final class ByteToEdgeFrameDecoder extends ByteToMessageDecoder {
         this.preAuthMaxFrame = preAuthMaxFrame;
     }
 
-    /** The negotiated inbound wire version ({@code 0} until the first business frame pins it). */
+    
     byte negotiatedVersion() {
         return negotiatedVersion;
     }

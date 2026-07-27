@@ -41,28 +41,8 @@ import java.util.concurrent.TimeUnit;
 import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 
 /**
- * Production Netty edge read-serving HTTP/1.1 server — the Netty adapter over the
- * transport-agnostic {@link EdgeReadHandler}. Serves byte-identical responses to the JDK
- * {@link EdgeHttpServer} on the canonical request paths by construction (both delegate to the same
- * logic; routing is exact-match), at much less server-side allocation.
- *
- * <p><b>Transport.</b> Tier selected at startup by {@link NettyTransport} (io_uring then Epoll then
- * NIO, runtime-detected; CI exercises the fallback). {@code MultiThreadIoEventLoopGroup} +
- * {@code PooledByteBufAllocator.DEFAULT}; {@code HttpServerCodec} with a hand-rolled handler (no
- * {@code HttpObjectAggregator} on the hot path); pooled response buffer; keep-alive honoured;
- * {@code voidPromise} writes; flush on {@code channelReadComplete}.
- *
- * <p><b>Allocation discipline (hot path).</b> The handler IS the {@link EdgeReadHandler.Sink} (no
- * per-request sink object), allocates exactly the one {@link HttpHeaders} the response needs (handed
- * INTO the response), one pooled body {@link ByteBuf}, and one response object. The slowloris
- * deadline is enforced by a single self-rescheduling watcher keyed off a {@code deadlineNanos}
- * timestamp, so a completed request costs only one {@code long} write, not a per-request
- * {@code schedule()} call (which would add its own per-request allocation).
- *
- * <p><b>Hardening a public read port needs</b> (it is exposed to hostile traffic): bounded
- * {@code HttpServerCodec} (oversize line/header: 400 + close); a request-size ceiling
- * (oversize body: 413 + close); a request-completion deadline (slowloris incl. the dribble
- * variant); {@link IdleStateHandler} idle reaping; and a leak-free {@code ByteBuf} lifecycle.
+ * Netty adapter over {@link EdgeReadHandler}. Byte-identical to {@link EdgeHttpServer} by
+ * construction, with less per-request allocation and selectable transport tier.
  */
 public final class NettyEdgeHttpServer {
 
@@ -83,10 +63,6 @@ public final class NettyEdgeHttpServer {
     private EventLoopGroup worker;
     private Channel serverChannel;
 
-    /**
-     * Same constructor shape as {@link EdgeHttpServer}. The {@code /metrics} scrape token is read
-     * from the same system property both adapters observe.
-     */
     public NettyEdgeHttpServer(int port, EdgeClientCore core,
                                StrongReadKeyClass strongReadKeyClass,
                                PrometheusExporter exporter, EdgeNodeMetrics metrics) {
@@ -103,7 +79,6 @@ public final class NettyEdgeHttpServer {
         this.transport = NettyTransport.select();
     }
 
-    /** The active transport tier (io_uring / epoll / nio) — surfaced for logging + the CI proof. */
     public String transportTier() {
         return transport.tier();
     }
@@ -137,19 +112,15 @@ public final class NettyEdgeHttpServer {
             started = true;
         } finally {
             if (!started) {
-                // bind/sync failed (e.g. port in use) or was interrupted after the event-loop
-                // groups were created — release them so a failed start() leaks no threads/FDs.
                 stop();
             }
         }
     }
 
-    /** The actual bound port (resolves an ephemeral port 0 after {@link #start()}). */
     public int port() {
         return ((InetSocketAddress) serverChannel.localAddress()).getPort();
     }
 
-    /** Bounded graceful shutdown (mitigates io_uring shutdown slowness on JDK 25). */
     public void stop() {
         if (serverChannel != null) {
             serverChannel.close();
@@ -162,17 +133,9 @@ public final class NettyEdgeHttpServer {
         }
     }
 
-    /**
-     * Per-channel inbound handler (a new instance per connection — holds per-request state) AND the
-     * {@link EdgeReadHandler.Sink} for its responses (so there is no per-request sink object). All
-     * methods run on the channel's single event-loop thread, so the mutable fields need no
-     * synchronization.
-     */
     private final class ReadHandler extends ChannelInboundHandlerAdapter implements EdgeReadHandler.Sink {
 
-        private ChannelHandlerContext chCtx;   // set on channelActive; used by the sink + deadline
-
-        // Per-request request state.
+        private ChannelHandlerContext chCtx;
         private String method;
         private String uri;
         private String cursorHeader;
@@ -181,24 +144,18 @@ public final class NettyEdgeHttpServer {
         private long bodyBytes;
         private boolean rejected;
 
-        // Slowloris deadline (allocation-free hot path): a single self-rescheduling watcher enforces
-        // "a request must complete by deadlineNanos". Each completed request just writes deadlineNanos;
-        // the watcher reschedules itself only when it fires (approximately once per timeout window, not per request).
+        // Single self-rescheduling watcher for request completion deadline (allocation-free).
         private long deadlineNanos;
         private ScheduledFuture<?> deadlineWatcher;
         private Runnable deadlineCheck;
 
-        // Per-request response headers — the ONE HttpHeaders the response needs, created fresh per
-        // request and handed INTO the response (not in addition to it).
         private HttpHeaders respHeaders;
 
         @Override
         public void channelActive(ChannelHandlerContext ctx) {
             chCtx = ctx;
-            // Arm at connection open — NOT on the decoded HttpRequest: a partial header block never
-            // decodes to an HttpRequest, so a header-slowloris would never arm it.
             if (requestTimeoutMillis > 0) {
-                deadlineCheck = this::checkDeadline;   // cached once; reused on every reschedule
+                deadlineCheck = this::checkDeadline;
                 deadlineNanos = System.nanoTime() + requestTimeoutNanos;
                 deadlineWatcher = ctx.executor().schedule(
                         deadlineCheck, requestTimeoutMillis, TimeUnit.MILLISECONDS);
@@ -212,7 +169,6 @@ public final class NettyEdgeHttpServer {
             ctx.fireChannelInactive();
         }
 
-        /** Close if the completion deadline has passed; else reschedule to the (possibly pushed) deadline. */
         private void checkDeadline() {
             long remaining = deadlineNanos - System.nanoTime();
             if (remaining <= 0) {
@@ -242,7 +198,6 @@ public final class NettyEdgeHttpServer {
                     bodyBytes = 0;
                     rejected = false;
                     if (req.decoderResult().isFailure()) {
-                        // Oversize initial line / header block, or malformed framing.
                         fail(ctx, HttpResponseStatus.BAD_REQUEST);
                         return;
                     }
@@ -251,13 +206,12 @@ public final class NettyEdgeHttpServer {
                     if (!rejected) {
                         bodyBytes += hc.content().readableBytes();
                         if (bodyBytes > maxRequestBytes) {
-                            fail(ctx, HttpResponseStatus.REQUEST_ENTITY_TOO_LARGE); // 413
+                            fail(ctx, HttpResponseStatus.REQUEST_ENTITY_TOO_LARGE);
                         }
                     }
                     if (msg instanceof LastHttpContent && !rejected) {
                         respond(ctx);
                         if (requestTimeoutMillis > 0) {
-                            // Reset the completion clock for the next request — a long write, no alloc.
                             deadlineNanos = System.nanoTime() + requestTimeoutNanos;
                         }
                     }
@@ -271,8 +225,6 @@ public final class NettyEdgeHttpServer {
             respHeaders = new DefaultHttpHeaders();
             handler.handle(method, EdgeReadHandler.stripQuery(uri), cursorHeader, authHeader, this);
         }
-
-        // ---- EdgeReadHandler.Sink (this handler renders its own responses) ----
 
         @Override
         public void header(CharSequence name, CharSequence value) {
@@ -298,7 +250,6 @@ public final class NettyEdgeHttpServer {
             }
         }
 
-        /** Writes a bodyless error response and closes (used for oversize / decode-failed requests). */
         private void fail(ChannelHandlerContext ctx, HttpResponseStatus status) {
             rejected = true;
             FullHttpResponse resp = new DefaultFullHttpResponse(HTTP_1_1, status, Unpooled.EMPTY_BUFFER);

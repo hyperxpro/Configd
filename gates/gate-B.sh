@@ -13,11 +13,6 @@
 # (reported LOUDLY) instead of re-running the multi-hour chain. Locally — or in
 # a full manual run — it runs the whole chain via gate-phase0.sh.
 #
-# WHAT A GREEN gate-B PROVES (beyond the cumulative 1..7 + phase0 chain):
-#   - the re-threading, rehoming, and coalesced-heartbeat work is merge-ready;
-#   - the verified baseline this work branches from is recorded (cedc706);
-#   - the milestone artifacts EXIST (non-vacuity: a deleted contract / gate /
-#     coalescing class FAILS this gate, never a silent pass).
 #
 # Environment knobs (CI must not set GATE_B_SKIP_CHAIN on a full manual run):
 #   GATE_B_SKIP_CHAIN=1   skip the cumulative gate-phase0 chain (CI supplies it

@@ -17,21 +17,8 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * A scriptable loopback edge server for the client tests — the counterpart to the live raw-socket probes run
- * against the server's Netty edge. It accepts connections on an ephemeral loopback port and runs a
- * per-connection {@link Handler} that can behave well (read the {@code AUTH}, confirm with a {@code HEARTBEAT})
- * or hostilely (emit an oversize length prefix, a bad CRC, garbage, a control-character diagnostic, or stall).
- * It encodes/decodes with the real {@link EdgeFrameCodec}, so the client is exercised against the real wire in
- * both directions, not a mock codec.
- *
- * <p>Plaintext by default (fast; the auth/framing logic is transport-agnostic); a {@link #startTls} variant
- * drives the TLS cases. Every {@link Handler} runs on its own thread; the server records every frame it
- * decoded from the client so a test can assert "exactly one {@code AUTH}", "the refreshed token", etc.
- */
 final class MockEdgeServer implements AutoCloseable {
 
-    /** A per-connection server script. Throwing/returning ends that connection. */
     interface Handler {
         void handle(Conn conn) throws Exception;
     }

@@ -110,48 +110,33 @@ final class EdgeNodeMetrics {
         this.poisonPill = registry.counter(PoisonPillPolicy.POISON_PILL_METRIC);
         this.poisonTerminal = registry.counter(PoisonPillPolicy.TERMINAL_METRIC);
         this.reconnects = registry.counter("edge.reconnects");
-        // The contract names this series with the configd. prefix verbatim.
         this.stalenessViolations = registry.counter("configd.edge.staleness_violation");
         this.rebootstrapTriggered = registry.counter("edge.rebootstrap_triggered");
-        // The StalenessTracker counter, wired into the process registry.
         this.implausible = registry.counter(StalenessTracker.IMPLAUSIBLE_METRIC);
         registry.gauge("edge.cursor_lag", cursorLag::get);
-        // Eager so configd_edge_read_seconds exists on the first scrape. The matching bucket
-        // schedule is published to the exporter in EdgeNodeMain via
-        // ConfigdMetrics.edgeProcessHistogramSchedules() so the le buckets match the edge-read alert.
         this.readLatency = registry.histogram(io.configd.observability.ConfigdMetrics.NAME_EDGE_READ_SECONDS);
     }
 
-    /** Records one edge read-serving latency sample ({@code configd_edge_read_seconds}). */
     void recordReadLatency(long nanos) {
         readLatency.record(nanos);
     }
 
-    /** The implausible-frontier counter to hand to {@link EdgeClientCore}'s constructor. */
     MetricsRegistry.Counter implausibleCounter() {
         return implausible;
     }
 
-    /** The retry counter ({@code edge_poison_retries_total}) for the poison-pill policy. */
     MetricsRegistry.Counter poisonRetriesCounter() {
         return poisonRetries;
     }
 
-    /** The quarantine counter ({@code configd_edge_poison_pill_total}). */
     MetricsRegistry.Counter poisonPillCounter() {
         return poisonPill;
     }
 
-    /** The terminal counter ({@code configd_edge_poison_pill_terminal_total}). */
     MetricsRegistry.Counter poisonTerminalCounter() {
         return poisonTerminal;
     }
 
-    /**
-     * Registers the live staleness gauges against the core. Called once at wiring time;
-     * the suppliers read the core's volatile frontier so the gauges stay current at
-     * scrape time even when no events flow.
-     */
     void bind(EdgeClientCore core) {
         Objects.requireNonNull(core, "core must not be null");
         registry.gauge("edge.staleness_ms", core::stalenessMs);
@@ -162,16 +147,7 @@ final class EdgeNodeMetrics {
         this.lastState = core.stalenessState();
     }
 
-    /**
-     * Pumps the core's single-writer diagnostic counters into the registry and detects
-     * staleness-state transitions. MUST be called from the thread that owns the core
-     * (the stream client's session loop) — both while connected and during backoff, so
-     * the DISCONNECTED transition (which happens precisely while disconnected) is seen.
-     *
-     * @param core           the core to pump from (non-null)
-     * @param rebootstrapHook invoked on each transition INTO DISCONNECTED (the re-bootstrap
-     *                        orchestration seam; may be a no-op stub)
-     */
+    // Must be called from the core's single writer thread (stream client's session loop).
     void syncFromCore(EdgeClientCore core, Runnable rebootstrapHook) {
         pump(applied, core.appliedCount() - lastApplied);
         lastApplied = core.appliedCount();
@@ -206,12 +182,10 @@ final class EdgeNodeMetrics {
         }
     }
 
-    /** A read was served or attempted on the HTTP surface ({@code edge_reads_total}). */
     void onRead() {
         reads.increment();
     }
 
-    /** A read was refused ({@code edge_read_refusals_total{reason}}). */
     void onReadRefused(String reason) {
         switch (reason) {
             case REASON_CURSOR_BEHIND -> refusalsCursorBehind.increment();
@@ -221,12 +195,9 @@ final class EdgeNodeMetrics {
         }
     }
 
-    /** A reconnect cycle was initiated ({@code edge_reconnects_total}). */
     void onReconnect() {
         reconnects.increment();
     }
-
-    // --- test accessors ---
 
     long reconnectsCount() {
         return reconnects.get();

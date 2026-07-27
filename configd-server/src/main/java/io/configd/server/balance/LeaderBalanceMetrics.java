@@ -5,23 +5,7 @@ import io.configd.observability.MetricsRegistry;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 
-/**
- * Observability sink for the leadership balancer. Kept as an interface so the loop is testable without a
- * live registry ({@link #NOOP}) and the production series live in one place ({@link #forRegistry}).
- *
- * <p>Series (all under {@code configd.raft.autobalance.*}):
- * <ul>
- *   <li>{@code leader_spread} gauge - the {@code max-min} leader count from this node's local view, as of
- *       the last cadence.</li>
- *   <li>{@code cooldown_active} gauge - {@code 1} while this node is inside its post-transfer cooldown.</li>
- *   <li>{@code transfers_initiated} counter - real transfers this node drove.</li>
- *   <li>{@code transfer_refused} counter - transfers the primitive declined (no longer leader, or a
- *       config change pending on the group - the hard floor folding into a no-op).</li>
- *   <li>{@code would_transfer} counter - dry-run moves that were computed but not executed.</li>
- *   <li>{@code skipped_unstable.<reason>} counters - cadences skipped by the instability gate, one series
- *       per reason ({@code unknown_leader} / {@code term_churn} / {@code cooldown}).</li>
- * </ul>
- */
+
 public interface LeaderBalanceMetrics {
 
     void leaderSpread(int spread);
@@ -34,17 +18,13 @@ public interface LeaderBalanceMetrics {
 
     void wouldTransfer();
 
-    /** {@code reason} is one of the {@code LeaderBalancePlanner.REASON_*} constants (bounded set). */
+    
     void skippedUnstable(String reason);
 
-    /**
-     * A balance cadence threw from {@code runOnce()} (a transient read/transfer fault). The loop swallows
-     * it to stay alive; this counter makes a PERSISTENTLY-throwing loop metric-visible (and alertable)
-     * rather than only stderr-visible.
-     */
+    
     void cycleError();
 
-    /** A sink that records nothing - for tests and for the loop when metrics are not wired. */
+    
     LeaderBalanceMetrics NOOP = new LeaderBalanceMetrics() {
         @Override public void leaderSpread(int spread) { }
         @Override public void cooldownActive(boolean active) { }
@@ -55,11 +35,7 @@ public interface LeaderBalanceMetrics {
         @Override public void cycleError() { }
     };
 
-    /**
-     * A sink backed by the server's {@link MetricsRegistry}. Counters and the per-reason skip series are
-     * eager-created so they emit {@code _total 0} from the first scrape rather than only appearing once
-     * the first event fires. The two gauges read {@link AtomicLong}s the loop updates each cadence.
-     */
+    
     static LeaderBalanceMetrics forRegistry(MetricsRegistry registry) {
         return new RegistryLeaderBalanceMetrics(registry);
     }

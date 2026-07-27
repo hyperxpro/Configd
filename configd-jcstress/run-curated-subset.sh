@@ -1,35 +1,13 @@
 #!/usr/bin/env bash
-# A fast curated jcstress smoke.
+# Fast curated jcstress smoke: @JCStressTest subset in sanity mode (1 normal + 1 stress fork, 1 iter).
+# Harness self-test (HarnessSelfTest.KnownRacyCounter) intentionally forbidden-hitting; excluded from gate.
+# 3-actor FanOutBuffer test (TwoReadersOneWriter) needs 3 hw-threads; 2-vCPU gate host cannot schedule.
+# 2-actor single-reader variants cover same torn-read invariant.
+# Subset: 6 transport interleavings + decisive read-path races + rehoming no-double-ownership.
+# Companions intentionally forbidden-hitting (like KnownRacyCounter) are excluded.
 #
-# Runs the curated, deterministic subset of @JCStressTest classes in jcstress
-# "sanity" mode (1 normal + 1 stress fork, 1 iteration each) -- a fast smoke that
-# proves the race detector runs end-to-end and surfaces no forbidden outcome on
-# the real structures. The full, longer-confidence run is the operator's
-# `-m default/stress` pass.
-#
-# Why a curated subset (not all tests):
-#   * The harness self-test (HarnessSelfTest.KnownRacyCounter) is intentionally
-#     forbidden-hitting -- it must NOT run in a gate batch.
-#   * The 3-actor FanOutBuffer test (TwoReadersOneWriter) needs 3 hardware
-#     threads; on the 2-vCPU gate host jcstress cannot schedule 3 actors and the
-#     test does not converge in bounded time. The 2-actor single-reader variants
-#     cover the same torn-read invariant deterministically.
-#
-# The subset is the 6 transport interleavings (the explicit must-cover list) plus
-# the decisive read-path races: FanOutBuffer wrap-around + lapped eviction,
-# VersionedConfigStore torn-version + aliased array, HamtMap consistent-version
-# structural sharing, the owner-thread-guard publication (no false negative once a
-# node is in service), the monitor-view publication (an immutable snapshot
-# published via a single volatile ref is never observed torn), and the rehoming
-# no-double-ownership proof (RehomingDoubleOwnershipTest: the volatile owner field
-# plus the detach->adopt barrier never let two owners both own the group, and a
-# re-bind opens no false negative). The UnboundGuardIsInertAndRaces,
-# PerFieldPublishCanTear, and RehomingDoubleOwnershipTest.BrokenHandoffDoubleOwnership
-# companions are intentionally forbidden/tear-hitting (like
-# HarnessSelfTest.KnownRacyCounter) and excluded here.
-#
-# Exit 0 iff every selected test ran and reported zero FAILED/forbidden results.
 # Usage: run-curated-subset.sh [results-dir]
+
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -45,8 +23,6 @@ if [ ! -f "$JAR" ]; then
   exit 1
 fi
 
-# Explicit, fully-qualified test names so the subset is deterministic and never
-# accidentally pulls in the harness self-test.
 read -r -d '' TESTS <<'EOF' || true
 io.configd.jcstress.transport.TcpRaftTransportRaceTest.EnqueueVsTeardownVsPublish
 io.configd.jcstress.transport.TcpRaftTransportRaceTest.CasVsFinallyReset
@@ -63,23 +39,17 @@ io.configd.jcstress.RaftOwnerThreadGuardTest.OwnerGuardNoFalseNegativeInService
 io.configd.jcstress.RaftMonitorViewPublicationTest.PublishedSnapshotNeverTears
 EOF
 
-# The rehoming no-double-ownership proofs run at -m quick, NOT sanity. The double-ownership race is
-# rare (~0.05-1% even with millions of samples); sanity mode (~56 samples) false-passes even the
-# broken control ~20% of runs, so a sanity clean-pass cannot catch a double-ownership regression.
-# -m quick reliably FAILS the broken control, so the clean pass here carries real weight.
+# Rehoming tests run at -m quick (not sanity): double-ownership race is rare (~0.05-1%);
+# sanity (~56 samples) false-passes broken control ~20% of runs; quick reliably FAILs it.
 read -r -d '' REHOMING_TESTS <<'EOF' || true
 io.configd.jcstress.RehomingDoubleOwnershipTest.CleanHandoffNoDoubleOwnership
 io.configd.jcstress.RehomingDoubleOwnershipTest.PostAdoptGuardNoFalseNegative
 EOF
 
-# jcstress -t takes a single regex; OR the exact names together (escape dots).
 REGEX="$(echo "$TESTS" | sed 's/\./\\./g' | paste -sd'|' -)"
 REHOMING_REGEX="$(echo "$REHOMING_TESTS" | sed 's/\./\\./g' | paste -sd'|' -)"
 
-# A clean jcstress run exits 0 AND reports zero failed results. Be defensive: fail the gate on a
-# non-zero exit, any [FAILED] marker, or a non-zero failed/error count. Called DIRECTLY (not in $())
-# so its exit propagates to the gate.
-check_run() { # $1=label $2=logfile $3=rc
+check_run() {
   local label="$1" log="$2" rc="$3"
   if [ "$rc" -ne 0 ]; then
     echo "jcstress curated subset ($label): jcstress exited $rc"; tail -20 "$log"; exit 1
@@ -97,7 +67,6 @@ check_run() { # $1=label $2=logfile $3=rc
 echo "jcstress curated subset: $(echo "$TESTS" | grep -c .) tests sanity + $(echo "$REHOMING_TESTS" | grep -c .) rehoming tests quick, ${CPUS} CPUs"
 echo "results: $RESULTS"
 
-# (1) the bulk at -m sanity — a fast smoke for the frequent races.
 LOG="$RESULTS/run-sanity.log"
 set +e
 java -jar "$JAR" -t "($REGEX)" -m sanity -c "$CPUS" -r "$RESULTS/sanity" > "$LOG" 2>&1
@@ -105,8 +74,6 @@ rc=$?
 set -e
 check_run sanity "$LOG" "$rc"
 
-# (2) the rehoming no-double-ownership proofs at -m quick — so a double-ownership regression is
-# RELIABLY caught (sanity false-passes even the broken control ~20% of runs; see the comment above).
 QLOG="$RESULTS/run-rehoming-quick.log"
 set +e
 java -jar "$JAR" -t "($REHOMING_REGEX)" -m quick -c "$CPUS" -r "$RESULTS/rehoming" > "$QLOG" 2>&1

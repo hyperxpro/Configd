@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
-# Build the trusted Porcupine checker binary. Installs a user-local
-# Go toolchain if none is on PATH (no sudo), then builds the ~120-line Go main
-# that calls anishathalye/porcupine into configd-linz/bin/porcupine-check.
-#
-# Porcupine is Go and Go is not a Java build dependency, so this is run out of
-# band of Maven. The Go module (go.mod/go.sum) pins the porcupine version for a
-# reproducible checker. After running, export PORCUPINE_BIN to the printed path.
+# Build trusted Porcupine checker binary. Installs user-local Go toolchain if needed (no sudo).
+# Go module (go.mod/go.sum) pins porcupine version for reproducible checker.
+# After running, export PORCUPINE_BIN to printed path.
+
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

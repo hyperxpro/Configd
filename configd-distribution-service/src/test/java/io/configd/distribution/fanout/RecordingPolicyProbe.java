@@ -3,12 +3,6 @@ package io.configd.distribution.fanout;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Shared slow-consumer test probe: a {@link FanOutSessionMetrics} that counts the
- * slow-consumer policy series plus a {@link SlowConsumerGovernor.TransitionEvent}
- * recorder, so every test asserts both halves of the contract, that each transition
- * produces both a metric and a structured log event, against the same run.
- */
 final class RecordingPolicyProbe implements FanOutSessionMetrics {
 
     int slowTransitions;
@@ -25,7 +19,6 @@ final class RecordingPolicyProbe implements FanOutSessionMetrics {
 
     final List<SlowConsumerGovernor.TransitionEvent> transitions = new ArrayList<>();
 
-    /** The governor transition listener (pass to the governor constructor). */
     void onTransition(SlowConsumerGovernor.TransitionEvent event) {
         transitions.add(event);
     }
@@ -36,8 +29,6 @@ final class RecordingPolicyProbe implements FanOutSessionMetrics {
         }
         return transitions.get(transitions.size() - 1);
     }
-
-    // Fan-out series: unused by the governor, but required by the interface.
 
     @Override public void onNotifyBatch(int n, int bytes) { }
     @Override public void onQueueDepth(int depth) { }

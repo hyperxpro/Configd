@@ -21,20 +21,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * The server-side prefix-filtering drain proofs: a filtered session delivers only the matching
- * (plus strong-read) deltas, advances its cursor over the full scanned range, and tells the edge
- * the covered-through position with a cursor-advance HEARTBEAT. Uses the same real
- * {@link FanOutBuffer} / {@link RecordingTransportSink} / {@link FakeClock} harness as
- * {@link FanOutSessionCoreTest}.
- */
 class FanOutSessionCorePrefixFilterTest {
 
     private final FakeClock clock = new FakeClock(1_000L);
     private final RecordingTransportSink sink = new RecordingTransportSink();
     private final CountingMetrics metrics = new CountingMetrics();
 
-    /** A counting metrics sink so the filtered/delivered/cursor-advance series are assertable. */
     private static final class CountingMetrics implements FanOutSessionMetrics {
         int filtered;
         int delivered;

@@ -6,45 +6,6 @@
 # silent placeholders. A gate that is wired but never executed is the
 # phantom-CI failure mode — every step asserts a real BUILD SUCCESS.
 #
-# WHAT A GREEN GATE-4 PROVES:
-#   (a) gate3       gates 1+2+3 still green (cumulative; no regression of the
-#                   control plane or the edge data plane while chaos hardening
-#                   landed). In CI gate-3 runs as its own job, so the gate-4 job
-#                   sets GATE4_SKIP_GATE3=1 (coverage via the job dependency).
-#   (b) liveness    the formerly-stalling seed regression suite + first-class
-#                   liveness: Rr103InflightWindowRecoveryTest (the
-#                   inflight-window leak fix, recovery = 1 heartbeat),
-#                   LivenessBoundedProgressSweepTest (200 seeds, bounded
-#                   post-heal progress, 0 violations), Rr095StallSeedDiagnosisTest
-#                   (all 7 stall seeds diagnosed as never-healed artifacts).
-#   (c) reconfig    reconfiguration-under-fault: ReconfigurationTest (incl.
-#                   JointConsensusEndToEnd — split-brain prevention + mid-joint
-#                   crash recovery).
-#   (d) durability  consensus durability cells: RaftLogCompactionTriggerTest
-#                   (compaction reachable), SnapshotCrashRecoveryTest
-#                   (durable-prefix + fsync-lie), FileStorageTest (long-safe
-#                   read), MultiRaftDriverTest (compaction fan-out),
-#                   StorageEnospcConsensusReactionTest (ENOSPC), ConfigdServerTest
-#                   (tick-loop wiring source-guard + clean start).
-#   (e) edgechaos   the owed edge-chaos legs: FanOutSessionCoreTest
-#                   (prod-threshold ack-lag + wedged-transport),
-#                   GovernorBoundedIdentityMapChurnTest (governor churn),
-#                   EdgeTransportMtlsTest (accept-then-blackhole
-#                   handshake-timeout, real socket).
-#   (g) partition   PartitionMatrixTest (single-region/leader/asymmetric/
-#                   partial/gray partitions + clock-skew; continuous safety
-#                   oracles + recovery). Runs UNCONDITIONALLY in the CI subset
-#                   (main() → step_partition, no skip guard).
-#   (h) overload    OverloadChaosTest (control-plane write-flood backpressure +
-#                   post-partition reconnect storm). Runs UNCONDITIONALLY in
-#                   the CI subset (main() → step_overload).
-#   (f) nightly     HEAVY/long integrated sweeps — NOT in the CI subset (run only
-#                   on the nightly path): EdgeIntegratedNightlySweepTest
-#                   (-Dconfigd.edge.nightly=true, 10k ticks), Rr095StallSeedsIntegratedRerunTest
-#                   (-Dconfigd.rr095.rerun=true), and MiniJepsenSweepTest
-#                   (sustained mixed-fault mini-Jepsen). The control-plane 10k
-#                   SeedSweepTest already runs in the build-and-test job; not
-#                   duplicated here.
 #
 # Environment knobs (CI must not set the skips on the nightly full run):
 #   GATE4_SKIP_GATE3=1    skip step (a) — reported LOUDLY (CI runs gate-3 as its

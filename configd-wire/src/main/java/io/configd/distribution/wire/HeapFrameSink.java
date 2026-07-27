@@ -4,29 +4,22 @@ import java.util.Arrays;
 import java.util.zip.CRC32C;
 
 /**
- * A growable heap {@code byte[]} {@link FrameSink} - the JDK-side / test-side backend for the
- * single-pass {@link EdgeFrameCodec#encodeInto}. Big-endian, matching {@code ByteBuffer}'s default.
- *
- * <p><b>Reuse is the point.</b> Constructed once and {@link #reset()} between frames, the backing
- * array grows only to a connection's high-water frame and is then reused, so the steady-state
- * per-frame allocation of the framing itself is ~0 - what remains is exactly the codec-internal
- * message-building floor ({@code CommandCodec.encodeBatch} + signature/nonce clones). That is the
- * 25,520 B/op (batch 64) the head-to-head proved is transport-independent. A fresh sink per call
- * (as {@link EdgeFrameCodec#encode(EdgeFrame)} uses for the cold/test path) is also supported.
- *
- * <p>Not thread-safe: one sink per writer (the JDK fan-out writer thread reuses one per connection).
+ * Growable heap byte[] FrameSink: JDK/test backend for single-pass EdgeFrameCodec.encodeInto.
+ * Big-endian (matches ByteBuffer default). Reuse is the point: reset() between frames, backing
+ * array grows to high-water and reuses. Steady-state per-frame allocation ~0 (only codec-internal
+ * message-building floor remains: CommandCodec.encodeBatch + signature/nonce clones). Not
+ * thread-safe: one sink per writer.
  */
 public final class HeapFrameSink implements FrameSink {
 
     private byte[] buf;
     private int writerIndex;
 
-    /** Creates a sink with the given initial capacity (a floor of 16 bytes is enforced). */
+    /** Minimum initial capacity of 16 bytes enforced. */
     public HeapFrameSink(int initialCapacity) {
         this.buf = new byte[Math.max(16, initialCapacity)];
     }
 
-    /** Resets the write position to 0 so the backing array is reused for the next frame. */
     public void reset() {
         writerIndex = 0;
     }

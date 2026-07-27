@@ -22,18 +22,8 @@ import java.util.Objects;
  */
 public final class MessageRouter {
 
-    /**
-     * Handler for messages routed to a specific group or the default handler.
-     */
     @FunctionalInterface
     public interface GroupMessageHandler {
-        /**
-         * Processes a message for a specific group.
-         *
-         * @param from    the sending node
-         * @param groupId the Raft group identifier
-         * @param message the deserialized message
-         */
         void onMessage(NodeId from, int groupId, Object message);
     }
 
@@ -44,20 +34,11 @@ public final class MessageRouter {
         this.groupHandlers = new HashMap<>();
     }
 
-    /**
-     * Registers a handler for messages targeting a specific Raft group.
-     *
-     * @param groupId the Raft group identifier
-     * @param handler the handler to invoke for messages to this group
-     */
     public void registerGroup(int groupId, GroupMessageHandler handler) {
         Objects.requireNonNull(handler, "handler must not be null");
         groupHandlers.put(groupId, handler);
     }
 
-    /**
-     * Removes the handler for a Raft group.
-     */
     public void unregisterGroup(int groupId) {
         groupHandlers.remove(groupId);
     }
@@ -71,14 +52,6 @@ public final class MessageRouter {
         this.defaultHandler = handler;
     }
 
-    /**
-     * Routes a message to the appropriate handler.
-     *
-     * @param from    the sending node
-     * @param groupId the target group identifier
-     * @param message the deserialized message
-     * @return true if a handler was found and invoked
-     */
     public boolean route(NodeId from, int groupId, Object message) {
         Objects.requireNonNull(from, "from must not be null");
         Objects.requireNonNull(message, "message must not be null");
@@ -95,16 +68,10 @@ public final class MessageRouter {
         return false;
     }
 
-    /**
-     * Returns true if a handler is registered for the given group.
-     */
     public boolean hasHandler(int groupId) {
         return groupHandlers.containsKey(groupId);
     }
 
-    /**
-     * Returns the number of registered group handlers.
-     */
     public int groupCount() {
         return groupHandlers.size();
     }

@@ -23,20 +23,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Replay-horizon boundary matrix: cursor exactly-at / one-below / one-above the ring's
- * oldest-retained sequence, plus the lapped-after-TAIL-decision race.
- *
- * <p>The replay horizon is the ring's retention: a subscriber cursor at
- * {@code oldestRetainedSeq - 1} is exactly recoverable from the tail; one below is beyond
- * the horizon (GAP -> snapshot re-bootstrap). The interleaving is forced deterministically
- * (single-threaded publish between protocol steps - the only honest way to pin an exact
- * interleaving).
- *
- * <p>Writes keep flowing through every phase (decision, lap, snapshot, resume) and the
- * final edge-model state must byte-equal the authoritative cumulative state - the
- * exactly-once-over-effect judge.
- */
 class ReplayHorizonBoundaryTest {
 
     private final FakeClock clock = new FakeClock(1_000L);
@@ -45,7 +31,6 @@ class ReplayHorizonBoundaryTest {
     private HamtMap<String, VersionedValue> auth = HamtMap.empty();
     private long version;
 
-    /** Publishes the next committed write into the buffer AND the authoritative state. */
     private void commit(FanOutBuffer buffer, String key, String val) {
         long seq = ++version;
         auth = auth.put(key, new VersionedValue(bytes(val), seq, 0L));

@@ -63,7 +63,6 @@ public record SlowConsumerPolicyConfig(
         requirePositive(maxTrackedIdentities, "maxTrackedIdentities");
     }
 
-    /** Defaults: 10 s / 3 / 10 / 60 s / 60 s / 3 / 1 h / 1 h / 4096. */
     public static SlowConsumerPolicyConfig defaults() {
         return new SlowConsumerPolicyConfig(
                 10_000L,     // queueWarnWindowMs

@@ -12,15 +12,9 @@ import java.util.Objects;
  */
 public sealed interface ConfigMutation {
 
-    /** The config key being mutated. */
     String key();
 
-    /**
-     * Upsert a key-value pair.
-     *
-     * @param key   config key (non-null, non-blank)
-     * @param value raw config bytes (non-null)
-     */
+    /** Put (upsert) a key-value pair. */
     record Put(String key, byte[] value) implements ConfigMutation {
 
         public Put {
@@ -32,13 +26,13 @@ public sealed interface ConfigMutation {
             value = value.clone();
         }
 
-        /** Returns a defensive copy of the value bytes. */
+        /** Returns defensive copy (caller-visible contract). */
         @Override
         public byte[] value() {
             return value.clone();
         }
 
-        /** Internal zero-copy access for the write path. */
+        /** Unsafe zero-copy access for write path; callers MUST NOT mutate. */
         public byte[] valueUnsafe() {
             return value;
         }
@@ -61,11 +55,7 @@ public sealed interface ConfigMutation {
         }
     }
 
-    /**
-     * Delete (tombstone) a key.
-     *
-     * @param key config key to remove (non-null, non-blank)
-     */
+    /** Delete (tombstone) a key. */
     record Delete(String key) implements ConfigMutation {
 
         public Delete {

@@ -1,36 +1,18 @@
 #!/usr/bin/env bash
-# nxknee.sh — multi-Raft N x knee: aggregate write-throughput scaling vs shard
-#             count N (the horizontal-scale claim, measured on metal).
+# nxknee.sh — multi-Raft N x knee: aggregate write-throughput scaling vs shard count N.
+# Two design points for honest measurement:
+#   (1) StaticShardMap routes (scope,key)->shard; keys spread uniformly; no edge-port (write/consensus plane).
+#   (2) Symmetric realistic election timeouts (150/300/50 ms defaults); leaders scatter naturally.
+#       Asymmetric timeouts were rejected — short leader timeout makes leader fragile at knee.
+# ShardAwareWriteDriver replicates StaticShardMap + learns per-shard leaders from X-Leader-Hint.
+# Knee is where 16 vCPU + shared NVMe fsync saturate.
 #
-# Derived from perf/wsC-ladder.sh (single-group knee) with the multi-Raft
-# generalisation. Two design points make an N-group measurement honest:
-#
-#   (1) -Dconfigd.raft.shardCount=N on all three nodes (StaticShardMap routes
-#       (scope,key)->shard; the driver's ~1M distinct keys spread ~uniformly
-#       over N groups). No --edge-port, so the N>1 edge fail-closed guard never
-#       trips — this is the write/consensus plane.
-#
-#   (2) Realistic, symmetric election timeouts (the as-built 150/300/50 ms
-#       defaults) on all three nodes, so the N groups' leaders scatter naturally
-#       across the nodes — exactly how multi-Raft balances leadership in
-#       production. We do not pin leaders with timeout asymmetry: that was tried
-#       and rejected — a short leader timeout plus a long follower timeout makes
-#       the leader fragile at the knee and prevents failover, so the group goes
-#       leaderless and the measured knee is an artefact, not the real one.
-#
-#   To drive a scattered-leader cluster, the load generator is the shard-aware
-#   ShardAwareWriteDriver: it replicates StaticShardMap.shardFor and keeps a
-#   per-shard leader pointer (learned from X-Leader-Hint), so every PUT lands on
-#   the node that leads that key's shard — the production sharded-client pattern.
-#   Aggregate throughput is the sum across all N shards' leaders on the 3-node
-#   box; the knee is where the box's 16 vCPU / shared NVMe fsync saturate.
-#
-#   Usage:  perf/nxknee.sh <N> [outdir]
-#   Env:    NXK_RATES (default auto ~N*800/s ladder)  NXK_DUR (default 20)
-#           NXK_CONC (default auto)  NXK_VALBYTES (default 512)
-#           NXK_HEAP (default "-Xmx4g -Xms4g")  NXK_GC (default ZGC)
-#           NXK_TRANSPORT (default epoll)  NXK_BASE (default /mnt/nvme/run/...)
-#           NXK_DRYRUN (default 0)  CONFIGD_JAR / CONFIGD_BENCH / NXK_SIGNKEY
+# Usage:  perf/nxknee.sh <N> [outdir]
+# Env:    NXK_RATES (default auto ~N*800/s)  NXK_DUR (default 20)  NXK_CONC (default auto)
+#         NXK_VALBYTES (default 512)  NXK_HEAP (default "-Xmx4g -Xms4g")  NXK_GC (default ZGC)
+#         NXK_TRANSPORT (default epoll)  NXK_BASE (default /mnt/nvme/run/...)
+#         NXK_DRYRUN (default 0)  CONFIGD_JAR  CONFIGD_BENCH  NXK_SIGNKEY
+
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JAR="${CONFIGD_JAR:-$(ls "$ROOT"/configd-server/target/configd-server-*.jar 2>/dev/null | grep -v original- | head -1)}"
@@ -101,7 +83,6 @@ launch_cluster() {
   [ "$ready" -eq 1 ] || { tail -n 20 "$BASE"/n*.log; fail "cluster not ready"; }
 }
 
-# Total shards that have a leader somewhere (sum raft_shard_leader_<g> across the 3 nodes).
 leaders_present() {
   local t=0 k v
   for k in 1 2 3; do
@@ -109,7 +90,6 @@ leaders_present() {
     t=$((t + ${v:-0}))
   done; echo "$t"
 }
-# Per-node leader distribution string, e.g. "n1=3 n2=2 n3=3".
 leader_dist() {
   local out="" k v
   for k in 1 2 3; do
@@ -117,7 +97,7 @@ leader_dist() {
     out="$out n$k=${v:-0}"
   done; echo "${out# }"
 }
-wait_all_shards_led() {  # every one of the N shards must have elected a leader
+wait_all_shards_led() {
   for _t in $(seq 1 80); do [ "$(leaders_present)" -eq "$N" ] 2>/dev/null && return 0; sleep 0.5; done
   return 1
 }
