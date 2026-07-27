@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # restore-snapshot.sh — operator entry point for restoring a Configd cluster
+#
+# Snapshot layout, as written by ConfigStateMachine#snapshot:
+#     [8-byte sequence counter][4-byte entry count]
+#     per entry: [4-byte key length][key bytes][4-byte value length][value bytes]
 
 set -euo pipefail
 

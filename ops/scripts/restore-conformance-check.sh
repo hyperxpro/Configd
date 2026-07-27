@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 # restore-conformance-check.sh — verifies restored cluster matches snapshot
+#
+# Snapshot layout, as written by ConfigStateMachine#snapshot — the parser below depends on it:
+#     [8-byte sequence counter][4-byte entry count]
+#     per entry: [4-byte key length][key bytes][4-byte value length][value bytes]
+# The 8-byte counter equals the lastIncludedIndex the snapshot represents, which is what makes
+# comparing it against the post-restore applied index a valid check.
 
 set -euo pipefail
 

@@ -11,6 +11,8 @@ import java.util.Set;
  * (production 10ms, sim 1ms). If ...Ms were consumed as tick counts directly, intervals would inflate 10x.
  * Validation: derived election:heartbeat tick ratio must be >= ~10 (safety factor for leader to emit
  * several heartbeats within one election window, preventing live-lock).
+ * Backpressure: maxPendingProposals is the uncommitted-entry ceiling past which proposals are
+ * rejected (default 1024). Keep that value written here - gates/gate-5.sh asserts it stays documented.
  */
 public record RaftConfig(
         NodeId nodeId,

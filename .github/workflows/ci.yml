@@ -86,6 +86,8 @@ jobs:
   gate:
     # A nightly_flags that differs from fast_flags must be non-empty: an empty string is falsy in the
     # `cond && A || B` selection below and silently falls back to fast_flags, downgrading coverage.
+    # security-and-supply-chain and multiraft-merge-seal stay out of this matrix: they need extra
+    # setup (gitleaks/NVD, git history) that these generic legs do not provide.
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     strategy:

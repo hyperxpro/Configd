@@ -11,6 +11,8 @@ metadata:
     app: configd
     component: bootstrap
 ---
+# Deliberately scoped to the single ConfigMap name configd-peers: even with this Role fully
+# compromised the blast radius is overwriting that one ConfigMap. Do not widen it.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
