@@ -46,7 +46,7 @@ class VaultTransitKmsProviderTest {
         try (FakeVaultTransit vault = new FakeVaultTransit(MOUNT)) {
             VaultTransitKmsProvider provider = new VaultTransitKmsProvider(config(vault.baseUrl(), "node-A"));
             assertEquals("vault-transit", provider.type());
-            provider.healthCheck(); // reachable
+            provider.healthCheck();
 
             KmsProvider.Provisioned prov = provider.generateRootKey();
             byte[] original = prov.rootKey().withMaterial(byte[]::clone);
@@ -82,7 +82,7 @@ class VaultTransitKmsProviderTest {
             KmsProvider.Provisioned prov = provider.generateRootKey();
             byte[] original = prov.rootKey().withMaterial(byte[]::clone);
 
-            provider.rotateKek();                    // new KEK version
+            provider.rotateKek();
             RootKey live = provider.unwrap(prov.wrapped()); // old carrier still decrypts post-rotate
             assertArrayEquals(original, live.withMaterial(byte[]::clone));
 
@@ -96,7 +96,6 @@ class VaultTransitKmsProviderTest {
 
     @Test
     void unreachableVaultFailsClosed() {
-        // Point at a closed port: healthCheck and unwrap must both throw KmsUnavailableException (fail closed).
         VaultTransitKmsProvider provider = new VaultTransitKmsProvider(config("http://127.0.0.1:1", "node-A"));
         assertThrows(KmsUnavailableException.class, provider::healthCheck);
         WrappedKey bogus = new WrappedKey(provider.currentKeyId(),

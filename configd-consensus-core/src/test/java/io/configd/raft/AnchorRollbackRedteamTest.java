@@ -48,7 +48,7 @@ class AnchorRollbackRedteamTest {
 
     private static final int GID = 0;
     private static final String WAL = "raft-log.wal";
-    private static final String ANCHOR = FileAnchorIO.ANCHOR_FILE_NAME; // "raft-anchor"
+    private static final String ANCHOR = FileAnchorIO.ANCHOR_FILE_NAME;
 
     private static IntegrityEnvelope keyed() {
         return SnapshotIntegrityTest.keyedEnvelope();
@@ -58,7 +58,6 @@ class AnchorRollbackRedteamTest {
         return new LogEntry(index, term, cmd.getBytes(StandardCharsets.UTF_8));
     }
 
-    // CLOSED - recovery MUST REFUSE
 
     /**
      * Attack 1 - tail-truncation of committed data, swept across EVERY W' in [snapshotIndex, A).
@@ -73,11 +72,11 @@ class AnchorRollbackRedteamTest {
             Path dir = Files.createDirectories(base.resolve("w" + wPrime));
             RaftLog log = new RaftLog(Storage.file(dir), keyed(), GID);
             for (int i = 1; i <= 5; i++) {
-                log.append(entry(i, 1, "v" + i));   // A = 5
+                log.append(entry(i, 1, "v" + i));
             }
             log.closeAnchor();
 
-            truncateWalToFrameCount(dir, wPrime); // lose the committed tail down to index wPrime
+            truncateWalToFrameCount(dir, wPrime);
 
             IntegrityException ex = assertThrows(IntegrityException.class,
                     () -> new RaftLog(Storage.file(dir), keyed(), GID),
@@ -99,18 +98,16 @@ class AnchorRollbackRedteamTest {
         RaftLog log = new RaftLog(Storage.file(dir), keyed(), GID);
         log.append(entry(1, 1, "a"));
         log.append(entry(2, 1, "b"));
-        log.append(entry(3, 1, "c"));           // floor now 3
+        log.append(entry(3, 1, "c"));
         log.closeAnchor();
-        byte[] earlierImage = Files.readAllBytes(dir.resolve(ANCHOR)); // capture the floor=3 image
+        byte[] earlierImage = Files.readAllBytes(dir.resolve(ANCHOR));
 
         RaftLog log2 = new RaftLog(Storage.file(dir), keyed(), GID);
         log2.append(entry(4, 1, "d"));
-        log2.append(entry(5, 1, "e"));          // floor now 5
+        log2.append(entry(5, 1, "e"));
         log2.closeAnchor();
 
-        // Roll the whole anchor file back to the captured floor=3 image (a genuine prior state)...
         Files.write(dir.resolve(ANCHOR), earlierImage, StandardOpenOption.TRUNCATE_EXISTING);
-        // ...and drop the WAL below the rolled floor: W'=2 < A=3.
         truncateWalToFrameCount(dir, 2);
 
         IntegrityException ex = assertThrows(IntegrityException.class,
@@ -135,7 +132,6 @@ class AnchorRollbackRedteamTest {
         log.append(entry(3, 1, "c"));
         log.closeAnchor();
 
-        // A genuine FRESH anchor image for this gid (seq=1, lastDurableIndex=0, currentTerm=0).
         Path scratch = Files.createDirectories(base.resolve("scratch"));
         AnchorFile fresh = AnchorFile.openInDirectory(scratch, GID, keyed());
         fresh.bootstrapFresh();
@@ -160,15 +156,14 @@ class AnchorRollbackRedteamTest {
     @Test
     void termRollbackWholeImageBelowWalWitnessedTermRefuses(@TempDir Path dir) throws Exception {
         RaftLog log = new RaftLog(Storage.file(dir), keyed(), GID);
-        log.append(entry(1, 1, "a"));           // term 1 => anchor.currentTerm=1
+        log.append(entry(1, 1, "a"));
         log.closeAnchor();
         byte[] term1Image = Files.readAllBytes(dir.resolve(ANCHOR));
 
         RaftLog log2 = new RaftLog(Storage.file(dir), keyed(), GID);
-        log2.append(entry(2, 5, "b"));          // term 5 witnessed by the WAL; anchor.currentTerm=5
+        log2.append(entry(2, 5, "b"));
         log2.closeAnchor();
 
-        // Roll the anchor image back to the term-1 capture while the WAL retains the term-5 entry.
         Files.write(dir.resolve(ANCHOR), term1Image, StandardOpenOption.TRUNCATE_EXISTING);
 
         IntegrityException ex = assertThrows(IntegrityException.class,
@@ -187,7 +182,6 @@ class AnchorRollbackRedteamTest {
      */
     @Test
     void tailContentRollbackHeadTermMismatchRefuses(@TempDir Path dir) throws Exception {
-        // Build the term-1 chain [1,2,3]@t1 and capture the whole WAL.
         RaftLog t1 = new RaftLog(Storage.file(dir), keyed(), GID);
         t1.append(entry(1, 1, "a"));
         t1.append(entry(2, 1, "b"));
@@ -195,15 +189,12 @@ class AnchorRollbackRedteamTest {
         t1.closeAnchor();
         byte[] term1Wal = Files.readAllBytes(dir.resolve(WAL));
 
-        // Conflict-truncate index 3 and re-append it at term 2: the anchor now records
-        // lastDurableIndex=3, lastDurableTerm=2, currentTerm=2.
         RaftLog t2 = new RaftLog(Storage.file(dir), keyed(), GID);
         t2.truncateFrom(3);
         t2.append(entry(3, 2, "c"));            // same command length -> identical frame length
         assertEquals(2, t2.lastTerm());
         t2.closeAnchor();
 
-        // Splice the OLD term-1 head back: WAL[3].term = 1, but the anchor remembers term 2.
         Files.write(dir.resolve(WAL), term1Wal, StandardOpenOption.TRUNCATE_EXISTING);
 
         IntegrityException ex = assertThrows(IntegrityException.class,
@@ -259,13 +250,11 @@ class AnchorRollbackRedteamTest {
      */
     @Test
     void foreignGidAnchorImageRefuses(@TempDir Path dir) throws Exception {
-        // Build a legitimate gid=0 shard.
         RaftLog log = new RaftLog(Storage.file(dir), keyed(), GID);
         log.append(entry(1, 1, "a"));
         log.append(entry(2, 1, "b"));
         log.closeAnchor();
 
-        // Craft a foreign gid=1 anchor image (in a scratch dir) and splice it over the gid=0 anchor.
         Path scratch = Files.createDirectories(dir.resolve("foreign"));
         AnchorFile foreign = AnchorFile.openInDirectory(scratch, 1, keyed());
         foreign.bootstrapFresh();
@@ -280,7 +269,6 @@ class AnchorRollbackRedteamTest {
                 "a foreign-gid anchor authenticates no slot for this gid => REFUSE, got: " + ex.getMessage());
     }
 
-    // SAFE - legal crash / Raft interleavings that MUST NOT spuriously REFUSE
 
     /**
      * False-positive 7a - the legal leader-flush crash between the WAL fsync and the anchor fsync:
@@ -294,8 +282,8 @@ class AnchorRollbackRedteamTest {
         RaftLog log = new RaftLog(storage, keyed(), GID);
         log.append(entry(1, 1, "a"));
         log.append(entry(2, 1, "b"));
-        log.append(entry(3, 1, "c"));           // A = 3
-        log.appendNoSync(entry(4, 1, "d"));     // WAL durable to 4, anchor still 3 (W>A)
+        log.append(entry(3, 1, "c"));
+        log.appendNoSync(entry(4, 1, "d"));
 
         RaftLog recovered = new RaftLog(storage.recoveredView(), keyed(), GID);
         assertEquals(4, recovered.lastIndex(), "W>A must accept-forward and adopt the durable WAL head");
@@ -338,11 +326,9 @@ class AnchorRollbackRedteamTest {
         for (int i = 1; i <= 5; i++) {
             log.append(entry(i, 1, "v" + i));
         }
-        log.persistSnapshot(new SnapshotState(new byte[]{1}, 3, 1)); // authenticated blob@3
-        log.compact(3, 1);                                            // WAL now [4,5], anchor.snapshotIndex=3
+        log.persistSnapshot(new SnapshotState(new byte[]{1}, 3, 1));
+        log.compact(3, 1);
 
-        // Simulate the crash that lost the anchor snapshot-advance: roll the anchor's snapshot
-        // boundary back to 0 while keeping the durable head. blob@3 stays present.
         AnchorFile a = AnchorFile.openInDirectory(dir, GID, keyed());
         AnchorRecord cur = a.current();
         a.writeSnapshot(0, 0, cur.lastDurableIndex(), cur.lastDurableTerm());
@@ -374,7 +360,6 @@ class AnchorRollbackRedteamTest {
         a.close();
         log.closeAnchor();
 
-        // Delete the blob: the WAL@[4,5] over anchor.snapshotIndex=0 is now an unjustified front cut.
         // FileStorage stores a value key as "<key>.dat"; delete (not deleteIfExists) so a wrong name
         // would fail loudly rather than silently leaving the blob in place.
         Files.delete(dir.resolve("raft-log.snapshot.dat"));
@@ -409,21 +394,19 @@ class AnchorRollbackRedteamTest {
         RaftLog log = new RaftLog(Storage.file(dir), keyed(), GID);
         log.append(entry(1, 1, "a"));
         log.append(entry(2, 1, "b"));
-        log.append(entry(3, 1, "c"));                                   // older floor = 3
-        log.appendAll(List.of(entry(4, 1, "d"), entry(5, 1, "e"), entry(6, 1, "f"))); // one anchor write to 6
+        log.append(entry(3, 1, "c"));
+        log.appendAll(List.of(entry(4, 1, "d"), entry(5, 1, "e"), entry(6, 1, "f")));
         log.closeAnchor();
 
         int newer = higherSeqSlotOffset(dir);
-        zeroSlotLenPrefix(dir, newer);                                  // free one-step rollback to floor 3
+        zeroSlotLenPrefix(dir, newer);
         assertEquals(3, reopenAnchorFloor(dir), "the fallback slot must hold the seq-1 floor (3)");
 
-        // WAL intact at 6: W(6) > A(3) => accept-forward, no loss.
         RaftLog recovered = new RaftLog(Storage.file(dir), keyed(), GID);
         assertEquals(6, recovered.lastIndex(), "slot corruption alone must not lose committed data");
         recovered.closeAnchor();
     }
 
-    // RESIDUAL - the documented boundary of a purely local anchor.
 
     /**
      * Residual finding - a within-term rollback of the durable floor to a prior authenticated
@@ -459,20 +442,17 @@ class AnchorRollbackRedteamTest {
         RaftLog log = new RaftLog(Storage.file(dir), keyed(), GID);
         log.append(entry(1, 1, "a"));
         log.append(entry(2, 1, "b"));
-        log.append(entry(3, 1, "c"));                                   // stale-slot floor will be 3
-        log.appendAll(List.of(entry(4, 1, "d"), entry(5, 1, "e"), entry(6, 1, "f"))); // live-slot floor 6
+        log.append(entry(3, 1, "c"));
+        log.appendAll(List.of(entry(4, 1, "d"), entry(5, 1, "e"), entry(6, 1, "f")));
         assertEquals(6, log.lastIndex());
         log.closeAnchor();
 
-        // Step 2: free one-step rollback of the floor 6 -> 3 by destroying the newer slot.
         int newer = higherSeqSlotOffset(dir);
         zeroSlotLenPrefix(dir, newer);
         assertEquals(3, reopenAnchorFloor(dir), "the promoted seq-1 slot must carry floor 3");
 
-        // Step 3: truncate the WAL to exactly the rolled-back floor.
         truncateWalToFrameCount(dir, 3);
 
-        // Recovery ACCEPTS (no REFUSE) and boots at index 3 - committed 4,5,6 silently lost.
         RaftLog recovered;
         try {
             recovered = new RaftLog(Storage.file(dir), keyed(), GID);
@@ -486,14 +466,12 @@ class AnchorRollbackRedteamTest {
         }
         assertEquals(3, recovered.lastIndex(),
                 "R-a: recovery accepts the rolled-back+truncated state, silently dropping committed 4,5,6");
-        // Confirm the loss is real: the committed entries are simply gone (entryAt returns null).
         assertNull(recovered.entryAt(6),
                 "index 6 was committed-and-acked but is silently absent after the R-a attack");
         assertNull(recovered.entryAt(4), "index 4 (committed) silently absent after the R-a attack");
         recovered.closeAnchor();
     }
 
-    // Real-byte helpers
 
     /**
      * Truncates {@code raft-log.wal} to keep exactly the first {@code keepFrames} complete frames
@@ -559,7 +537,6 @@ class AnchorRollbackRedteamTest {
         return AnchorRecord.decode(payload).anchorSeq();
     }
 
-    /** Reopens the anchor and returns its recovered durable floor (lastDurableIndex). */
     private static long reopenAnchorFloor(Path dir) {
         AnchorFile a = AnchorFile.openInDirectory(dir, GID, keyed());
         assertNotNull(a.current(), "a valid slot must survive the one-step corruption");

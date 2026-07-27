@@ -12,9 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * healthy edge data plane (1) delivers every published commit notification within the bound
  * (the delivery invariant) and (2) converges every live edge to the CP leader's authoritative
  * store. With {@link StreamDriver#NONE} nothing is ever delivered, since no fan-out service
- * exists to drive it; the captured before/after runs are
- * {@code docs/session-3/captures/phase-v-backlog-failures.txt} and
- * {@code docs/session-3/captures/c1-backlog-green.txt}.
+ * exists to drive it.
  *
  * @see C1StreamDriver
  * @see EdgeInvariants
@@ -26,11 +24,6 @@ class EdgePropagationBacklogTest {
     private static final int TICKS = 1_200;
     private static final long SEED = 4242L;
 
-    /**
-     * Over a no-edge-fault schedule, a healthy edge data plane must (1) deliver every
-     * published commit notification within the bound and (2) converge every live
-     * edge to the CP leader's authoritative store. With the real stream driver, both hold.
-     */
     @Test
     void noFaultScheduleDeliversAndConverges() {
         EdgeFanOutSim sim = new EdgeFanOutSim(SEED, CP_NODES, EDGES, TICKS,
@@ -38,7 +31,6 @@ class EdgePropagationBacklogTest {
                 AdversarialSchedule.defaultIntensity(), EdgeInvariants.BOUND_MS);
         sim.run();
 
-        // (1) Eventual delivery: zero recorded delivery-bound violations.
         EdgeActivity activity = sim.activity();
         assertEquals(0, activity.deliveryViolationCount(),
                 "every published commit notification must be delivered to a"

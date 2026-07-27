@@ -22,40 +22,22 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * <b>Open-loop, coordinated-omission-corrected</b> HTTP write
- * load driver against a live Configd control-plane cluster.
+ * <b>Open-loop, coordinated-omission-corrected</b> HTTP write load driver against a live
+ * Configd control-plane cluster.
  *
- * <h2>Coordinated omission handling: open-loop intended-time scheduling</h2>
- * Each request {@code i} has a <b>scheduled send time</b> {@code t_i = startNanos + i / rate}.
- * A submitter releases request {@code i} at its scheduled slot <em>regardless of how many prior
- * requests are still in flight</em>. Latency is recorded as {@code completion - t_i} (the
- * SCHEDULED time, not the actual send time). A stall therefore inflates the measured latency of
- * every request whose scheduled slot fell inside the stall - exactly the requests CO would drop.
- * This is NOT a naive closed-loop "send-next-after-previous-returns" generator (forbidden).
+ * <p>Each request has a <b>scheduled send time</b>, released at its slot regardless of how
+ * many prior requests are still in flight; latency is recorded as
+ * {@code completion - scheduled}, not completion minus actual-send. A naive closed-loop
+ * "send-next-after-previous-returns" generator would drop exactly the requests a stall
+ * should penalize (coordinated omission).
  *
- * <p>Because each {@code PUT /v1/config} BLOCKS until quorum commit, the driver uses a
- * bounded worker pool to carry concurrent in-flight requests; the SCHEDULE is owned by the main
- * submitter thread which does not wait on completions.
+ * <p>A write to a non-leader returns 503 with an {@code X-Leader-Hint} header; the driver
+ * retargets to the hinted leader and counts retargets so churn is visible rather than
+ * silently absorbed into the latency numbers.
  *
- * <h2>Leader following (operational reality on the throttled box)</h2>
- * On a CPU-credit-throttled 2-vCPU box, Raft leadership churns (election timeout 150 - 300 ms can
- * fire faster than load settles). A write to a non-leader returns <b>503 with an
- * {@code X-Leader-Hint: &lt;nodeId&gt;}</b> header. The driver is given the full node-id -> API-URL
- * map and, on a 503 hint, retargets to the hinted leader. This is a legitimate client behaviour
- * (a real client follows the hint), and the driver <b>counts and reports</b> retargets +
- * per-status counts so churn is visible, never hidden. The CO clock still uses the scheduled send
- * time, so a churn stall inflates the recorded latency rather than dropping it.
- *
- * <h2>Self-calibration</h2>
- * Mode {@code calibrate} drives as fast as it can (closed loop, N workers) to find the ceiling
- * commit rate the harness+server sustain; an at-rate run must stay below that ceiling with
- * headroom or it is a generator/server-saturation finding, not a clean latency number.
- *
- * <h2>Modes (nodeMap = "1=http://127.0.0.1:8181,2=...,3=...")</h2>
- * <pre>
- *   calibrate &lt;nodeMap&gt; &lt;durationSec&gt; &lt;concurrency&gt; [valueBytes]
- *   atrate    &lt;nodeMap&gt; &lt;targetRate&gt; &lt;durationSec&gt; &lt;concurrency&gt; [valueBytes]
- * </pre>
+ * <p>Mode {@code calibrate} finds the closed-loop ceiling commit rate; an {@code atrate} run
+ * must stay below that ceiling with headroom, or it measures generator/server saturation,
+ * not latency.
  */
 public final class OpenLoopWriteDriver {
 
@@ -76,7 +58,6 @@ public final class OpenLoopWriteDriver {
         }
     }
 
-    /** Parse "1=http://h:8181,2=http://h:8182,3=..." -> ordered list of base URLs + id map. */
     private static Map<Integer, String> parseNodeMap(String spec) {
         Map<Integer, String> m = new HashMap<>();
         for (String part : spec.split(",")) {
@@ -103,7 +84,6 @@ public final class OpenLoopWriteDriver {
                 .build();
     }
 
-    /** Resolve the current leader URL by probing each node with a real committed PUT. */
     private static String resolveLeader(HttpClient client, Map<Integer, String> nodes, byte[] value) {
         for (var e : nodes.entrySet()) {
             try {
@@ -116,10 +96,9 @@ public final class OpenLoopWriteDriver {
                 }
             } catch (Exception ignored) {}
         }
-        return nodes.values().iterator().next(); // fall back to any node
+        return nodes.values().iterator().next();
     }
 
-    // calibrate: closed-loop max sustainable commit rate (precondition for at-rate runs)
     private static void calibrate(String[] args) throws Exception {
         Map<Integer, String> nodes = parseNodeMap(args[1]);
         int durationSec = Integer.parseInt(args[2]);
@@ -136,7 +115,7 @@ public final class OpenLoopWriteDriver {
         AtomicLong seq = new AtomicLong();
         ConcurrentHashMap<Integer, AtomicInteger> status = new ConcurrentHashMap<>();
         long start = System.nanoTime();
-        long warmEnd = start + 3_000_000_000L; // 3 s warmup not counted
+        long warmEnd = start + 3_000_000_000L;
         long deadline = start + durationSec * 1_000_000_000L;
 
         Runnable worker = () -> {
@@ -168,7 +147,6 @@ public final class OpenLoopWriteDriver {
         System.out.printf("CALIBRATE-STATUS %s%n", statusString(status));
     }
 
-    // atrate: open-loop, CO-corrected, latency-at-rate
     private static void atRate(String[] args) throws Exception {
         Map<Integer, String> nodes = parseNodeMap(args[1]);
         double targetRate = Double.parseDouble(args[2]);

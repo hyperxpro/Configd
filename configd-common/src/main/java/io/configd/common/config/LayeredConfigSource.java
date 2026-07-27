@@ -26,7 +26,6 @@ public final class LayeredConfigSource implements ConfigSource {
         this.sources = List.copyOf(sources);
     }
 
-    /** Composes {@code sources} in precedence order, highest first. At least one source is required. */
     public static LayeredConfigSource of(ConfigSource... sources) {
         if (sources.length == 0) {
             throw new IllegalArgumentException("a LayeredConfigSource needs at least one source");

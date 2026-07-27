@@ -22,11 +22,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-/**
- * The read / subscribe / hydrate happy paths over the plaintext loopback mock: TAIL hydration + signed
- * delta apply, SNAPSHOT_FIRST hydration + cutover, the reactive change stream, the {@code CURSOR_ACK} cadence,
- * and resume-after-disconnect.
- */
 @Timeout(30)
 class EdgeSubscribeHydrateTest {
 
@@ -36,7 +31,7 @@ class EdgeSubscribeHydrateTest {
         ConfigDelta d1 = StreamFixtures.signedPut(leader, 0, 1, 1, "k1", "v1");
         ConfigDelta d2 = StreamFixtures.signedPut(leader, 1, 2, 2, "k2", "v2");
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            conn.readFrame(); // SUBSCRIBE
+            conn.readFrame();
             conn.send(new EdgeFrame.SubscribeOk(2L, EdgeFrame.Mode.TAIL));
             conn.send(StreamFixtures.notify(1, 100, d1));
             conn.send(StreamFixtures.notify(2, 100, d2));
@@ -59,7 +54,7 @@ class EdgeSubscribeHydrateTest {
         KeyPair leader = StreamFixtures.ed25519();
         ConfigDelta tail = StreamFixtures.signedPut(leader, 5, 6, 1, "c", "3");
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            conn.readFrame(); // SUBSCRIBE
+            conn.readFrame();
             conn.send(new EdgeFrame.SubscribeOk(6L, EdgeFrame.Mode.SNAPSHOT_FIRST));
             for (EdgeFrame f : StreamFixtures.snapshotFrames(5, StreamFixtures.entries("a", "1", "b", "2"), 8)) {
                 conn.send(f);
@@ -128,7 +123,7 @@ class EdgeSubscribeHydrateTest {
         ConfigDelta d1 = StreamFixtures.signedPut(leader, 0, 1, 1, "k1", "v1");
         ConfigDelta d2 = StreamFixtures.signedPut(leader, 1, 2, 2, "k2", "v2");
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            conn.readFrame(); // SUBSCRIBE
+            conn.readFrame();
             if (conn.index == 1) {
                 conn.send(new EdgeFrame.SubscribeOk(2L, EdgeFrame.Mode.TAIL));
                 conn.send(StreamFixtures.notify(1, 100, d1));

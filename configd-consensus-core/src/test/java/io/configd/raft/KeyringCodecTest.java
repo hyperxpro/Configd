@@ -47,7 +47,6 @@ class KeyringCodecTest {
         return r;
     }
 
-    // Round trip.
 
     @Test
     void wrapUnwrapRoot_roundTrips_andBodyRoundTrips() {
@@ -63,7 +62,6 @@ class KeyringCodecTest {
         assertEquals(1, decoded.entries().size());
     }
 
-    // A wrapped root cannot be replayed into another term or node.
 
     @Test
     void wrappedRoot_replayedIntoDifferentTerm_failsAad() {
@@ -88,12 +86,10 @@ class KeyringCodecTest {
     @Test
     void wrappedRoot_wrongKek_failsClosed() {
         KeyringEntry e1 = KeyringCodec.wrapRoot(kek((byte) 0x30), NODE_A, 1, root((byte) 0x03), RNG);
-        // A different KEK (a signing-key mismatch) cannot unwrap it.
         assertThrows(IntegrityException.class,
                 () -> KeyringCodec.unwrapRoot(kek((byte) 0x31), NODE_A, KeyringCodec.KEYRING_FORMAT_VERSION, e1));
     }
 
-    // Unknown wrapAlgId, term 0, and a bad version all fail closed.
 
     @Test
     void unknownWrapAlgId_failsClosed() {
@@ -141,7 +137,6 @@ class KeyringCodecTest {
 
     @Test
     void activeTermWithNoMatchingEntry_failsClosed() {
-        // activeTerm points at a term the entry set does not contain.
         KeyringEntry e = KeyringCodec.wrapRoot(kek((byte) 0x40), NODE_A, 1, root((byte) 0x05), RNG);
         byte[] body = KeyringCodec.encodeBody(new Keyring(1, 1L, 5 /* no such term */, List.of(e)));
         assertThrows(IntegrityException.class, () -> KeyringCodec.decodeBody(body));
@@ -174,7 +169,6 @@ class KeyringCodecTest {
                 "the outer MAC covers activeTerm + entryCount + every entry - a strip fails loud");
     }
 
-    // Slot overflow refuses loudly.
 
     @Test
     void slotOverflow_bootstrapRefusesLoudly() {

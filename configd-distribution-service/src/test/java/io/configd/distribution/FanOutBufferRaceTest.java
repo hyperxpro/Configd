@@ -31,8 +31,6 @@ class FanOutBufferRaceTest {
         return new ConfigNotification(seq);
     }
 
-    // Small helper to build a notification whose seq == its content, so a reader
-    // can detect any duplicate/skip purely from the seq sequence it observes.
     private record ConfigNotification(long seq) {
         CommitNotification toCommit() {
             ConfigDelta d = new ConfigDelta(seq - 1, seq,
@@ -68,16 +66,13 @@ class FanOutBufferRaceTest {
             }
         }, "race-writer");
 
-        // Each reader tails with a cursor; on GAP it replays (jumps its cursor to
-        // the buffer's current oldest-retained minus one, the smallest legal
-        // resume that the contract guarantees is contiguous) and continues.
         List<Thread> readers = new java.util.ArrayList<>();
         for (int r = 0; r < readerCount; r++) {
             Thread reader = new Thread(() -> {
                 try {
                     start.await();
                     long cursor = 0;
-                    long lastSeen = 0; // highest seq observed; must be strictly increasing
+                    long lastSeen = 0;
                     while (true) {
                         boolean done = writeDone.await(0, TimeUnit.MILLISECONDS);
                         CommitNotificationSource.Result res = buf.readSince(cursor);
@@ -96,7 +91,6 @@ class FanOutBufferRaceTest {
                                 ((CommitNotificationSource.Result.Ok) res).notifications();
                         long prev = cursor;
                         for (CommitNotification n : ns) {
-                            // No duplicate, no out-of-order, no seq <= cursor.
                             if (n.seq() <= prev) {
                                 throw new AssertionError(
                                         "non-ascending/duplicate seq in non-GAP run: "
@@ -172,7 +166,6 @@ class FanOutBufferRaceTest {
         CountDownLatch start = new CountDownLatch(1);
         CountDownLatch writeDone = new CountDownLatch(1);
         CopyOnWriteArrayList<Throwable> errors = new CopyOnWriteArrayList<>();
-        // Reader publishes its highest observed seq; writer paces against it.
         java.util.concurrent.atomic.AtomicLong observed =
                 new java.util.concurrent.atomic.AtomicLong(0);
 

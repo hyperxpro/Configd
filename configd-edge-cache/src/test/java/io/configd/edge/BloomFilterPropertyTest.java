@@ -8,10 +8,6 @@ import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Property-based tests for {@link BloomFilter}. The fundamental property:
- * a Bloom filter NEVER has false negatives.
- */
 class BloomFilterPropertyTest {
 
     @Property(tries = 500)

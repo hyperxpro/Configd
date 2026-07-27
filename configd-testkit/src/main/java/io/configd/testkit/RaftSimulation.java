@@ -8,14 +8,6 @@ import java.util.function.Consumer;
 import java.util.random.RandomGenerator;
 import java.util.random.RandomGeneratorFactory;
 
-/**
- * Deterministic simulation harness for Raft consensus testing.
- * Runs a simulated Raft cluster on a single thread with controlled
- * time advancement and network fault injection.
- *
- * Inspired by FoundationDB's deterministic simulation.
- * Uses a seeded PRNG for full reproducibility - same seed = same execution.
- */
 public final class RaftSimulation {
 
     private final long seed;
@@ -25,10 +17,8 @@ public final class RaftSimulation {
     private final int nodeCount;
     private final List<NodeId> nodeIds;
 
-    // Callbacks for custom assertions after each step
     private final List<Consumer<RaftSimulation>> invariantCheckers = new ArrayList<>();
 
-    // Statistics
     private long totalTicks;
     private long totalMessagesDelivered;
     private long totalPartitionsInjected;
@@ -51,20 +41,17 @@ public final class RaftSimulation {
     public long seed() { return seed; }
 
     /**
-     * Returns a deterministic per-node {@link RandomGenerator} for driving a
-     * node's election timeout, seeded purely from the master simulation seed
-     * and the node id. This keeps "same seed = same execution" holding for the
-     * election RNG too: an entropy-seeded generator (e.g. {@code RandomGenerator.of(name)})
-     * would produce divergent election schedules on every run even with a fixed
-     * simulation seed, making a failing seed unreplayable. The master seed is the
-     * single source of all simulated randomness.
-     * <p>
-     * Production seeding is unaffected: this lives in the test simulation
-     * harness; the live server keeps its own {@link RandomGenerator}.
-     *
-     * @param nodeId the node whose election RNG is requested
-     * @return a fresh deterministic generator seeded from {@code mix(seed, nodeId)}
-     */
+         * Returns a deterministic per-node {@link RandomGenerator} for driving a
+         * node's election timeout, seeded purely from the master simulation seed
+         * and the node id. This keeps "same seed = same execution" holding for the
+         * election RNG too: an entropy-seeded generator (e.g. {@code RandomGenerator.of(name)})
+         * would produce divergent election schedules on every run even with a fixed
+         * simulation seed, making a failing seed unreplayable. The master seed is the
+         * single source of all simulated randomness.
+         * <p>
+         * Production seeding is unaffected: this lives in the test simulation
+         * harness; the live server keeps its own {@link RandomGenerator}.
+         */
     public RandomGenerator electionRandom(NodeId nodeId) {
         long nodeSeed = mixSeed(seed, nodeId.id());
         return RandomGeneratorFactory.of("L64X128MixRandom").create(nodeSeed);
@@ -82,18 +69,10 @@ public final class RaftSimulation {
         return z ^ (z >>> 31);
     }
 
-    /**
-     * Register an invariant checker that runs after every simulation step.
-     * If the checker throws, the simulation stops with a reproducible failure.
-     */
     public void addInvariantChecker(Consumer<RaftSimulation> checker) {
         invariantCheckers.add(checker);
     }
 
-    /**
-     * Advance simulation by one tick (1ms).
-     * Delivers any pending messages that are due.
-     */
     public void tick() {
         clock.advanceMs(1);
         int delivered = network.deliverDue(clock.currentTimeMillis());
@@ -102,9 +81,6 @@ public final class RaftSimulation {
         checkInvariants();
     }
 
-    /**
-     * Advance simulation to the next interesting event (next message delivery or timeout).
-     */
     public void advanceToNextEvent() {
         long nextDelivery = network.nextDeliveryTime();
         if (nextDelivery == Long.MAX_VALUE) {
@@ -119,18 +95,12 @@ public final class RaftSimulation {
         checkInvariants();
     }
 
-    /**
-     * Run simulation for the given number of ticks.
-     */
     public void runTicks(int ticks) {
         for (int i = 0; i < ticks; i++) {
             tick();
         }
     }
 
-    /**
-     * Inject a random network partition between two random nodes.
-     */
     public void injectRandomPartition() {
         int a = random.nextInt(nodeCount);
         int b = random.nextInt(nodeCount);
@@ -140,9 +110,6 @@ public final class RaftSimulation {
         }
     }
 
-    /**
-     * Inject a partition isolating the given node from all others.
-     */
     public void isolateNode(NodeId node) {
         for (NodeId other : nodeIds) {
             if (!other.equals(node)) {
@@ -152,7 +119,6 @@ public final class RaftSimulation {
         totalPartitionsInjected++;
     }
 
-    /** Heal all network partitions. */
     public void healAllPartitions() {
         network.healAll();
     }

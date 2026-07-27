@@ -52,32 +52,17 @@ interface StreamDriver {
         /** Live edges (deterministic order). The driver streams to each. */
         List<EdgeActor> edges();
 
-        /** The {@link CommitNotificationSource} for CP node {@code cpNode}. */
         CommitNotificationSource source(int cpNode);
 
-        /** The {@link ReplaySource} for CP node {@code cpNode}. */
         ReplaySource replaySource(int cpNode);
 
         /** Pushes a message to {@code edge} over the edge network (latency applies). */
         void send(EdgeActor edge, EdgeStream message);
 
-        /** Current sim logical time in ms. */
         long nowMs();
     }
 
-    /**
-     * Advances the server-side streaming by one tick: read new notifications from
-     * each subscribed source and push them toward the edges (or recover on GAP).
-     *
-     * @param ctx the per-tick streaming context
-     */
     void drive(Context ctx);
 
-    /**
-     * The honest default: nothing is ever delivered. With {@code NONE} the edge
-     * data plane does not exist - every published notification is an eventual-
-     * delivery-bound violation (recorded), which is exactly the propagation backlog.
-     * This is the only behavior that truthfully reflects "no fan-out service exists".
-     */
     StreamDriver NONE = ctx -> { /* deliberately empty - see EdgePropagationBacklogTest */ };
 }

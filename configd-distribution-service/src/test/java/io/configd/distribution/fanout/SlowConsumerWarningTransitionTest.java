@@ -7,13 +7,6 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Queue-warn sustained-window transition: the queue at or above the warn threshold held for
- * {@code edge.fanout.policy.queueWarnWindowMs} promotes HEALTHY to SLOW with the
- * {@code edge_fanout_slow_transitions_total} metric and the structured transition event;
- * ack progress (the queue draining below warn) returns the consumer to HEALTHY.
- * Clock-driven (explicit nowMillis - no sleeps).
- */
 class SlowConsumerWarningTransitionTest {
 
     private static final String EDGE = "CN=edge-1,O=configd";
@@ -65,7 +58,6 @@ class SlowConsumerWarningTransitionTest {
         governor.evaluate(EDGE, T0 + 10_000);
         assertEquals(ConsumerState.SLOW, governor.state(EDGE));
 
-        // The queue drains below warn, the ack-progress-resumes exit.
         governor.onQueuePressure(EDGE, false, 50L, 50L, T0 + 12_000);
         assertEquals(ConsumerState.HEALTHY, governor.state(EDGE));
         SlowConsumerGovernor.TransitionEvent event = probe.lastTransition();
@@ -141,7 +133,6 @@ class SlowConsumerWarningTransitionTest {
         governor.onQueuePressure(EDGE, true, 1L, 0L, T0);
         assertEquals(1, probe.lastHealthy,
                 "the consumer_state gauge must count a newly tracked identity");
-        // Under the bound, identities coexist - eviction must not run below it.
         governor.onQueuePressure("CN=edge-other,O=configd", true, 1L, 0L, T0 + 1);
         assertEquals(2, governor.trackedIdentities(),
                 "no eviction below maxTrackedIdentities");

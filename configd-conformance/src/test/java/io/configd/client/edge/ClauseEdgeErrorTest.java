@@ -126,10 +126,6 @@ class ClauseEdgeErrorTest {
     @Tag("clause:E4-1")
     @Tag("clause:E3-3")
     void aWatchCanceledNotAuthorizedSurfacesForbiddenPerWatchAgainstTheRealClient() throws Exception {
-        // End-to-end: the mock sends a WATCH_CANCELED carrying NOT_AUTHORIZED (11), the 403-class per-watch
-        // reject. The real ConfigdEdgeClient must surface it as a ForbiddenException on the watch's terminal
-        // future (do not retry the same target) and, because the carrier is per-watch, must not reconnect --
-        // the connection is torn down once, not looped.
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
             long wid = ((EdgeFrame.WatchCreate) conn.readFrame()).watchId();
             conn.send(new EdgeFrame.WatchCanceled(wid, ErrorCode.NOT_AUTHORIZED, null, "over-broad target"),
@@ -146,7 +142,6 @@ class ClauseEdgeErrorTest {
         }
     }
 
-    // -----------------------------------------------------------------------
 
     private static ConfigdClientConfig trustedConfig(int port) {
         HostileServerLimits d = HostileServerLimits.defaults();

@@ -76,7 +76,7 @@ final class RoutingCluster {
         queue.clear();
         for (Frame f : batch) {
             if (partitioned.contains(f.src()) || partitioned.contains(f.dst())) {
-                continue; // dropped on the partition
+                continue;
             }
             RaftNode tgt = nodes.get(f.dst());
             if (tgt != null) {
@@ -119,7 +119,6 @@ final class RoutingCluster {
         return first();
     }
 
-    /** A state machine that counts mutating commands (empty command == no-op). */
     static StateMachine seqSm() {
         return new StateMachine() {
             @Override public long apply(long index, long term, byte[] command) {

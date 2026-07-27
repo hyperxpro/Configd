@@ -109,12 +109,10 @@ class SlowConsumerStateMachineWalkTest {
         assertEquals(ConsumerState.QUARANTINED, governor.state(victimIdentity),
                 "refusals must not mutate the state");
 
-        // Cooldown exit -> forced snapshot-first re-bootstrap -> CATCHUP -> HEALTHY.
         tickUntil(sim, () -> governor.state(victimIdentity) == ConsumerState.HEALTHY,
                 "post-cooldown readmission re-bootstraps and resolves to HEALTHY");
         assertEquals(1, metrics.readmissions);
 
-        // Converged: the readmitted edge serves the latest committed value.
         commit(sim, victim.subscribedCpNode(), "walk/final", "converged");
         tickUntil(sim, () -> hasValue(victim, "walk/final", "converged"),
                 "the readmitted edge converges to post-quarantine commits");
@@ -127,8 +125,6 @@ class SlowConsumerStateMachineWalkTest {
     void laggingEdgeWalksTheFullStateMachineEndToEnd() {
         WalkEvidence evidence = runFullWalk();
 
-        // The exact walk, in order: every transition observed; the structured events ARE
-        // the evidence.
         List<String> legs = evidence.transitions().stream()
                 .map(t -> t.from() + "->" + t.to() + ":" + t.reason())
                 .toList();
@@ -141,7 +137,6 @@ class SlowConsumerStateMachineWalkTest {
                 legs, "the full machine must be walked in order: " + legs);
         assertTrue(evidence.refusals() > 0, "cooldown refusals must be observed (C4-3)");
 
-        // Cursor evidence rides the quarantine transition.
         SlowConsumerGovernor.TransitionEvent quarantine = evidence.transitions().get(2);
         assertTrue(quarantine.cursor() > 0 && quarantine.lastAckedSeq() >= 0,
                 "the quarantine event must carry the cursor evidence: " + quarantine);
@@ -192,7 +187,6 @@ class SlowConsumerStateMachineWalkTest {
         String victimIdentity = "edge-" + victim.edgeId();
         sim.enableEdgeRecovery(0);
 
-        // quarantineLimit (3) lag->quarantine->readmit cycles; the 3rd trip escalates.
         for (int cycle = 1; cycle <= 3; cycle++) {
             victim.lag();
             for (int i = 1; i <= 60
@@ -219,13 +213,11 @@ class SlowConsumerStateMachineWalkTest {
         assertEquals(SlowConsumerGovernor.REASON_REPEAT_QUARANTINE, escalation.reason());
         assertEquals(3, escalation.quarantinesInWindow());
 
-        // Refused - observably - through the unhealthy cooldown...
         int refusalsAtEscalation = metrics.reconnectsRefused;
         tickUntil(sim, () -> metrics.reconnectsRefused > refusalsAtEscalation,
                 "reconnects are refused during the unhealthy cooldown");
         assertEquals(ConsumerState.UNHEALTHY, governor.state(victimIdentity));
 
-        // ...then the cooldown ALONE readmits (C4-3) and the edge resolves to HEALTHY.
         tickUntil(sim, () -> governor.state(victimIdentity) == ConsumerState.HEALTHY,
                 "the unhealthy cooldown auto-readmits and the re-bootstrap resolves");
         assertEquals(3, metrics.readmissions,
@@ -286,9 +278,7 @@ class SlowConsumerStateMachineWalkTest {
                 "a healthy flapping edge must record NO policy transitions: " + transitions);
     }
 
-    // -----------------------------------------------------------------------
     // helpers (the EdgeGapRecoveryTest commit/tick discipline - no sleeps)
-    // -----------------------------------------------------------------------
 
     private static void commit(EdgeFanOutSim sim, int observedCpNode, String key, String value) {
         byte[] expected = value.getBytes(StandardCharsets.UTF_8);

@@ -61,8 +61,8 @@ class CommitOutcomeSeamTest {
         SeqStateMachine sm = new SeqStateMachine();
         RaftNode node = singleNodeLeader(sm);
 
-        ProposeOutcome first = node.propose(new byte[]{1});  // seq OFFSET+1
-        ProposeOutcome second = node.propose(new byte[]{2}); // seq OFFSET+2
+        ProposeOutcome first = node.propose(new byte[]{1});
+        ProposeOutcome second = node.propose(new byte[]{2});
         assertTrue(first.accepted() && second.accepted());
 
         AtomicReference<CommitOutcome> o1 = new AtomicReference<>();
@@ -74,8 +74,6 @@ class CommitOutcomeSeamTest {
         assertNotNull(o2.get());
         assertEquals(CommitOutcome.Kind.COMMITTED, o1.get().kind());
         assertEquals(CommitOutcome.Kind.COMMITTED, o2.get().kind());
-        // The seq must be the per-index applied-mutation seq threaded from apply(),
-        // not the latest seq and not the index/lastApplied (offset decorrelates them).
         assertEquals(SeqStateMachine.SEQ_OFFSET + 1, o1.get().seq(),
                 "first write's COMMITTED seq must be its own applied-mutation seq");
         assertEquals(SeqStateMachine.SEQ_OFFSET + 2, o2.get().seq(),
@@ -100,9 +98,6 @@ class CommitOutcomeSeamTest {
         long index = p.index();
         long realTerm = p.term();
 
-        // Register for the SAME index but a higher term than the one that applied.
-        // The entry that applied at `index` carries realTerm, so this proposal can
-        // never commit AS this proposal - LOST.
         AtomicReference<CommitOutcome> lost = new AtomicReference<>();
         node.whenCommitOutcome(index, realTerm + 5, lost::set);
 
@@ -136,7 +131,6 @@ class CommitOutcomeSeamTest {
         AtomicReference<CommitOutcome> outcome = new AtomicReference<>();
         int[] fireCount = {0};
         leader.whenCommitOutcome(p.index(), p.term(), o -> { fireCount[0]++; outcome.set(o); });
-        // Not yet committed in a 3-node cluster (needs a follower ack).
         assertNull(outcome.get(), "must stay pending until quorum-commit + apply");
 
         cluster.deliverAllMessages(10);
@@ -195,7 +189,6 @@ class CommitOutcomeSeamTest {
         assertEquals(sb + 1, sc, "consecutive mutations are gap-free per index");
     }
 
-    /** A no-op (non-mutating) committed entry resolves COMMITTED with a sane seq. */
     @Test
     void nonMutatingEntryResolvesCommittedWithCurrentSeq() {
         SeqStateMachine sm = new SeqStateMachine();

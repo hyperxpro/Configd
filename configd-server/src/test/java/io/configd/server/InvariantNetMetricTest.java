@@ -47,7 +47,6 @@ class InvariantNetMetricTest {
         try {
             ConfigStateMachine sm = server.stateMachine();
 
-            // Establish key "k" at version 1.
             sm.apply(1L, 1L, CommandCodec.encodePut("k", new byte[]{1}));
 
             // Inject the precondition a real corruption (e.g. a sequence-counter rewind from a stale
@@ -66,7 +65,6 @@ class InvariantNetMetricTest {
             try {
                 sm.apply(2L, 1L, CommandCodec.encodePut("k", new byte[]{2}));
             } catch (RuntimeException expectedStoreRejection) {
-                // store may reject the non-monotonic version; the violation metric is already recorded.
             }
 
             String metrics = scrapeMetrics(server);
@@ -81,7 +79,6 @@ class InvariantNetMetricTest {
         }
     }
 
-    /** Scrapes the running server's /metrics endpoint (public in the minimal, no-auth config). */
     private static String scrapeMetrics(ConfigdServer server) throws Exception {
         // Admin server is Netty-based; the public bound-port accessor is transport-agnostic.
         int port = server.apiPort();
@@ -96,7 +93,6 @@ class InvariantNetMetricTest {
         return resp.body();
     }
 
-    /** Reads the value of a Prometheus counter line ("name value"); -1 if absent. */
     private static long counterValue(String exposition, String metricName) {
         for (String line : exposition.split("\n")) {
             String t = line.trim();

@@ -28,7 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class NodeKeyringRedteamTest {
 
-    private static final int WAL_MAGIC = 0x5257_414C; // "RWAL"
+    private static final int WAL_MAGIC = 0x5257_414C;
     private static final int SCOPE = 3;               // a per-shard gid, same on wrap + read here
     private static final String REF = "kid-ref";
 
@@ -91,7 +91,7 @@ class NodeKeyringRedteamTest {
             r2 = encOver(k).wrap(WAL_MAGIC, SCOPE, p2);
             assertEquals(2, keyTermOf(r2));
 
-            k.rotateTerm(REF);                       // -> term 3
+            k.rotateTerm(REF);
             r3 = encOver(k).wrap(WAL_MAGIC, SCOPE, p3);
             assertEquals(3, keyTermOf(r3));
             assertEquals(3, k.termCount());
@@ -138,7 +138,6 @@ class NodeKeyringRedteamTest {
             r2 = encOver(k).wrap(WAL_MAGIC, SCOPE, p2);
             assertEquals(2, keyTermOf(r2));
         }
-        // Perform the rollback: overwrite the whole keyring file with the older, still-valid image.
         disk.image = rollbackTarget;
 
         try (NodeKeyring k2 = NodeKeyring.loadOrCreateOverIO(

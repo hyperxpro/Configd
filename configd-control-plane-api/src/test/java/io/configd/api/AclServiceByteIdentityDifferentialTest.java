@@ -43,15 +43,10 @@ class AclServiceByteIdentityDifferentialTest {
 
     private static final AclService.Permission[] PERMS = AclService.Permission.values();
 
-    // Grant-time principals (a small closed set so configs overlap and ancestors actually compose).
     private static final String[] GRANT_PRINCIPALS = {"root", "alice", "bob", "carol", "dave"};
-    // Query-time principals: the grant set plus an unknown principal that must always be default-denied.
     private static final String[] QUERY_PRINCIPALS = {"root", "alice", "bob", "carol", "dave", "mallory"};
-    // Prefixes deliberately mixing the empty/global prefix, deep nested chains, siblings, and carve-outs,
-    // so a key routinely matches several overlapping ancestors (where union vs longest-match would differ).
     private static final String[] PREFIXES =
             {"", "a.", "a.b.", "a.b.c.", "a.c.", "a.secret.", "b.", "db.", "db.conn."};
-    // Query keys spanning exact-prefix hits, descendants of several depths, siblings, and total misses.
     private static final String[] KEYS =
             {"", "a.", "a.x", "a.b", "a.b.x", "a.b.c.y", "a.c.z", "a.secret.k", "b.y", "db.host",
              "db.conn.pool", "miss"};
@@ -95,7 +90,7 @@ class AclServiceByteIdentityDifferentialTest {
             EnumSet<AclService.Permission> allow = EnumSet.noneOf(AclService.Permission.class);
             EnumSet<AclService.Permission> deny = EnumSet.noneOf(AclService.Permission.class);
             for (Map.Entry<String, Map<String, Entry>> e : model.entrySet()) {
-                if (key.startsWith(e.getKey())) {            // brute-force ancestor match (no floor/lower)
+                if (key.startsWith(e.getKey())) {
                     Entry en = e.getValue().get(principal);
                     if (en != null) {
                         allow.addAll(en.allow);
@@ -111,7 +106,6 @@ class AclServiceByteIdentityDifferentialTest {
         }
     }
 
-    /** A random non-empty capability subset (as an EnumSet, matching AclService's immutable() input). */
     private static EnumSet<AclService.Permission> randomCaps(Random r) {
         EnumSet<AclService.Permission> caps = EnumSet.noneOf(AclService.Permission.class);
         for (AclService.Permission p : PERMS) {
@@ -125,7 +119,6 @@ class AclServiceByteIdentityDifferentialTest {
         return caps;
     }
 
-    // Fuzz AclService against the independent oracle through four lenses, empty role maps.
 
     /**
      * Over many random configurations (built only from grant/deny/revoke, so the role maps stay empty as
@@ -141,7 +134,7 @@ class AclServiceByteIdentityDifferentialTest {
      */
     @Test
     void differentialAgainstIndependentOracleAcrossFourLenses() {
-        Random r = new Random(0xB17E_1D0FFL); // fixed seed -> reproducible
+        Random r = new Random(0xB17E_1D0FFL);
         int assertions = 0;
         final int configs = 80;
 
@@ -172,7 +165,7 @@ class AclServiceByteIdentityDifferentialTest {
                 }
             }
 
-            String undefined = "undef-" + r.nextInt(1_000_000); // never defined -> contributes nothing
+            String undefined = "undef-" + r.nextInt(1_000_000);
             for (String principal : QUERY_PRINCIPALS) {
                 for (String key : KEYS) {
                     for (AclService.Permission perm : PERMS) {
@@ -196,7 +189,6 @@ class AclServiceByteIdentityDifferentialTest {
         assertTrue(assertions >= 5000, "expected a large differential space; ran " + assertions);
     }
 
-    // The deployed grant("","root",allOf), evaluated through the production {"admin"} 4-arg path.
 
     /**
      * Replicates the deployed config verbatim - the sole {@code grant("", "root", allOf)} - and drives it
@@ -213,17 +205,15 @@ class AclServiceByteIdentityDifferentialTest {
         acl.grant("", "root", allOf);
         oracle.grant("", "root", allOf);
 
-        Set<String> prodRoles = Set.of("admin"); // asserted by authn (ConfigdServer:720); never defined
+        Set<String> prodRoles = Set.of("admin");
 
         for (String key : KEYS) {
             for (AclService.Permission perm : PERMS) {
-                // Root: authorized everywhere, and identical to the oracle (which also says true).
                 assertTrue(acl.isAllowed("root", prodRoles, key, perm),
                         () -> "root must be authorized for " + perm + " on '" + key + "'");
                 assertEquals(oracle.decide("root", key, perm), acl.isAllowed("root", prodRoles, key, perm),
                         divergence("root production path", List.of("grant(\"\",\"root\",allOf)"), "root", key, perm));
 
-                // Every non-root principal: default-denied, identical to the oracle (false).
                 for (String p : new String[]{"intruder", "alice", "admin"}) {
                     assertEquals(oracle.decide(p, key, perm), acl.isAllowed(p, prodRoles, key, perm),
                             divergence("non-root production path", List.of("grant(\"\",\"root\",allOf)"), p, key, perm));
@@ -234,8 +224,6 @@ class AclServiceByteIdentityDifferentialTest {
         }
     }
 
-    // Hardening: even an ACL-static binding to an UNDEFINED role (which flips the empty-roles guard's
-    // branch and runs the role block) must not perturb a single decision while no role is defined.
 
     /**
      * Strictly beyond the production shape (server code never calls {@code assignRole}), this proves the
@@ -285,7 +273,6 @@ class AclServiceByteIdentityDifferentialTest {
                         // 3-arg delegates with empty authn roles; the static binding alone flips the guard.
                         assertEquals(expected, acl.isAllowed(principal, key, perm),
                                 divergence("guard-flip 3-arg w/ undefined static role", opLog, principal, key, perm));
-                        // And with an authn-asserted (also undefined) role on top.
                         assertEquals(expected, acl.isAllowed(principal, Set.of("admin"), key, perm),
                                 divergence("guard-flip 4-arg {\"admin\"}", opLog, principal, key, perm));
                         assertions += 2;
@@ -331,10 +318,6 @@ class AclServiceByteIdentityDifferentialTest {
                 }
             }
 
-            // Three config-policy states that must each contribute NOTHING:
-            //   (i)   EMPTY                       - the production state (guard short-circuits);
-            //   (ii)  bindings to an UNDEFINED role - flips the bindings guard; cp.roles().get() is null;
-            //   (iii) a DEFINED-but-UNBOUND, un-asserted role with allOf on "" - no principal resolves it.
             String undefRole = "cfg-undef-" + r.nextInt(1_000_000);
             Map<String, Set<String>> undefBindings = new HashMap<>();
             for (String p : QUERY_PRINCIPALS) {

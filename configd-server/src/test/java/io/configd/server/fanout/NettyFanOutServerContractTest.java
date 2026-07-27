@@ -9,12 +9,6 @@ import io.configd.transport.TlsManager;
 
 import java.net.InetSocketAddress;
 
-/**
- * The {@link AbstractFanOutServerContract} bound to the Netty {@code NettyFanOutServer} with the
- * transport tier auto-selected (Epoll, falling back to NIO; io_uring is opt-in) at construction. Proves
- * the migrated transport reproduces every behaviour the JDK subclass does on whatever native tier the
- * host offers.
- */
 class NettyFanOutServerContractTest extends AbstractFanOutServerContract {
 
     @Override

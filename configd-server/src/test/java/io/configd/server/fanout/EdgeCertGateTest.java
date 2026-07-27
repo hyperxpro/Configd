@@ -88,7 +88,6 @@ class EdgeCertGateTest {
 
     @Test
     void aNullCheckerUnderStrictIsUnknownFailClosed() {
-        // No responder wired (the default) plus strict means every cert is UNKNOWN, so it is rejected.
         assertFalse(gate(RevocationMode.STRICT, null).admit(List.of(leaf)),
                 "strict with no configured responder rejects every cert (documented foot-gun)");
         assertTrue(gate(RevocationMode.LAX, null).admit(List.of(leaf)),

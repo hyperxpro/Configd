@@ -11,9 +11,6 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link HamtMap} - the persistent HAMT with structural sharing.
- */
 class HamtMapTest {
 
     @Nested
@@ -172,7 +169,7 @@ class HamtMapTest {
         record FixedHashKey(String value) {
             @Override
             public int hashCode() {
-                return 42; // all keys collide
+                return 42;
             }
 
             @Override

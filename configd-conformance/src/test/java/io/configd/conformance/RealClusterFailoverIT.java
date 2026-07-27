@@ -102,11 +102,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * mechanics are identical (persisted cursor, re-subscribe on reconnect, {@code TAIL} vs re-bootstrap decided
  * by the server).
  */
-@Timeout(240) // hang detection on the throttled 2-vCPU box; every phase bounds itself with an explicit deadline
+@Timeout(240)
 class RealClusterFailoverIT {
 
     private static final int NODES = 3;
-    private static final int GROUP = 0; // the default single Raft group (shardCount=1), replicated across all 3
+    private static final int GROUP = 0;
 
     // 2-vCPU election budget: heartbeat 100ms << election 1500-3000ms (ratio ~15-30), a range already proven
     // stable, so jitter cannot manufacture a spurious election or shed.
@@ -195,8 +195,6 @@ class RealClusterFailoverIT {
                 }), "pre-failover key " + key(k) + " must be readable with its committed value");
             }
 
-            // The reference edge client subscribes with all three endpoints, leader first, so its connection
-            // lands on the node we will kill -- forcing a genuine cross-endpoint failover.
             try (ConfigdEdgeClient edge =
                          ConfigdEdgeClient.open(edgeConfig(edgeEndpointsLeaderFirst(servers, leader0)))) {
                 Subscription sub = edge.subscribeFullStore(SubscribeOptions.defaults());
@@ -204,8 +202,6 @@ class RealClusterFailoverIT {
                 sub.subscribe(recordingSubscriber(changes));
                 sub.awaitHydrated(Duration.ofMillis(HYDRATE_MS));
 
-                // Hydrated on the LEADER: the pre-failover keys arrived via the hydrate SNAPSHOT (a bulk state
-                // load), NOT as change events -- so the change stream is empty until a post-hydrate delta.
                 for (int k = 0; k < KEY_COUNT; k++) {
                     final int kk = k;
                     assertTrue(await(HYDRATE_MS, () -> sub.view().get(key(kk))
@@ -218,15 +214,11 @@ class RealClusterFailoverIT {
                         "the subscription connected to the leader and stayed stable (no pre-kill reconnect)");
                 long cursorBefore = sub.cursor();
 
-                // KILL the leader (crash equivalent: shutdown closes edge + HTTP + Raft transport). This drops
-                // the edge connection AND forces a control-plane re-election.
                 servers[leader0].shutdown();
                 running.remove(servers[leader0]);
                 System.out.println("[GC-FAILOVER] killed leader node " + leader0
                         + " (edge subscription's own node); cursor at kill=" + cursorBefore);
 
-                // HTTP LEADER-FOLLOW: a put issued AFTER the kill transparently succeeds on the NEW leader --
-                // the client rode the election window, following the real X-Leader-Hint.
                 WriteOutcome postPut = http.blocking()
                         .put(POST_KEY, POST_VALUE.getBytes(UTF_8), WriteOptions.defaults());
                 assertTrue(postPut.seq() > 0,
@@ -238,9 +230,6 @@ class RealClusterFailoverIT {
                 System.out.println("[GC-FAILOVER] HTTP leader-followed: post write committed at seq "
                         + postPut.seq() + "; new leader is node " + leader1);
 
-                // EDGE FAILOVER-RESUME: the killed edge connection reconnects (cross-endpoint) to a survivor
-                // and resumes FROM ITS CURSOR -- the post-failover write is delivered EXACTLY ONCE (no gap, no
-                // duplicate), the cursor advances, and nothing already hydrated is re-delivered.
                 assertTrue(await(DELIVER_MS, () -> edge.reconnectCount() >= 1),
                         "the edge subscription's node was killed — it must reconnect (rotate) to a survivor");
                 assertTrue(await(DELIVER_MS, () -> sub.view().get(POST_KEY)
@@ -337,7 +326,7 @@ class RealClusterFailoverIT {
      *  subscription connects to the leader (index 0) and a post-kill reconnect rotates to a survivor. */
     private static List<ServerAddress> edgeEndpointsLeaderFirst(ConfigdServer[] servers, int leader) {
         List<ServerAddress> addrs = new ArrayList<>(servers.length);
-        addrs.add(new ServerAddress("127.0.0.1", servers[leader].fanOutServer().localPort())); // index 0 = leader
+        addrs.add(new ServerAddress("127.0.0.1", servers[leader].fanOutServer().localPort()));
         for (int i = 0; i < servers.length; i++) {
             if (i != leader) {
                 addrs.add(new ServerAddress("127.0.0.1", servers[i].fanOutServer().localPort()));

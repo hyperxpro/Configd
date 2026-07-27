@@ -25,14 +25,8 @@ import java.util.zip.CRC32C;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link DeltaApplier} - gap detection and delta sequencing.
- */
 class DeltaApplierTest {
 
-    /**
-     * Simple test clock with explicit time control.
-     */
     static class TestClock implements Clock {
         long timeMs;
 
@@ -117,7 +111,6 @@ class DeltaApplierTest {
 
         @Test
         void gapDetectedWhenFromVersionMismatches() {
-            // Current version is 0, delta starts from 5
             ConfigDelta delta = new ConfigDelta(5, 6, List.of(
                     new ConfigMutation.Put("key", bytes("value"))
             ));
@@ -126,17 +119,15 @@ class DeltaApplierTest {
 
             assertEquals(DeltaApplier.ApplyResult.GAP_DETECTED, result);
             assertTrue(applier.pendingGap());
-            assertEquals(0, client.currentVersion()); // Store unchanged
+            assertEquals(0, client.currentVersion());
         }
 
         @Test
         void gapDetectedOnForwardJump() {
-            // Apply one delta successfully
             applier.offer(new ConfigDelta(0, 1, List.of(
                     new ConfigMutation.Put("a", bytes("1"))
             )), clock.currentTimeMillis());
 
-            // Skip version 2, jump to 3
             ConfigDelta delta = new ConfigDelta(2, 3, List.of(
                     new ConfigMutation.Put("b", bytes("2"))
             ));
@@ -148,13 +139,11 @@ class DeltaApplierTest {
 
         @Test
         void resetGapAfterFullSync() {
-            // Trigger gap
             applier.offer(new ConfigDelta(5, 6, List.of(
                     new ConfigMutation.Put("key", bytes("value"))
             )), clock.currentTimeMillis());
             assertTrue(applier.pendingGap());
 
-            // Load full snapshot to recover
             client.loadSnapshot(buildSnapshot(10, "key", "value"));
             applier.resetGap();
 
@@ -164,16 +153,13 @@ class DeltaApplierTest {
 
         @Test
         void afterGapResetCanApplyDeltasNormally() {
-            // Trigger gap
             applier.offer(new ConfigDelta(5, 6, List.of(
                     new ConfigMutation.Put("key", bytes("value"))
             )), clock.currentTimeMillis());
 
-            // Recover with full sync
             client.loadSnapshot(buildSnapshot(10, "key", "v10"));
             applier.resetGap();
 
-            // Now apply delta from version 10
             ConfigDelta delta = new ConfigDelta(10, 11, List.of(
                     new ConfigMutation.Put("key", bytes("v11"))
             ));
@@ -189,17 +175,15 @@ class DeltaApplierTest {
 
         @Test
         void staleDeltaWhenToVersionBehindCurrent() {
-            // Load snapshot at version 5
             client.loadSnapshot(buildSnapshot(5, "key", "value"));
             applier = new DeltaApplier(client);
 
-            // Delta targeting version 3 (behind current)
             ConfigDelta delta = new ConfigDelta(2, 3, List.of(
                     new ConfigMutation.Put("old", bytes("data"))
             ));
 
             assertEquals(DeltaApplier.ApplyResult.STALE_DELTA, applier.offer(delta, clock.currentTimeMillis()));
-            assertEquals(5, client.currentVersion()); // Unchanged
+            assertEquals(5, client.currentVersion());
             assertFalse(applier.pendingGap());
         }
 
@@ -208,7 +192,6 @@ class DeltaApplierTest {
             client.loadSnapshot(buildSnapshot(5, "key", "value"));
             applier = new DeltaApplier(client);
 
-            // Delta targeting version 5 (equal to current)
             ConfigDelta delta = new ConfigDelta(4, 5, List.of(
                     new ConfigMutation.Put("dup", bytes("data"))
             ));
@@ -298,8 +281,7 @@ class DeltaApplierTest {
             ConfigSigner verifier = new ConfigSigner(keyPair.getPublic());
             DeltaApplier verifyingApplier = new DeltaApplier(client, verifier);
 
-            // A well-formed signed (epoch > 0) delta whose signature bytes are corrupt.
-            byte[] badSignature = new byte[64]; // all zeros - invalid
+            byte[] badSignature = new byte[64];
             ConfigDelta delta = new ConfigDelta(0, 1, List.of(
                     new ConfigMutation.Put("key", bytes("value"))), badSignature, 1L,
                     new byte[]{1, 2, 3, 4, 5, 6, 7, 8});
@@ -307,7 +289,7 @@ class DeltaApplierTest {
             DeltaApplier.ApplyResult result = verifyingApplier.offer(delta, clock.currentTimeMillis());
 
             assertEquals(DeltaApplier.ApplyResult.SIGNATURE_INVALID, result);
-            assertEquals(0, client.currentVersion()); // not applied
+            assertEquals(0, client.currentVersion());
         }
 
         @Test
@@ -358,7 +340,7 @@ class DeltaApplierTest {
 
             ConfigDelta delta = new ConfigDelta(0, 1, List.of(
                     new ConfigMutation.Put("key", bytes("value"))
-            )); // no signature
+            ));
 
             DeltaApplier.ApplyResult result = verifyingApplier.offer(delta, clock.currentTimeMillis());
 
@@ -368,7 +350,6 @@ class DeltaApplierTest {
 
         @Test
         void deltaWithSignatureFromWrongKeyIsRejected() throws Exception {
-            // Generate a different key pair
             KeyPairGenerator gen = KeyPairGenerator.getInstance("Ed25519");
             KeyPair otherKeyPair = gen.generateKeyPair();
             ConfigSigner wrongSigner = new ConfigSigner(otherKeyPair);
@@ -391,7 +372,6 @@ class DeltaApplierTest {
 
         @Test
         void noVerifierAllowsUnsignedDeltas() {
-            // The default applier (no verifier) accepts unsigned deltas.
             ConfigDelta delta = new ConfigDelta(0, 1, List.of(
                     new ConfigMutation.Put("key", bytes("value"))
             ));
@@ -410,7 +390,6 @@ class DeltaApplierTest {
          */
         @Test
         void find0004_singleMutationSignedByLeaderVerifiesAtEdge() throws Exception {
-            // Simulate the leader: ConfigStateMachine signs in canonical batch form
             io.configd.store.ConfigStateMachine leaderSm = new io.configd.store.ConfigStateMachine(
                     new io.configd.store.VersionedConfigStore(), clock, leaderSigner);
             byte[] putCommand = CommandCodec.encodePut("db.host", bytes("localhost"));
@@ -424,7 +403,6 @@ class DeltaApplierTest {
                     new ConfigMutation.Put("db.host", bytes("localhost"))
             ), leaderSig, leaderSm.lastEpoch(), leaderSm.lastNonce());
 
-            // Edge verifier with only the public key
             ConfigSigner verifier = new ConfigSigner(keyPair.getPublic());
             DeltaApplier verifyingApplier = new DeltaApplier(client, verifier);
 
@@ -473,7 +451,6 @@ class DeltaApplierTest {
             verifier = new ConfigSigner(keyPair.getPublic());
         }
 
-        /** Builds a delta signed under the given epoch (and an empty nonce). */
         private ConfigDelta signedDelta(long fromV, long toV, long epoch) throws Exception {
             ConfigDelta unsigned = new ConfigDelta(fromV, toV, List.of(
                     new ConfigMutation.Put("key-" + epoch, bytes("v-" + epoch))
@@ -496,7 +473,6 @@ class DeltaApplierTest {
             assertEquals(DeltaApplier.ApplyResult.APPLIED, r);
             assertEquals(100L, persistingApplier.highestSeenEpoch());
 
-            // Sidecar exists, is exactly 12 bytes, and CRC32C-validates.
             Path lock = snapshotDir.resolve("epoch.lock");
             assertTrue(Files.exists(lock), "epoch.lock must be persisted after apply");
             byte[] data = Files.readAllBytes(lock);
@@ -511,7 +487,6 @@ class DeltaApplierTest {
 
         @Test
         void epochReplayRejectedAcrossRestart() throws Exception {
-            // Write epoch 100 and persist it.
             DeltaApplier first = new DeltaApplier(client, verifier, snapshotDir);
             assertEquals(DeltaApplier.ApplyResult.APPLIED,
                     first.offer(signedDelta(0, 1, 100L), clock.currentTimeMillis()));
@@ -526,8 +501,6 @@ class DeltaApplierTest {
             assertEquals(100L, restarted.highestSeenEpoch(),
                     "post-restart epoch must be loaded from sidecar");
 
-            // The replay attempt: an attacker re-signs an older delta at
-            // epoch 42 and offers it. It must be rejected.
             DeltaApplier.ApplyResult r = restarted.offer(signedDelta(0, 1, 42L), clock.currentTimeMillis());
             assertEquals(DeltaApplier.ApplyResult.REPLAY_REJECTED, r,
                     "stale-epoch delta must be rejected after restart");
@@ -537,18 +510,16 @@ class DeltaApplierTest {
 
         @Test
         void corruptSidecarTreatedAsAbsent() throws Exception {
-            // Manually write a sidecar with a bad CRC.
             Path lock = snapshotDir.resolve("epoch.lock");
             ByteBuffer buf = ByteBuffer.allocate(12);
             buf.putLong(999L);
-            buf.putInt(0xDEADBEEF); // wrong CRC
+            buf.putInt(0xDEADBEEF);
             Files.write(lock, buf.array());
 
             DeltaApplier applier2 = new DeltaApplier(client, verifier, snapshotDir);
             assertEquals(0L, applier2.highestSeenEpoch(),
                     "corrupt sidecar must be ignored (epoch resets to 0)");
 
-            // The next applied delta overwrites the sidecar with valid bytes.
             assertEquals(DeltaApplier.ApplyResult.APPLIED,
                     applier2.offer(signedDelta(0, 1, 7L), clock.currentTimeMillis()));
             assertEquals(7L, applier2.highestSeenEpoch());
@@ -565,12 +536,10 @@ class DeltaApplierTest {
 
         @Test
         void nullSnapshotDirSkipsPersistence() throws Exception {
-            // Defensive: the legacy two-arg constructor must not touch disk.
             DeltaApplier inMem = new DeltaApplier(client, verifier, null);
             assertEquals(DeltaApplier.ApplyResult.APPLIED,
                     inMem.offer(signedDelta(0, 1, 50L), clock.currentTimeMillis()));
             assertEquals(50L, inMem.highestSeenEpoch());
-            // No file in snapshotDir was created (no persistence configured).
             assertFalse(Files.exists(snapshotDir.resolve("epoch.lock")));
         }
     }

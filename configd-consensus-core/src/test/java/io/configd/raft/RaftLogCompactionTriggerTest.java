@@ -27,7 +27,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class RaftLogCompactionTriggerTest {
 
-    /** Minimal recording state machine with a non-empty snapshot blob. */
     static final class RecordingSM implements StateMachine {
         @Override public long apply(long index, long term, byte[] command) { return StateMachine.NON_MUTATING; }
         @Override public byte[] snapshot() { return new byte[]{1, 2, 3}; }
@@ -41,7 +40,7 @@ class RaftLogCompactionTriggerTest {
         RaftNode node = new RaftNode(config, new RaftLog(storage),
                 (target, message) -> { }, new RecordingSM(), new Random(1), storage);
         for (int i = 0; i < 400; i++) {
-            node.tick(); // self-elect (no peers -> immediate)
+            node.tick();
         }
         assertEquals(RaftRole.LEADER, node.role(), "a single-node cluster must self-elect");
         return node;
@@ -51,7 +50,6 @@ class RaftLogCompactionTriggerTest {
     void maybeCompactTriggersSnapshotOnlyAboveThreshold() {
         RaftNode node = singleNodeLeader();
 
-        // Single-node: each propose commits + applies immediately. Drive applied entries up.
         for (int i = 0; i < 20; i++) {
             assertEquals(ACCEPTED, node.propose(("k" + i).getBytes()).result());
         }
@@ -62,13 +60,10 @@ class RaftLogCompactionTriggerTest {
         assertTrue(appliedSpan >= 20, "single-node proposals must apply; span=" + appliedSpan);
         assertEquals(0, node.log().snapshotIndex(), "no compaction has happened yet (the bug: it never would)");
 
-        // BELOW threshold: compaction must NOT fire - the WAL is not yet large enough.
         long highThreshold = appliedSpan + 100;
         assertFalse(node.maybeCompact(highThreshold), "must NOT compact below the threshold");
         assertEquals(0, node.log().snapshotIndex(), "snapshotIndex must be unchanged below the threshold");
 
-        // ABOVE threshold: compaction MUST fire - snapshotIndex advances, retained span drops,
-        // and the WAL prefix is truncated.
         long lowThreshold = 5;
         assertTrue(node.maybeCompact(lowThreshold), "must compact above the threshold");
         assertTrue(node.log().snapshotIndex() > 0, "snapshotIndex must advance after compaction");

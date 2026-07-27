@@ -68,7 +68,6 @@ class IntegrityEnvelopeEncryptionTest {
         assertArrayEquals(new byte[0], env.unwrap(MAGIC, SCOPE, wrapped));
     }
 
-    // Confidentiality: the plaintext must not be on disk.
 
     @Test
     void ciphertextContainsNoPlaintext() {
@@ -95,7 +94,6 @@ class IntegrityEnvelopeEncryptionTest {
         assertFalse(Arrays.equals(nonceA, nonceB));
     }
 
-    // Authenticity: any tampered byte fails closed.
 
     @Test
     void tamperingCiphertextFailsClosed() {
@@ -141,7 +139,6 @@ class IntegrityEnvelopeEncryptionTest {
         assertThrows(IntegrityException.class, () -> env.unwrap(OTHER_MAGIC, SCOPE, wrapped));
     }
 
-    // Scope: cross-shard splice control on the encrypting path.
 
     @Test
     void scopeMismatchRefusedEncrypting() {
@@ -174,7 +171,6 @@ class IntegrityEnvelopeEncryptionTest {
         assertThrows(IntegrityException.class, () -> env.unwrap(MAGIC, SCOPE, truncated));
     }
 
-    // Key mismatch: a different root cannot decrypt.
 
     @Test
     void differentRootKeyCannotDecrypt() {
@@ -187,11 +183,9 @@ class IntegrityEnvelopeEncryptionTest {
         assertThrows(IntegrityException.class, () -> wrongReader.unwrap(MAGIC, SCOPE, wrapped));
     }
 
-    // Downgrade and posture refusals.
 
     @Test
     void encryptingReaderRefusesAlgNoneDowngrade() {
-        // A NONE (keyless) artifact must be refused by an encrypting reader (fail-closed).
         byte[] none = IntegrityEnvelope.keyless().wrap(MAGIC, SCOPE, payload());
         IntegrityEnvelope enc = IntegrityEnvelope.encrypting(keys());
         assertThrows(IntegrityException.class, () -> enc.unwrap(MAGIC, SCOPE, none));
@@ -206,7 +200,6 @@ class IntegrityEnvelopeEncryptionTest {
         assertThrows(IntegrityException.class, () -> IntegrityEnvelope.keyless().unwrap(MAGIC, SCOPE, wrapped));
     }
 
-    // Migration: an encrypting reader still verifies term-versioned HMAC records.
 
     @Test
     void encryptingReaderReadsPreEncryptionHmacRecords() {
@@ -231,7 +224,6 @@ class IntegrityEnvelopeEncryptionTest {
         assertThrows(IntegrityException.class, () -> strict.unwrap(MAGIC, SCOPE, preEncryption));
     }
 
-    // Per-artifact isolation.
 
     @Test
     void differentMagicsProduceDifferentSegments() {

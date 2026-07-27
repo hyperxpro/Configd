@@ -38,12 +38,10 @@ class WatchMultiplexSinkTest {
     private FanOutBuffer buffer;
     private FanOutSessionCore core;
 
-    /** Builds a single-watch translating session over an empty buffer (TAIL, so live streaming). */
     private void singleWatch(WatchTarget target) {
         singleWatch(target, 0);
     }
 
-    /** Builds a single-watch translating session on shard {@code gid} over an empty buffer. */
     private void singleWatch(WatchTarget target, int gid) {
         registry = new WatchRegistry();
         buffer = new FanOutBuffer(64);
@@ -112,7 +110,7 @@ class WatchMultiplexSinkTest {
 
     @Test
     void notifyTranslatesToWatchEventTaggedWithThisShardsGid() {
-        singleWatch(fullTarget(false), 3); // this decorator is shard 3
+        singleWatch(fullTarget(false), 3);
         buffer.publish(put(7, "/k/x", "vx"));
         core.tick(clock.now());
         EdgeFrame.WatchEvent event = onlyEvent();
@@ -154,9 +152,6 @@ class WatchMultiplexSinkTest {
     @Test
     void subscribeOkForwardsThisShardsModeToTheCoordinator() {
         singleWatch(fullTarget(false), 4); // empty buffer, so TAIL; this decorator is shard 4
-        // The sink does not emit WATCH_CREATED, since a per-shard sink cannot build the
-        // N-ShardMode vector; it forwards the initial mode of this shard to the
-        // coordinator, which coalesces.
         assertTrue(out.sentOfType(EdgeFrame.WatchCreated.class).isEmpty(),
                 "the per-shard sink emits no WATCH_CREATED; the driver coalesces it");
         assertEquals(1, coord.shardCreated.size());
@@ -171,9 +166,7 @@ class WatchMultiplexSinkTest {
         singleWatch(fullTarget(false));
         core.tick(clock.now()); // anchors the heartbeat cadence
         long hbAt = clock.now() + FanOutConfig.defaults().heartbeatMs();
-        core.tick(hbAt); // idle past heartbeatMs, so a heartbeat
-        // The sink swallows the core HEARTBEAT and forwards it; the driver emits the coalesced
-        // WATCH_PROGRESS. The per-shard sink never emits a WATCH_PROGRESS itself.
+        core.tick(hbAt);
         assertTrue(out.sentOfType(EdgeFrame.WatchProgress.class).isEmpty(),
                 "the per-shard sink emits no WATCH_PROGRESS; the driver coalesces it");
         assertEquals(1, coord.idleProgressServerNow.size());
@@ -182,10 +175,6 @@ class WatchMultiplexSinkTest {
 
     @Test
     void legacyPassthroughIsFrameIdenticalToTheBareCore() {
-        // The 0x01 byte-identity guarantee: a connection whose flag is never flipped
-        // drives the core through the decorator, producing exactly the frames a bare sink
-        // would record. The same CommitNotification instances are published to both
-        // buffers so frame equality holds.
         CommitNotification n1 = put(1, "/k/1", "v1");
         CommitNotification n2 = put(2, "/k/2", "v2");
         List<EdgeFrame> bare = runLegacy(false, n1, n2);
@@ -195,20 +184,18 @@ class WatchMultiplexSinkTest {
 
     private List<EdgeFrame> runLegacy(boolean decorate, CommitNotification... notifications) {
         RecordingTransportSink rec = new RecordingTransportSink();
-        // watchConnection stays false, the default, so this is pure passthrough; the
-        // coordinator is untouched.
         TransportSink sink = decorate
                 ? new WatchMultiplexSink(rec, new WatchRegistry(), 0, coord)
                 : rec;
         FanOutBuffer buf = new FanOutBuffer(64);
         FanOutSessionCore session = new FanOutSessionCore(buf, snapshotAt(0), sink,
                 FanOutConfig.defaults(), FanOutSessionMetrics.NOOP, new FakeClock(1_000L));
-        session.onSubscribe(new EdgeFrame.Subscribe(true, List.of(), 0L, -1L, "edge")); // empty, so TAIL
+        session.onSubscribe(new EdgeFrame.Subscribe(true, List.of(), 0L, -1L, "edge"));
         for (CommitNotification n : notifications) {
             buf.publish(n);
         }
-        session.tick(1_000L);  // NOTIFY
-        session.tick(1_300L);  // idle past heartbeatMs, so HEARTBEAT
+        session.tick(1_000L);
+        session.tick(1_300L);
         assertTrue(coord.shardCreated.isEmpty() && coord.idleProgressServerNow.isEmpty(),
                 "a legacy passthrough connection never touches the coordinator");
         return rec.sent();
@@ -267,7 +254,6 @@ class WatchMultiplexSinkTest {
         return new SnapshotReplaySource(() -> snap);
     }
 
-    /** Records the two coalescing forwards of the sink so its contract can be asserted in isolation. */
     private static final class RecordingCoordinator implements WatchMultiplexSink.Coordinator {
         final List<ShardCreated> shardCreated = new ArrayList<>();
         final List<Long> idleProgressServerNow = new ArrayList<>();

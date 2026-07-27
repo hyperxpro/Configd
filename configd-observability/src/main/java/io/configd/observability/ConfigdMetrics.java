@@ -227,15 +227,8 @@ public final class ConfigdMetrics {
         this.writeRejectedOverloaded = registry.counter(NAME_WRITE_REJECTED_OVERLOADED);
         this.raftElections = registry.counter(NAME_RAFT_ELECTIONS);
         this.raftConnectionDecodeDropped = registry.counter(NAME_RAFT_TRANSPORT_CONNECTION_DECODE_DROPPED);
-        // HTTP ingress-reject counters -- incremented by NettyHttpApiServer on this same registry. Eager
-        // so the two known-reason series emit "_total 0" from the first scrape; no field (never incremented
-        // here). Mirrors the ACL-loader pattern below.
         registry.counter(NAME_HTTP_REQUEST_REJECTED_BASE + "." + HTTP_REJECT_REASON_BAD_REQUEST);
         registry.counter(NAME_HTTP_REQUEST_REJECTED_BASE + "." + HTTP_REJECT_REASON_PAYLOAD_TOO_LARGE);
-        // ACL config-policy loader counters -- PRODUCED and incremented by AclConfigPolicyLoader on this
-        // same registry (idempotent re-registration). Catalogued and eager-created here so they emit
-        // "_total 0" from the first scrape even before the loader runs; no field (this class never
-        // increments them).
         registry.counter(NAME_ACL_POLICY_LOAD_FAILED);
         registry.counter(NAME_ACL_POLICY_RELOAD);
 
@@ -252,8 +245,6 @@ public final class ConfigdMetrics {
             registry.gauge(NAME_RAFT_PENDING_APPLY, raftPendingSupplier);
         }
 
-        // Last-snapshot-size gauge - eager over an AtomicLong seeded at 0 so it renders from the first
-        // scrape; recordSnapshotBytes() updates it whenever the state machine produces a snapshot.
         registry.gauge(NAME_SNAPSHOT_BYTES, lastSnapshotBytes::get);
     }
 
@@ -285,9 +276,6 @@ public final class ConfigdMetrics {
         registry.infoGauge(NAME_STATE_MACHINE_HASH, STATE_MACHINE_HASH_LABEL, hexSupplier);
     }
 
-    /** Late-binds the subscribed-prefix capacity gauge. The supplier is a sampled snapshot
-     *  (e.g. {@code SubscriptionManager.prefixCount()}); a benign data race on a plain
-     *  {@code size()} read is acceptable gauge semantics. */
     public void bindSubscriptionPrefixGauge(LongSupplier supplier) {
         Objects.requireNonNull(supplier, "supplier must not be null");
         registry.gauge(NAME_SUBSCRIPTION_PREFIX_COUNT, supplier);

@@ -63,7 +63,6 @@ class SharedNodeFaultIsolationLiveTest {
 
     private static final NodeId LOCAL = NodeId.of(1);
 
-    /** No peers - single-node groups self-elect; transport is unused. */
     private static final class NoopTransport implements RaftTransport {
         @Override public void send(NodeId target, RaftMessage message) { }
     }
@@ -79,7 +78,6 @@ class SharedNodeFaultIsolationLiveTest {
         final List<Long> appliedSeqs = Collections.synchronizedList(new ArrayList<>());
         private final AtomicLong mutatingCount = new AtomicLong();
         volatile long lastAppliedIndex;
-        /** When non-null, a mutating apply blocks here (the stuck-apply fault). */
         volatile CountDownLatch gate;
         volatile boolean sawForeignGid;
 
@@ -93,7 +91,7 @@ class SharedNodeFaultIsolationLiveTest {
                 return StateMachine.NON_MUTATING; // leader no-op / election entry - never blocks
             }
             if ((command[0] & 0xFF) != (gid & 0xFF)) {
-                sawForeignGid = true; // cross-shard leak - group applied another shard's command
+                sawForeignGid = true;
             }
             CountDownLatch g = gate;
             if (g != null) {
@@ -117,16 +115,15 @@ class SharedNodeFaultIsolationLiveTest {
         return new byte[]{(byte) gid, (byte) (n & 0xFF), (byte) (n >>> 8)};
     }
 
-    /** Builds a storage-backed single-node group with the tracking SM, owner-binds it, then self-elects. */
     private static RaftNode newTrackingLeader(OwnerExecutorPool pool, int gid,
             BlockableTrackingStateMachine sm) throws Exception {
         Storage storage = Storage.inMemory();
-        RaftConfig config = RaftConfig.of(LOCAL, Set.of()); // single-node cluster self-elects
+        RaftConfig config = RaftConfig.of(LOCAL, Set.of());
         RaftNode node = new RaftNode(config, new RaftLog(storage), new NoopTransport(),
                 sm, new java.util.Random(42L + gid), storage);
         pool.ownerExecutor(gid).submit(() -> {
             node.bindOwnerThread();
-            for (int i = 0; i < 400; i++) node.tick(); // self-elect (single-node)
+            for (int i = 0; i < 400; i++) node.tick();
         }).get(10, TimeUnit.SECONDS);
         assertEquals(RaftRole.LEADER, node.role(), "group " + gid + " should self-elect to LEADER");
         return node;
@@ -158,8 +155,8 @@ class SharedNodeFaultIsolationLiveTest {
     @Timeout(60)
     void couplingLeakRed_stuckApplyStarvesCoOwnedSibling_otherOwnerUnaffected_thenRecovers()
             throws Exception {
-        final int p = 2;                 // owner0 = {0,2}, owner1 = {1,3}
-        final int[] gids = {0, 1, 2, 3}; // P<N: groups 0,2 SHARE owner0; 1,3 SHARE owner1
+        final int p = 2;
+        final int[] gids = {0, 1, 2, 3};
         OwnerExecutorPool pool = new OwnerExecutorPool(p);
         MultiRaftDriver driver = new MultiRaftDriver(LOCAL, Clock.system());
         driver.setOwnerPool(pool);
@@ -186,10 +183,9 @@ class SharedNodeFaultIsolationLiveTest {
         CountDownLatch stuck = new CountDownLatch(1);
         sms.get(0).gate = stuck;
         pool.ownerExecutor(0).execute(() -> {
-            driver.propose(0, cmd(0, 99)); // blocks inside group 0's apply on `stuck` (inline flush path)
-            driver.tickOwner(0);           // queued behind the block; never reached until release
+            driver.propose(0, cmd(0, 99));
+            driver.tickOwner(0);
         });
-        // Give owner0 a moment to enter the blocking apply.
         Thread.sleep(200);
 
         // WITNESS RED: group 2 SHARES owner0 with the stuck group 0, so it is STARVED -
@@ -216,8 +212,6 @@ class SharedNodeFaultIsolationLiveTest {
         assertTrue(witnessProgresses(driver, pool, sms.get(2), 2, 100, 5_000),
                 "recovery: starved sibling group 2 must resume after owner0 is unblocked");
 
-        // Per-shard SAFETY survived the fault: every shard applied a strictly monotone sequence and never
-        // a foreign shard's command (no cross-shard leak, no corruption).
         for (int gid : gids) {
             assertMonotoneAndIsolated(sms.get(gid), gid);
         }
@@ -229,7 +223,7 @@ class SharedNodeFaultIsolationLiveTest {
     @Test
     @Timeout(60)
     void perShardSafetyHoldsUnderSharedOwnerConcurrency() throws Exception {
-        final int p = 2;                 // owner0 = {0,2}, owner1 = {1,3}
+        final int p = 2;
         final int[] gids = {0, 1, 2, 3};
         OwnerExecutorPool pool = new OwnerExecutorPool(p);
         MultiRaftDriver driver = new MultiRaftDriver(LOCAL, Clock.system());
@@ -260,7 +254,7 @@ class SharedNodeFaultIsolationLiveTest {
                         final int n = i;
                         pool.ownerExecutor(g).submit(() -> {
                             if (driver.propose(g, cmd(g, n)).result() == ProposalResult.ACCEPTED) {
-                                driver.tickOwner(owner); // commit + apply on the owner thread
+                                driver.tickOwner(owner);
                             }
                         }).get();
                     }
@@ -275,7 +269,6 @@ class SharedNodeFaultIsolationLiveTest {
         assertTrue(done.await(50, TimeUnit.SECONDS), "concurrent shared-owner workload did not finish");
         producers.shutdownNow();
 
-        // Final drain so every accepted proposal applies.
         for (int owner = 0; owner < p; owner++) {
             final int o = owner;
             for (int i = 0; i < 5; i++) {
@@ -284,7 +277,6 @@ class SharedNodeFaultIsolationLiveTest {
         }
 
         assertNull(failure.get(), "no producer threw under shared-owner concurrency");
-        // Per shard: strictly monotone applied sequence, only this shard's commands, real progress.
         for (int gid : gids) {
             BlockableTrackingStateMachine sm = sms.get(gid);
             assertMonotoneAndIsolated(sm, gid);

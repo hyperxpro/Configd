@@ -67,7 +67,6 @@ class HttpApiServerMtlsE2ETest {
         runMtlsScenario(true);
     }
 
-    /** Boots the given adapter with {@code mode=mtls} plus a client-DN ACL grant, then proves a cert gets 200 and no cert gets 401. */
     private void runMtlsScenario(boolean netty) throws Exception {
         Path serverKs = dir.resolve("server.p12");
         Path clientKs = dir.resolve("client.p12");
@@ -89,14 +88,12 @@ class HttpApiServerMtlsE2ETest {
         try {
             URI uri = URI.create("https://127.0.0.1:" + server.port() + "/v1/config/app.feature");
 
-            // A client presenting its verified cert authenticates as the cert-DN principal (READ granted, so 200).
             HttpClient withCert = HttpClient.newBuilder().sslContext(sslContext(clientKs, trust)).build();
             HttpResponse<String> ok = withCert.send(HttpRequest.newBuilder().uri(uri).GET().build(),
                     HttpResponse.BodyHandlers.ofString());
             assertEquals(200, ok.statusCode(),
                     (netty ? "netty" : "jdk") + ": a verified client cert must authenticate on the HTTPS admin plane");
 
-            // A client presenting no certificate (trust-only context) is rejected 401.
             HttpClient noCert = HttpClient.newBuilder().sslContext(trustOnlyContext(trust)).build();
             HttpResponse<String> denied = noCert.send(HttpRequest.newBuilder().uri(uri).GET().build(),
                     HttpResponse.BodyHandlers.ofString());
@@ -130,7 +127,6 @@ class HttpApiServerMtlsE2ETest {
         };
     }
 
-    // keytool and JSSE fixture
 
     private static void genKeyPair(Path keystore, String alias, String dn, String ext) throws Exception {
         java.util.List<String> cmd = new java.util.ArrayList<>(List.of("keytool", "-genkeypair", "-alias", alias,

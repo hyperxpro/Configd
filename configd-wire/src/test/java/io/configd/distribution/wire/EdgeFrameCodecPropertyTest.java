@@ -40,7 +40,6 @@ class EdgeFrameCodecPropertyTest {
 
     private static final byte V2 = EdgeFrameCodec.EDGE_WIRE_VERSION_V2;
 
-    // round-trip
 
     @Property(tries = 500)
     void roundTripPreservesEveryFrame(@ForAll("frames") EdgeFrame frame) {
@@ -62,7 +61,6 @@ class EdgeFrameCodecPropertyTest {
         ConfigDelta d = decoded.notifications().get(0).delta();
         assertArrayEquals(before, d.signingPayload(),
                 "signingPayload() must be byte-identical after a NOTIFY round-trip");
-        // The raw signature/epoch/nonce must also survive verbatim.
         assertArrayEquals(n.delta().signature(), d.signature());
         assertEquals(n.delta().epoch(), d.epoch());
         assertArrayEquals(n.delta().nonce(), d.nonce());
@@ -72,12 +70,10 @@ class EdgeFrameCodecPropertyTest {
     void peekLengthAgreesWithEncodedLength(@ForAll("frames") EdgeFrame frame) {
         byte[] wire = EdgeFrameCodec.encode(frame);
         assertEquals(wire.length, EdgeFrameCodec.peekLength(wire));
-        // peekLength on just the 6-byte header is the same.
         byte[] header = Arrays.copyOf(wire, EdgeFrameCodec.HEADER_SIZE);
         assertEquals(wire.length, EdgeFrameCodec.peekLength(header));
     }
 
-    // truncation at every byte boundary
 
     @Property(tries = 400)
     void truncationAtAnyBoundaryIsRejectedCleanly(
@@ -96,7 +92,6 @@ class EdgeFrameCodecPropertyTest {
                 "truncated frame must be rejected as a CodecException");
     }
 
-    // single-bit corruption -> CRC error, not misparse
 
     @Property(tries = 500)
     void singleBitFlipIsCaughtByCrcNotMisparsed(
@@ -107,7 +102,7 @@ class EdgeFrameCodecPropertyTest {
         // (bytes 0..3) - corrupting the length prefix is a separate property (it is
         // rejected as a length mismatch, also fine, but we isolate CRC here).
         int totalBits = wire.length * 8;
-        int startBit = 4 * 8; // skip the length prefix
+        int startBit = 4 * 8;
         int span = totalBits - startBit;
         if (span <= 0) {
             return;
@@ -120,8 +115,9 @@ class EdgeFrameCodecPropertyTest {
         // trailer, so decode must fail; it must NOT return a different valid frame.
         EdgeFrameCodec.CodecException ex = assertThrows(EdgeFrameCodec.CodecException.class,
                 () -> EdgeFrameCodec.decode(corrupted));
-        // The flip is caught as corruption (CRC), bad version, or a malformed payload -
-        // all are FRAME_CORRUPT or BAD_WIRE_VERSION, never a silent wrong-frame.
+        // The flip is caught as corruption (CRC), bad version, an oversize length, or a
+        // malformed payload - all are FRAME_CORRUPT, BAD_WIRE_VERSION, or FRAME_TOO_LARGE, never a
+        // silent wrong-frame.
         assertTrue(ex.code() == ErrorCode.FRAME_CORRUPT
                         || ex.code() == ErrorCode.BAD_WIRE_VERSION
                         || ex.code() == ErrorCode.FRAME_TOO_LARGE,
@@ -147,13 +143,11 @@ class EdgeFrameCodecPropertyTest {
                 "a stale-CRC body flip must read as FRAME_CORRUPT (CRC verified first)");
     }
 
-    // length-cap violations rejected BEFORE allocation
 
     @Property(tries = 200)
     void oversizeLengthPrefixIsRejectedByPeekBeforeAllocation(
             @ForAll @IntRange(min = EdgeFrameCodec.MAX_EDGE_FRAME_SIZE + 1, max = Integer.MAX_VALUE) int bogusLen) {
         byte[] header = new byte[EdgeFrameCodec.HEADER_SIZE];
-        // Write an oversize length into the first 4 bytes.
         header[0] = (byte) (bogusLen >>> 24);
         header[1] = (byte) (bogusLen >>> 16);
         header[2] = (byte) (bogusLen >>> 8);
@@ -183,7 +177,6 @@ class EdgeFrameCodecPropertyTest {
         assertThrows(EdgeFrameCodec.CodecException.class, () -> EdgeFrameCodec.decode(copy));
     }
 
-    /** A NOTIFY batch over the count cap must be rejected at encode (FRAME_TOO_LARGE). */
     @Property(tries = 30)
     void notifyBatchOverCountCapRejectedAtEncode(
             @ForAll @IntRange(min = EdgeFrameCodec.MAX_NOTIFY_BATCH + 1,
@@ -204,16 +197,15 @@ class EdgeFrameCodecPropertyTest {
     @Property(tries = 100)
     void wrongVersionWithValidCrcIsRejectedAsBadVersion(
             @ForAll @IntRange(min = 0, max = 255) int rawVersion) {
-        // 0x01, 0x02, 0x03, and the 0x04 auth version are all accepted now (W1-3 / ADR-0045 / AU3-3);
-        // only OTHER versions are BAD_WIRE_VERSION. (A business CURSOR_ACK stamped 0x04 is a legal-version
-        // but illegal-type frame -> FRAME_CORRUPT, not BAD_WIRE_VERSION, so 0x04 is skipped here.)
+        // 0x01, 0x02, 0x03, and the 0x04 auth version are all accepted now; only OTHER versions are
+        // BAD_WIRE_VERSION. (A business CURSOR_ACK stamped 0x04 is a legal-version but illegal-type frame
+        // -> FRAME_CORRUPT, not BAD_WIRE_VERSION, so 0x04 is skipped here.)
         if ((byte) rawVersion == EdgeFrameCodec.EDGE_WIRE_VERSION
                 || (byte) rawVersion == EdgeFrameCodec.EDGE_WIRE_VERSION_V2
                 || (byte) rawVersion == EdgeFrameCodec.EDGE_WIRE_VERSION_V3
                 || (byte) rawVersion == EdgeFrameCodec.EDGE_WIRE_VERSION_V4) {
             return;
         }
-        // A minimal CURSOR_ACK frame, then rewrite version + fix CRC.
         byte[] wire = EdgeFrameCodec.encode(new EdgeFrame.CursorAck(7));
         wire[4] = (byte) rawVersion;
         CRC32C crc = new CRC32C();
@@ -242,9 +234,7 @@ class EdgeFrameCodecPropertyTest {
         assertThrows(IllegalArgumentException.class, () -> FrameType.fromCode(99));
     }
 
-    // Watch frames (0x02)
 
-    /** Every watch frame round-trips byte-for-byte through a 0x02 encode/decode. */
     @Property(tries = 500)
     void roundTripPreservesEveryWatchFrame(@ForAll("watchFrames") EdgeFrame frame) {
         byte[] wire = EdgeFrameCodec.encode(frame, V2);
@@ -253,7 +243,7 @@ class EdgeFrameCodecPropertyTest {
     }
 
     /**
-     * The per-shard cursor vector (W3-5) round-trips through a WATCH_PROGRESS carrier with
+     * The per-shard cursor vector round-trips through a WATCH_PROGRESS carrier with
      * its components preserved in unsigned-ascending order - empty (from-now), single
      * ({@code N=1}), and multi-component forms.
      */
@@ -267,7 +257,7 @@ class EdgeFrameCodecPropertyTest {
                 "components preserved in unsigned-sorted order");
     }
 
-    /** A WATCH_CREATE cursor (the resume token, W5-4) round-trips for every cursor form. */
+    /** A WATCH_CREATE cursor (the resume token) round-trips for every cursor form. */
     @Property(tries = 300)
     void cursorVectorRoundTripsThroughWatchCreate(@ForAll("watchCursors") WatchCursor cursor) {
         EdgeFrame.WatchCreate wc = new EdgeFrame.WatchCreate(
@@ -280,7 +270,6 @@ class EdgeFrameCodecPropertyTest {
     /** Construction enforces the cursor invariant: unsigned-ascending gid, no dup, non-negative S. */
     @Property(tries = 1)
     void cursorConstructionInvariants() {
-        // Duplicate gid rejected.
         assertThrows(IllegalArgumentException.class, () -> new WatchCursor(List.of(
                 new WatchCursor.Component(5, 1L), new WatchCursor.Component(5, 2L))));
         // Unsigned ordering: gid -1 == 0xFFFFFFFF is the LARGEST u32, so it must come last.
@@ -291,16 +280,14 @@ class EdgeFrameCodecPropertyTest {
                 new WatchCursor.Component(1, 1L), new WatchCursor.Component(-1, 2L)));
         assertEquals(2, ok.components().size());
         assertFalse(ok.isFromNow());
-        // Negative S rejected at the component level.
         assertThrows(IllegalArgumentException.class, () -> new WatchCursor.Component(0, -1L));
-        // from-now / single factories.
         assertTrue(WatchCursor.fromNow().isFromNow());
         assertEquals(0, WatchCursor.of(0, 9L).components().get(0).gid());
         assertEquals(9L, WatchCursor.of(0, 9L).components().get(0).s());
     }
 
     /**
-     * The signed-i32 {@code val_len} sentinel (W5-6) survives a round-trip: a non-empty PUT
+     * The signed-i32 {@code val_len} sentinel survives a round-trip: a non-empty PUT
      * (val_len &gt; 0), an empty PUT (val_len == 0, value PRESENT not null), and a DELETE
      * (val_len == -1, value null) are each reconstructed exactly.
      */
@@ -321,7 +308,6 @@ class EdgeFrameCodecPropertyTest {
         assertTrue(cs.get(2).isDelete());
     }
 
-    /** A WATCH_* type stamped on a 0x01 frame (CRC repaired) decodes as FRAME_CORRUPT (W5-11). */
     @Property(tries = 1)
     void watchTypeStampedV1DecodesAsCorrupt() {
         byte[] wire = EdgeFrameCodec.encode(new EdgeFrame.WatchCancel(7L), V2);
@@ -340,7 +326,6 @@ class EdgeFrameCodecPropertyTest {
                 "a watch type on a 0x01-stamped frame must read as FRAME_CORRUPT");
     }
 
-    // arbitraries
 
     @Provide
     Arbitrary<EdgeFrame> frames() {
@@ -413,7 +398,6 @@ class EdgeFrameCodecPropertyTest {
                 .as(EdgeFrame.ErrorClose::new);
     }
 
-    // watch arbitraries
 
     @Provide
     Arbitrary<EdgeFrame> watchFrames() {

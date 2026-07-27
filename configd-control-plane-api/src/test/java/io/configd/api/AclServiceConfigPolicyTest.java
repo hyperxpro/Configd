@@ -40,7 +40,6 @@ class AclServiceConfigPolicyTest {
         return new PolicyRule(prefix, Set.of(), EnumSet.copyOf(Set.of(caps)));
     }
 
-    // empty-default byte-identity
 
     @Test
     void defaultSnapshotIsEmpty() {
@@ -58,17 +57,15 @@ class AclServiceConfigPolicyTest {
         assertFalse(acl.isAllowed("bob", "a.b", READ));
     }
 
-    // additive grants via config
 
     @Test
     void configRoleViaAssertedRoleNameGrantsAdditively() {
         AclService acl = new AclService();
         acl.publishConfigPolicy(new ConfigPolicy(
                 Map.of("reader", role("reader", allow("x.", READ))), Map.of()));
-        // principal asserts "reader" (authn) -> resolves against the config role
         assertTrue(acl.isAllowed("alice", Set.of("reader"), "x.y", READ));
-        assertFalse(acl.isAllowed("alice", Set.of("reader"), "y.z", READ)); // prefix miss
-        assertFalse(acl.isAllowed("alice", Set.of(), "x.y", READ));         // not asserted -> no grant
+        assertFalse(acl.isAllowed("alice", Set.of("reader"), "y.z", READ));
+        assertFalse(acl.isAllowed("alice", Set.of(), "x.y", READ));
     }
 
     @Test
@@ -79,64 +76,59 @@ class AclServiceConfigPolicyTest {
                 Map.of("alice", Set.of("reader"))));
         // 3-arg (no asserted roles): authority flows purely from the CONFIG binding
         assertTrue(acl.isAllowed("alice", "x.y", READ));
-        assertFalse(acl.isAllowed("bob", "x.y", READ)); // bob not bound
+        assertFalse(acl.isAllowed("bob", "x.y", READ));
     }
 
     @Test
     void configComposesWithOwnGrants() {
         AclService acl = new AclService();
-        acl.grant("x.", "alice", EnumSet.of(READ));                 // own grant: READ
+        acl.grant("x.", "alice", EnumSet.of(READ));
         acl.publishConfigPolicy(new ConfigPolicy(
                 Map.of("writer", role("writer", allow("x.", WRITE))),
-                Map.of("alice", Set.of("writer"))));                // config: WRITE
-        assertTrue(acl.isAllowed("alice", "x.y", READ));            // from own grant
-        assertTrue(acl.isAllowed("alice", "x.y", WRITE));           // from config role - additive union
+                Map.of("alice", Set.of("writer"))));
+        assertTrue(acl.isAllowed("alice", "x.y", READ));
+        assertTrue(acl.isAllowed("alice", "x.y", WRITE));
     }
 
-    // absolute deny-precedence ACROSS layers
 
     @Test
     void configDenyOverridesOwnAllow() {
         AclService acl = new AclService();
-        acl.grant("a.", "alice", EnumSet.of(READ, WRITE));         // own grant allows READ+WRITE
+        acl.grant("a.", "alice", EnumSet.of(READ, WRITE));
         acl.publishConfigPolicy(new ConfigPolicy(
                 Map.of("carve", role("carve", deny("a.", WRITE))),
-                Map.of("alice", Set.of("carve"))));                 // config DENY WRITE
-        assertTrue(acl.isAllowed("alice", "a.b", READ));           // READ survives
-        assertFalse(acl.isAllowed("alice", "a.b", WRITE));         // WRITE denied with absolute precedence
+                Map.of("alice", Set.of("carve"))));
+        assertTrue(acl.isAllowed("alice", "a.b", READ));
+        assertFalse(acl.isAllowed("alice", "a.b", WRITE));
     }
 
     @Test
     void ownDenyOverridesConfigAllow() {
         AclService acl = new AclService();
-        acl.deny("a.", "alice", EnumSet.of(WRITE));                // own DENY WRITE
+        acl.deny("a.", "alice", EnumSet.of(WRITE));
         acl.publishConfigPolicy(new ConfigPolicy(
                 Map.of("w", role("w", allow("a.", WRITE))),
-                Map.of("alice", Set.of("w"))));                     // config ALLOW WRITE
+                Map.of("alice", Set.of("w"))));
         assertFalse(acl.isAllowed("alice", "a.b", WRITE));         // own deny wins (subtracted once over both)
     }
 
-    // effective-WATCH = WATCH AND READ through config
 
     @Test
     void configWatchFloorRequiresRead() {
         AclService acl = new AclService();
-        // WATCH granted but not READ -> effective WATCH is false.
         acl.publishConfigPolicy(new ConfigPolicy(
                 Map.of("w", role("w", allow("x.", WATCH))), Map.of("alice", Set.of("w"))));
         assertFalse(acl.isAllowed("alice", "x.y", WATCH));
-        // WATCH + READ -> effective WATCH true.
         acl.publishConfigPolicy(new ConfigPolicy(
                 Map.of("w", role("w", allow("x.", WATCH, READ))), Map.of("alice", Set.of("w"))));
         assertTrue(acl.isAllowed("alice", "x.y", WATCH));
         // A config READ-deny removes effective WATCH even if WATCH allowed (cross-layer floor).
-        acl.grant("x.", "alice", EnumSet.of(READ, WATCH));         // own grant gives READ+WATCH
+        acl.grant("x.", "alice", EnumSet.of(READ, WATCH));
         acl.publishConfigPolicy(new ConfigPolicy(
                 Map.of("d", role("d", deny("x.", READ))), Map.of("alice", Set.of("d"))));
-        assertFalse(acl.isAllowed("alice", "x.y", WATCH));         // READ denied -> WATCH floored off
+        assertFalse(acl.isAllowed("alice", "x.y", WATCH));
     }
 
-    // the atomic publish-swap
 
     @Test
     void publishSwapReplacesPolicyWholesale() {
@@ -145,9 +137,9 @@ class AclServiceConfigPolicyTest {
                 Map.of("r", role("r", allow("x.", READ))), Map.of("alice", Set.of("r")));
         acl.publishConfigPolicy(grantP);
         assertTrue(acl.isAllowed("alice", "x.y", READ));
-        acl.publishConfigPolicy(ConfigPolicy.EMPTY);               // swap back to empty
+        acl.publishConfigPolicy(ConfigPolicy.EMPTY);
         assertFalse(acl.isAllowed("alice", "x.y", READ));
-        acl.publishConfigPolicy(grantP);                            // swap forward again
+        acl.publishConfigPolicy(grantP);
         assertTrue(acl.isAllowed("alice", "x.y", READ));
     }
 
@@ -192,7 +184,7 @@ class AclServiceConfigPolicyTest {
             try {
                 while (!done.get()) {
                     if (!acl.isAllowed("alice", "x.y", READ)) {
-                        tornOrInconsistent.set(true);   // false is impossible: BOTH snapshots grant it
+                        tornOrInconsistent.set(true);
                     }
                     reads.incrementAndGet();
                 }
@@ -222,7 +214,6 @@ class AclServiceConfigPolicyTest {
         AclService acl = new AclService();
         ConfigPolicy newer = new ConfigPolicy(
                 Map.of("r", role("r", allow("x.", READ))), Map.of("alice", Set.of("r")));
-        // Publish a NEWER store version first.
         acl.publishConfigPolicy(100L, newer);
         assertTrue(acl.isAllowed("alice", "x.y", READ));
         // An out-of-order rebuild that scanned an OLDER store version must be IGNORED (monotonic publish),
@@ -231,15 +222,12 @@ class AclServiceConfigPolicyTest {
         assertTrue(acl.isAllowed("alice", "x.y", READ),
                 "a stale (older-version) publish must not clobber the newer policy");
         assertEquals(newer, acl.configPolicy());
-        // Equal version is also ignored (idempotent rebuild at the same version).
         acl.publishConfigPolicy(100L, ConfigPolicy.EMPTY);
         assertTrue(acl.isAllowed("alice", "x.y", READ), "an equal-version publish must not clobber");
-        // A strictly-newer version DOES supersede.
         acl.publishConfigPolicy(150L, ConfigPolicy.EMPTY);
         assertFalse(acl.isAllowed("alice", "x.y", READ));
     }
 
-    // carve mechanism (motivates the loader's reservation)
 
     @Test
     void configBindingToRootWouldCarveAtServiceLevel_motivatesLoaderReservation() {
@@ -255,7 +243,6 @@ class AclServiceConfigPolicyTest {
         assertFalse(acl.isAllowed("root", Set.of(), "anything", READ),
                 "with a config binding root→deny-all, root IS carved at the AclService level (vector is real)");
 
-        // Remove the binding (the production state after loader reservation): root is fully authorized again.
         acl.publishConfigPolicy(ConfigPolicy.EMPTY);
         for (AclService.Permission perm : AclService.Permission.values()) {
             assertTrue(acl.isAllowed("root", Set.of(), "anything", perm),
@@ -295,8 +282,6 @@ class AclServiceConfigPolicyTest {
                 Map.of("admin", role("admin", deny("", EnumSet.allOf(AclService.Permission.class)
                         .toArray(new AclService.Permission[0])))),
                 Map.of()));
-        // Asserting {"admin"} (if root asserted its own name as a role) resolves the config "admin"
-        // deny-all -> root carved.
         assertFalse(acl.isAllowed("root", Set.of("admin"), "anything", READ),
                 "asserting the 'admin' role with a config 'admin' deny-all role present carves root — this is "
                         + "the vector N1 (root asserts Set.of()) and N3 (reserve 'admin') close");

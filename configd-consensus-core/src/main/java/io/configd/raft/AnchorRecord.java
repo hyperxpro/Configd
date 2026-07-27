@@ -30,18 +30,14 @@ record AnchorRecord(long anchorSeq, long currentTerm, int votedFor,
                     long lastDurableIndex, long lastDurableTerm,
                     long snapshotIndex, long snapshotTerm) {
 
-    /** {@code votedFor} sentinel for "no vote in the current term". */
     static final int VOTED_FOR_NULL = -1;
 
-    /** Fixed on-wire payload size: six 8-byte longs plus the 4-byte votedFor. */
-    static final int PAYLOAD_LEN = 8 + 8 + 4 + 8 + 8 + 8 + 8; // 52
+    static final int PAYLOAD_LEN = 8 + 8 + 4 + 8 + 8 + 8 + 8;
 
-    /** The bootstrap record a fresh node lays down: seq=1, everything else zero/null. */
     static AnchorRecord fresh() {
         return new AnchorRecord(1L, 0L, VOTED_FOR_NULL, 0L, 0L, 0L, 0L);
     }
 
-    /** Serializes exactly {@link #PAYLOAD_LEN} big-endian bytes. */
     byte[] encodePayload() {
         ByteBuffer buf = ByteBuffer.allocate(PAYLOAD_LEN);
         buf.putLong(anchorSeq);
@@ -75,7 +71,6 @@ record AnchorRecord(long anchorSeq, long currentTerm, int votedFor,
         return new AnchorRecord(seq, term, voted, durIndex, durTerm, snapIndex, snapTerm);
     }
 
-    /** Copy with a new {@code anchorSeq} (assigned by the writer just before a slot write). */
     AnchorRecord withSeq(long seq) {
         return new AnchorRecord(seq, currentTerm, votedFor,
                 lastDurableIndex, lastDurableTerm, snapshotIndex, snapshotTerm);

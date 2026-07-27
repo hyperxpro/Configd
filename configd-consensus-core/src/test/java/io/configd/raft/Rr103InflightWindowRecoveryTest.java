@@ -40,7 +40,6 @@ class Rr103InflightWindowRecoveryTest {
         assertEquals(RaftRole.LEADER, n1.role(), "precondition: N1 leader");
         assertTrue(n1.log().commitIndex() >= 1, "precondition: no-op committed");
 
-        // Baseline: commit a batch with all three replicating, so N3 starts current.
         for (int i = 0; i < 4; i++) {
             assertTrue(n1.propose(("base" + i).getBytes()).accepted());
         }
@@ -48,7 +47,6 @@ class Rr103InflightWindowRecoveryTest {
         long baseCommit = n1.log().commitIndex();
         assertEquals(baseCommit, n3.log().commitIndex(), "precondition: N3 fully current before partition");
 
-        // Injection: isolate N3, then pin the leader's window toward it.
         cluster.partition(N3);
         // Propose more than maxInflightAppends (=10) entries in a tight burst with NO
         // intervening tick (so no heartbeat, no decay): each broadcast increments
@@ -85,7 +83,6 @@ class Rr103InflightWindowRecoveryTest {
             }
         }
 
-        // Same-term backfill, no election needed.
         assertEquals(termBeforeHeal, n1.currentTerm(),
                 "recovery must be by backfill within the SAME term — no new election");
         assertEquals(RaftRole.LEADER, n1.role(), "N1 must remain leader through recovery");

@@ -13,25 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-/**
- * Assertion-twin firing harness - config-store half.
- * <p>
- * Fires the two twins that live in {@link ConfigStateMachine}:
- * <ul>
- *   <li>{@code per_key_order} - a PUT whose assigned version is not strictly greater than
- *       the existing value's version. Driven by reflectively rewinding the sequence counter
- *       (only the precondition is injected - the detection, throw, and metric path are the
- *       real production code).</li>
- *   <li>{@code apply_owner_thread} - the single-writer owner-thread tripwire. We bind the
- *       owner on one thread (first apply), then drive {@code apply} from a SECOND thread and
- *       assert (a) the wired {@link ConfigStateMachine.InvariantChecker} throws and (b)
- *       {@code onApplyOwnerThreadViolation} increments.</li>
- * </ul>
- * This class is run alongside the consensus-core half ({@code io.configd.raft.AssertionTwinFiringTest}).
- */
 class AssertionTwinFiringTest {
 
-    /** Records every fired twin name and still throws (test/sim semantics). */
     static final class RecordingChecker implements ConfigStateMachine.InvariantChecker {
         final List<String> fired = new ArrayList<>();
 
@@ -44,7 +27,6 @@ class AssertionTwinFiringTest {
         }
     }
 
-    /** Counts owner-thread violations so the metric path is asserted too. */
     static final class CountingMetrics implements StateMachineMetrics {
         volatile int ownerViolations;
         @Override public void onWriteCommitSuccess(long applyDurationNanos) { }
@@ -62,7 +44,6 @@ class AssertionTwinFiringTest {
 
         sm.apply(1L, 1L, CommandCodec.encodePut("k", new byte[]{1}));
 
-        // Rewind the sequence counter so the next PUT computes a version <= existing.
         Field scf = ConfigStateMachine.class.getDeclaredField("sequenceCounter");
         scf.setAccessible(true);
         scf.setLong(sm, 0L);
@@ -71,7 +52,6 @@ class AssertionTwinFiringTest {
             sm.apply(2L, 1L, CommandCodec.encodePut("k", new byte[]{2}));
             fail("expected per_key_order to fire on a non-monotonic version");
         } catch (AssertionError expected) {
-            // production check threw via the wired checker
         }
         assertTrue(checker.fired.contains("per_key_order"),
                 "per_key_order must be observed firing; fired=" + checker.fired);
@@ -84,12 +64,10 @@ class AssertionTwinFiringTest {
         ConfigStateMachine sm = new ConfigStateMachine(
                 new VersionedConfigStore(), Clock.system(), checker, null, metrics);
 
-        // First apply on THIS thread binds the owner.
         sm.apply(1L, 1L, CommandCodec.encodePut("a", new byte[]{1}));
         assertTrue(checker.fired.isEmpty(), "no violation on the owner thread");
         assertEquals(0, metrics.ownerViolations);
 
-        // Second apply from a DIFFERENT thread must trip the owner-thread tripwire.
         AtomicReference<Throwable> thrown = new AtomicReference<>();
         Thread offOwner = new Thread(() -> {
             try {

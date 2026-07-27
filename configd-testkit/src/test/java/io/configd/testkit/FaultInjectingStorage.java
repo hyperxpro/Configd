@@ -11,11 +11,10 @@ import java.util.concurrent.atomic.AtomicLong;
  * faults that throw / delay / truncate in place: write-failure, ENOSPC, fsync-failure,
  * short-read, latency. It composes over any delegate {@code Storage}.
  * <p>
- * Scope and fidelity (see {@code docs/session-4/storage-fault-layer-design.md}): this
- * injector exercises how CALLERS react to a storage op that fails or lies in place. It
- * does NOT model the crash/power-loss durability window - torn-write, fsync-lie, and
- * crash-at-point belong to {@code CrashStorage} (consensus-core test), which alone
- * faithfully models the directory-fsync-pending window (the fsync-ack gap). A
+ * Scope and fidelity: this injector exercises how CALLERS react to a storage op that fails
+ * or lies in place. It does NOT model the crash/power-loss durability window - torn-write,
+ * fsync-lie, and crash-at-point belong to {@code CrashStorage} (consensus-core test), which
+ * alone faithfully models the directory-fsync-pending window (the fsync-ack gap). A
  * {@code FaultInjectingStorage} over {@code CrashStorage} composes the two: operational
  * faults plus a faithful crash model.
  * <p>
@@ -35,7 +34,6 @@ public final class FaultInjectingStorage implements Storage {
     private long enospcLimitBytes = -1;
     private String shortReadLog;
 
-    // Observability for the oracle assertions.
     private final AtomicLong bytesAppended = new AtomicLong();
     private final AtomicLong writeFaultsFired = new AtomicLong();
     private final AtomicLong syncFaultsFired = new AtomicLong();
@@ -119,7 +117,7 @@ public final class FaultInjectingStorage implements Storage {
     public List<byte[]> readLog(String logName) {
         List<byte[]> frames = delegate.readLog(logName);
         if (logName.equals(shortReadLog) && !frames.isEmpty()) {
-            return List.copyOf(frames.subList(0, frames.size() - 1)); // drop the last frame
+            return List.copyOf(frames.subList(0, frames.size() - 1));
         }
         return frames;
     }

@@ -38,7 +38,7 @@ class AclServiceConfigPolicyVersionTest {
         assertEquals(100L, acl.configPolicyVersion());
         acl.publishConfigPolicy(150L, ConfigPolicy.EMPTY);
         assertEquals(150L, acl.configPolicyVersion());
-        acl.publishConfigPolicy(120L, ConfigPolicy.EMPTY); // stale (<= current) -> ignored
+        acl.publishConfigPolicy(120L, ConfigPolicy.EMPTY);
         assertEquals(150L, acl.configPolicyVersion(), "the version does not regress on a stale publish");
     }
 }

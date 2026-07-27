@@ -55,7 +55,6 @@ class BootstrapCutoverExactnessTest {
         @Override public long nanoTime() { return timeMs * 1_000_000L; }
     }
 
-    /** Records edge->server frames; offers always succeed. */
     static final class RecordingSink implements EdgeClientCore.FrameSink {
         final List<EdgeFrame> sent = new ArrayList<>();
         @Override public boolean offer(EdgeFrame frame) {
@@ -98,7 +97,6 @@ class BootstrapCutoverExactnessTest {
                 List.of(new ConfigMutation.Put(key, bytes(value)))));
     }
 
-    /** The bootstrap state at S: keys k1..k5 (k5 = seq S's effect, value "v5"). */
     private static ConfigSnapshot bootstrapStateAtS() {
         HamtMap<String, VersionedValue> data = HamtMap.empty();
         for (long seq = 1; seq <= S; seq++) {
@@ -118,7 +116,6 @@ class BootstrapCutoverExactnessTest {
         core.onFrame(new EdgeFrame.SnapshotEnd(seq));
     }
 
-    /** The zero-state bootstrap handshake + transfer, as the wire delivers it. */
     private void bootstrap() {
         core.onFrame(new EdgeFrame.SubscribeOk(S, EdgeFrame.Mode.SNAPSHOT_FIRST));
         deliverSnapshot(bootstrapStateAtS(), S);
@@ -150,7 +147,6 @@ class BootstrapCutoverExactnessTest {
         assertArrayEquals(bytes("v5"), core.get("k5").value(),
                 "the snapshot's effect for seq S survives byte-identically — no "
                         + "double-application divergence");
-        // The cutover stays exact afterwards.
         core.onFrame(new EdgeFrame.Notify(List.of(notif(S + 1, "k6", "v6"))));
         assertEquals(S + 1, core.cursor());
     }
@@ -173,7 +169,6 @@ class BootstrapCutoverExactnessTest {
                 .resumeCursor(), "the heal carries the REAL cursor S — the server's "
                 + "decideMode then resolves replay vs re-bootstrap");
 
-        // The healed redelivery: S+1 then S+2 in order - each applies exactly once.
         core.onFrame(new EdgeFrame.Notify(List.of(
                 notif(S + 1, "k6", "v6"), notif(S + 2, "k7", "v7"))));
         assertEquals(S + 2, core.cursor());
@@ -196,7 +191,6 @@ class BootstrapCutoverExactnessTest {
             assertArrayEquals(bytes("v" + seq), core.get("k" + seq).value());
         }
         assertEquals(S, core.currentVersion());
-        // And the cutover is still exact afterwards.
         core.onFrame(new EdgeFrame.Notify(List.of(notif(S + 1, "k6", "v6"))));
         assertEquals(S + 1, core.cursor());
         assertEquals(0, core.gapsDetected());

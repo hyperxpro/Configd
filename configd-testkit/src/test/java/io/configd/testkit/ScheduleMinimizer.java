@@ -26,10 +26,6 @@ final class ScheduleMinimizer {
         this.stillFails = stillFails;
     }
 
-    /**
-     * Minimizes {@code failing} to a 1-minimal schedule that still satisfies
-     * {@code stillFails}. Requires that {@code failing} already fails.
-     */
     AdversarialSchedule minimize(AdversarialSchedule failing) {
         if (!stillFails.test(failing)) {
             throw new IllegalArgumentException("input schedule does not reproduce the failure");
@@ -40,7 +36,6 @@ final class ScheduleMinimizer {
         while (reduced) {
             reduced = false;
 
-            // Try dropping each fault event.
             for (int i = 0; i < current.events().size(); i++) {
                 AdversarialSchedule candidate = withoutEvent(current, i);
                 if (stillFails.test(candidate)) {
@@ -53,7 +48,6 @@ final class ScheduleMinimizer {
                 continue;
             }
 
-            // Then try dropping each client op.
             for (int i = 0; i < current.ops().size(); i++) {
                 AdversarialSchedule candidate = withoutOp(current, i);
                 if (stillFails.test(candidate)) {
@@ -78,7 +72,6 @@ final class ScheduleMinimizer {
         return s.withEventsAndOps(s.events(), ops, s.totalTicks());
     }
 
-    /** Serializes a (minimized) schedule to a standalone, replayable JSON artifact. */
     static String toJson(AdversarialSchedule s) {
         StringBuilder sb = new StringBuilder();
         sb.append("{\"seed\":").append(s.seed())

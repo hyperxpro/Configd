@@ -196,7 +196,6 @@ class SimulatedNetworkTest {
         void isolateDoesNotAffectThirdParty() {
             network.isolate(NODE_0, NODE_1);
 
-            // NODE_0 -> NODE_2 should still work
             network.send(NODE_0, NODE_2, "ok", 1000L);
             assertEquals(1, network.pendingCount());
             network.deliverDue(1005L);

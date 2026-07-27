@@ -46,7 +46,6 @@ class PoisonPillRebootstrapTest {
         @Override public long nanoTime() { return timeMs * 1_000_000L; }
     }
 
-    /** Throws on configured seqs through the production catch path. */
     static final class PoisonInjector implements EdgeClientCore.ApplyFaultInjector {
         long poisonSeq = -1;
         boolean poisonSnapshots;
@@ -117,7 +116,6 @@ class PoisonPillRebootstrapTest {
         core.onFrame(new EdgeFrame.SnapshotEnd(seq));
     }
 
-    /** Drains exactly one directive, asserting its type, and acks the reconnect cycle. */
     private <T extends EdgeClientCore.ConnectionDirective> T drainOne(Class<T> type) {
         EdgeClientCore.ConnectionDirective d = core.pollDirective();
         assertNotNull(d, "expected a pending directive");
@@ -139,7 +137,6 @@ class PoisonPillRebootstrapTest {
             applySeqOne();
             injector.poisonSeq = 2;
 
-            // Failures 1 and 2: bounded retries - resubscribe at the CURRENT cursor.
             for (int attempt = 1; attempt <= 2; attempt++) {
                 core.onFrame(new EdgeFrame.Notify(List.of(notif(2, 1, 2, "k", "v2"))));
                 var r = drainOne(EdgeClientCore.ConnectionDirective.ReconnectNextEndpoint.class);
@@ -150,7 +147,6 @@ class PoisonPillRebootstrapTest {
             assertEquals(2, core.poisonPolicy().retries());
             assertEquals(0, core.poisonPolicy().quarantines());
 
-            // Failure 3 (maxRetries): quarantine - forced snapshot re-bootstrap at cursor 0.
             core.onFrame(new EdgeFrame.Notify(List.of(notif(2, 1, 2, "k", "v2"))));
             var rb = drainOne(EdgeClientCore.ConnectionDirective.ReconnectNextEndpoint.class);
             assertEquals(0, rb.resumeCursor(), "ADR-0040: forced re-bootstrap is cursor 0");
@@ -161,7 +157,6 @@ class PoisonPillRebootstrapTest {
                     "configd.edge.poison_pill emitted on quarantine");
             assertEquals(3, metrics.counter(PoisonPillPolicy.RETRIES_METRIC).get());
 
-            // The store never advanced past the poison and never diverged.
             assertEquals(1, core.cursor());
             assertEquals(1, core.currentVersion());
             assertFalse(core.isTerminal());
@@ -176,7 +171,6 @@ class PoisonPillRebootstrapTest {
             drainOne(EdgeClientCore.ConnectionDirective.ReconnectNextEndpoint.class);
             core.onReconnected();
 
-            // The fault was transient: the redelivered seq 2 now applies.
             injector.poisonSeq = -1;
             core.onFrame(new EdgeFrame.Notify(List.of(notif(2, 1, 2, "k", "v2"))));
             assertEquals(2, core.cursor());
@@ -231,7 +225,6 @@ class PoisonPillRebootstrapTest {
             assertFalse(core.isTerminal());
             assertEquals(0, core.poisonPolicy().terminals());
 
-            // The chain resumes past the poison; the bad delta is never re-applied.
             core.onFrame(new EdgeFrame.Notify(List.of(notif(6, 5, 6, "k", "v6"))));
             assertEquals(6, core.cursor());
             assertArrayEquals(bytes("v6"), core.get("k").value());
@@ -256,7 +249,6 @@ class PoisonPillRebootstrapTest {
         void snapshotFailingToApplyDuringForcedRebootstrapIsTerminal() {
             quarantineSeqTwo();
 
-            // The forced re-bootstrap's snapshot itself fails to apply.
             injector.poisonSnapshots = true;
             feedSnapshot(snapshot(5, "k", "v5"), 5);
 
@@ -297,7 +289,6 @@ class PoisonPillRebootstrapTest {
             assertEquals(1, core.cursor(), "terminal core must not advance");
             core.tick(clock.currentTimeMillis());
 
-            // Reads still serve the last good state during the brief exit window.
             assertArrayEquals(bytes("v1"), core.get("k").value());
         }
 
@@ -308,7 +299,6 @@ class PoisonPillRebootstrapTest {
             feedSnapshot(snapshot(5, "k", "v5"), 5);
             assertEquals(1, core.poisonPolicy().terminals());
 
-            // A direct policy poke after terminal stays terminal without re-counting noise.
             assertEquals(PoisonPillPolicy.Action.TERMINAL,
                     core.poisonPolicy().onApplyFailure(9, new IllegalStateException("x")));
             assertEquals(1, core.poisonPolicy().terminals(), "terminal is latched, not re-counted");
@@ -347,7 +337,6 @@ class PoisonPillRebootstrapTest {
             assertEquals(1, r.resumeCursor());
             assertFalse(core.isTerminal());
 
-            // And it heals when the re-sent snapshot applies.
             core.onReconnected();
             injector.poisonSnapshots = false;
             feedSnapshot(snapshot(5, "k", "v5"), 5);
@@ -415,7 +404,7 @@ class PoisonPillRebootstrapTest {
         @Test
         void quarantineReleasesAtExactlyTheQuarantinedSeqNotBelow() {
             PoisonPillPolicy p = quarantined(new PoisonPillPolicy(), 7);
-            p.onProgress(6); // one short of the poison: NOT covered yet
+            p.onProgress(6);
             assertEquals(7, p.quarantinedSeq(), "a snapshot below the poison seq is no recovery");
             p.onProgress(7); // exactly covered
             assertEquals(-1, p.quarantinedSeq());

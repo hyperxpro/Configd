@@ -28,7 +28,6 @@ class WireH2HCorrectnessTest {
     private static final int VALUE_BYTES = 64;
     private static final int ED25519_SIG_BYTES = 64;
 
-    // Consensus wire format: [4B BE senderId] || FrameCodec frame.
 
     @Test
     void consensusSendWireInto_isByteIdenticalToEncodeWire() {
@@ -64,7 +63,6 @@ class WireH2HCorrectnessTest {
         return wire;
     }
 
-    // Fan-out NOTIFY frame.
 
     @Test
     void fanOutNotifyInto_isByteIdenticalToEdgeFrameCodec() {
@@ -79,7 +77,6 @@ class WireH2HCorrectnessTest {
             assertArrayEquals(expected, actual,
                     "best-JDK NOTIFY encode must be byte-identical (count=" + notifyCount + ")");
 
-            // And the bytes must round-trip through the production decoder unchanged.
             EdgeFrame decoded = EdgeFrameCodec.decode(actual);
             assertEquals(EdgeFrame.Notify.class, decoded.getClass());
             assertEquals(notifyCount, ((EdgeFrame.Notify) decoded).notifications().size());

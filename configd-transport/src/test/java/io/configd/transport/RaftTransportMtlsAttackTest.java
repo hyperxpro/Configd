@@ -69,14 +69,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RaftTransportMtlsAttackTest {
 
     private static Path fixtureDir;
-    // Server identity + trust store (trusts the legit client and itself).
     private static Path serverKeyStore;
     private static Path serverTrustStore;
     // Legit client identity (trusted) - used by the downgrade test, where the attack is the
     // version offer, not the credential, so the cert must otherwise be valid and trusted.
     private static Path clientKeyStore;
-    // CA-signed client whose END-ENTITY certificate is already expired (chain anchors at the trusted
-    // CA, so path validation reaches the leaf and enforces notAfter).
     private static Path expiredKeyStore;
     private static final char[] PASS = "changeit".toCharArray();
 
@@ -101,10 +98,6 @@ class RaftTransportMtlsAttackTest {
         exportCert(serverKeyStore, "server", serverCert);
         exportCert(clientKeyStore, "client", clientCert);
 
-        // A CA, and an expired end-entity client signed by it. The truststore anchors at the CA, so
-        // path validation reaches the leaf and enforces its dead validity window (notAfter ~1 day ago).
-        // An expired self-signed leaf imported as an anchor would be accepted (RFC 5280 section 6.1),
-        // so the CA layer is what makes this a meaningful expiry test.
         genCa(caKeyStore, "CN=configd-test-ca,O=configd-test");
         exportCert(caKeyStore, "ca", caCert);
         genCaSignedExpiredEndEntity(expiredKeyStore, caKeyStore, caCert,
@@ -159,20 +152,16 @@ class RaftTransportMtlsAttackTest {
             OutputStream out = plain.getOutputStream();
             out.write(wire);
             out.flush();
-            // The server, if it speaks plaintext, would decode and dispatch immediately. Read until
-            // EOF/timeout (the server drops the bad TLS record) - a bounded wait, never a hang.
             drainBriefly(plain.getInputStream());
         } catch (IOException expected) {
             // Connection reset by the TLS server rejecting the record - also a valid rejection.
         }
 
-        // Give any (erroneous) async dispatch a bounded window to surface, then assert silence.
         assertNoInboundWithin(inboundCount, 1_000);
         assertEquals(0, inboundCount.get(),
                 "a plaintext frame must never be decoded as a peer message by the TLS-only Raft server");
     }
 
-    // Expired client certificate rejected.
 
     @Test
     @Timeout(120)
@@ -208,7 +197,6 @@ class RaftTransportMtlsAttackTest {
         assertEquals(0, inboundCount.get(), "no frame may be delivered over a downgraded connection");
     }
 
-    // Server + attack helpers.
 
     private int startMtlsServer(Path keyStore, AtomicInteger inboundCount) throws Exception {
         TlsConfig serverTls = new TlsConfig(
@@ -223,9 +211,6 @@ class RaftTransportMtlsAttackTest {
         return server.localPort();
     }
 
-    /**
-     * Builds an {@link SSLSocket} from {@code clientCtx} and runs {@link #attemptHandshakeAndSend}.
-     */
     private boolean attemptHandshakeAndSend(SSLContext clientCtx, int port) throws Exception {
         SSLSocket sock = (SSLSocket) clientCtx.getSocketFactory().createSocket();
         return attemptHandshakeAndSend(sock, port);
@@ -263,7 +248,6 @@ class RaftTransportMtlsAttackTest {
         }
     }
 
-    /** Reads up to EOF or the socket timeout, discarding bytes. Bounded; never hangs. */
     private static void drainBriefly(InputStream in) throws IOException {
         byte[] buf = new byte[256];
         try {
@@ -275,7 +259,6 @@ class RaftTransportMtlsAttackTest {
         }
     }
 
-    /** Spin-waits up to {@code millis} asserting the inbound handler stays at zero. */
     private static void assertNoInboundWithin(AtomicInteger inboundCount, long millis)
             throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
@@ -301,7 +284,6 @@ class RaftTransportMtlsAttackTest {
         return wire;
     }
 
-    // SSLContext + keytool fixture builders.
 
     private static SSLContext clientContext(Path clientKs, Path trustStore) throws Exception {
         KeyManagerFactory kmf = null;
@@ -374,7 +356,6 @@ class RaftTransportMtlsAttackTest {
                 "-storepass", "changeit", "-keypass", "changeit");
         runKeytool("keytool", "-certreq", "-alias", "expired",
                 "-keystore", keyStore.toString(), "-storepass", "changeit", "-file", csr.toString());
-        // CA signs an ALREADY-EXPIRED end-entity cert (startdate 2 days ago, 1-day validity).
         runKeytool("keytool", "-gencert", "-alias", "ca",
                 "-keystore", caKeyStore.toString(), "-storepass", "changeit",
                 "-infile", csr.toString(), "-outfile", signed.toString(), "-rfc",

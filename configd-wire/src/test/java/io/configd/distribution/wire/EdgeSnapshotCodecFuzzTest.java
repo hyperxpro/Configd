@@ -57,7 +57,6 @@ class EdgeSnapshotCodecFuzzTest {
     private static final Duration DECODE_BUDGET = Duration.ofSeconds(2);
     private static final int MAX_FIELD = EdgeSnapshotCodec.MAX_ENTRY_FIELD_BYTES; // 1 MiB
 
-    // 1. deserialize: arbitrary body bytes.
 
     @Property(tries = 3000, seed = "424242")
     void arbitraryBodyBytesYieldSnapshotOrIllegalArgument(@ForAll("adversarialSized") byte[] body) {
@@ -69,7 +68,6 @@ class EdgeSnapshotCodecFuzzTest {
         assertDeserializeOracle(body);
     }
 
-    // 2. deserialize: structured mutation of a VALID body.
 
     /**
      * Overwrite a random 4-byte window of a valid body with a hostile int (negative, oversize field
@@ -90,7 +88,6 @@ class EdgeSnapshotCodecFuzzTest {
         assertDeserializeOracle(body);
     }
 
-    /** Truncate a valid body at EVERY offset - each prefix decodes-or-rejects, never underflows. */
     @Property(tries = 120, seed = "1002")
     void truncateValidBodyAtEveryOffsetIsTotal(@ForAll("validBodies") byte[] valid) {
         for (int cut = 0; cut < valid.length; cut++) {
@@ -109,7 +106,6 @@ class EdgeSnapshotCodecFuzzTest {
         assertDeserializeOracle(body);
     }
 
-    // 3. Round-trip fidelity (valid snapshots).
 
     @Property(tries = 300, seed = "1004")
     void serializeThenDeserializePreservesContent(@ForAll("snapshots") ConfigSnapshot snap) {
@@ -121,7 +117,6 @@ class EdgeSnapshotCodecFuzzTest {
         assertArrayEquals(body, EdgeSnapshotCodec.serialize(back));
     }
 
-    /** chunk() then reassemble() is a lossless identity for any valid body and any legal chunk size. */
     @Property(tries = 300, seed = "1005")
     void chunkThenReassembleIsLossless(
             @ForAll("snapshots") ConfigSnapshot snap,
@@ -131,9 +126,7 @@ class EdgeSnapshotCodecFuzzTest {
         assertArrayEquals(body, EdgeSnapshotCodec.reassemble(chunks));
     }
 
-    // 4. chunk() / reassemble() hostile inputs.
 
-    /** An out-of-range chunkBytes (0, negative, above the 1 MiB cap) is a clean IllegalArgument. */
     @Property(tries = 1, seed = "2001")
     void hostileChunkBytesRejected() {
         byte[] body = new byte[100];
@@ -143,7 +136,6 @@ class EdgeSnapshotCodecFuzzTest {
         }
     }
 
-    /** A non-contiguous (gap / duplicate / descending) chunk index run is rejected by reassemble. */
     @Property(tries = 400, seed = "2002")
     void nonContiguousChunkIndicesRejected(@ForAll("hostileChunkLists") List<EdgeFrame.SnapshotChunk> chunks) {
         assertTimeoutPreemptively(DECODE_BUDGET, () -> {
@@ -157,14 +149,12 @@ class EdgeSnapshotCodecFuzzTest {
                 }
                 assertNotNull(out);
             } catch (IllegalArgumentException expected) {
-                // correct - the contiguity guard fired
             } catch (Throwable t) {
                 failForbidden("reassemble", new byte[0], t);
             }
         });
     }
 
-    // 5. Permanent regression corpus.
 
     /** A body shorter than the 12-byte (seq+count) header is a clean reject, never underflow. */
     @Property(tries = 1, seed = "3001")
@@ -175,7 +165,6 @@ class EdgeSnapshotCodecFuzzTest {
         }
     }
 
-    /** A negative entryCount is a clean reject. */
     @Property(tries = 1, seed = "3002")
     void corpusNegativeEntryCount() {
         ByteBuffer b = ByteBuffer.allocate(12);
@@ -184,7 +173,6 @@ class EdgeSnapshotCodecFuzzTest {
         assertThrows(IllegalArgumentException.class, () -> EdgeSnapshotCodec.deserialize(b.array()));
     }
 
-    /** A body declaring a keyLen far larger than the bytes present rejects before allocation. */
     @Property(tries = 1, seed = "3003")
     void corpusKeyLenOverrunRejectedPreAllocation() {
         ByteBuffer b = ByteBuffer.allocate(12 + 4 + 3);
@@ -206,7 +194,6 @@ class EdgeSnapshotCodecFuzzTest {
         assertThrows(IllegalArgumentException.class, () -> EdgeSnapshotCodec.deserialize(b.array()));
     }
 
-    /** An entryCount that over-declares (more entries than the buffer holds) fails-fast per entry. */
     @Property(tries = 1, seed = "3005")
     void corpusEntryCountOverDeclares() {
         ByteBuffer b = ByteBuffer.allocate(12);
@@ -216,7 +203,6 @@ class EdgeSnapshotCodecFuzzTest {
                 IllegalArgumentException.class, () -> EdgeSnapshotCodec.deserialize(b.array())));
     }
 
-    // Oracle + helpers.
 
     private static void assertDeserializeOracle(byte[] body) {
         assertTimeoutPreemptively(DECODE_BUDGET, () -> {
@@ -225,7 +211,6 @@ class EdgeSnapshotCodecFuzzTest {
                 assertNotNull(snap, "deserialize returned null");
                 assertNotNull(snap.data(), "decoded snapshot has null data");
             } catch (IllegalArgumentException expected) {
-                // The single documented rejection type - correct.
             } catch (Throwable t) {
                 failForbidden("deserialize", body, t);
             }
@@ -251,7 +236,6 @@ class EdgeSnapshotCodecFuzzTest {
         return out;
     }
 
-    // Arbitraries.
 
     @Provide
     Arbitrary<byte[]> adversarialSized() {
@@ -326,7 +310,6 @@ class EdgeSnapshotCodecFuzzTest {
                 MAX_FIELD + 1, 1_000_000, 2_000_000_000, Integer.MAX_VALUE);
     }
 
-    /** Sanity anchor: a known-good body still decodes. */
     @Property(tries = 1, seed = "4000")
     void knownGoodBodyStillDecodes() {
         HamtMap<String, VersionedValue> data = HamtMap.empty();

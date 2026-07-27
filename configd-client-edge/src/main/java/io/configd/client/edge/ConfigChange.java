@@ -11,7 +11,6 @@ import java.util.Optional;
  */
 public record ConfigChange(String key, Kind kind, byte[] value, long version) {
 
-    /** Whether the change set or removed the key. */
     public enum Kind {PUT, DELETE}
 
     public ConfigChange {

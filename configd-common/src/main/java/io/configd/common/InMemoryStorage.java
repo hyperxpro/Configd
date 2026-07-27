@@ -61,6 +61,5 @@ public final class InMemoryStorage implements Storage {
 
     @Override
     public void sync() {
-        // No-op for in-memory storage
     }
 }

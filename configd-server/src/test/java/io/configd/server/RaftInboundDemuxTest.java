@@ -61,13 +61,11 @@ class RaftInboundDemuxTest {
         RaftNode node1 = buildLeaderOnOwner(driver.ownerExecutor(1), t1);
         driver.addGroup(0, node0);
         driver.addGroup(1, node1);
-        // Self-election produced no peer sends (single-node clusters).
         assertEquals(0, t0.sends.get(), "group 0 election must not have sent");
         assertEquals(0, t1.sends.get(), "group 1 election must not have sent");
 
         RaftTransportAdapter.InboundHandler demux = ConfigdServer.raftDemuxInboundHandler(driver, null);
 
-        // Route a frame stamped gid=1 -> ONLY group 1 must handle it (reply send on t1, none on t0).
         t1.arm();
         demux.accept(NodeId.of(2), 1, staleAppendEntries());
         assertTrue(t1.awaitSend(), "the gid=1 frame must be handled by group 1 (its leader replies)");
@@ -77,7 +75,6 @@ class RaftInboundDemuxTest {
         assertEquals(0, t0.sends.get(),
                 "group 0 must NOT have handled the gid=1 frame (pre-fix bug: everything routed to group 0)");
 
-        // Route a frame stamped gid=0 -> ONLY group 0 must handle it.
         t0.arm();
         demux.accept(NodeId.of(2), 0, staleAppendEntries());
         assertTrue(t0.awaitSend(), "the gid=0 frame must be handled by group 0");
@@ -124,7 +121,6 @@ class RaftInboundDemuxTest {
         assertEquals(0, t0.sends.get(),
                 "no hostile/unregistered gid may be routed to group 0 or cause a send");
 
-        // The legit group still works after the hostile barrage (the owner is not wedged/poisoned).
         t0.arm();
         demux.accept(NodeId.of(2), 0, staleAppendEntries());
         assertTrue(t0.awaitSend(), "group 0 must still handle a legit gid=0 frame after the hostile barrage");
@@ -132,9 +128,7 @@ class RaftInboundDemuxTest {
         assertEquals(1, t0.sends.get(), "exactly the one legit frame was handled");
     }
 
-    // ---- helpers ----------------------------------------------------------------------------
 
-    /** Builds a single-node cluster bound to {@code owner}, ticked there until it self-elects LEADER. */
     private static RaftNode buildLeaderOnOwner(ScheduledExecutorService owner, RaftTransport transport)
             throws Exception {
         RaftConfig config = RaftConfig.of(NodeId.of(1), Set.of()); // single-node cluster
@@ -155,7 +149,6 @@ class RaftInboundDemuxTest {
         return new AppendEntriesRequest(0L, NodeId.of(2), 0L, 0L, List.of(), 0L);
     }
 
-    /** Drains an owner executor so any marshalled routing task has completed. */
     private static void fence(ScheduledExecutorService owner) throws Exception {
         owner.submit(() -> { }).get(5, TimeUnit.SECONDS);
     }

@@ -63,7 +63,6 @@ class LocalKmsEncryptionIntegrationTest {
             }
         }
 
-        // none of the plaintext survives on "disk"
         for (byte[] record : onDisk) {
             String latin1 = new String(record, StandardCharsets.ISO_8859_1);
             assertFalse(latin1.contains("secret-value-"), "on-disk record leaked plaintext");
@@ -93,7 +92,6 @@ class LocalKmsEncryptionIntegrationTest {
             byte[] snapSeg = Arrays.copyOfRange(snap, 16, 32);
             assertFalse(Arrays.equals(walSeg, snapSeg),
                     "WAL and snapshot are distinct segments -> distinct DEKs");
-            // both still round-trip
             assertArrayEquals("w".getBytes(StandardCharsets.UTF_8), env.unwrap(WAL_MAGIC, SCOPE,wal));
             assertArrayEquals("s".getBytes(StandardCharsets.UTF_8), env.unwrap(SNAP_MAGIC, SCOPE,snap));
         }

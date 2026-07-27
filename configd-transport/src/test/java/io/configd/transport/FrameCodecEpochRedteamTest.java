@@ -40,7 +40,7 @@ class FrameCodecEpochRedteamTest {
         // epoch error — otherwise a bit-flip would point operators at "newer peer" instead of "bad
         // hardware/bug".
         byte[] frame = FrameCodec.encode(MessageType.APPEND_ENTRIES, GROUP_ID, TERM, PAYLOAD);
-        frame[EPOCH_OFFSET] ^= 0x01; // corrupt one epoch byte; CRC now stale
+        frame[EPOCH_OFFSET] ^= 0x01;
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> FrameCodec.decode(frame));
         assertTrue(ex.getMessage().contains("CRC32C"),
@@ -53,7 +53,7 @@ class FrameCodecEpochRedteamTest {
         // MBZ check (not the checksum) is what fires. A single bit surviving the CRC is a newer peer
         // that put meaning into the reserved slot; the reader must fail closed.
         byte[] frame = FrameCodec.encode(MessageType.REQUEST_VOTE, GROUP_ID, TERM, PAYLOAD);
-        frame[EPOCH_OFFSET + 7] ^= 0x01; // low byte of the 8-byte epoch
+        frame[EPOCH_OFFSET + 7] ^= 0x01;
         repairCrc(frame);
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> FrameCodec.decode(frame));
@@ -63,8 +63,6 @@ class FrameCodecEpochRedteamTest {
 
     @Test
     void zeroEpochFrameRoundTripsCleanly() {
-        // Regression / no-false-positive: the canonical MBZ epoch (all zero) must decode without
-        // tripping the reserved-field guard.
         byte[] frame = FrameCodec.encode(MessageType.APPEND_ENTRIES, GROUP_ID, TERM, PAYLOAD);
         FrameCodec.Frame decoded = assertDoesNotThrow(() -> FrameCodec.decode(frame));
         assertEquals(MessageType.APPEND_ENTRIES, decoded.messageType());

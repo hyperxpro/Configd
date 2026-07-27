@@ -27,14 +27,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Client-conforms tests for the architectural invariants (the plane split, the two version mechanisms, the
- * forward-compat MUSTs, fail-closed-on-unknown) asserted structurally against the reference client facades,
- * plus the HTTP error taxonomy (the full status table, the 401-vs-403 split, the retry classification
- * buckets) asserted against the scriptable {@link MockControlPlane}. The edge half of the error taxonomy
- * (the catch-up ladder, the (code, carrier) scope rule, and the edge column of the 401-vs-403 split) is in
- * {@code ClauseEdgeErrorTest}.
- */
 @Timeout(30)
 class ClauseOverviewErrorHttpTest {
 
@@ -97,7 +89,7 @@ class ClauseOverviewErrorHttpTest {
         // Leader-following even at N=1: a single-endpoint client back-off-retries a hintless 503 (the normal
         // election window) rather than failing, so an N=1 driver stays forward-compatible.
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
-            s.enqueue(Response.text(503, "Not Leader")); // hintless -- leader unknown during election
+            s.enqueue(Response.text(503, "Not Leader"));
             s.enqueue(Response.committed(5));
             assertEquals(5L, c.blocking().put("k", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults()).seq());
             assertEquals(2, s.requestCount(), "leader-following retry works with a single (N=1) endpoint");
@@ -114,8 +106,6 @@ class ClauseOverviewErrorHttpTest {
     @Test
     @Tag("clause:OV7-3")
     void failsClosedOnAnUnknownStatusAndOnAnUnrecognizedSuccessBody() throws Exception {
-        // A driver must fail closed on anything it does not recognize, never a weaker interpretation.
-        // (a) An unknown/unmapped HTTP status (418) is a clean terminal error, not silently treated as success.
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.text(418, "I'm a teapot"));
             assertThrows(BadRequestException.class, () -> c.blocking().get("k", GetOptions.defaults()));
@@ -133,26 +123,21 @@ class ClauseOverviewErrorHttpTest {
     @Test
     @Tag("clause:E2-1")
     void theCompleteHttpStatusTableMapsToTheRequiredReaction() throws Exception {
-        // The full status set the HTTP data plane returns, each with the normative driver reaction.
-        // 200 read: value and version served.
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.value("hello", 42));
             GetResult r = c.blocking().get("k", GetOptions.defaults());
             assertTrue(r.found());
             assertEquals(42L, r.version());
         }
-        // 200 write: seq parsed from the body.
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.committed(7));
             assertEquals(7L, c.blocking().put("k", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults()).seq());
         }
-        // 404: a definite "absent", surfaced as an empty result, never an exception or a routing retry.
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.text(404, "Not Found"));
             assertFalse(c.blocking().get("missing", GetOptions.defaults()).found());
             assertEquals(1, s.requestCount(), "404 is a real answer — not retried");
         }
-        // 400 / 405: permanent request error, do not retry unchanged.
         for (int status : new int[]{400, 405}) {
             try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
                 s.enqueue(Response.text(status, "bad"));
@@ -161,7 +146,6 @@ class ClauseOverviewErrorHttpTest {
                 assertEquals(1, s.requestCount(), status + " is permanent");
             }
         }
-        // 401: (re)authenticate; do not hot-loop the same credential.
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.of(401, Map.of("WWW-Authenticate", "Bearer"), "Unauthorized"));
             assertThrows(AuthFailedException.class, () -> c.blocking().get("k", GetOptions.defaults()));
@@ -213,14 +197,12 @@ class ClauseOverviewErrorHttpTest {
     @Test
     @Tag("clause:E7-1")
     void everyOutcomeFallsIntoTheCorrectRetryClass() throws Exception {
-        // The retry classification buckets. TERMINAL (no retry): a 400 is not retried.
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.text(400, "bad"));
             assertThrows(BadRequestException.class,
                     () -> c.blocking().put("k", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults()));
             assertEquals(1, s.requestCount(), "terminal bucket: 400 is not retried");
         }
-        // RETRY (transient / backoff): a 503 is retried within the budget.
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.text(503, "Not Leader"));
             s.enqueue(Response.committed(1));
@@ -237,7 +219,6 @@ class ClauseOverviewErrorHttpTest {
                     () -> c.blocking().put("k", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults()),
                     "indeterminate bucket: budget exhausted while indeterminate ⇒ UNKNOWN, not a definite failure");
         }
-        // RETRY-ONLY-AFTER-CHANGING-CREDENTIAL: a 401 is not hot-looped -- it surfaces immediately for re-auth.
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.of(401, Map.of("WWW-Authenticate", "Bearer"), "Unauthorized"));
             assertThrows(AuthFailedException.class,
@@ -246,7 +227,6 @@ class ClauseOverviewErrorHttpTest {
         }
     }
 
-    // -----------------------------------------------------------------------
 
     private static ConfigdHttpClient client(MockControlPlane server) {
         return ConfigdHttpClient.builder()

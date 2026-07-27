@@ -103,7 +103,6 @@ class InboundRoutingThrowableHandlerTest {
                 "a SEVERE record must be emitted (not a stderr printStackTrace)");
     }
 
-    /** A transport that throws on send - models the follower's response path failing. */
     private static final class ThrowingTransport implements RaftTransport {
         @Override public void send(NodeId target, RaftMessage message) {
             throw new RuntimeException("synthetic transport/IO failure on response");
@@ -129,7 +128,6 @@ class InboundRoutingThrowableHandlerTest {
         MultiRaftDriver driver = new MultiRaftDriver(NodeId.of(1), Clock.system());
         driver.addGroup(GROUP, node);
 
-        // Count tasks that reach the executor, to prove it keeps serving after a throw.
         AtomicInteger ran = new AtomicInteger();
         ExecutorService exec = Executors.newSingleThreadExecutor(r -> new Thread(() -> {
             ran.incrementAndGet();
@@ -151,7 +149,6 @@ class InboundRoutingThrowableHandlerTest {
             exec.execute(done::countDown);
             assertTrue(done.await(5, TimeUnit.SECONDS), "executor must keep serving tasks");
 
-            // The escaping Throwable was surfaced (pre-fix: swallowed -> counter absent).
             String label = SafeLog.cardinalityGuard("RuntimeException");
             String registryName = ConfigdMetrics.NAME_INBOUND_ROUTING_THROWABLE_BASE + "." + label;
             var counter = registry.snapshot().metrics().get(registryName);

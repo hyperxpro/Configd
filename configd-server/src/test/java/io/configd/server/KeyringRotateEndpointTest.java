@@ -23,13 +23,6 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Proves the ADMIN-gated online keyring term-rotation trigger end-to-end against a REAL on-disk keyring:
- * the endpoint durably rotates the term, and after a simulated restart (a fresh envelope built over the
- * same data dir) (1) the active term advanced, (2) data written under the OLD term still decrypts, and
- * (3) new writes stamp the NEW term. The ADMIN gate is proven fail-closed (non-ADMIN and auth-off denied,
- * the rotation never attempted).
- */
 class KeyringRotateEndpointTest {
 
     private static final String ENABLE = "configd.raft.encryption.enabled";
@@ -53,7 +46,6 @@ class KeyringRotateEndpointTest {
 
         System.setProperty(ENABLE, "true");
         try {
-            // --- Boot #1: build the encrypting envelope and capture the rotation capability. ---
             KeyringRotator[] rotatorHolder = { null };
             IntegrityEnvelope env1 = ConfigdServer.deriveRaftIntegrityEnvelope(
                     keyStore, keyFile, dataDir, r -> rotatorHolder[0] = r);
@@ -64,22 +56,18 @@ class KeyringRotateEndpointTest {
             byte[] oldRecord = env1.wrap(WAL_MAGIC, SCOPE, OLD_PLAINTEXT);
             assertEquals(1, keyTermOf(oldRecord), "the first boot writes under term 1");
 
-            // --- Rotate through the REAL ADMIN endpoint. ---
             AdminApiHandler h = handler(acl(), auth(), rotator);
             AdminApiHandler.AdminResponse resp = post(h, "admin");
             assertEquals(200, resp.status(), "an ADMIN principal must be able to rotate the keyring");
             String body = new String(resp.body(), StandardCharsets.UTF_8);
             assertTrue(body.contains("activeTerm=2"), "the response must report the new active term: " + body);
 
-            // --- Boot #2 (simulated restart): rebuild the envelope over the same data dir. ---
             IntegrityEnvelope env2 = ConfigdServer.deriveRaftIntegrityEnvelope(
                     SigningKeyStore.loadOrCreate(keyFile), keyFile, dataDir);
 
-            // (2) old-term data still decrypts through the rebuilt envelope (non-destructive rotation).
             assertArrayEquals(OLD_PLAINTEXT, env2.unwrap(WAL_MAGIC, SCOPE, oldRecord),
                     "a record written under term 1 must still decrypt after the rotation + restart");
 
-            // (1)+(3) new writes stamp the NEW term.
             byte[] newRecord = env2.wrap(WAL_MAGIC, SCOPE, NEW_PLAINTEXT);
             assertEquals(2, keyTermOf(newRecord), "after rotate + restart, new writes must use term 2");
             assertArrayEquals(NEW_PLAINTEXT, env2.unwrap(WAL_MAGIC, SCOPE, newRecord),
@@ -118,17 +106,14 @@ class KeyringRotateEndpointTest {
             KeyringRotator[] holder = { null };
             ConfigdServer.deriveRaftIntegrityEnvelope(keyStore, keyFile, dataDir, r -> holder[0] = r);
 
-            // A guard rotator that records whether rotate() was ever reached, wrapping the real one.
             int[] rotateCalls = { 0 };
             AdminApiHandler.KeyringRotationAdmin guarded = () -> {
                 rotateCalls[0]++;
                 return holder[0].rotate();
             };
 
-            // Unauthenticated -> 401.
             AdminApiHandler h = handler(acl(), auth(), guarded);
             assertEquals(401, post(h, null).status(), "an unauthenticated rotate must be 401");
-            // Authenticated non-ADMIN -> 403.
             assertEquals(403, post(h, "writer").status(), "a non-ADMIN principal must be forbidden from rotate");
             // Auth off + ACL off -> 403 (a key rotation must not be issuable during an insecure bring-up).
             AdminApiHandler authOff = handler(null, null, guarded);
@@ -142,8 +127,6 @@ class KeyringRotateEndpointTest {
 
     @Test
     void rotationFailureFailsClosed503(@TempDir Path root) throws Exception {
-        // A rotator whose mechanism throws (an IO/crypto failure) must surface fail-closed (503), audited,
-        // never a silent 200.
         AdminApiHandler.KeyringRotationAdmin broken = () -> {
             throw new IllegalStateException("keyring write failed");
         };
@@ -167,7 +150,6 @@ class KeyringRotateEndpointTest {
             assertEquals(405, h.handle(req("GET", ROTATE, null, "admin")).status(),
                     "a non-POST on rotate must be 405");
 
-            // With no rotator wired the route is absent (falls through to 404).
             AdminApiHandler noRotator = handler(acl(), auth(), null);
             assertEquals(404, noRotator.handle(req("POST", ROTATE, null, "admin")).status(),
                     "with no rotator wired, rotate must fall through to 404");
@@ -176,7 +158,6 @@ class KeyringRotateEndpointTest {
         }
     }
 
-    // ---- helpers ----
 
     private static AuthInterceptor auth() {
         return new AuthInterceptor(token -> switch (token) {

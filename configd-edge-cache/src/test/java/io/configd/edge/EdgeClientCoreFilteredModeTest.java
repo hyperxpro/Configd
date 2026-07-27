@@ -79,7 +79,6 @@ class EdgeClientCoreFilteredModeTest {
 
         assertEquals(5L, core.cursor(), "cursor tracks the last delivered covered seq");
         assertEquals(5L, core.currentVersion(), "the store applied version is the last matched toVersion");
-        // Both matching keys are present (converged to the full-then-local-filter state).
         assertEquals("v", new String(core.get("svc/a").value(), StandardCharsets.UTF_8));
         assertEquals("v", new String(core.get("svc/b").value(), StandardCharsets.UTF_8));
 

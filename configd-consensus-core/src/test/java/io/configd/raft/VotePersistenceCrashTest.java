@@ -44,7 +44,6 @@ class VotePersistenceCrashTest {
     private static final NodeId CAND_A = NodeId.of(2);
     private static final NodeId CAND_B = NodeId.of(3);
 
-    /** Records every RequestVoteResponse this node emits so we can read the grant decision. */
     private static final class RecordingTransport implements RaftTransport {
         final List<RequestVoteResponse> voteResponses = new ArrayList<>();
 
@@ -61,7 +60,6 @@ class VotePersistenceCrashTest {
         }
     }
 
-    /** A throwing checker so any invariant violation surfaces loudly. */
     private static final RaftNode.InvariantChecker THROWING = (name, condition, message) -> {
         if (!condition) {
             throw new AssertionError("Invariant violated [" + name + "]: " + message);
@@ -110,9 +108,6 @@ class VotePersistenceCrashTest {
         RecordingTransport t2 = new RecordingTransport();
         RaftNode recovered = boot(storage.recoveredView(), t2);
 
-        // The recovered node MUST have remembered (term=5, votedFor=A). If the
-        // production durableState.vote(A) call was removed, the
-        // vote never reached durable storage and this is null/0.
         assertEquals(5, recovered.currentTerm(),
                 "RR-086: currentTerm must survive the restart (persisted before in-memory update)");
         assertEquals(CAND_A, recovered.votedFor(),
@@ -128,7 +123,6 @@ class VotePersistenceCrashTest {
                 "RR-085 #2 / split-brain: after a restart the node must NOT grant a SECOND vote in "
                         + "term 5 to a different candidate (B) — it already voted for A. A lost vote "
                         + "persistence makes this double-vote succeed.");
-        // votedFor stays A (the reject did not overwrite it).
         assertEquals(CAND_A, recovered.votedFor(), "the recovered vote for A must be unchanged");
     }
 }

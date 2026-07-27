@@ -35,30 +35,21 @@ class EdgeStalenessFrontierSimTest {
      * every {@code heartbeatMs} (250ms); each carries {@code latestSeq == cursor}, advancing
      * the frontier, so the edge never leaves CURRENT.
      */
-    /** The workload window: ops spread across these ticks so commits actually land. */
     private static final int WORKLOAD_TICKS = 1_500;
 
     @Test
     void idleButConnectedEdgeStaysCurrentAcrossThirtyFiveSeconds() {
-        // No edge faults, no CP faults; a workload (spread across WORKLOAD_TICKS) so a leader
-        // elects, commits land, and the edges catch up - then the schedule exhausts and the
-        // system goes idle with only heartbeats flowing.
         EdgeFanOutSim sim = new EdgeFanOutSim(7L, CP_NODES, EDGES, WORKLOAD_TICKS,
                 /*edgeFaults*/ false, new C1StreamDriver(),
                 new AdversarialSchedule.Intensity(0, 60, 0.0), EdgeInvariants.BOUND_MS);
 
-        // Phase 1: run the full workload window so a leader elects, ~60 ops commit, and the
-        // edges catch up to the leader (cursor == latestSeq) and start receiving heartbeats.
         sim.run();
-        // The edges must have caught up and be CURRENT before the idle window.
         for (EdgeActor edge : sim.edges()) {
             assertEquals(StalenessTracker.State.CURRENT, edge.staleness(),
                     "edge " + edge.edgeId() + " must be CURRENT after catch-up");
         }
         assertTrue(sim.edges().get(0).cursor() > 0, "non-vacuity: edges applied some deltas");
 
-        // Phase 2: idle for >35s of sim time (the workload schedule is exhausted, so no new
-        // commits) - only heartbeats flow. The edge must stay CURRENT the WHOLE time.
         long start = sim.currentTime();
         while (sim.currentTime() - start < 35_500) {
             sim.tick();
@@ -83,13 +74,11 @@ class EdgeStalenessFrontierSimTest {
                 /*edgeFaults*/ false, new C1StreamDriver(),
                 new AdversarialSchedule.Intensity(0, 60, 0.0), EdgeInvariants.BOUND_MS);
 
-        // Run the workload window so a leader elects, commits land, and the edges catch up.
         sim.run();
         EdgeActor victim = sim.edges().get(0);
         assertEquals(StalenessTracker.State.CURRENT, victim.staleness(),
                 "victim must be CURRENT before partition");
 
-        // Partition the victim: no more deltas, no more heartbeats reach it.
         sim.partitionEdge(0);
 
         StalenessTracker.State sawStale = walkUntil(sim, victim, StalenessTracker.State.STALE, 2_000);
@@ -111,7 +100,6 @@ class EdgeStalenessFrontierSimTest {
                 "the connected sibling must NOT be DISCONNECTED (heartbeats kept it fresh)");
     }
 
-    /** Ticks the sim up to {@code maxAdvanceMs} of sim time, returning the first state reached. */
     private static StalenessTracker.State walkUntil(EdgeFanOutSim sim, EdgeActor edge,
                                                     StalenessTracker.State target, long maxAdvanceMs) {
         long start = sim.currentTime();

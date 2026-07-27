@@ -49,7 +49,6 @@ public final class OidcAuthenticatorFactory implements AuthenticatorFactory {
         return new OidcAuthenticator(validatorsByIssuer);
     }
 
-    /** The distinct issuer block names under {@link #ISSUER_PREFIX} (the segment before the next dot). */
     static Set<String> issuerNames(ConfigSource cfg) {
         Set<String> names = new TreeSet<>();
         for (String key : cfg.keysWithPrefix(ISSUER_PREFIX)) {

@@ -30,7 +30,6 @@ import java.util.Objects;
  */
 public final class OidcAuthenticator implements Authenticator {
 
-    /** Validators keyed by their exact pinned issuer identifier (the token's {@code iss} must equal one). */
     private final Map<String, OidcIssuerValidator> validatorsByIssuer;
 
     OidcAuthenticator(Map<String, OidcIssuerValidator> validatorsByIssuer) {
@@ -76,7 +75,6 @@ public final class OidcAuthenticator implements Authenticator {
 
         OidcIssuerValidator validator = validatorsByIssuer.get(issuer);
         if (validator == null) {
-            // A JWT for an issuer we are not configured to trust: dispatch continues down the chain.
             return notThis("issuer not configured: " + issuer);
         }
 

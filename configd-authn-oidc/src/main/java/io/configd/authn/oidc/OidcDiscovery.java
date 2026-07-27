@@ -24,13 +24,6 @@ final class OidcDiscovery {
     private OidcDiscovery() {
     }
 
-    /**
-     * Fetches {@code {issuerUri}/.well-known/openid-configuration}, asserts its {@code issuer} equals the
-     * pinned {@code issuerUri}, and returns the advertised {@code jwks_uri} (which must be {@code https}).
-     *
-     * @throws IllegalStateException if the document cannot be fetched/parsed, the issuer does not match, or
-     *                               the {@code jwks_uri} is missing or not {@code https} - a fail-closed boot
-     */
     static URL resolveJwksUri(String issuerUri, int connectTimeoutMs, int readTimeoutMs, int sizeLimitBytes) {
         URL wellKnown = wellKnownUrl(issuerUri);
         DefaultResourceRetriever retriever =

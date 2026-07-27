@@ -5,14 +5,6 @@ import io.configd.common.NodeId;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * Cluster administration service. Handles node membership changes,
- * leadership transfers, and cluster health queries.
- * <p>
- * Membership changes go through the Raft reconfiguration protocol
- * to maintain safety. This service is the external API surface for
- * operators and management tools.
- */
 public final class AdminService {
 
     public sealed interface AdminResult {
@@ -26,7 +18,6 @@ public final class AdminService {
         NodeId currentLeader();
         Set<NodeId> clusterNodes();
         boolean isLeader();
-        /** The current Raft term. */
         long currentTerm();
         long commitIndex();
     }

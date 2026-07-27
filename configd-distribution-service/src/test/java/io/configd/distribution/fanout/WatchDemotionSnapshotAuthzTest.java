@@ -73,14 +73,13 @@ class WatchDemotionSnapshotAuthzTest {
                 out.sentOfType(EdgeFrame.WatchCreated.class).get(0).shards().get(0).mode(),
                 "from-now ⇒ TAIL (no initial snapshot)");
 
-        // Publish a new commit, then refuse its WATCH_EVENT offer so the core demotes to CATCHUP.
         buffer.publish(commit(2L, "/k/a"));
         out.blockNextOffers(1);                 // block the WATCH_EVENT once -> TRANSPORT_BLOCK demote
         driver.session().tick(clock.now());
         assertEquals(FanOutSessionCore.SessionState.CATCHUP, driver.session().state(),
                 "the refused WATCH_EVENT demoted the session (slow-consumer ladder)");
 
-        out.clear();                            // isolate the re-snapshot frames
+        out.clear();
         driver.session().tick(clock.now());     // performSnapshotTransfer -> FILTERED re-snapshot
 
         List<EdgeFrame.WatchSnapshotChunk> chunks = out.sentOfType(EdgeFrame.WatchSnapshotChunk.class);

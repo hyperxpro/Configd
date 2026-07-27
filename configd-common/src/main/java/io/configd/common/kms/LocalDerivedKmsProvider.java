@@ -50,12 +50,12 @@ public final class LocalDerivedKmsProvider implements KmsProvider {
             "configd/raft-at-rest-encryption/kek/v1".getBytes(StandardCharsets.UTF_8);
 
     private static final String PROVIDER_TYPE = "local";
-    private static final int ROOT_KEY_LEN = 32; // AES-256
+    private static final int ROOT_KEY_LEN = 32;
 
     private final byte[] signingKeyIkm; // owned copy; zeroed on close()
     private final byte[] salt;          // signing keyId bytes (non-secret)
     private final String reference;     // non-secret KEK reference (signing keyId string)
-    private final int term;             // keyring term for this root
+    private final int term;
 
     /**
      * @param signingKeyIkm the cluster signing private-key encoding (defensively copied; the

@@ -16,9 +16,6 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link ConfigStateMachine}.
- */
 class ConfigStateMachineTest {
 
     private VersionedConfigStore store;
@@ -331,7 +328,7 @@ class ConfigStateMachineTest {
 
             assertTrue(stateMachine.removeListener(listener));
             stateMachine.apply(2, 1, CommandCodec.encodePut("b", bytes("2")));
-            assertEquals(1, count.get()); // not incremented
+            assertEquals(1, count.get());
         }
     }
 
@@ -353,9 +350,6 @@ class ConfigStateMachineTest {
             String longKey = "k".repeat(70_000);
             byte[] value = bytes("long-key-value");
 
-            // Put the long key directly into the store, bypassing CommandCodec
-            // (which has its own key-length limit). This is valid because the
-            // snapshot format is the contract under test, not the command codec.
             store.put(longKey, value, 1);
 
             ReadResult result = store.get(longKey);
@@ -649,8 +643,6 @@ class ConfigStateMachineTest {
             assertNotNull(batchSig);
             assertNotNull(putSig);
 
-            // Both should verify against canonical form bound with each
-            // state machine's own (epoch, nonce).
             ConfigSigner verifier = new ConfigSigner(keyPair.getPublic());
             byte[] canonical = CommandCodec.encodeBatch(List.of(
                     new ConfigMutation.Put("key", bytes("val"))));
@@ -731,13 +723,11 @@ class ConfigStateMachineTest {
             ConfigStateMachine sm = new ConfigStateMachine(
                     localStore, Clock.system(), badSigner);
 
-            // Listener fanout MUST also be skipped on sign failure.
             List<List<ConfigMutation>> fanoutLog = new ArrayList<>();
             sm.addListener((mutations, version) -> fanoutLog.add(mutations));
 
             byte[] command = CommandCodec.encodePut("k", bytes("v"));
 
-            // (a) The exception must propagate rather than being silently swallowed.
             assertThrows(IllegalStateException.class,
                     () -> sm.apply(1, 1, command),
                     "sign failure must propagate so Raft can panic / retry");
@@ -754,7 +744,6 @@ class ConfigStateMachineTest {
             assertEquals(0L, sm.sequenceCounter(),
                     "sequence counter must not advance on aborted apply");
 
-            // (d) lastSignature MUST remain null (no half-state).
             assertNull(sm.lastSignature(),
                     "lastSignature must remain null on aborted apply");
             assertEquals(0L, sm.lastEpoch());
@@ -769,7 +758,6 @@ class ConfigStateMachineTest {
         @Test
         void signFailureOnDeleteLeavesStoreUnmutated() throws Exception {
             VersionedConfigStore localStore = new VersionedConfigStore();
-            // Pre-seed with a key so DELETE has something to remove.
             localStore.put("k", bytes("preexisting"), 1L);
 
             ConfigSigner badSigner = verifyOnlySigner();
@@ -780,7 +768,6 @@ class ConfigStateMachineTest {
             assertThrows(IllegalStateException.class,
                     () -> sm.apply(2, 1, command));
 
-            // The pre-existing value MUST still be present.
             ReadResult after = localStore.get("k");
             assertTrue(after.found(), "DELETE must not be applied on sign failure");
             assertArrayEquals(bytes("preexisting"), after.value());
@@ -810,7 +797,6 @@ class ConfigStateMachineTest {
 
         @Test
         void successfulSignStillProducesNotificationAndMutation() throws Exception {
-            // Sanity: the happy path (successful sign) must still work end-to-end.
             KeyPairGenerator gen = KeyPairGenerator.getInstance("Ed25519");
             KeyPair kp = gen.generateKeyPair();
             ConfigSigner okSigner = new ConfigSigner(kp);
@@ -1023,7 +1009,6 @@ class ConfigStateMachineTest {
 
         @Test
         void tlvNegativeTrailerLengthIsRejected() {
-            // trailerLen < 0 boundary.
             ByteBuffer t = ByteBuffer.allocate(4 + 4 + 8);
             t.putInt(SNAPSHOT_TRAILER_MAGIC);
             t.putInt(-1);
@@ -1040,8 +1025,8 @@ class ConfigStateMachineTest {
             // supplies only 7. Pins the truncation boundary.
             ByteBuffer t = ByteBuffer.allocate(4 + 4 + 7);
             t.putInt(SNAPSHOT_TRAILER_MAGIC);
-            t.putInt(8);          // claims 8 payload bytes
-            t.put(new byte[7]);   // but only 7 present
+            t.putInt(8);
+            t.put(new byte[7]);
             ConfigStateMachine dst = freshMachine();
             IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                     () -> dst.restoreSnapshot(withTrailer(t.array())),
@@ -1074,7 +1059,7 @@ class ConfigStateMachineTest {
             // trailer and the bytes would be (mis)read as a raw 8-byte epoch.
             ByteBuffer t = ByteBuffer.allocate(8);
             t.putInt(SNAPSHOT_TRAILER_MAGIC);
-            t.putInt(0); // trailerLen 0
+            t.putInt(0);
             ConfigStateMachine dst = freshMachine();
             assertDoesNotThrow(() -> dst.restoreSnapshot(withTrailer(t.array())),
                     "an 8-byte magic+len=0 TLV trailer must load as a (payload-less) TLV");

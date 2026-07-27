@@ -9,9 +9,6 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link ConfigValidator}.
- */
 class ConfigValidatorTest {
 
     private ConfigValidator validator;
@@ -234,7 +231,7 @@ class ConfigValidatorTest {
 
             List<ConfigMutation> mutations = List.of(
                     new ConfigMutation.Put("db.host", bytes("localhost")),
-                    new ConfigMutation.Put("db.port", new byte[0]), // invalid
+                    new ConfigMutation.Put("db.port", new byte[0]),
                     new ConfigMutation.Put("db.name", bytes("mydb"))
             );
 
@@ -254,7 +251,6 @@ class ConfigValidatorTest {
                     new ConfigMutation.Delete("db.old")
             );
 
-            // Deletes skip validation, so this should pass
             assertTrue(validator.validateAll(mutations).isValid());
         }
 

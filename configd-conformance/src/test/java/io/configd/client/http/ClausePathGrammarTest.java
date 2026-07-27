@@ -19,20 +19,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * Runner II -- CLIENT-CONFORMS, §01 paths / access (the "A" clauses that bind the client side): the address model
- * ({@code (scope, path)} with {@code scope} a typed field, never a path segment -- A2-1/A2-3/A8-2), the path-grammar
- * rejections the reference client performs <b>before</b> any byte reaches the wire (A3-1 absolute, A3-3 seg-char,
- * A3-4 canonical, A3-5 at most 1024 B -- all via the shared {@code io.configd.client.PathGrammar}), the
- * no-recursive-delete surface (A4-7), and the closed-enum fail-closed posture (A9-4). The HTTP-plane facts are
- * asserted against the scriptable {@link MockControlPlane} (recorded request path/query; and, for a rejection,
- * that NOTHING reached the wire); the edge-plane client-side validation is asserted against the public
+ * Runner II -- CLIENT-CONFORMS, §01 paths / access (the "A" clauses that bind the client side). HTTP-plane
+ * facts are asserted against the scriptable {@link MockControlPlane} (recorded request path/query; and, for a
+ * rejection, that NOTHING reached the wire); edge-plane client-side validation is asserted against the public
  * {@link WatchTarget} constructor.
  *
- * <p>The <b>server-side</b> halves of these clauses -- the live edge server rejecting a seg-char / non-canonical
- * path (A3-1..A3-3, A3-4), the watch-authorization contract (A5-2, A6-x, A9-3), the server fail-closed on an
- * unrecognized scope ordinal (A9-4), and the non-aliasing lock on the HTTP data plane (A3-4) -- live in
- * {@code io.configd.conformance.ServerObeysPathAuthzTest} / {@code ServerObeysPathAliasingTest}. Each clause that
- * binds BOTH sides carries its tag on both tests.
+ * <p>The <b>server-side</b> halves of these clauses live in {@code io.configd.conformance.ServerObeysPathAuthzTest}
+ * / {@code ServerObeysPathAliasingTest}. Each clause that binds BOTH sides carries its tag on both tests.
  */
 @Timeout(30)
 class ClausePathGrammarTest {
@@ -43,9 +36,6 @@ class ClausePathGrammarTest {
     @Tag("clause:A2-1")
     @Tag("clause:A8-2")
     void scopeIsATypedFieldNeverAPathSegment() throws Exception {
-        // HTTP plane (A8-2: the deployed admin surface): a non-GLOBAL scope rides the typed `?scope=` query
-        // parameter; it is NEVER folded into the key path. The recorded path is the bare key; the scope is the
-        // whole query, matched exactly (not composed with the key).
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.committed(1));
             c.blocking().put("app/name", "v".getBytes(StandardCharsets.UTF_8),
@@ -55,8 +45,6 @@ class ClausePathGrammarTest {
             assertEquals("scope=REGIONAL", r.query(), "scope is a typed, exact query parameter (A2-1/A8-2)");
             assertFalse(r.path().contains("REGIONAL"), "the scope enum name never appears in the path (A2-1)");
         }
-        // Edge plane (A8-2: the binary protocol carries scope as a typed field): the WatchTarget scope is a
-        // distinct u8 field, orthogonal to the path bytes -- the address is genuinely the pair (scope, path).
         WatchTarget regional = new WatchTarget(1 /* REGIONAL ordinal */, WatchTarget.Kind.KEY, "/app/name",
                 EnumSet.noneOf(WatchTarget.Flag.class));
         assertEquals(1, regional.scope(), "edge scope is a typed field on the target (A8-2)");
@@ -68,9 +56,8 @@ class ClausePathGrammarTest {
     @Tag("clause:A2-3")
     @Tag("clause:A8-2")
     void scopeDefaultsToGlobalAndIsOmittedOnTheHttpWire() throws Exception {
-        // A2-3: a caller that does not specify scope defaults to GLOBAL. A8-2: on the GLOBAL-only HTTP surface
-        // GLOBAL is the identity -- it is OMITTED from the wire (no `?scope=`), so a default request is
-        // byte-identical to the pre-scope client (D7-4 compat).
+        // GLOBAL is omitted from the wire specifically so a default request stays byte-identical to the
+        // pre-scope client (D7-4 compat).
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.value("v", 1));
             c.blocking().get("k", GetOptions.defaults());
@@ -81,7 +68,6 @@ class ClausePathGrammarTest {
             c.blocking().put("k", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults());
             assertEquals(null, s.lastRequest().query(), "a default (GLOBAL) write sends no scope parameter (A2-3)");
         }
-        // Even an EXPLICIT GLOBAL is omitted (GLOBAL is the wire default, not a distinct transmitted value).
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.value("v", 1));
             c.blocking().get("k", GetOptions.defaults().scope(Scope.GLOBAL));
@@ -92,22 +78,18 @@ class ClausePathGrammarTest {
     @Test
     @Tag("clause:A3-1..A3-3")
     void clientRejectsIllegalPathsBeforeTheWire() throws Exception {
-        // A3-1: a path MUST be absolute. The edge client validates this in the WatchTarget constructor -- a
-        // non-absolute (or empty) KEY/PREFIX path is rejected LOCALLY, so no malformed target ever reaches the
-        // wire (there is no MockEdgeServer here precisely because the reject is pre-transport).
+        // No MockEdgeServer here — the reject is pre-transport, so there's nothing to reach the wire and record.
         assertThrows(IllegalArgumentException.class, () -> WatchTarget.key("relative/no/leading/slash"),
                 "a non-absolute path is rejected client-side (A3-1)");
         assertThrows(IllegalArgumentException.class, () -> WatchTarget.prefix("also/relative"),
                 "a non-absolute prefix is rejected client-side (A3-1)");
         assertThrows(IllegalArgumentException.class, () -> WatchTarget.key(""),
                 "an empty KEY path is rejected client-side (A3-2 non-empty segment / A3-1)");
-        // A3-3 (seg-char): a byte outside [A-Za-z0-9._-] is rejected CLIENT-SIDE, before any wire byte --
-        // EDGE plane (absolute path in the WatchTarget ctor): a space, and a tab (a control byte).
+        // seg-char is [A-Za-z0-9._-]; a space and a tab (control byte) both fall outside it (A3-3).
         assertThrows(IllegalArgumentException.class, () -> WatchTarget.key("/app/a b"),
                 "a space is not seg-char — rejected client-side (A3-3)");
         assertThrows(IllegalArgumentException.class, () -> WatchTarget.key("/app/a\tb"),
                 "a tab (control byte) is not seg-char — rejected client-side (A3-3)");
-        // HTTP plane (flat key) vs the mock: an illegal key throws and NO request reaches the wire.
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             assertThrows(IllegalArgumentException.class, () -> c.blocking().get("a b", GetOptions.defaults()));
             assertThrows(IllegalArgumentException.class,
@@ -116,8 +98,8 @@ class ClausePathGrammarTest {
             assertEquals(0, s.requestCount(),
                     "an illegal key is rejected client-side — nothing reaches the wire (A3-3)");
         }
-        // A3-3 (encoding): a seg-char-clean absolute path constructs and is UTF-8 on the wire; a clean flat key
-        // still reaches the server (proving the rejects above are the grammar, not a blanket refusal).
+        // Proves the rejects above are the grammar, not a blanket refusal — a clean path/key still reaches
+        // the server (A3-3).
         WatchTarget ok = WatchTarget.key("/app/name");
         assertArrayEquals("/app/name".getBytes(StandardCharsets.UTF_8), ok.pathBytes(),
                 "the path is encoded as UTF-8 bytes on the wire (A3-3)");
@@ -131,10 +113,8 @@ class ClausePathGrammarTest {
     @Test
     @Tag("clause:A3-4")
     void clientRejectsNonCanonicalPathsBeforeTheWire() throws Exception {
-        // A3-4: non-canonical spellings -- `.`/`..` traversal and the empty segment `//` -- are rejected
-        // CLIENT-SIDE, never silently rewritten, so a driver never puts an ALIASING key on the wire (two
-        // spellings a caller thinks are "the same" must not fragment into distinct server keys).
-        // EDGE plane (absolute):
+        // Non-canonical spellings are rejected, never silently rewritten — normalizing them would let two
+        // spellings a caller thinks are "the same" fragment into distinct server keys (A3-4).
         assertThrows(IllegalArgumentException.class, () -> WatchTarget.key("/a/../b"),
                 "a '..' traversal segment is rejected client-side (A3-4)");
         assertThrows(IllegalArgumentException.class, () -> WatchTarget.key("/a/./b"),
@@ -145,7 +125,6 @@ class ClausePathGrammarTest {
         // (`/a/` is the same as `/a/**`), and a canonical concrete path constructs -- neither throws.
         WatchTarget.prefix("/app/");
         WatchTarget.key("/a/b");
-        // HTTP plane (flat key): each non-canonical key throws before the wire -- nothing recorded.
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             assertThrows(IllegalArgumentException.class, () -> c.blocking().get("a/../b", GetOptions.defaults()));
             assertThrows(IllegalArgumentException.class, () -> c.blocking().get("a//b", GetOptions.defaults()));
@@ -153,7 +132,6 @@ class ClausePathGrammarTest {
             assertEquals(0, s.requestCount(),
                     "a non-canonical key is rejected client-side — nothing reaches the wire (A3-4)");
         }
-        // The canonical spelling still reaches the server.
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.value("v", 1));
             c.blocking().get("a/b", GetOptions.defaults());
@@ -165,9 +143,6 @@ class ClausePathGrammarTest {
     @Test
     @Tag("clause:A3-5")
     void clientRejectsAnOversizePathBeforeTheWire() {
-        // A3-5: a path MUST NOT exceed 1024 UTF-8 bytes. The edge client enforces the ceiling in the
-        // WatchTarget constructor -- a 1025-byte path is rejected LOCALLY (never sent), the deployed key-length
-        // limit as a client-side pre-check.
         assertEquals(1024, WatchTarget.MAX_PATH_BYTES, "the ceiling is the deployed 1024-byte key limit (A3-5)");
         String tooLong = "/" + "a".repeat(1024); // 1 + 1024 = 1025 bytes
         assertThrows(IllegalArgumentException.class, () -> WatchTarget.key(tooLong),
@@ -180,8 +155,6 @@ class ClausePathGrammarTest {
     @Test
     @Tag("clause:A4-7")
     void deleteAddressesExactlyOneConcreteKeyWithNoRecursiveSurface() throws Exception {
-        // A4-7: the protocol defines no recursive or subtree delete. A delete addresses exactly one concrete
-        // key -- a single request to that key's path, never a subtree fan-out.
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
             s.enqueue(Response.committed(7));
             c.blocking().delete("a/b", WriteOptions.defaults());
@@ -190,7 +163,6 @@ class ClausePathGrammarTest {
             assertEquals("DELETE", r.method());
             assertEquals("/v1/config/a/b", r.path(), "the exact concrete key, no wildcard/subtree form (A4-7)");
         }
-        // Structural: the client surface exposes NO recursive/subtree delete operation to call.
         assertFalse(hasRecursiveDeleteMethod(ConfigdHttpClient.class),
                 "the client exposes no subtree/recursive delete (A4-7)");
         assertFalse(hasRecursiveDeleteMethod(ConfigdHttpClient.Blocking.class),
@@ -200,10 +172,8 @@ class ClausePathGrammarTest {
     @Test
     @Tag("clause:A9-4")
     void clientCannotExpressAnUnrecognizedCapabilityOrTargetIdentifier() {
-        // A9-4 / A1.3 (fail closed on the unrecognized), CLIENT half: the driver's request-side identifier
-        // surfaces are CLOSED enums, so a driver structurally cannot ASSUME or EMIT a capability/flag/kind it
-        // does not recognize. The WATCH_CREATE flag set is exactly the three negotiated bits (W5-4a) and the
-        // target kind is exactly {KEY, PREFIX, FULL} -- there is no widening path to an unknown identifier.
+        // Fail-closed, CLIENT half (A9-4/A1.3): request-side identifier surfaces are CLOSED enums, so a driver
+        // structurally cannot emit a capability/flag/kind it does not recognize.
         assertEquals(3, WatchTarget.Flag.values().length, "the flag set is closed to the negotiated bits (A9-4)");
         assertEquals(3, WatchTarget.Kind.values().length, "the target kind set is closed (A9-4)");
         // flagBits() only ever ORs known bits -- it can never produce an out-of-set flag identifier.

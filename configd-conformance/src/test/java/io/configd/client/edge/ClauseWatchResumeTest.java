@@ -25,14 +25,6 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-/**
- * CLIENT-CONFORMS, watch resume + catch-up (§02 W): the reference {@link Watch} against the scriptable
- * {@link MockEdgeServer} for the per-connection {@code 0x02} negotiation, resume-by-re-sending-the-vector, the
- * {@code WATCH_CREATED} live-signal + per-shard mode vector, the per-{@code (watch_id, gid)} inline catch-up
- * snapshot (others keep streaming), the {@code WATCH_CREATE} flag bits, the {@code GAP_UNRECOVERABLE}
- * re-bootstrap (has_oldest=0, fresh non-reused watch_id), and the {@code WATCH_CREATE}-vs-{@code SUBSCRIBE}
- * distinction.
- */
 @Timeout(30)
 class ClauseWatchResumeTest {
 
@@ -89,7 +81,6 @@ class ClauseWatchResumeTest {
     void watchCreatedIsTheLiveSignalCarryingThePerShardModeVector() throws Exception {
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
             long wid = ((EdgeFrame.WatchCreate) conn.readFrame()).watchId();
-            // The first (and only) server frame: a multi-shard WATCH_CREATED (0x0C) carrying a per-shard vector.
             w(conn, new EdgeFrame.WatchCreated(wid, List.of(
                     new EdgeFrame.ShardMode(0, 0, EdgeFrame.Mode.TAIL),
                     new EdgeFrame.ShardMode(1, 0, EdgeFrame.Mode.TAIL))));
@@ -100,7 +91,6 @@ class ClauseWatchResumeTest {
                 collect(watch);
                 // awaitCreated completes only on WATCH_CREATED -- the "authorized and live" signal (W5-5).
                 watch.awaitCreated(Duration.ofSeconds(10));
-                // The per-shard mode vector was consumed: the client recorded BOTH covered shards' components.
                 await("both covered shards recorded from the CREATED mode vector",
                         () -> componentS(watch.cursor(), 0) >= 0L && componentS(watch.cursor(), 1) >= 0L);
                 assertInstanceOf(EdgeFrame.WatchCreate.class, firstWatchCreate(server)); // CREATE (0x0A) leads to CREATED (0x0C)
@@ -134,8 +124,6 @@ class ClauseWatchResumeTest {
                         WatchOptions.defaults());
                 List<WatchEvent> got = collect(watch);
                 watch.awaitCreated(Duration.ofSeconds(10));
-                // The (watch_id, gid=0) substream hydrated shard 0 (2 entries) then it tailed to S=4; shard 1's
-                // event was delivered independently -- only the lagging shard snapshotted, the other kept streaming.
                 await("snapshot entries + both shards' tail delivered", () -> countChanges(got) >= 4);
                 await("shard 0 cursor set to the snapshot then tailed to (0,4)", () -> componentS(watch.cursor(), 0) == 4L);
                 await("shard 1 kept streaming to (1,1)", () -> componentS(watch.cursor(), 1) == 1L);
@@ -152,7 +140,6 @@ class ClauseWatchResumeTest {
             conn.parkUntilClosed();
         })) {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(trustedConfig(server.port()))) {
-                // A with_initial_snapshot request sets bit2 on the wire, and only bit2.
                 client.watch(WatchTarget.prefix("/").with(WatchTarget.Flag.WITH_INITIAL_SNAPSHOT), WatchOptions.defaults());
                 await("the WATCH_CREATE reached the server", () -> !server.received().isEmpty());
                 EdgeFrame.WatchCreate c = firstWatchCreate(server);
@@ -170,7 +157,6 @@ class ClauseWatchResumeTest {
                 WatchTarget.key("/k").with(WatchTarget.Flag.PREV_VALUE).flagBits());
         assertEquals(EdgeFrame.WATCH_FLAG_WITH_INITIAL_SNAPSHOT,
                 WatchTarget.key("/k").with(WatchTarget.Flag.WITH_INITIAL_SNAPSHOT).flagBits());
-        // Two flags OR into one byte (bit0 | bit1).
         assertEquals(EdgeFrame.WATCH_FLAG_FULL_CHAIN_VERIFY | EdgeFrame.WATCH_FLAG_PREV_VALUE,
                 WatchTarget.key("/k").with(WatchTarget.Flag.FULL_CHAIN_VERIFY, WatchTarget.Flag.PREV_VALUE).flagBits());
     }
@@ -225,7 +211,6 @@ class ClauseWatchResumeTest {
                 assertInstanceOf(EdgeFrame.WatchCreate.class, c);
                 assertTrue(server.received().stream().noneMatch(f -> f instanceof EdgeFrame.Subscribe),
                         "a watch does NOT open a connection-level SUBSCRIBE");
-                // The per-watch cursor is a VECTOR (a list of (gid, S) components), not a scalar resumeCursor.
                 assertEquals(1, c.cursor().components().size(), "the watch cursor is a one-element vector at N=1");
                 assertEquals(5L, componentS(c.cursor(), 0));
             }

@@ -8,22 +8,6 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Progressive rollout stage management.
- * <p>
- * Config changes are rolled out in stages, with health gates between each:
- * <pre>
- *   CANARY --&gt; ONE_PERCENT --&gt; TEN_PERCENT --&gt; FIFTY_PERCENT --&gt; FULL
- * </pre>
- * Each stage has a minimum soak time. Advancement requires:
- * <ol>
- *   <li>Minimum soak time elapsed</li>
- *   <li>Health checks passing (no error rate spike)</li>
- *   <li>No manual hold placed on the rollout</li>
- * </ol>
- * <p>
- * A rollout can be paused, resumed, or rolled back at any stage. Emergency
- * rollouts ({@link RolloutPolicy#IMMEDIATE}) bypass all gates.
- * <p>
  * Thread safety: designed for single-threaded access from the distribution
  * service I/O thread.
  */
@@ -45,25 +29,17 @@ public final class RolloutController {
             this.fraction = fraction;
         }
 
-        /** The fraction of edge nodes that should receive the change. */
         public double fraction() {
             return fraction;
         }
     }
 
-    /**
-     * Rollout policies.
-     */
     public enum RolloutPolicy {
-        /** Normal progressive rollout through all stages. */
         PROGRESSIVE,
-        /** Skip all gates - deploy immediately to 100%. Requires elevated ACL. */
+        /** Requires elevated ACL. */
         IMMEDIATE
     }
 
-    /**
-     * Current state of a rollout.
-     */
     public enum RolloutState {
         IN_PROGRESS,
         PAUSED,
@@ -71,9 +47,6 @@ public final class RolloutController {
         ROLLED_BACK
     }
 
-    /**
-     * Status of an individual rollout.
-     */
     public record RolloutStatus(
             String rolloutId,
             Stage currentStage,
@@ -83,7 +56,6 @@ public final class RolloutController {
             long soakTimeMs,
             boolean healthPassing
     ) {
-        /** Returns true if the rollout can advance to the next stage. */
         public boolean canAdvance(long currentTimeMs) {
             if (state != RolloutState.IN_PROGRESS) return false;
             if (currentStage == Stage.FULL) return false;
@@ -97,18 +69,6 @@ public final class RolloutController {
     private final Map<Stage, Long> soakTimes;
     private final Map<String, RolloutTracker> rollouts;
 
-    /**
-     * Creates a rollout controller with default soak times.
-     * <p>
-     * Default soak times:
-     * <ul>
-     *   <li>CANARY: 60 seconds</li>
-     *   <li>ONE_PERCENT: 120 seconds</li>
-     *   <li>TEN_PERCENT: 300 seconds</li>
-     *   <li>FIFTY_PERCENT: 600 seconds</li>
-     *   <li>FULL: 0 (terminal stage)</li>
-     * </ul>
-     */
     public RolloutController(Clock clock) {
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
         this.soakTimes = new EnumMap<>(Stage.class);
@@ -120,20 +80,10 @@ public final class RolloutController {
         this.rollouts = new HashMap<>();
     }
 
-    /**
-     * Overrides the soak time for a specific stage.
-     */
     public void setSoakTime(Stage stage, long soakTimeMs) {
         soakTimes.put(stage, soakTimeMs);
     }
 
-    /**
-     * Starts a new rollout.
-     *
-     * @param rolloutId unique identifier for this rollout
-     * @param policy    the rollout policy
-     * @return the initial rollout status
-     */
     public RolloutStatus startRollout(String rolloutId, RolloutPolicy policy) {
         Objects.requireNonNull(rolloutId, "rolloutId must not be null");
         Objects.requireNonNull(policy, "policy must not be null");
@@ -154,8 +104,6 @@ public final class RolloutController {
     }
 
     /**
-     * Attempts to advance a rollout to the next stage.
-     *
      * @return the updated status, or null if the rollout doesn't exist
      */
     public RolloutStatus advance(String rolloutId) {
@@ -179,9 +127,6 @@ public final class RolloutController {
         return toStatus(rolloutId, tracker);
     }
 
-    /**
-     * Pauses a rollout at its current stage.
-     */
     public RolloutStatus pause(String rolloutId) {
         RolloutTracker tracker = rollouts.get(rolloutId);
         if (tracker != null && tracker.state == RolloutState.IN_PROGRESS) {
@@ -190,9 +135,6 @@ public final class RolloutController {
         return status(rolloutId);
     }
 
-    /**
-     * Resumes a paused rollout.
-     */
     public RolloutStatus resume(String rolloutId) {
         RolloutTracker tracker = rollouts.get(rolloutId);
         if (tracker != null && tracker.state == RolloutState.PAUSED) {
@@ -203,7 +145,7 @@ public final class RolloutController {
     }
 
     /**
-     * Rolls back a rollout. The change should be reverted.
+     * The change should be reverted.
      */
     public RolloutStatus rollback(String rolloutId) {
         RolloutTracker tracker = rollouts.get(rolloutId);
@@ -213,10 +155,7 @@ public final class RolloutController {
         return status(rolloutId);
     }
 
-    /**
-     * Updates the health status for a rollout. Call this periodically
-     * with the result of health checks.
-     */
+    /** Call this periodically with the result of health checks. */
     public void updateHealth(String rolloutId, boolean healthy) {
         RolloutTracker tracker = rollouts.get(rolloutId);
         if (tracker != null) {
@@ -224,18 +163,12 @@ public final class RolloutController {
         }
     }
 
-    /**
-     * Returns the current status of a rollout.
-     */
     public RolloutStatus status(String rolloutId) {
         RolloutTracker tracker = rollouts.get(rolloutId);
         if (tracker == null) return null;
         return toStatus(rolloutId, tracker);
     }
 
-    /**
-     * Returns the number of active rollouts.
-     */
     public int activeRolloutCount() {
         int count = 0;
         for (RolloutTracker t : rollouts.values()) {
@@ -246,9 +179,6 @@ public final class RolloutController {
         return count;
     }
 
-    /**
-     * Removes completed or rolled-back rollouts from tracking.
-     */
     public void cleanup() {
         rollouts.entrySet().removeIf(e ->
                 e.getValue().state == RolloutState.COMPLETED

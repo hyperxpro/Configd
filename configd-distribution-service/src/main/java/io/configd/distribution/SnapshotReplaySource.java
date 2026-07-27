@@ -25,11 +25,6 @@ public final class SnapshotReplaySource implements ReplaySource {
 
     private final Supplier<ConfigSnapshot> snapshotSupplier;
 
-    /**
-     * @param snapshotSupplier supplies the current immutable store snapshot
-     *                         (e.g. {@code store::snapshot}); non-null, and must
-     *                         return a non-null snapshot
-     */
     public SnapshotReplaySource(Supplier<ConfigSnapshot> snapshotSupplier) {
         this.snapshotSupplier = Objects.requireNonNull(snapshotSupplier, "snapshotSupplier must not be null");
     }

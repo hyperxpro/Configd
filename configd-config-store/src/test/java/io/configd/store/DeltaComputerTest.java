@@ -9,9 +9,6 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link DeltaComputer}.
- */
 class DeltaComputerTest {
 
     private static byte[] bytes(String s) {
@@ -31,7 +28,6 @@ class DeltaComputerTest {
         return new ConfigSnapshot(data, version, timestamp);
     }
 
-    /** Collects mutations into a map keyed by config key for easy assertions. */
     private static Map<String, ConfigMutation> indexByKey(ConfigDelta delta) {
         Map<String, ConfigMutation> map = new HashMap<>();
         for (ConfigMutation m : delta.mutations()) {
@@ -171,7 +167,6 @@ class DeltaComputerTest {
 
             ConfigDelta delta = DeltaComputer.compute(from, to);
 
-            // update(update), add(add), delete(remove) = 3 mutations
             assertEquals(3, delta.size());
 
             Map<String, ConfigMutation> indexed = indexByKey(delta);

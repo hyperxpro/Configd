@@ -15,15 +15,10 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * The fail-closed resolution contract of {@link AuthenticatorChain} (the security core) and its fail-loud,
- * hybrid name + ServiceLoader construction.
- */
 class AuthenticatorChainTest {
 
     private static final Credential CRED = new Credential.BearerToken("x");
 
-    /** A configurable authenticator: it claims a credential class and returns / throws a canned outcome. */
     private static final class TestAuthenticator implements Authenticator {
         private final String type;
         private final Class<? extends Credential> handles;
@@ -80,8 +75,6 @@ class AuthenticatorChainTest {
 
     @Test
     void invalidCredentialHardStops_neverFallsThroughToAWeakerAuthenticator() {
-        // The first authenticator OWNS the credential and rejects it as invalid. Even though a later
-        // authenticator WOULD accept, the chain must STOP - the whole point of fail-closed.
         AuthenticatorChain chain = new AuthenticatorChain(List.of(
                 TestAuthenticator.returning("owner", denied(DenyReason.INVALID_CREDENTIAL)),
                 TestAuthenticator.returning("weaker", auth("should-never-win"))));
@@ -123,7 +116,6 @@ class AuthenticatorChainTest {
 
     @Test
     void typeDispatchSkipsNonHandlers() {
-        // 'certOnly' handles ClientCertificate, so it is skipped for a BearerToken; 'bearer' then wins.
         AuthenticatorChain chain = new AuthenticatorChain(List.of(
                 new TestAuthenticator("certOnly", Credential.ClientCertificate.class, c -> auth("cert"), null),
                 TestAuthenticator.returning("bearer", auth("token"))));
@@ -175,7 +167,6 @@ class AuthenticatorChainTest {
 
     @Test
     void unknownProviderFailsLoud() {
-        // Naming 'oidc' with no OIDC module on the classpath is a STARTUP error, never a silent downgrade.
         IllegalStateException e = assertThrows(IllegalStateException.class,
                 () -> AuthenticatorChain.build(List.of("mtls", "oidc"), cfg(Map.of())));
         assertTrue(e.getMessage().contains("oidc"));
@@ -189,7 +180,6 @@ class AuthenticatorChainTest {
 
     @Test
     void noneMixedWithOtherProvidersIsRejected() {
-        // 'none' (auth disabled) is all-or-nothing; combining it with a real authenticator is fail-loud.
         assertThrows(IllegalStateException.class,
                 () -> AuthenticatorChain.build(List.of("mtls", "none"), cfg(Map.of())));
         assertThrows(IllegalStateException.class,

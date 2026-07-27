@@ -55,7 +55,7 @@ class EdgePostAdmissionCorruptFrameTest {
             // throws CodecException(FRAME_CORRUPT). On Netty that arrives at exceptionCaught wrapped in a
             // DecoderException; the fix unwraps it so the close carries FRAME_CORRUPT, not SERVER_SHUTDOWN.
             byte[] frame = EdgeFrameCodec.encode(new EdgeFrame.CursorAck(5L));
-            frame[frame.length - 1] ^= (byte) 0xFF; // corrupt the CRC32C trailer
+            frame[frame.length - 1] ^= (byte) 0xFF;
             edge.sendRaw(frame);
 
             EdgeFrame.ErrorClose close = (EdgeFrame.ErrorClose) readUntil(edge, EdgeFrame.ErrorClose.class);
@@ -74,9 +74,6 @@ class EdgePostAdmissionCorruptFrameTest {
         postSubscribeCorruptFrameClosesFrameCorrupt(true);
     }
 
-    // -----------------------------------------------------------------------
-    // fixtures
-    // -----------------------------------------------------------------------
 
     private int startPlaintextServer(boolean netty) throws IOException {
         MetricsRegistry registry = new MetricsRegistry();

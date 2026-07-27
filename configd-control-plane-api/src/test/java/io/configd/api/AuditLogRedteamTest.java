@@ -101,8 +101,6 @@ class AuditLogRedteamTest {
         assertEquals(0, r.brokenIndex());
     }
 
-    // An in-memory Storage that keeps raw audit frames and lets a test tamper them directly. No frame
-    // CRC (unlike FileStorage) so it is the AUDIT chain, not a container checksum, under test.
     private static final class TamperStore implements Storage {
         private final Map<String, List<byte[]>> logs = new HashMap<>();
 

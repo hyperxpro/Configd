@@ -81,13 +81,10 @@ public final class LivePropagationProbeMain {
      */
     public static final int EXIT_EDGE_NOT_BUILT = 2;
 
-    /** The single boundary observer id (one in-process consumer of the boundary). */
     private static final int BOUNDARY_OBSERVER_ID = 0;
 
-    /** The edge-process observer id ({@code --mode edge}). */
     private static final int EDGE_OBSERVER_ID = 1;
 
-    /** {@code Committed: seq=<S>} - the quorum-commit 200 response body the consumer parses. */
     private static final Pattern COMMITTED_SEQ = Pattern.compile("Committed: seq=(\\d+)");
 
     private LivePropagationProbeMain() {
@@ -112,14 +109,11 @@ public final class LivePropagationProbeMain {
         }
     }
 
-    // Edge mode: commit -> edge-visibility through the real wire path.
 
     private static int runEdge(Options opts) throws Exception {
         printEdgeHeader(opts);
 
         Path dataDir = Files.createTempDirectory("configd-probe-edge-");
-        // Real signing/verify key pair via the production path: the server signs its
-        // fan-out stream; the edge verifies.
         Path signingKey = dataDir.resolve("signing-key.bin");
         SigningKeyStore.loadOrCreate(signingKey);
         Path verifyKey = dataDir.resolve("verify-key.der");
@@ -251,12 +245,10 @@ public final class LivePropagationProbeMain {
             this.probe = probe;
         }
 
-        /** Signals the concurrent watcher loop to finish. */
         void stop() {
             stopped.set(true);
         }
 
-        /** True once {@link #stop()} has been called. */
         boolean stopped() {
             return stopped.get();
         }
@@ -264,7 +256,6 @@ public final class LivePropagationProbeMain {
         /** One pump pass; returns true if anything was recorded (publish or visible). */
         boolean pumpOnce() {
             boolean progressed = false;
-            // 1. Drain the boundary: record publish ts per seq.
             CommitNotificationSource.Result result = source.readSince(boundaryCursor);
             switch (result) {
                 case CommitNotificationSource.Result.Ok ok -> {
@@ -283,7 +274,6 @@ public final class LivePropagationProbeMain {
                     progressed = true;
                 }
             }
-            // 2. Sample the edge cursor; record visible for newly covered published seqs.
             long edgeCursor = edge.core().cursor();
             long recordable = Math.min(edgeCursor, boundaryCursor);
             if (recordable > edgeRecordedUpTo) {
@@ -316,7 +306,6 @@ public final class LivePropagationProbeMain {
         System.out.println();
     }
 
-    // Boundary mode.
 
     private static int runBoundary(Options opts) throws Exception {
         printHeader(opts);
@@ -327,8 +316,6 @@ public final class LivePropagationProbeMain {
 
         PropagationProbe probe = new PropagationProbe();
         AtomicBoolean draining = new AtomicBoolean(false);
-        // Tail the commit-notification handoff boundary in-process on its own thread. The consumer loop
-        // records publish ts = commit timestamp and visible ts = now at consumption.
         ConsumerLoop consumer = new ConsumerLoop(
                 server.commitNotificationSource(), server.replaySource(), probe, draining);
         Thread consumerThread = new Thread(consumer, "probe-boundary-consumer");
@@ -345,11 +332,8 @@ public final class LivePropagationProbeMain {
 
             long lastSeq = driveWrites(http, base, opts);
 
-            // Wait - by polling, never a fixed sleep - until the consumer has observed
-            // every committed seq (cursor reached lastSeq) or the deadline expires.
             awaitConsumed(probe, lastSeq, opts);
         } finally {
-            // Signal the consumer to finish its current pass and stop, then shut down.
             draining.set(true);
             consumer.stop();
             consumerThread.join(Duration.ofSeconds(5).toMillis());
@@ -363,11 +347,6 @@ public final class LivePropagationProbeMain {
         return 0;
     }
 
-    /**
-     * Drives {@code opts.writes} HTTP PUTs over loopback, each to a distinct key, and
-     * returns the highest committed seq observed. Retries an individual write across
-     * transient leader churn, polling a deadline.
-     */
     private static long driveWrites(HttpClient http, String base, Options opts)
             throws Exception {
         long maxSeq = -1;
@@ -457,7 +436,7 @@ public final class LivePropagationProbeMain {
      */
     private static void awaitConsumed(PropagationProbe probe, long lastSeq, Options opts) {
         if (lastSeq < 0) {
-            return; // nothing committed (no writes) - nothing to await
+            return;
         }
         long deadline = System.nanoTime() + opts.drainDeadline.toNanos();
         while (System.nanoTime() < deadline) {
@@ -528,8 +507,6 @@ public final class LivePropagationProbeMain {
                     yield !ns.isEmpty();
                 }
                 case CommitNotificationSource.Result.Gap gap -> {
-                    // Recover via the replay seam: apply the snapshot wholesale and resume
-                    // tailing from its seq floor.
                     ReplaySource.Replay replay = replaySource.replayFromSnapshot();
                     cursor = replay.seq();
                     yield true;
@@ -538,9 +515,7 @@ public final class LivePropagationProbeMain {
         }
     }
 
-    // Config + output helpers.
 
-    /** Single-node config: empty peers (self-elect), no peer addresses (no-op transport), TLS off. */
     private static ServerConfig singleNodeConfig(Options opts, Path dataDir) {
         return new ServerConfig(
                 NodeId.of(opts.nodeId),
@@ -586,9 +561,7 @@ public final class LivePropagationProbeMain {
         }
     }
 
-    // CLI options.
 
-    /** Parsed CLI options and their defaults. */
     private static final class Options {
         String mode = "boundary";
         int writes = 200;

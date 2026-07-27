@@ -61,14 +61,12 @@ class IntegrityEnvelopeRedteamTest {
         return "frozen-redteam-payload".getBytes();
     }
 
-    /** Repairs the CRC32C trailer (all bytes but the last 4) so a crafted header change is judged on its own merits. */
     private static void repairCrc(byte[] b) {
         CRC32C crc = new CRC32C();
         crc.update(b, 0, b.length - IntegrityEnvelope.CRC_SIZE);
         ByteBuffer.wrap(b).putInt(b.length - IntegrityEnvelope.CRC_SIZE, (int) crc.getValue());
     }
 
-    // Version 0 and the u16 reserved escape 0xFFFF must both fail closed.
 
     @Test
     void versionZeroRejected_keyed() {
@@ -121,7 +119,6 @@ class IntegrityEnvelopeRedteamTest {
                 "the 0xFFFF reserved-escape version must fail closed");
     }
 
-    // Unknown algId, and algId-dispatch posture confusion.
 
     @Test
     void unknownAlgIdRejected_keyless() {
@@ -164,14 +161,12 @@ class IntegrityEnvelopeRedteamTest {
     void algNoneUnderEncryptingReaderRejected_downgrade() {
         // Attack: strip authentication (algId=NONE) and present the plaintext to an encrypting
         // reader. Posture, not just bytes, must defeat the strip-to-plaintext downgrade.
-        byte[] plain = IntegrityEnvelope.keyless().wrap(SNAP_MAGIC, SCOPE, payload()); // algId=NONE
+        byte[] plain = IntegrityEnvelope.keyless().wrap(SNAP_MAGIC, SCOPE, payload());
         IntegrityException ex = assertThrows(IntegrityException.class,
                 () -> encryptingEnvelope().unwrap(SNAP_MAGIC, SCOPE, plain));
         assertTrue(ex.getMessage().contains("downgrade"), ex.getMessage());
     }
 
-    // Reserved byte not equal to zero under the encrypting posture (the builder covered keyless
-    // and keyed only).
 
     @Test
     void reservedNonZeroRejected_encrypting() {
@@ -188,13 +183,9 @@ class IntegrityEnvelopeRedteamTest {
                 "a non-zero reserved byte on an encrypted record must fail closed, got: " + ex.getMessage());
     }
 
-    // Cross-artifact magic confusion: wrap under one artifact's magic, read as another's.
 
     @Test
     void crossArtifactConfusionRejected_keyed() {
-        // Attack: a valid WAL-record envelope replayed where a snapshot blob is expected. The reader
-        // sees a magic that is not the one it asked for and, under a key, refuses the unauthenticated
-        // bytes. (This is the confusion the per-artifact magic exists to stop.)
         IntegrityEnvelope env = new IntegrityEnvelope(hmacKey());
         byte[] walRecord = env.wrap(WALE_MAGIC, SCOPE, payload());
         assertThrows(IntegrityException.class, () -> env.unwrap(SNAP_MAGIC, SCOPE, walRecord),
@@ -212,8 +203,8 @@ class IntegrityEnvelopeRedteamTest {
         IntegrityEnvelope env = encryptingEnvelope();
         byte[] walRecord = env.wrap(WALE_MAGIC, SCOPE, payload());
 
-        ByteBuffer.wrap(walRecord).putInt(0, SNAP_MAGIC); // masquerade as a snapshot
-        repairCrc(walRecord);                             // defeat the corruption check
+        ByteBuffer.wrap(walRecord).putInt(0, SNAP_MAGIC);
+        repairCrc(walRecord);
 
         IntegrityException ex = assertThrows(IntegrityException.class,
                 () -> env.unwrap(SNAP_MAGIC, SCOPE, walRecord),

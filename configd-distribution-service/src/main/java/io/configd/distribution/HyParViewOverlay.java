@@ -12,32 +12,11 @@ import java.util.Set;
 import java.util.random.RandomGenerator;
 
 /**
- * HyParView overlay network management.
- * <p>
- * HyParView maintains two views of the network:
- * <ul>
- *   <li><b>Active view</b> - small set of peers with open connections.
- *       These peers are used for eager push in Plumtree. Typical size: 4-6.</li>
- *   <li><b>Passive view</b> - larger set of peers used for recovery when
- *       active view members fail. Typical size: 24-30.</li>
- * </ul>
- * <p>
- * Membership protocol:
- * <ul>
- *   <li><b>Join</b> - new node contacts a known peer; that peer adds it to
- *       its active view and forwards a ForwardJoin to random active peers.</li>
- *   <li><b>Shuffle</b> - periodic exchange of passive view entries between
- *       active peers, ensuring passive views remain fresh.</li>
- *   <li><b>Disconnect</b> - when an active peer is removed, it is moved to
- *       the passive view and a passive peer is promoted.</li>
- * </ul>
- * <p>
  * Thread safety: designed for single-threaded access from the distribution
  * service I/O thread. No synchronization is used.
  */
 public final class HyParViewOverlay {
 
-    /** Outbound protocol messages. */
     public sealed interface OutboundMessage {
         NodeId target();
 
@@ -49,7 +28,6 @@ public final class HyParViewOverlay {
         record Neighbor(NodeId target, boolean highPriority) implements OutboundMessage {}
     }
 
-    /** Callback for active view changes (used to update PlumtreeNode). */
     @FunctionalInterface
     public interface ViewChangeListener {
         void onViewChange(NodeId peer, boolean added);
@@ -68,14 +46,8 @@ public final class HyParViewOverlay {
     private ViewChangeListener viewChangeListener;
 
     /**
-     * Creates a HyParView overlay.
-     *
-     * @param localId        this node's identifier
      * @param maxActiveSize  maximum active view size (typically 4-6)
      * @param maxPassiveSize maximum passive view size (typically 24-30)
-     * @param shuffleLength  number of entries per shuffle exchange
-     * @param shuffleTtl     TTL for ForwardJoin messages
-     * @param random         random generator (seeded for deterministic testing)
      */
     public HyParViewOverlay(NodeId localId, int maxActiveSize, int maxPassiveSize,
                              int shuffleLength, int shuffleTtl, RandomGenerator random) {
@@ -90,27 +62,16 @@ public final class HyParViewOverlay {
         this.outbox = new LinkedList<>();
     }
 
-    /**
-     * Sets the listener for active view changes.
-     */
     public void setViewChangeListener(ViewChangeListener listener) {
         this.viewChangeListener = listener;
     }
 
-    /**
-     * Initiates a join by contacting a known peer (bootstrap node).
-     *
-     * @param contactNode the peer to join through
-     */
     public void join(NodeId contactNode) {
         Objects.requireNonNull(contactNode, "contactNode must not be null");
         addToActiveView(contactNode);
         outbox.add(new OutboundMessage.Join(contactNode, localId));
     }
 
-    /**
-     * Processes a Join request from a new node.
-     */
     public void receiveJoin(NodeId newNode) {
         if (newNode.equals(localId)) return;
 
@@ -122,10 +83,6 @@ public final class HyParViewOverlay {
         }
     }
 
-    /**
-     * Processes a ForwardJoin message. If TTL reaches 0 or the active view
-     * is not full, add the node. Otherwise decrement TTL and forward.
-     */
     public void receiveForwardJoin(NodeId newNode, int ttl) {
         if (newNode.equals(localId)) return;
 
@@ -140,10 +97,6 @@ public final class HyParViewOverlay {
         }
     }
 
-    /**
-     * Initiates a shuffle exchange with a random active peer.
-     * Called periodically (e.g., every 30 seconds) to refresh passive views.
-     */
     public void initiateShuffle() {
         if (activeView.isEmpty()) return;
 
@@ -155,28 +108,16 @@ public final class HyParViewOverlay {
         outbox.add(new OutboundMessage.ShuffleRequest(peer, sample));
     }
 
-    /**
-     * Processes a shuffle request. Selects a sample from the passive view,
-     * sends it back, and integrates the received sample.
-     */
     public void receiveShuffleRequest(NodeId from, List<NodeId> sample) {
         List<NodeId> reply = samplePassiveView(sample.size());
         outbox.add(new OutboundMessage.ShuffleReply(from, reply));
         integrateSample(sample);
     }
 
-    /**
-     * Processes a shuffle reply. Integrates the received sample into
-     * the passive view.
-     */
     public void receiveShuffleReply(List<NodeId> sample) {
         integrateSample(sample);
     }
 
-    /**
-     * Handles a peer failure. Removes the peer from the active view
-     * and promotes a passive peer to maintain connectivity.
-     */
     public void peerFailed(NodeId peer) {
         if (activeView.remove(peer)) {
             notifyViewChange(peer, false);
@@ -185,9 +126,6 @@ public final class HyParViewOverlay {
         }
     }
 
-    /**
-     * Processes a Disconnect notification from a peer.
-     */
     public void receiveDisconnect(NodeId from) {
         if (activeView.remove(from)) {
             notifyViewChange(from, false);
@@ -196,17 +134,14 @@ public final class HyParViewOverlay {
         }
     }
 
-    /** Returns the active view (unmodifiable). */
     public Set<NodeId> activeView() {
         return Set.copyOf(activeView);
     }
 
-    /** Returns the passive view (unmodifiable). */
     public Set<NodeId> passiveView() {
         return Set.copyOf(passiveView);
     }
 
-    /** Drains all pending outbound messages. */
     public Queue<OutboundMessage> drainOutbox() {
         Queue<OutboundMessage> result = new LinkedList<>(outbox);
         outbox.clear();

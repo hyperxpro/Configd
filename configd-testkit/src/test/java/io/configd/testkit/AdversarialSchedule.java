@@ -31,19 +31,14 @@ final class AdversarialSchedule {
     private static final int TAG_WORKLOAD = 1_002;
 
     enum FaultKind {
-        /** Begin dropping a fraction of messages cluster-wide for a window. */
         DROP_WINDOW_BEGIN,
-        /** End the active drop window (restore zero drop). */
         DROP_WINDOW_END,
         /** Add a (possibly asymmetric / partial) partition between two nodes. */
         PARTITION_ADD,
-        /** Remove a specific partition. */
         PARTITION_REMOVE,
-        /** Heal all partitions (first-class scheduled event). */
         HEAL_ALL,
         /** Begin a delay-spike window on a chosen ordered pair. */
         DELAY_SPIKE_BEGIN,
-        /** End the active delay-spike window. */
         DELAY_SPIKE_END,
         /** Arm a crash on a node after N of its storage writes (CrashStorage). */
         CRASH_ARM
@@ -54,7 +49,6 @@ final class AdversarialSchedule {
     /** A scheduled fault at a logical tick. {@code a}/{@code b} are node ids or -1. */
     record Event(int tick, FaultKind kind, int a, int b, double param, int intParam) {}
 
-    /** A scheduled client operation at a logical tick. */
     record Op(int tick, OpKind kind, int clientId, int opSeq, String key, String value) {}
 
     private final long seed;
@@ -85,7 +79,6 @@ final class AdversarialSchedule {
         this.ops = List.copyOf(ops);
     }
 
-    /** Knobs controlling fault/op density - defaults give a busy adversarial run. */
     record Intensity(int faultCount, int opCount, double minPartitionFraction) {}
 
     static Intensity defaultIntensity() {

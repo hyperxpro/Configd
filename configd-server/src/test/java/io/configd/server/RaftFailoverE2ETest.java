@@ -109,7 +109,6 @@ final class RaftFailoverE2ETest {
         System.setProperty("configd.raft.netty.workerThreads", "1"); // less event-loop contention on 2 vCPU
         cluster = new Cluster();
 
-        // 1) elect and replicate a batch across all three nodes
         int leader0 = cluster.electStableLeader(STABILIZE_BUDGET_MS);
         assertTrue(leader0 >= 0, "a stable leader must be elected on the real Netty wire");
         long term0 = cluster.maxTerm();
@@ -126,10 +125,8 @@ final class RaftFailoverE2ETest {
             }
         }
 
-        // 2) kill the leader mid-stream (crash equivalent: transport closed, ticks stopped)
         cluster.killNode(leader0);
 
-        // 3) a new leader is elected among the two survivors
         int leader1 = cluster.awaitStableLeaderExcluding(leader0, FAILOVER_BUDGET_MS);
         assertTrue(leader1 >= 0,
                 "the two survivors must elect a new stable leader after the leader was killed");
@@ -137,7 +134,6 @@ final class RaftFailoverE2ETest {
         assertTrue(cluster.maxTerm() > term0,
                 "a real re-election must advance the term past the pre-failover term " + term0);
 
-        // 4) no data loss: every pre-failover committed key survives on both survivors
         for (int i = 0; i < NODES; i++) {
             if (i == leader0) {
                 continue;
@@ -148,7 +144,6 @@ final class RaftFailoverE2ETest {
             }
         }
 
-        // 5) the cluster is live again: a fresh write commits and replicates on both survivors
         long postCommit = cluster.commitAndAwaitReplication(leader1, "post", "after-failover", leader0);
         assertTrue(postCommit > 0, "a post-failover write must commit on the new leader's 2-of-3 quorum");
         for (int i = 0; i < NODES; i++) {
@@ -171,7 +166,6 @@ final class RaftFailoverE2ETest {
                 ctx + ": key '" + key + "' must hold its committed value");
     }
 
-    // real-wire cluster (mirrors NettyConsensusLivenessTest.RealWireCluster; stores retained, node kill added)
 
     private final class Cluster {
         private final NodeId[] ids = new NodeId[NODES];
@@ -273,7 +267,6 @@ final class RaftFailoverE2ETest {
             }
         }
 
-        /** Crash a node: stop its ticks (no more heartbeats/appends) and close its transport (drop the wire). */
         void killNode(int i) {
             dead[i] = true;
             ScheduledFuture<?> f = tickFutures[i];

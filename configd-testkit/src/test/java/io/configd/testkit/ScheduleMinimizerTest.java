@@ -24,7 +24,6 @@ class ScheduleMinimizerTest {
 
     @Test
     void ddminReducesToMinimalFailingSchedule() {
-        // Find a seed whose expanded schedule contains a PARTITION_ADD.
         AdversarialSchedule failing = null;
         for (long seed = 0; seed < 50 && failing == null; seed++) {
             AdversarialSchedule s = new AdversarialSchedule(seed, NODES, TICKS);
@@ -44,14 +43,11 @@ class ScheduleMinimizerTest {
         ScheduleMinimizer minimizer = new ScheduleMinimizer(stillFails);
         AdversarialSchedule minimized = minimizer.minimize(failing);
 
-        // Still reproduces.
         assertTrue(stillFails.test(minimized), "minimized schedule must still fail");
-        // Strictly smaller.
         int afterTotal = minimized.events().size() + minimized.ops().size();
         assertTrue(afterTotal < beforeEvents + beforeOps,
                 "minimized schedule must be strictly smaller (" + afterTotal + " < "
                         + (beforeEvents + beforeOps) + ")");
-        // 1-minimal w.r.t. this predicate: exactly the one needed PARTITION_ADD, no ops.
         assertEquals(1, minimized.events().size(),
                 "ddmin must isolate the single root-cause event");
         assertEquals(AdversarialSchedule.FaultKind.PARTITION_ADD,
@@ -59,7 +55,6 @@ class ScheduleMinimizerTest {
         assertTrue(minimized.ops().isEmpty(),
                 "ops irrelevant to the failure must be removed");
 
-        // The result is a standalone, replayable JSON artifact.
         String json = ScheduleMinimizer.toJson(minimized);
         assertTrue(json.contains("\"seed\":") && json.contains("PARTITION_ADD"),
                 "artifact must be a self-describing replayable schedule");

@@ -14,7 +14,7 @@ export PORCUPINE_BIN="${PORCUPINE_BIN:-$ROOT/configd-linz/bin/porcupine-check}"
 SEEDS="${1:-1001 1002 1003 1004 1005}"
 
 br=11000; ba=10000
-green_run() { # nodes seed
+green_run() {
   local nodes="$1" seed="$2"
   br=$((br+14)); ba=$((ba+14))
   local log="/tmp/gate-n$nodes-$seed.log"

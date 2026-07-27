@@ -83,45 +83,37 @@ class EdgeMetricsContractTest {
     // once non-empty).
 
     private static final List<String> EDGE_PROCESS_SERIES = List.of(
-            // staleness surface
             "edge_staleness_ms",
             "edge_staleness_state",
             "configd_edge_staleness_violation_total",
             "edge_staleness_implausible_total",
-            // cursor / apply pipeline
             "edge_cursor_lag",
             "edge_applied_total",
             "edge_gaps_total",
             "edge_snapshots_applied_total",
             "edge_snapshot_chunks_rejected_total",
             "edge_verify_rejections_total",
-            // read-serving surface
             "edge_reads_total",
             "edge_read_refusals_cursor_behind_total",
             "edge_read_refusals_strong_read_total",
             "edge_read_refusals_not_subscribed_total",
-            // lifecycle
             "edge_reconnects_total",
             "edge_rebootstrap_triggered_total",
-            // poison-pill ladder
             "edge_poison_retries_total",
             "configd_edge_poison_pill_total",
             "configd_edge_poison_pill_terminal_total");
 
     private static final List<String> FAN_OUT_SERIES = List.of(
-            // stream mechanics
             "edge_fanout_notify_batches_total",
-            "edge_fanout_notify_batch_size_count", // histogram sample line
+            "edge_fanout_notify_batch_size_count",
             "edge_fanout_heartbeats_total",
             "edge_fanout_snapshot_transfers_total",
             "edge_fanout_slow_consumer_warnings_total",
-            // demotions (per-reason suffix encoding)
             "edge_fanout_demotions_queue_overflow_total",
             "edge_fanout_demotions_ack_lag_total",
             "edge_fanout_demotions_gap_total",
             "edge_fanout_demotions_transport_block_total",
             "edge_fanout_demotions_other_total",
-            // session closes (per-reason suffix encoding)
             "edge_fanout_sessions_closed_server_shutdown_total",
             "edge_fanout_sessions_closed_protocol_violation_total",
             "edge_fanout_sessions_closed_frame_corrupt_total",
@@ -132,21 +124,17 @@ class EdgeMetricsContractTest {
             "edge_fanout_sessions_closed_bad_subscribe_total",
             "edge_fanout_sessions_closed_transport_gone_total",
             "edge_fanout_sessions_closed_other_total",
-            // admission + subscribe-time decision
             "edge_fanout_sessions_refused_total",
             "edge_fanout_first_frame_timeouts_total",
             "edge_fanout_subscribe_tail_total",
             "edge_fanout_subscribe_snapshot_first_total",
             "edge_fanout_subscribe_horizon_distance",
-            // server-side prefix filtering
             "edge_fanout_filtered_deltas_total",
             "edge_fanout_delivered_deltas_total",
             "edge_fanout_cursor_advances_total",
             "edge_fanout_filtered_sessions_total",
-            // queue depth + connected subscribers
             "edge_fanout_queue_depth",
             "edge_fanout_connected_subscribers",
-            // slow-consumer governor counters + per-state gauges
             "edge_fanout_slow_transitions_total",
             "edge_fanout_quarantines_total",
             "edge_fanout_reconnects_refused_total",
@@ -158,7 +146,6 @@ class EdgeMetricsContractTest {
             "edge_fanout_consumer_state_quarantined",
             "edge_fanout_consumer_state_unhealthy");
 
-    // Edge-process half (EdgeNodeMetrics over a real EdgeClientCore + test clock)
 
     private static final class TestClock implements Clock {
         long timeMs = 1_000_000L;
@@ -196,8 +183,6 @@ class EdgeMetricsContractTest {
 
     @Test
     void edgeProcessSeriesAreAllPresentOnFirstScrape() {
-        // The very first scrape — zero traffic, zero events — must already export every
-        // edge-process series in the named list, each as a real sample line.
         assertAllSeriesPresent(EdgeHalf.create().scrape(), EDGE_PROCESS_SERIES);
     }
 
@@ -210,7 +195,6 @@ class EdgeMetricsContractTest {
         assertEquals(3, seriesValue(boot, "edge_staleness_state"), "boot = DISCONNECTED ordinal");
         assertTrue(seriesValue(boot, "edge_staleness_ms") > 30_000, "boot staleness past threshold");
 
-        // A committed delta at wall-now heals the frontier → CURRENT, staleness 0.
         edge.apply(1, "a", "1");
         edge.metrics.syncFromCore(edge.core, null);
         String current = edge.scrape();
@@ -241,8 +225,6 @@ class EdgeMetricsContractTest {
 
     @Test
     void poisonPillCounterHandlesMoveTheExportedSeries() {
-        // The counter handles EdgeNodeMetrics hands to PoisonPillPolicy are wired to
-        // the exported names — the ladder's semantics are pinned in edge-cache.
         EdgeHalf edge = EdgeHalf.create();
         edge.metrics.poisonRetriesCounter().increment(2);
         edge.metrics.poisonPillCounter().increment();
@@ -253,7 +235,6 @@ class EdgeMetricsContractTest {
         assertEquals(1, seriesValue(out, "configd_edge_poison_pill_terminal_total"));
     }
 
-    // Server-side fan-out half (RegistryFanOutSessionMetrics over its own registry)
 
     @Test
     void fanOutSeriesAreAllPresentOnFirstScrape() {
@@ -271,12 +252,10 @@ class EdgeMetricsContractTest {
         m.onQueueDepth(7);
         m.onQueueDepth(3);
 
-        // Connected-subscriber count follows connect/disconnect.
         m.onSubscriberConnected();
         m.onSubscriberConnected();
         m.onSubscriberDisconnected();
 
-        // One movement per slow-consumer transition family.
         m.onSlowTransition();
         m.onQuarantine();
         m.onSessionClosed("QUARANTINED");
@@ -285,7 +264,6 @@ class EdgeMetricsContractTest {
         m.onUnhealthy();
         m.onConsumerStates(4, 3, 2, 1, 5);
 
-        // Stream-mechanics spot-check (one batch through the FanOutSessionMetrics seam).
         m.onNotifyBatch(5, 100);
         m.onDemotion(DemotionEvent.REASON_ACK_LAG);
 
@@ -316,19 +294,16 @@ class EdgeMetricsContractTest {
     void everyDashboardAndAlertSeriesIsProvenEmitted() throws Exception {
         java.util.Set<String> emitted = new java.util.HashSet<>();
 
-        // edge process: edge_* + configd_edge_read_seconds (with its bucket schedule) + JVM gauges
         EdgeHalf edge = EdgeHalf.create();
         edge.metrics.syncFromCore(edge.core, null);
         io.configd.observability.JvmMetrics.bind(edge.registry);
         addEmitted(emitted, new PrometheusExporter(edge.registry,
                 io.configd.observability.ConfigdMetrics.edgeProcessHistogramSchedules()).export());
 
-        // server-side fan-out series
         MetricsRegistry fanReg = new MetricsRegistry();
         new RegistryFanOutSessionMetrics(fanReg);
         addEmitted(emitted, new PrometheusExporter(fanReg).export());
 
-        // control-plane SLO series (with histogram schedules) + subscription gauge + JVM runtime
         MetricsRegistry cpReg = new MetricsRegistry();
         io.configd.observability.ConfigdMetrics cp =
                 new io.configd.observability.ConfigdMetrics(cpReg, () -> 0L);
@@ -354,7 +329,6 @@ class EdgeMetricsContractTest {
                         + missing + "\n  referenced=" + referenced);
     }
 
-    /** Adds each exported sample line's bare metric name (before `{` or ` `) to the set. */
     private static void addEmitted(java.util.Set<String> set, String scrape) {
         for (String line : scrape.split("\n")) {
             if (line.isBlank() || line.startsWith("#")) continue;
@@ -365,7 +339,6 @@ class EdgeMetricsContractTest {
         }
     }
 
-    /** Extracts Configd metric-series identifiers (our four prefixes) from a dashboard/alert file. */
     private static java.util.Set<String> seriesRefs(String text) {
         java.util.Set<String> out = new java.util.TreeSet<>();
         java.util.regex.Matcher m = java.util.regex.Pattern

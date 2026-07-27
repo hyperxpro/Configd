@@ -93,7 +93,7 @@ class EdgeTokenAuthTest {
 
     private void bearerAuthThenSubscribeReceives(boolean netty) throws Exception {
         AclService acl = new AclService();
-        acl.grant("", PRINCIPAL, EnumSet.of(AclService.Permission.READ)); // whole-store READ for the token id
+        acl.grant("", PRINCIPAL, EnumSet.of(AclService.Permission.READ));
         int port = startTokenServer(netty, new AclServiceWatchAuthorizer(acl), LONG_TTL_MS);
 
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
@@ -121,7 +121,7 @@ class EdgeTokenAuthTest {
     private void subscribeBeforeAuthIsRejected(boolean netty) throws Exception {
         int port = startTokenServer(netty, null, LONG_TTL_MS); // authorizer irrelevant: the gate closes first
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 8_000)) {
-            edge.subscribeFullStore("no-auth", 0L); // a business frame before AUTH
+            edge.subscribeFullStore("no-auth", 0L);
             assertNull(readSubscribeOkOrNull(edge),
                     "a SUBSCRIBE before AUTH must never be acknowledged");
             assertTrue(drainUntilClosed(edge), "the connection must close");
@@ -161,7 +161,7 @@ class EdgeTokenAuthTest {
     private void refreshBeforeAuthIsRejected(boolean netty) throws Exception {
         int port = startTokenServer(netty, null, LONG_TTL_MS);
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 8_000)) {
-            edge.refreshBearer(TOKEN); // REFRESH_AUTH before ever authenticating
+            edge.refreshBearer(TOKEN);
             EdgeFrame.ErrorClose close = (EdgeFrame.ErrorClose) readUntil(edge, EdgeFrame.ErrorClose.class);
             assertEquals(ErrorCode.PROTOCOL_VIOLATION, close.code(),
                     "REFRESH_AUTH before AUTH is a protocol violation");
@@ -285,7 +285,7 @@ class EdgeTokenAuthTest {
         int port = startTokenServer(netty, twoPrincipalChain(), null, LONG_TTL_MS);
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge.authenticateBearer("tok-alice");
-            edge.refreshBearer("tok-alice"); // SAME identity -> accepted, session extended
+            edge.refreshBearer("tok-alice");
             edge.subscribeFullStore("x", 0L);
             assertNotNull(readUntil(edge, EdgeFrame.SubscribeOk.class),
                     "a same-identity refresh keeps the connection authenticated and usable");
@@ -306,7 +306,7 @@ class EdgeTokenAuthTest {
         int port = startTokenServer(netty, twoPrincipalChain(), null, LONG_TTL_MS);
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge.authenticateBearer("tok-alice");
-            edge.refreshBearer("tok-bob"); // a DIFFERENT identity on an established connection
+            edge.refreshBearer("tok-bob");
             EdgeFrame.ErrorClose close = (EdgeFrame.ErrorClose) readUntil(edge, EdgeFrame.ErrorClose.class);
             assertEquals(ErrorCode.AUTH_FAIL, close.code(),
                     "a refresh that resolves to a different identity must fail closed");
@@ -484,7 +484,6 @@ class EdgeTokenAuthTest {
                     return true;
                 }
             } catch (java.net.SocketTimeoutException e) {
-                // keep polling
             } catch (IOException | EdgeFrameCodec.CodecException e) {
                 return true;
             }

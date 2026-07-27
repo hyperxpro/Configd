@@ -15,7 +15,6 @@ import java.util.Set;
  */
 public final class NoAuthAuthenticator implements Authenticator {
 
-    /** The subject id every caller is mapped to when authentication is disabled. */
     public static final String ANONYMOUS_ID = "anonymous";
 
     private static final Principal ANONYMOUS =

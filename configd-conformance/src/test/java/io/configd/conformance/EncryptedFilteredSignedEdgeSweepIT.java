@@ -52,34 +52,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * genuine {@code ConfigdServer}'s signed deltas while that server keeps the same values AES-GCM-scrambled
  * on disk.
  *
- * <h2>The four legs (one boot, one encrypted node)</h2>
- * <ol>
- *   <li><b>Clean verified filtered tail.</b> Subscribe to the {@code app/} prefix with
- *       {@code withAcceptFiltered(true)} against the empty encrypted store, then commit in-prefix keys
- *       over HTTP. Each is delivered as a change event carrying a leader-signed position; the client
- *       applies it only because {@code verifyWith(clusterKey)} passed (a bad signature would tear the
- *       connection down fail-closed). Because the connection subscribes to an empty store it TAILs from
- *       cursor 0, so the deltas chain contiguously and are delivered as verified change events, not folded
- *       into an unsigned hydration snapshot.</li>
- *   <li><b>Out-of-prefix dropped on the live tail, in-prefix sentinel delivered live.</b> An out-of-prefix
- *       key (also the at-rest canary) is committed, followed by an in-prefix sentinel. The change-event
- *       stream, which is <b>not</b> filtered on the client (only the materialized view is), never carries
- *       the out-of-prefix key, proving the SERVER dropped the whole signed delta before it reached the
- *       wire. The interleaved drop opens a forward jump in the delivered chain (the server's covered-S
- *       cursor advances past the skipped position); the sentinel must arrive as exactly ONE live change
- *       event forward-applied over that jump, NOT re-hydrated by a re-bootstrap: the proof the reference
- *       client honors the filtered forward-only apply contract rather than misreading the jump as a gap and
- *       re-bootstrapping on every interleaved out-of-prefix commit. Single-key commits keep this
- *       delta-granular filter key-granular.</li>
- *   <li><b>0x01 back-compat.</b> A second reference client subscribes full-store with
- *       {@code SubscribeOptions.defaults()} (wire {@code 0x01}) against the SAME encrypted server and
- *       hydrates the WHOLE store, including the out-of-prefix key the {@code 0x03} client never saw,
- *       proving a filtered-capable server still serves an un-opted {@code 0x01} client correctly.</li>
- *   <li><b>Genuinely encrypted at rest.</b> A walk of the node's data dir proves the committed canary,
- *       readable through the HTTP client, does NOT appear in cleartext on disk. Encryption is transparent
- *       to both the wire and the client API, yet the value is AES-GCM-scrambled at rest.</li>
- * </ol>
- *
  * <p><b>How the fan-out signing public key is obtained.</b> The cluster signs its fan-out deltas with the
  * keypair loaded from {@code --signing-key-file} ({@code ConfigdServer} builds {@code new
  * ConfigSigner(SigningKeyStore.loadOrCreate(keyFile).keyPair())}). The test pre-creates that key file and
@@ -101,7 +73,6 @@ class EncryptedFilteredSignedEdgeSweepIT {
     private static final long DELIVER_MS = 30_000;
     private static final long POLL_MS = 50;
 
-    // The subscribed prefix and an out-of-prefix namespace the filter must drop.
     private static final String PREFIX = "app/";
     private static final String OUT_PREFIX = "sys/";
 
@@ -138,7 +109,6 @@ class EncryptedFilteredSignedEdgeSweepIT {
             try {
                 s.shutdown();
             } catch (RuntimeException ignored) {
-                // best-effort teardown
             }
         }
         running.clear();
@@ -155,8 +125,6 @@ class EncryptedFilteredSignedEdgeSweepIT {
     @Test
     void encryptedServerFiltersAndSignsTheEdgeSweepAndStaysPlaintextOffDisk(@TempDir Path root)
             throws Exception {
-        // The cluster signs fan-out deltas with the --signing-key-file keypair; pre-create it and capture
-        // the PUBLIC verify key the reference client will check every signed position against.
         Path signingKey = root.resolve("secrets").resolve("signing-key.bin");
         Files.createDirectories(signingKey.getParent());
         PublicKey clusterKey = SigningKeyStore.loadOrCreate(signingKey).keyPair().getPublic();
@@ -167,7 +135,6 @@ class EncryptedFilteredSignedEdgeSweepIT {
 
         try (ConfigdHttpClient http = httpClient(server)) {
 
-            // ---- 0x03 filtered + signed-verify client ----
             try (ConfigdEdgeClient edge = ConfigdEdgeClient.open(verifyingEdgeConfig(edgePort, clusterKey))) {
                 Subscription sub = edge.subscribePrefixes(List.of(PREFIX),
                         SubscribeOptions.defaults().withAcceptFiltered(true));
@@ -176,7 +143,6 @@ class EncryptedFilteredSignedEdgeSweepIT {
                 // Empty store => TAIL from cursor 0 (no hydration snapshot); the tail below chains cleanly.
                 sub.awaitHydrated(Duration.ofMillis(HYDRATE_MS));
 
-                // --- leg 1: clean verified filtered tail (cells 3, 4, 18) ---
                 http.blocking().put(PREFIX + "name", "configd".getBytes(UTF_8), WriteOptions.defaults());
                 http.blocking().put(PREFIX + "region", "us-east".getBytes(UTF_8), WriteOptions.defaults());
                 assertTrue(await(DELIVER_MS, () -> viewHas(sub, PREFIX + "name", "configd")
@@ -190,9 +156,8 @@ class EncryptedFilteredSignedEdgeSweepIT {
                 assertEquals0(countPrefix(changes, OUT_PREFIX), changes,
                         "no out-of-prefix key may be delivered before any is even committed");
 
-                // --- leg 2: out-of-prefix dropped on the live filtered tail (cell 3) ---
-                // Commit the out-of-prefix canary, then an in-prefix sentinel; when the sentinel is visible
-                // the client has processed past the canary's position, so the canary's absence is decisive.
+                // Commit the out-of-prefix canary, then an in-prefix sentinel; when the sentinel is visible the client
+                // has processed past the canary's position, so the canary's absence is decisive.
                 WriteOutcome canaryPut = http.blocking()
                         .put(CANARY_KEY, CANARY_VALUE.getBytes(UTF_8), WriteOptions.defaults());
                 assertTrue(canaryPut.seq() > 0, "the out-of-prefix canary must commit (seq=" + canaryPut.seq() + ")");
@@ -233,7 +198,6 @@ class EncryptedFilteredSignedEdgeSweepIT {
             assertArrayEquals(CANARY_VALUE.getBytes(UTF_8), canaryRead.valueOrThrow(),
                     "the HTTP client reads the committed out-of-prefix value verbatim");
 
-            // ---- leg 3: 0x01 back-compat against the SAME 0x03-capable encrypted server (cell 19) ----
             try (ConfigdEdgeClient legacy = ConfigdEdgeClient.open(plaintextEdgeConfig(edgePort))) {
                 Subscription full = legacy.subscribeFullStore(SubscribeOptions.defaults()); // 0x01, whole store
                 List<ConfigChange> legacyChanges = new CopyOnWriteArrayList<>();
@@ -248,7 +212,6 @@ class EncryptedFilteredSignedEdgeSweepIT {
             }
         }
 
-        // ---- leg 4: genuinely encrypted at rest (cell 3) ----
         String hit = firstFileContaining(dataDir, CANARY_VALUE.getBytes(UTF_8));
         assertTrue(hit == null,
                 "encryption at rest is ON: the committed canary must not appear in cleartext on disk, found it in "
@@ -257,9 +220,6 @@ class EncryptedFilteredSignedEdgeSweepIT {
                 + "cleartext under " + dataDir + ") — encryption, 0x03 filtering, and signed verify compose");
     }
 
-    // =======================================================================
-    // single-node boot + reference clients
-    // =======================================================================
 
     private ConfigdServer bootSingleNode(Path dataDir, Path signingKey) {
         // Signing key kept outside the data dir: the boot guard refuses a key co-located with the encrypted
@@ -335,9 +295,6 @@ class EncryptedFilteredSignedEdgeSweepIT {
         };
     }
 
-    // =======================================================================
-    // small helpers
-    // =======================================================================
 
     private static boolean viewHas(Subscription sub, String key, String value) {
         return sub.view().get(key).map(v -> value.equals(new String(v, UTF_8))).orElse(false);

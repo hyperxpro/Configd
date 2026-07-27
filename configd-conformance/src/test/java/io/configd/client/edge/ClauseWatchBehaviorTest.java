@@ -32,15 +32,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-/**
- * CLIENT-CONFORMS, watch behavior (§02 W): the reference {@link Watch} against the scriptable
- * {@link MockEdgeServer} on the {@code 0x02} plane -- the delivery behaviors (persistence, the UNION merge +
- * {@code (gid,S)} dedup, per-key/per-shard order, bookmark idle-advance + no-regress, batch-atomic events with a
- * signed {@code val_len} DELETE, {@code commit_ts}-is-freshness-not-cursor, {@code full_chain_verify} local
- * verify+filter, the {@code NOT_AUTHORIZED} per-watch terminal, client-initiated cancel, and fail-closed on an
- * un-negotiated extension). The bodies re-express the {@code EdgeWatchTest} scenarios with genuine per-clause
- * assertions; the resume/catch-up half lives in {@link ClauseWatchResumeTest}.
- */
 @Timeout(30)
 class ClauseWatchBehaviorTest {
 
@@ -53,7 +44,7 @@ class ClauseWatchBehaviorTest {
             long wid = ((EdgeFrame.WatchCreate) conn.readFrame()).watchId();
             w(conn, new EdgeFrame.WatchCreated(wid, List.of(new EdgeFrame.ShardMode(0, 0, EdgeFrame.Mode.TAIL))));
             w(conn, event(wid, 0, 1, "k1", "v1"));
-            w(conn, event(wid, 0, 2, "k1", "v2")); // a SECOND change on the same key -- proof the watch is persistent
+            w(conn, event(wid, 0, 2, "k1", "v2"));
             conn.parkUntilClosed();
         })) {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(trustedConfig(server.port()))) {
@@ -148,12 +139,11 @@ class ClauseWatchBehaviorTest {
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
             long wid = ((EdgeFrame.WatchCreate) conn.readFrame()).watchId();
             w(conn, new EdgeFrame.WatchCreated(wid, List.of(new EdgeFrame.ShardMode(0, 0, EdgeFrame.Mode.TAIL))));
-            // One shard-commit with TWO matching changes (a PUT + a DELETE) -- delivered as ONE atomic event.
             w(conn, new EdgeFrame.WatchEvent(wid, 0, 1, 100L, List.of(
                     EdgeFrame.WatchChange.put("k1", "v1".getBytes(StandardCharsets.UTF_8)),
                     EdgeFrame.WatchChange.delete("k2"))));      // DELETE means val_len == -1 (the sole signed width)
             w(conn, new EdgeFrame.WatchEvent(wid, 0, 2, 100L, List.of(
-                    EdgeFrame.WatchChange.put("k3", "v3".getBytes(StandardCharsets.UTF_8))))); // next commit, ascending S
+                    EdgeFrame.WatchChange.put("k3", "v3".getBytes(StandardCharsets.UTF_8)))));
             conn.parkUntilClosed();
         })) {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(trustedConfig(server.port()))) {
@@ -162,7 +152,6 @@ class ClauseWatchBehaviorTest {
                 watch.awaitCreated(Duration.ofSeconds(10));
                 // Two commits, so exactly two events (never split, never coalesced; W5-6).
                 await("two events (one per shard-commit)", () -> got.size() == 2);
-                // Batch-atomic: both keys of the one BATCH commit arrive together in a single event.
                 assertEquals(2, got.get(0).changes().size(), "one shard-commit's matching keys arrive together");
                 ConfigChange put = got.get(0).changes().get(0);
                 ConfigChange del = got.get(0).changes().get(1);
@@ -245,7 +234,6 @@ class ClauseWatchBehaviorTest {
     void notAuthorizedIsAPerWatchTerminalTheClientDoesNotRetry() throws Exception {
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
             long wid = ((EdgeFrame.WatchCreate) conn.readFrame()).watchId();
-            // A per-watch terminal close carrying the 403-class code -- no data frame precedes it.
             w(conn, new EdgeFrame.WatchCanceled(wid, ErrorCode.NOT_AUTHORIZED, null, "over-broad target"));
         })) {
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(trustedConfig(server.port()))) {

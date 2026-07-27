@@ -39,44 +39,21 @@ public final class InvariantMonitor {
 
     private static final Logger LOG = Logger.getLogger(InvariantMonitor.class.getName());
 
-    /** Prefix for invariant violation counter metrics. */
     private static final String METRIC_PREFIX = "invariant.violation.";
 
     private final MetricsRegistry metrics;
     private final boolean testMode;
 
-    /** Registered invariants: name -> registration. */
     private final ConcurrentHashMap<String, InvariantRegistration> invariants = new ConcurrentHashMap<>();
 
-    /** Per-invariant violation counts. */
     private final ConcurrentHashMap<String, LongAdder> violationCounts = new ConcurrentHashMap<>();
 
-    /**
-     * Creates an invariant monitor.
-     *
-     * @param metrics  the metrics registry for recording violation counts (non-null)
-     * @param testMode if {@code true}, violations throw {@link AssertionError};
-     *                 if {@code false}, violations are recorded silently
-     */
     public InvariantMonitor(MetricsRegistry metrics, boolean testMode) {
         Objects.requireNonNull(metrics, "metrics must not be null");
         this.metrics = metrics;
         this.testMode = testMode;
     }
 
-    /**
-     * Checks an invariant condition. If the condition is {@code false}:
-     * <ul>
-     *   <li>In test mode: throws {@link AssertionError} with the given message.</li>
-     *   <li>In production mode: increments the violation counter for this
-     *       invariant name.</li>
-     * </ul>
-     *
-     * @param invariantName      a unique name for this invariant (non-null, non-blank)
-     * @param condition          the invariant condition ({@code true} means OK)
-     * @param messageOnViolation the message to include in the error or log (non-null)
-     * @throws AssertionError if {@code testMode} is {@code true} and {@code condition} is {@code false}
-     */
     public void check(String invariantName, boolean condition, String messageOnViolation) {
         Objects.requireNonNull(invariantName, "invariantName must not be null");
         Objects.requireNonNull(messageOnViolation, "messageOnViolation must not be null");

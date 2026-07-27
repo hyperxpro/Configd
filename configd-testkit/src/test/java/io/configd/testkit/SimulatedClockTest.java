@@ -169,7 +169,7 @@ class SimulatedClockTest {
         @Test
         void resetsNanoOffsetToZero() {
             SimulatedClock clock = new SimulatedClock(1000L);
-            clock.advanceNanos(500_000); // set a non-zero nanoOffset
+            clock.advanceNanos(500_000);
             assertEquals(1000L * 1_000_000L + 500_000L, clock.nanoTime());
 
             clock.setTimeMs(2000L);

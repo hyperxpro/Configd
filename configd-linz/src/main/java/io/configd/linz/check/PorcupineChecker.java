@@ -53,10 +53,8 @@ public final class PorcupineChecker {
                         + "configd-linz/scripts/build-porcupine.sh (ADR-0032: a real checker is mandatory)");
     }
 
-    /** The checker's verdict plus its stdout/stderr, for pasting as evidence. */
     public record Result(Verdict verdict, int exitCode, String stdout, String stderr) {}
 
-    /** Serializes {@code ops} to a temp history file and checks it. */
     public Result check(List<Op> ops) throws IOException, InterruptedException {
         Path tmp = Files.createTempFile("linz-history-", ".json");
         try {
@@ -67,7 +65,6 @@ public final class PorcupineChecker {
         }
     }
 
-    /** Checks an already-serialized history JSON file. */
     public Result checkFile(Path historyJson) throws IOException, InterruptedException {
         Process proc = new ProcessBuilder(binary.toString(), historyJson.toString())
                 .redirectErrorStream(false)

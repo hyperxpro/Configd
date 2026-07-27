@@ -35,7 +35,6 @@ class LeadershipTransferAdminTest {
 
     private static final String PATH = "/v1/admin/groups/0/transfer-leadership";
 
-    /** A fake seam: records the (attempted) transfers, and returns a configurable result or throws timeout. */
     private static final class FakeLeadershipAdmin implements AdminApiHandler.LeadershipAdmin {
         final Set<Integer> knownGroups;
         final AtomicInteger attempts = new AtomicInteger();
@@ -62,7 +61,6 @@ class LeadershipTransferAdminTest {
         }
     }
 
-    /** root maps to "root" (no roles); admin maps to "adminP"; writer maps to "writerP"; anything else is denied. */
     private static AuthInterceptor auth() {
         return new AuthInterceptor(token -> switch (token) {
             case "root" -> new AuthInterceptor.AuthResult.Authenticated("root", Set.of());
@@ -88,9 +86,9 @@ class LeadershipTransferAdminTest {
 
     private static AdminApiHandler handler(AclService acl, AuthInterceptor auth,
                                            AdminApiHandler.LeadershipAdmin seam) {
-        return new AdminApiHandler(new HealthService(), /* exporter */ null, new VersionedConfigStore(),
-                /* writeService */ null, /* readService */ null, auth, acl, StrongReadPolicy.defaultPolicy(),
-                (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null, seam);
+        return new AdminApiHandler(new HealthService(), null, new VersionedConfigStore(),
+ null, null, auth, acl, StrongReadPolicy.defaultPolicy(),
+                (scope, key) -> NodeId.of(1), null, null, seam);
     }
 
     private static AdminApiHandler.AdminRequest req(String method, String path, String query, String token) {
@@ -115,13 +113,12 @@ class LeadershipTransferAdminTest {
         return h.handle(req("POST", path, query, token));
     }
 
-    // ADMIN gate: 401 unauthenticated, 403 non-admin, allow admin/root.
 
     @Test
     void unauthenticatedRequestIsRejected401AndTransferNotAttempted() throws Exception {
         FakeLeadershipAdmin seam = new FakeLeadershipAdmin(0);
         AdminApiHandler h = handler(acl(), auth(), seam);
-        assertEquals(401, post(h, PATH, "target=2", /* no token */ null).status(),
+        assertEquals(401, post(h, PATH, "target=2", null).status(),
                 "an unauthenticated leadership transfer must be 401");
         assertEquals(0, seam.attempts.get(), "an unauthenticated transfer must never reach the mechanism");
     }
@@ -130,7 +127,6 @@ class LeadershipTransferAdminTest {
     void nonAdminAuthenticatedPrincipalIsForbidden403AndTransferNotAttempted() throws Exception {
         FakeLeadershipAdmin seam = new FakeLeadershipAdmin(0);
         AdminApiHandler h = handler(acl(), auth(), seam);
-        // writerP holds broad WRITE but not ADMIN: a control op requires ADMIN, so it gets 403, never attempted.
         assertEquals(403, post(h, PATH, "target=2", "writer").status(),
                 "a WRITE-but-not-ADMIN principal must be forbidden from a leadership transfer");
         assertEquals(0, seam.attempts.get(), "a forbidden transfer must never reach the mechanism");
@@ -149,13 +145,11 @@ class LeadershipTransferAdminTest {
                 "the parsed ?target must be handed to the mechanism verbatim");
     }
 
-    // Auth-off posture: a control op is refused when auth is disabled (bring-up footgun closed).
 
     @Test
     void authDisabledRefusesTransfer403() throws Exception {
         FakeLeadershipAdmin seam = new FakeLeadershipAdmin(0);
-        // Auth off and ACL off (the loudly-warned non-production mode).
-        AdminApiHandler h = handler(/* acl */ null, /* auth */ null, seam);
+        AdminApiHandler h = handler( null, null, seam);
         assertEquals(403, post(h, PATH, "target=2", null).status(),
                 "auth-off: a leadership transfer (a privileged control op) must be refused, not open");
         assertEquals(0, seam.attempts.get(), "no transfer is attempted while auth is disabled");
@@ -164,14 +158,12 @@ class LeadershipTransferAdminTest {
     @Test
     void failsClosedWhenAuthOnButNoAclService403() throws Exception {
         FakeLeadershipAdmin seam = new FakeLeadershipAdmin(0);
-        // Auth on, ACL off: ADMIN cannot be evaluated, so the result is deny (never fall through to allowed).
-        AdminApiHandler h = handler(/* acl */ null, auth(), seam);
+        AdminApiHandler h = handler( null, auth(), seam);
         assertEquals(403, post(h, PATH, "target=2", "admin").status(),
                 "auth-on but no ACL service: the transfer must fail closed (ADMIN unevaluable)");
         assertEquals(0, seam.attempts.get(), "a fail-closed transfer must never reach the mechanism");
     }
 
-    // Response mapping: NotLeader becomes 503 plus a hint; Failure becomes 409; timeout becomes 503.
 
     @Test
     void notLeaderReturns503WithLeaderHint() throws Exception {
@@ -202,7 +194,6 @@ class LeadershipTransferAdminTest {
                 "a bounded-wait timeout on the owner thread must map to 503 (unknown, retryable)");
     }
 
-    // Input validation: malformed group id / target, unknown group, method, sub-resource, null seam.
 
     @Test
     void malformedGroupIdReturns400() throws Exception {
@@ -211,7 +202,6 @@ class LeadershipTransferAdminTest {
         // A non-integer group segment is the caller's own malformed URL, which is 400 (no server state leaked).
         assertEquals(400, post(h, "/v1/admin/groups/abc/transfer-leadership", "target=2", "root").status(),
                 "a non-integer group id must be 400");
-        // A nested path in the group segment is not a single group id.
         assertEquals(400, post(h, "/v1/admin/groups/0/nested/transfer-leadership", "target=2", "root").status(),
                 "a nested group segment must be 400");
         // The group id omitted entirely (prefix abuts suffix) is a malformed request, not a crash.
@@ -224,7 +214,7 @@ class LeadershipTransferAdminTest {
     void missingOrMalformedTargetReturns400() throws Exception {
         FakeLeadershipAdmin seam = new FakeLeadershipAdmin(0);
         AdminApiHandler h = handler(acl(), auth(), seam);
-        assertEquals(400, post(h, PATH, /* no target */ null, "root").status(),
+        assertEquals(400, post(h, PATH, null, "root").status(),
                 "a missing ?target must be 400");
         assertEquals(400, post(h, PATH, "target=", "root").status(),
                 "a blank ?target must be 400");
@@ -235,11 +225,10 @@ class LeadershipTransferAdminTest {
 
     @Test
     void unknownGroupReturns400AfterTheAdminGate() throws Exception {
-        FakeLeadershipAdmin seam = new FakeLeadershipAdmin(0); // only group 0 is registered
+        FakeLeadershipAdmin seam = new FakeLeadershipAdmin(0);
         AdminApiHandler h = handler(acl(), auth(), seam);
         assertEquals(400, post(h, "/v1/admin/groups/99/transfer-leadership", "target=2", "root").status(),
                 "a transfer for an unregistered group must be 400");
-        // ...but an unauthorized caller sees 403, never the group-existence 400 (no probing).
         assertEquals(403, post(h, "/v1/admin/groups/99/transfer-leadership", "target=2", "writer").status(),
                 "an unauthorized caller must not learn whether a group exists (403, not 400)");
         assertEquals(0, seam.attempts.get(), "an unknown-group transfer never reaches the mechanism");
@@ -279,12 +268,10 @@ class LeadershipTransferAdminTest {
         String ts = String.valueOf(clock.currentTimeMillis());
         String nonce = "transfer-nonce-1";
 
-        // The first (fresh) request passes the guard and reaches the mechanism.
         assertEquals(200, h.handle(transferReqWithReplay("root", ts, nonce)).status(),
                 "the first transfer request is accepted through the replay guard");
         assertEquals(1, seam.attempts.get(), "the first transfer reached the mechanism");
 
-        // Replaying the same captured request (same nonce) is rejected 409, and not attempted again.
         assertEquals(409, h.handle(transferReqWithReplay("root", ts, nonce)).status(),
                 "a replayed transfer request must be rejected (replayed nonce)");
         assertEquals(1, seam.attempts.get(), "a replayed transfer must not reach the mechanism");

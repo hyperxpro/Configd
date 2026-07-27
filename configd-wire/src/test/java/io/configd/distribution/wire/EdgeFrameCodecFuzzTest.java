@@ -53,7 +53,6 @@ class EdgeFrameCodecFuzzTest {
     private static final int MIN_FRAME = EdgeFrameCodec.HEADER_SIZE + EdgeFrameCodec.TRAILER_SIZE; // 10
     private static final byte V2 = EdgeFrameCodec.EDGE_WIRE_VERSION_V2;
 
-    // 1. Arbitrary bytes.
 
     @Property(tries = 2000, seed = "424242")
     void arbitraryBytesYieldFrameOrCodecExceptionOnly(@ForAll("adversarialSized") byte[] data) {
@@ -74,14 +73,12 @@ class EdgeFrameCodecFuzzTest {
                 assertTrue(len >= MIN_FRAME && len <= EdgeFrameCodec.MAX_EDGE_FRAME_SIZE,
                         "peekLength returned out-of-range " + len);
             } catch (EdgeFrameCodec.CodecException expected) {
-                // bounded, documented
             } catch (Throwable t) {
                 failForbidden("peekLength", data, t);
             }
         });
     }
 
-    // 2. Structured length-lie on a valid frame.
 
     @Property(tries = 500, seed = "1001")
     void lengthPrefixLieIsRejectedAsCodecException(
@@ -97,7 +94,6 @@ class EdgeFrameCodecFuzzTest {
                 EdgeFrameCodec.decode(frame);
                 fail("a length-prefix lie (" + hostileLength + ") must not decode");
             } catch (EdgeFrameCodec.CodecException expected) {
-                // correct
             } catch (Throwable t) {
                 failForbidden("length-lie decode", frame, t);
             }
@@ -137,14 +133,12 @@ class EdgeFrameCodecFuzzTest {
                 // forbids a forbidden throwable; a successful decode is fine.
                 assertNotNull(f);
             } catch (EdgeFrameCodec.CodecException expected) {
-                // correct - inner bounds check fired
             } catch (Throwable t) {
                 failForbidden("inner-length-lie", frame, t);
             }
         });
     }
 
-    // 3 & 4. Oversize / boundary length at the codec level.
 
     /**
      * The OOM lever at the edge codec: a length prefix at MAX_EDGE_FRAME_SIZE+1 or
@@ -173,7 +167,6 @@ class EdgeFrameCodecFuzzTest {
         }
     }
 
-    /** Boundary fuzzing: exactly MIN_FRAME and MAX_EDGE_FRAME_SIZE accepted by peek. */
     @Property(tries = 1, seed = "1008")
     void lengthBoundariesBehaveExactly() {
         assertEquals(MIN_FRAME, peekOf(MIN_FRAME));
@@ -189,7 +182,6 @@ class EdgeFrameCodecFuzzTest {
         return EdgeFrameCodec.peekLength(header);
     }
 
-    /** Sanity anchor: a known-good frame still decodes. */
     @Property(tries = 1, seed = "1010")
     void knownGoodFrameStillDecodes() {
         byte[] wire = EdgeFrameCodec.encode(new EdgeFrame.CursorAck(42));
@@ -197,9 +189,7 @@ class EdgeFrameCodecFuzzTest {
         assertEquals(new EdgeFrame.CursorAck(42), f);
     }
 
-    // 5. Watch frames (0x02). Same single-typed-failure oracle.
 
-    /** Truncating a valid 0x02 watch frame at any boundary yields a CodecException only. */
     @Property(tries = 500, seed = "2000")
     void watchFrameTruncationYieldsCodecExceptionOnly(
             @ForAll("validWatchFramesV2") byte[] valid,
@@ -214,14 +204,12 @@ class EdgeFrameCodecFuzzTest {
                 EdgeFrameCodec.decode(truncated);
                 fail("a truncated watch frame must not decode");
             } catch (EdgeFrameCodec.CodecException expected) {
-                // correct
             } catch (Throwable t) {
                 failForbidden("watch truncation decode", truncated, t);
             }
         });
     }
 
-    /** An inner field-length lie in a watch frame (CRC repaired) escapes only as a CodecException. */
     @Property(tries = 400, seed = "2001")
     void watchFrameInnerLengthLieRejected(
             @ForAll("validWatchFramesV2") byte[] valid,
@@ -241,14 +229,12 @@ class EdgeFrameCodecFuzzTest {
             try {
                 assertNotNull(EdgeFrameCodec.decode(frame));
             } catch (EdgeFrameCodec.CodecException expected) {
-                // correct - an inner bounds/invariant check fired
             } catch (Throwable t) {
                 failForbidden("watch inner-length-lie", frame, t);
             }
         });
     }
 
-    /** A hostile (negative / huge) cursor component count is rejected as FRAME_CORRUPT before allocation. */
     @Property(tries = 1, seed = "2002")
     void hostileCursorCountRejectedBeforeAllocation() {
         int[] hostile = {-1, Integer.MIN_VALUE, Integer.MAX_VALUE, 1_000_000};
@@ -266,7 +252,6 @@ class EdgeFrameCodecFuzzTest {
         }
     }
 
-    /** A duplicate or descending (unsigned) gid in a wire cursor is rejected as FRAME_CORRUPT. */
     @Property(tries = 1, seed = "2003")
     void unsortedOrDuplicateGidCursorRejected() {
         WatchCursor twoComp = new WatchCursor(List.of(
@@ -287,7 +272,6 @@ class EdgeFrameCodecFuzzTest {
         assertEquals(ErrorCode.FRAME_CORRUPT, ex.code());
     }
 
-    /** A WATCH_EVENT val_len other than the {@code -1} sentinel or a present (&ge;0) length is rejected. */
     @Property(tries = 1, seed = "2004")
     void watchEventBadValLenRejected() {
         EdgeFrame.WatchEvent ev = new EdgeFrame.WatchEvent(
@@ -309,7 +293,6 @@ class EdgeFrameCodecFuzzTest {
         assertEquals(ErrorCode.FRAME_CORRUPT, ex.code());
     }
 
-    /** A WATCH_* type stamped on a 0x01 frame (CRC repaired) is rejected as FRAME_CORRUPT. */
     @Property(tries = 1, seed = "2005")
     void watchTypeOnV1FrameRejected() {
         byte[] wire = EdgeFrameCodec.encode(new EdgeFrame.WatchCancel(7L), V2);
@@ -320,19 +303,17 @@ class EdgeFrameCodecFuzzTest {
         assertEquals(ErrorCode.FRAME_CORRUPT, ex.code());
     }
 
-    // 6. Amplifier reject paths, machine-swept.
-    //
     // Two client-facing amplifier bounds guard the edge codec; EdgeSubscribeBoundsTest /
-    // EdgeFrameCodecStrictnessTest pin the hand-aimed unit cases, and section 1's
-    // arbitrary-byte oracle exercises them incidentally. These properties sweep the
-    // exact hostile field with the fuzzer so the bound is proven across the whole int
-    // range, not a few points.
+    // EdgeFrameCodecStrictnessTest pin the hand-aimed unit cases, and the arbitrary-byte
+    // oracle above exercises them incidentally. These properties sweep the exact hostile
+    // field with the fuzzer so the bound is proven across the whole int range, not a few
+    // points.
     //
     // (The Raft-plane reject paths - a negative InstallSnapshot offset and trailing-byte
-    //  strictness - are machine-swept in RaftMessageCodecFuzzTest, the sibling suite in
-    //  configd-server. The SNAPSHOT_CHUNK decode cap is bounded by MAX_EDGE_FRAME_SIZE and
-    //  covered by the section-1 arbitrary-byte oracle; its encode cap
-    //  MAX_SNAPSHOT_CHUNK_BYTES is pinned by EdgeSnapshotCodecTest.)
+    // strictness - are machine-swept in RaftMessageCodecFuzzTest, the sibling suite in
+    // configd-server. The SNAPSHOT_CHUNK decode cap is bounded by MAX_EDGE_FRAME_SIZE and
+    // covered by the arbitrary-byte oracle above; its encode cap MAX_SNAPSHOT_CHUNK_BYTES
+    // is pinned by EdgeSnapshotCodecTest.)
 
     /**
      * Sweep the SUBSCRIBE {@code prefixCount} across the full int range on a CRC-valid frame
@@ -390,8 +371,6 @@ class EdgeFrameCodecFuzzTest {
                     () -> EdgeFrameCodec.decode(frame), "NOTIFY payload " + payloadLen + " over cap");
             assertEquals(ErrorCode.FRAME_TOO_LARGE, ex.code(), "payloadLen=" + payloadLen);
         }
-        // At-cap and just-under: the byte-cap does NOT fire; decode stays total (the zero-filled body
-        // parses a count then hits an inner bound / strict-end -> FRAME_CORRUPT, never a forbidden throw).
         for (int payloadLen : new int[]{cap, cap - 1, 32}) {
             byte[] frame = rawNotify(payloadLen);
             assertTimeoutPreemptively(DECODE_BUDGET, () -> {
@@ -418,7 +397,7 @@ class EdgeFrameCodecFuzzTest {
         byte[] f = new byte[total];
         ByteBuffer bb = ByteBuffer.wrap(f);
         bb.putInt(total);
-        bb.put(EdgeFrameCodec.EDGE_WIRE_VERSION);      // 0x01
+        bb.put(EdgeFrameCodec.EDGE_WIRE_VERSION);
         bb.put((byte) FrameType.SUBSCRIBE.code());
         bb.put((byte) 0);                               // fullStore = false
         bb.putInt(prefixCount);
@@ -435,14 +414,13 @@ class EdgeFrameCodecFuzzTest {
         byte[] f = new byte[total];
         ByteBuffer bb = ByteBuffer.wrap(f);
         bb.putInt(total);
-        bb.put(EdgeFrameCodec.EDGE_WIRE_VERSION);      // 0x01
+        bb.put(EdgeFrameCodec.EDGE_WIRE_VERSION);
         bb.put((byte) FrameType.NOTIFY.code());
         // payload stays zero-filled
         repairCrc(f);
         return f;
     }
 
-    // Oracle + helpers.
 
     private static void assertOracleHolds(byte[] data) {
         assertTimeoutPreemptively(DECODE_BUDGET, () -> {
@@ -478,7 +456,6 @@ class EdgeFrameCodecFuzzTest {
         return "len=" + data.length + " hex=" + hex + (data.length > 48 ? "..." : "");
     }
 
-    // Arbitraries.
 
     @Provide
     Arbitrary<byte[]> adversarialSized() {
@@ -513,7 +490,6 @@ class EdgeFrameCodecFuzzTest {
         return Arbitraries.bytes().array(byte[].class).ofSize(size);
     }
 
-    /** A spread of well-formed frames covering several variants and payload sizes. */
     @Provide
     Arbitrary<byte[]> validFrames() {
         Arbitrary<EdgeFrame> simple = Arbitraries.oneOf(
@@ -550,7 +526,6 @@ class EdgeFrameCodecFuzzTest {
                 });
     }
 
-    /** A spread of well-formed 0x02 watch frames covering every WATCH_* type and cursor form. */
     @Provide
     Arbitrary<byte[]> validWatchFramesV2() {
         Arbitrary<EdgeFrame> frames = Arbitraries.oneOf(

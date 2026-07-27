@@ -172,7 +172,6 @@ class ServerObeysPathAuthzTest {
         assertCreated(new AclServiceWatchAuthorizer(both), WatchTarget.key("/app/x"));
     }
 
-    // Watch-authorization contract (A6-2, A6-3, A6-4).
 
     @Test
     @Tag("clause:A6-2")
@@ -269,7 +268,6 @@ class ServerObeysPathAuthzTest {
         assertRejected(PERMISSIVE, unknownScope, ErrorCode.BAD_SUBSCRIBE, BadSubscribeException.class);
     }
 
-    // Harness.
 
     /** Starts a fresh live server (plaintext transport + bearer AUTH) with the given watch authorizer. */
     private FanOutServer newServer(WatchAuthorizer authorizer) throws Exception {
@@ -354,7 +352,7 @@ class ServerObeysPathAuthzTest {
         try (ConfigdEdgeClient client = ConfigdEdgeClient.open(clientConfig(srv.localPort()))) {
             Watch w = client.watch(target, WatchOptions.defaults());
             subscribe(w);
-            w.awaitCreated(Duration.ofSeconds(20)); // authorized and well-formed means created, no terminal reject
+            w.awaitCreated(Duration.ofSeconds(20));
         }
     }
 

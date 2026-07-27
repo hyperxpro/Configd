@@ -94,8 +94,6 @@ class EdgeSimDeterminismTest {
     }
 
     private static String digest(long seed, StreamDriver driver) {
-        // Edge faults ON so the digest captures all edge crash/restart/lag/partition
-        // transitions; the supplied driver decides whether deltas are actually delivered.
         EdgeFanOutSim sim = new EdgeFanOutSim(seed, CP_NODES, EDGES, TICKS,
                 /* edgeFaults */ true, driver,
                 AdversarialSchedule.defaultIntensity(), EdgeInvariants.BOUND_MS);
@@ -114,7 +112,6 @@ class EdgeSimDeterminismTest {
             sim.tick();
             try {
                 dos.writeInt(t);
-                // CP state - same fold as SimulationDeterminismTest / AdversarialSimTest.
                 for (int i = 0; i < CP_NODES; i++) {
                     dos.writeInt(cp.node(i).role().ordinal());
                     dos.writeLong(cp.node(i).currentTerm());
@@ -126,7 +123,6 @@ class EdgeSimDeterminismTest {
                     dos.writeLong(log.lastApplied());
                     dos.writeLong(cp.store(i).currentVersion());
                 }
-                // Edge state - the observable per edge.
                 for (EdgeActor edge : sim.edges()) {
                     dos.writeInt(edge.incarnation());
                     dos.writeLong(edge.cursor());

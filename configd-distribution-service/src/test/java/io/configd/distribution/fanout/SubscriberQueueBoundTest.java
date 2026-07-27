@@ -75,7 +75,7 @@ class SubscriberQueueBoundTest {
                 cfg, metrics, CLOCK);
         s.onSubscribe(new EdgeFrame.Subscribe(true, List.of(), 1L, -1L, "e"));
         for (long i = 2; i <= 5; i++) {
-            buffer.publish(notif(i)); // 4 pending -> 4 frames, hits the 80% warn at 4
+            buffer.publish(notif(i));
         }
         s.tick(0L);
         assertTrue(metrics.slowConsumerWarnings >= 1,
@@ -89,7 +89,6 @@ class SubscriberQueueBoundTest {
                         List.of(new ConfigMutation.Put("k" + seq, ("v" + seq).getBytes(StandardCharsets.UTF_8)))));
     }
 
-    /** Minimal counting metrics sink. */
     static final class CountingMetrics implements FanOutSessionMetrics {
         int notifyBatches;
         int slowConsumerWarnings;

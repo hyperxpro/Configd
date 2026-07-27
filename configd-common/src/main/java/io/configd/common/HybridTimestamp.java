@@ -22,9 +22,6 @@ public final class HybridTimestamp implements Comparable<HybridTimestamp> {
     public long wallTime() { return wallTime; }
     public int logical() { return logical; }
 
-    /**
-     * Pack into 64 bits. Top 48: wall time. Bottom 16: logical.
-     */
     public long packed() {
         return (wallTime << 16) | (logical & 0xFFFF);
     }

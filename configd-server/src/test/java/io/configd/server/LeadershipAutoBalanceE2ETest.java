@@ -36,44 +36,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * pure decision is convergent, {@code LeaderBalanceLoopTest} proves the loop's control behaviour over a
  * {@code FakeCluster} model, and {@code EncryptedMultiShardClusterCompositionTest} stands up a real
  * cluster but pins the loop OFF so its leadership-stability assertions cannot race a shed. None of them
- * proves the loop, wired into a live {@link ConfigdServer}, on its own thread, driving the real
- * owner-confined {@code transferLeadership} path over loopback TCP: takes a genuinely concentrated
- * cluster and spreads it back out. That is the property here.
+ * proves the loop, wired into a live {@link ConfigdServer}, driving the real owner-confined
+ * {@code transferLeadership} path over loopback TCP: takes a genuinely concentrated cluster and spreads
+ * it back out. That is the property here.
  *
- * <p>Both scenarios boot a real three-node, six-shard cluster over loopback (encryption OFF, to isolate
- * the balance behaviour), then deliberately concentrate every shard's leadership onto node 0 by driving
- * the same {@link RaftNode#transferLeadership} primitive the admin endpoint and the loop use. The
- * concentration is genuine: node 0 ends up leading all (or all-but-one) of the six groups, a leader
- * spread of {@code 6-0 = 6}, far past the actionable threshold of 2.
- *
- * <h2>The two halves</h2>
- * <ul>
- *   <li><b>Loop ON</b> ({@link #autobalanceOnRebalancesAConcentratedCluster}): with
- *       {@code autobalance.enabled=true} the loop sheds one led group per cadence to an under-loaded
- *       peer until the spread converges to {@code <= 1} (the balanced target for 6 groups over 3 nodes is
- *       {@code {2,2,2}}, spread 0). The convergence is via <em>genuine transfers</em>: the
- *       {@code transfers_initiated} counter on the running server proves the loop drove them, and the
- *       cluster stays correct: a write proposed AFTER rebalancing commits and replicates on all three.</li>
- *   <li><b>Kill switch OFF</b> ({@link #killSwitchOffLeavesAConcentratedClusterConcentrated}): with
- *       {@code autobalance.enabled=false} the SAME concentrated cluster does NOT self-balance within a
- *       window comfortably longer than the ON cluster took to converge. This is the control that proves
- *       the loop, not incidental election churn, is what rebalanced.</li>
- * </ul>
+ * <p>Both scenarios boot a real three-node, six-shard cluster over loopback, encryption OFF to isolate
+ * the balance behaviour, then deliberately concentrate every shard's leadership onto node 0 by driving
+ * the same {@link RaftNode#transferLeadership} primitive the admin endpoint and the loop use.
  *
  * <p><b>Why concentration is clean even with the loop live.</b> The loop's instability gate backs the
  * whole cycle off while any group's term bumped within {@code instabilityWindowMs}. Each transfer this
  * test issues bumps a term, so while the test is actively concentrating, the live loop is held in
  * {@code term_churn} back-off and cannot erode the concentration out from under it; it only begins
- * shedding once the test stops transferring and the window clears. The test therefore observes a real
- * concentrated start, then real convergence: no race to win.
+ * shedding once the test stops transferring and the window clears.
  *
- * <p>The cadence/cooldown/instability knobs are shortened from their production defaults so a bounded
- * test converges in tens of seconds, but the planner's real safety logic is untouched: the actionable
- * threshold stays 2, jitter/cooldown/churn back-off all still apply. Everything is deadline-polled, no
- * sleep-as-synchronisation; the per-method {@link Timeout} is pure hang detection on the throttled
- * 2-vCPU box. The election budget is widened to the ratio proven stable by
- * {@code NettyConsensusLivenessTest} so scheduling jitter cannot manufacture a spurious election (or an
- * involuntary leadership shed that would confound the kill-switch control).
+ * <p>The cadence/cooldown/instability knobs below are shortened from their production defaults so a
+ * bounded test converges in tens of seconds; the planner's real safety logic (actionable threshold,
+ * jitter/cooldown/churn back-off) is untouched.
  */
 @Timeout(180) // hang detection only; each phase bounds itself with an explicit deadline-poll
 class LeadershipAutoBalanceE2ETest {
@@ -84,11 +63,11 @@ class LeadershipAutoBalanceE2ETest {
     // spread has fallen to the unavoidable-imbalance floor of 1 or below.
     private static final int BALANCED_SPREAD = 1;
 
-    private static final long STABILIZE_MS = 60_000;   // all six shards elect a stable leader
-    private static final long CONCENTRATE_MS = 30_000;  // sweep every shard's leadership onto node 0
-    private static final long CONVERGE_MS = 45_000;    // ON: spread falls back to <= 1
-    private static final long OBSERVE_MS = 40_000;      // OFF: window in which no self-balancing may occur
-    private static final long REPLICATE_MS = 20_000;   // post-rebalance write replicates on all three
+    private static final long STABILIZE_MS = 60_000;
+    private static final long CONCENTRATE_MS = 30_000;
+    private static final long CONVERGE_MS = 45_000;
+    private static final long OBSERVE_MS = 40_000;
+    private static final long REPLICATE_MS = 20_000;
     private static final long POLL_MS = 50;
     private static final int STABLE_OBSERVATIONS = 10; // ~0.5s of a steady reading before it is "settled"
 
@@ -148,7 +127,6 @@ class LeadershipAutoBalanceE2ETest {
             try {
                 s.shutdown();
             } catch (RuntimeException ignored) {
-                // best-effort teardown
             }
         }
         running.clear();
@@ -167,12 +145,8 @@ class LeadershipAutoBalanceE2ETest {
         System.setProperty("configd.raft.autobalance.enabled", "true");
         ConfigdServer[] servers = bootCluster(root);
 
-        // Every shard must first elect a stable leader: the natural boot distribution is roughly even, so
-        // this is the balanced baseline the concentration then deliberately breaks.
         awaitAllShardsLed(servers);
 
-        // Concentrate: drive every shard's leadership onto node 0. The loop is held off by its term-churn
-        // gate while we do this (see class javadoc), so the concentration is clean.
         concentrateOnNode0(servers);
         int concentrated = awaitConcentration(servers);
         assertTrue(concentrated >= SHARDS - 1,
@@ -181,7 +155,6 @@ class LeadershipAutoBalanceE2ETest {
         System.out.println("[G8-BALANCE-ON] concentrated: node 0 leads " + concentrated + "/" + SHARDS
                 + " shards (spread " + settledSpread(servers) + ") — " + distribution(servers));
 
-        // The live loop must now shed leadership until the spread falls back to the balanced floor.
         assertTrue(awaitSpreadAtMost(servers, BALANCED_SPREAD, CONVERGE_MS),
                 "the auto-balance loop must converge the concentrated cluster to spread <= " + BALANCED_SPREAD
                         + " within " + CONVERGE_MS + "ms; last seen " + distribution(servers));
@@ -196,8 +169,6 @@ class LeadershipAutoBalanceE2ETest {
         System.out.println("[G8-BALANCE-ON] converged to spread " + settledSpread(servers)
                 + " via " + transfers + " loop-initiated transfers — " + distribution(servers));
 
-        // The cluster is still correct: a write proposed AFTER rebalancing commits and replicates on all
-        // three nodes (the rebalanced leadership did not lose or wedge the replicated log).
         long committed = commitAndAwaitReplication(servers, 0, "cfg/post-balance", "v-post");
         assertTrue(committed > 0, "a post-rebalance write must commit + replicate across the whole cluster");
         System.out.println("[G8-BALANCE-ON] post-rebalance write committed at index " + committed
@@ -225,7 +196,6 @@ class LeadershipAutoBalanceE2ETest {
         assertFalse(awaitSpreadAtMost(servers, BALANCED_SPREAD, OBSERVE_MS),
                 "without the auto-balance loop the concentrated cluster must NOT self-balance within "
                         + OBSERVE_MS + "ms; " + distribution(servers));
-        // And it is still genuinely concentrated (an unbalanced spread), not drifted apart by chance.
         int endSpread = settledSpread(servers);
         assertTrue(endSpread >= 2,
                 "the un-balanced cluster must remain concentrated (spread " + endSpread + "): "
@@ -234,7 +204,6 @@ class LeadershipAutoBalanceE2ETest {
                 + endSpread + " — no self-balancing without the loop: " + distribution(servers));
     }
 
-    // Mirrors EncryptedMultiShardClusterCompositionTest's loopback harness.
     private ConfigdServer[] bootCluster(Path root) throws Exception {
         // ONE shared cluster signing key, kept outside every node's data dir (a co-located key would
         // be readable by anyone with access to the data dir, defeating the at-rest integrity
@@ -337,7 +306,6 @@ class LeadershipAutoBalanceE2ETest {
         return sb.append("] spread=").append(spread(counts)).toString();
     }
 
-    /** Polls until every shard has a single stable leader (the balanced boot baseline). */
     private static void awaitAllShardsLed(ConfigdServer[] servers) throws InterruptedException {
         long end = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(STABILIZE_MS);
         int stable = 0;
@@ -356,16 +324,15 @@ class LeadershipAutoBalanceE2ETest {
     }
 
     /**
-     * Drives every shard not led by node 0 to transfer its leadership TO node 0, sweeping repeatedly until
-     * node 0 leads them all or the budget elapses. Sweeping (rather than one pass) keeps term bumps frequent
-     * so the ON loop's churn gate holds it off throughout, and re-issues any transfer that did not land.
+     * Sweeps repeatedly (rather than one pass) so term bumps stay frequent, holding the ON loop's
+     * churn gate off throughout concentration; each sweep also re-issues any transfer that did not land.
      */
     private void concentrateOnNode0(ConfigdServer[] servers) throws InterruptedException {
         long end = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(CONCENTRATE_MS);
         while (System.nanoTime() < end) {
             int[] counts = leaderCountsOrNull(servers);
             if (counts != null && counts[0] >= SHARDS) {
-                return; // fully concentrated on node 0
+                return;
             }
             for (int gid = 0; gid < SHARDS; gid++) {
                 int leader = shardLeader(servers, gid);
@@ -390,11 +357,9 @@ class LeadershipAutoBalanceE2ETest {
                 return node != null && node.transferLeadership(target);
             }).get(5, TimeUnit.SECONDS);
         } catch (Exception ignored) {
-            // best-effort; the concentration sweep retries
         }
     }
 
-    /** Polls briefly for the peak concentration on node 0 and returns the most it was observed leading. */
     private int awaitConcentration(ConfigdServer[] servers) throws InterruptedException {
         long end = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(10_000);
         int best = 0;
@@ -403,7 +368,7 @@ class LeadershipAutoBalanceE2ETest {
             if (counts != null) {
                 best = Math.max(best, counts[0]);
                 if (best >= SHARDS) {
-                    return best; // cannot do better than all shards on node 0
+                    return best;
                 }
             }
             Thread.sleep(POLL_MS);
@@ -411,9 +376,10 @@ class LeadershipAutoBalanceE2ETest {
         return best;
     }
 
-    /** Polls until the settled spread is {@code <= target} for several consecutive readings, or the budget
-     *  elapses. Requiring consecutive settled readings rules out a transient dip while a shed group is
-     *  mid-election. */
+    /**
+     * Requires several consecutive settled readings at or below {@code target} (not just one) to rule out
+     * a transient dip while a shed group is mid-election.
+     */
     private static boolean awaitSpreadAtMost(ConfigdServer[] servers, int target, long budgetMs)
             throws InterruptedException {
         long end = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
@@ -440,7 +406,6 @@ class LeadershipAutoBalanceE2ETest {
         return total;
     }
 
-    /** Reads a Prometheus counter's value from an exposition dump, or 0 if the series is absent. */
     private static long readCounter(String scrape, String metricName) {
         for (String line : scrape.split("\n")) {
             if (line.startsWith(metricName + " ")) {
@@ -456,9 +421,8 @@ class LeadershipAutoBalanceE2ETest {
     }
 
     /**
-     * Proposes a PUT on {@code gid}'s current leader and waits until ALL nodes apply it, retrying across a
-     * leadership change until accepted. Returns the committed index. (Mirrors the composition test's helper;
-     * the retry-across-leaders loop tolerates any late auto-balance shed of this group.)
+     * Retries across a leadership change so a late auto-balance shed of {@code gid} (the loop is still
+     * live) does not fail an in-flight PUT; returns the committed index once all nodes apply it.
      */
     private long commitAndAwaitReplication(ConfigdServer[] servers, int gid, String key, String value)
             throws Exception {

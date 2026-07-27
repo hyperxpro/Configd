@@ -55,7 +55,6 @@ class HkdfTest {
                         + "b8a11f5c5ee1879ec3454e5f3c738d2d"
                         + "9d201395faa4b61a96c8");
 
-        // null salt -> HashLen zero bytes; null info -> empty.
         assertArrayEquals(expectedPrk, Hkdf.extract(null, ikm));
         assertArrayEquals(expectedOkm, Hkdf.deriveKey(ikm, null, null, l));
     }

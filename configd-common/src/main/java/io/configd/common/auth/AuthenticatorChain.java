@@ -63,7 +63,6 @@ public final class AuthenticatorChain {
         this.authenticators = List.copyOf(authenticators);
     }
 
-    /** Resolves {@code credential} against the chain, fail-closed. See the class contract. */
     public AuthResult resolve(Credential credential) {
         Objects.requireNonNull(credential, "credential");
         boolean attempted = false;
@@ -78,16 +77,15 @@ public final class AuthenticatorChain {
                     return new AuthResult.Unavailable("authenticator '" + a.type() + "' returned no result");
                 }
                 if (r instanceof AuthResult.Authenticated) {
-                    return r; // first acceptance wins
+                    return r;
                 }
                 if (r instanceof AuthResult.Unavailable) {
-                    return r; // fail closed, stop
+                    return r;
                 }
                 AuthResult.Denied denied = (AuthResult.Denied) r; // sealed: only Denied remains
                 if (denied.reason() == DenyReason.INVALID_CREDENTIAL) {
-                    return r; // owned + bad: hard stop, never fall through
+                    return r;
                 }
-                // NO_CREDENTIAL / NOT_THIS_AUTHENTICATOR: try the next authenticator
             } catch (Throwable t) {
                 return new AuthResult.Unavailable(
                         "authenticator '" + a.type() + "' faulted: " + t.getClass().getSimpleName());

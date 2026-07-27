@@ -7,10 +7,8 @@ package io.configd.common.auth;
  * {@code UNKNOWN}, {@code strict} fails closed on it.
  */
 public enum RevocationStatus {
-    /** The responder affirmatively reports the certificate is NOT revoked (good). */
     GOOD,
     /** The responder affirmatively reports the certificate IS revoked. Rejected under {@code lax} and {@code strict}. */
     REVOKED,
-    /** The responder could not be reached, timed out, or gave an indeterminate answer (soft-fail signal). */
     UNKNOWN
 }

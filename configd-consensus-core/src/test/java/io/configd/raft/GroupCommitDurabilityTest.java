@@ -99,7 +99,7 @@ class GroupCommitDurabilityTest {
         Deque<Runnable> pending = new ArrayDeque<>();
         leader.setGroupCommit((flush, delayMicros) -> pending.add(flush), 4096, 0);
 
-        long base = leader.log().commitIndex();             // committed no-op index
+        long base = leader.log().commitIndex();
         ProposeOutcome out = leader.propose("x".getBytes());
         assertTrue(out.accepted(), "leader must accept the proposal");
         long idx = out.index();

@@ -45,7 +45,6 @@ class TcpRaftTransportSlowlorisTest {
         }
     }
 
-    /** Grabs an ephemeral free port (closed immediately) for the transport to bind. */
     private static int freePort() throws Exception {
         try (ServerSocket s = new ServerSocket(0)) {
             return s.getLocalPort();
@@ -58,7 +57,7 @@ class TcpRaftTransportSlowlorisTest {
                 new InetSocketAddress("127.0.0.1", port),
                 Map.of(),          // no peers needed for the inbound-only test
                 null,              // plaintext
-                msg -> { });       // no-op inbound handler
+                msg -> { });
         transports.add(t);
         t.start();
         return t;
@@ -85,7 +84,7 @@ class TcpRaftTransportSlowlorisTest {
             long t0 = System.nanoTime();
             attacker.setSoTimeout(5_000); // bound the attacker's own read so the test can never hang
             InputStream in = attacker.getInputStream();
-            int b = in.read(); // returns -1 when the server closes its side after the deadline
+            int b = in.read();
             long elapsedMs = (System.nanoTime() - t0) / 1_000_000;
 
             assertEquals(-1, b,

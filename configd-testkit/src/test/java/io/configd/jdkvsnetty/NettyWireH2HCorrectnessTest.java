@@ -66,7 +66,6 @@ class NettyWireH2HCorrectnessTest {
                 buf.getBytes(buf.readerIndex(), actual);
                 assertArrayEquals(expected, actual,
                         "best-Netty NOTIFY encode must be byte-identical (count=" + notifyCount + ")");
-                // And the bytes round-trip through the production decoder unchanged.
                 EdgeFrame decoded = EdgeFrameCodec.decode(actual);
                 assertEquals(notifyCount, ((EdgeFrame.Notify) decoded).notifications().size());
             } finally {

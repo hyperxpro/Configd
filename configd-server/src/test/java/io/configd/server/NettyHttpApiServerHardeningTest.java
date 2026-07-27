@@ -66,13 +66,11 @@ class NettyHttpApiServerHardeningTest {
         System.setProperty("configd.server.netty.maxRequestBytes", Integer.toString(maxRequestBytes));
 
         MetricsRegistry registry = new MetricsRegistry();
-        // Minimal spec: only what the public health endpoint + the codec/aggregator need. No
-        // auth/acl/write/read/audit/replay - the legit-traffic probe hits GET /health/live.
         server = new NettyHttpApiServer(
-                0, /* sslContext */ null, new HealthService(), new PrometheusExporter(registry),
-                new VersionedConfigStore(), /* writeService */ null, /* readService */ null,
-                /* authInterceptor */ null, /* aclService */ null, StrongReadPolicy.defaultPolicy(),
-                (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null);
+                0, null, new HealthService(), new PrometheusExporter(registry),
+                new VersionedConfigStore(), null, null,
+ null, null, StrongReadPolicy.defaultPolicy(),
+                (scope, key) -> NodeId.of(1), null, null);
         server.start();
     }
 
@@ -93,10 +91,10 @@ class NettyHttpApiServerHardeningTest {
         meteredRegistry = new MetricsRegistry();
         new ConfigdMetrics(meteredRegistry, () -> 0L); // eager-creates the ingress-reject counters
         server = new NettyHttpApiServer(
-                0, /* sslContext */ null, new HealthService(), new PrometheusExporter(meteredRegistry),
-                new VersionedConfigStore(), /* writeService */ null, /* readService */ null,
-                /* authInterceptor */ null, /* aclService */ null, StrongReadPolicy.defaultPolicy(),
-                (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null);
+                0, null, new HealthService(), new PrometheusExporter(meteredRegistry),
+                new VersionedConfigStore(), null, null,
+ null, null, StrongReadPolicy.defaultPolicy(),
+                (scope, key) -> NodeId.of(1), null, null);
         server.start();
     }
 
@@ -134,7 +132,6 @@ class NettyHttpApiServerHardeningTest {
         return server.port();
     }
 
-    // Oversize request line or headers get a 400 (bounded HttpServerCodec, never unbounded buffering)
 
     @Test
     void oversizeHeaderBlockIsRejectedWith4xxAndClosed() throws Exception {
@@ -157,12 +154,11 @@ class NettyHttpApiServerHardeningTest {
                 // The server signalled close (Connection: close + CLOSE listener); the read drains to EOF.
                 BufferedReader r = new BufferedReader(new InputStreamReader(s.getInputStream(),
                         StandardCharsets.US_ASCII));
-                while (r.readLine() != null) { /* drain to EOF */ }
+                while (r.readLine() != null) { }
             }
         }
     }
 
-    // Oversize body gets a 413 (the request-size ceiling), never accumulated
 
     @Test
     void oversizeBodyIsRejectedWith413NotBuffered() throws Exception {
@@ -193,7 +189,6 @@ class NettyHttpApiServerHardeningTest {
         }
     }
 
-    // The 400 and 413 ingress rejects must increment their reason counters
 
     @Test
     void malformedRequestTargetIncrementsBadRequestRejectCounter() throws Exception {
@@ -244,7 +239,6 @@ class NettyHttpApiServerHardeningTest {
                 "an oversize body must increment the payload_too_large reject counter");
     }
 
-    // Slowloris: an incomplete request is closed at the request-arrival deadline
 
     @Test
     void slowlorisIncompleteRequestIsClosedAtDeadline() throws Exception {
@@ -263,7 +257,7 @@ class NettyHttpApiServerHardeningTest {
                     "slowloris connection must be closed (EOF) or answered, not held open");
             if (first == 'H') {
                 // If the server answered (some builds 408), it must still close promptly - drain to EOF.
-                while (s.getInputStream().read() != -1) { /* drain */ }
+                while (s.getInputStream().read() != -1) { }
             }
         }
     }
@@ -284,7 +278,7 @@ class NettyHttpApiServerHardeningTest {
                 for (byte b : partial) {
                     os.write(b);
                     os.flush();
-                    Thread.sleep(30); // dribble: many bytes land, but the request never terminates
+                    Thread.sleep(30);
                 }
             } catch (SocketException closedMidDribble) {
                 // The server reaped the connection mid-dribble - the defence fired. Done.
@@ -296,16 +290,14 @@ class NettyHttpApiServerHardeningTest {
             assertTrue(first == -1 || first == 'H',
                     "slowloris dribble connection must be closed (EOF) or answered, not held open");
             if (first == 'H') {
-                while (s.getInputStream().read() != -1) { /* drain */ }
+                while (s.getInputStream().read() != -1) { }
             }
         }
     }
 
-    // The hardening must not break legitimate fast clients
 
     @Test
     void completeKeepAliveRequestStillServedUnderHardening() throws Exception {
-        // A normal keep-alive GET of the public health endpoint (no auth needed) is served 200.
         startServerWith(30_000, 60_000, 1 << 20);
         try (HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()) {
             HttpResponse<String> resp = http.send(HttpRequest.newBuilder()
@@ -316,7 +308,6 @@ class NettyHttpApiServerHardeningTest {
         }
     }
 
-    // Leak-freedom at PARANOID across all buffer paths (health/miss/404/error)
 
     @Test
     void noByteBufLeaksUnderSustainedTraffic() throws Exception {
@@ -349,7 +340,6 @@ class NettyHttpApiServerHardeningTest {
         }
     }
 
-    /** Drives {@code n} iterations of a request mix (4 endpoints each) through the server. */
     private static void hammer(HttpClient http, String base, int n) {
         for (int i = 0; i < n; i++) {
             send(http, base + "/health/live");              // health 200 (text body)

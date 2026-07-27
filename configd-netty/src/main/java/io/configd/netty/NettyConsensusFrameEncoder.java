@@ -42,10 +42,6 @@ public final class NettyConsensusFrameEncoder extends MessageToByteEncoder<Frame
         this.senderId = senderId;
     }
 
-    /**
-     * Size {@code out} to the exact frame ({@code [senderId] + FrameCodec frame}) so there is no
-     * reallocation+copy on write.
-     */
     @Override
     protected ByteBuf allocateBuffer(ChannelHandlerContext ctx, FrameCodec.Frame frame, boolean preferDirect) {
         int size = RaftWireProtocol.SENDER_ID_SIZE + FrameCodec.frameSize(frame.payload().length);

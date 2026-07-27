@@ -57,12 +57,10 @@ public final class RootKey implements AutoCloseable, Destroyable {
         this.material = material.clone();
     }
 
-    /** The non-secret identity of the KEK that produced this root key. */
     public KeyId keyId() {
         return keyId;
     }
 
-    /** The key length in bytes (non-secret). */
     public int length() {
         ensureLive();
         return material.length;
@@ -115,7 +113,6 @@ public final class RootKey implements AutoCloseable, Destroyable {
         return destroyed;
     }
 
-    /** try-with-resources scopes the live key's lifetime; delegates to {@link #destroy()}. */
     @Override
     public void close() {
         destroy();

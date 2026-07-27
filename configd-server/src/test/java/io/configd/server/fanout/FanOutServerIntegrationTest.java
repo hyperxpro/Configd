@@ -79,26 +79,22 @@ class FanOutServerIntegrationTest {
         HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
 
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(edgePort, 15_000)) {
-            // SUBSCRIBE -> SUBSCRIBE_OK.
             edge.subscribeFullStore("edge-1", 0L);
             EdgeFrame.SubscribeOk ok = (EdgeFrame.SubscribeOk) readUntil(edge, EdgeFrame.SubscribeOk.class);
             assertNotNull(ok, "must receive SUBSCRIBE_OK");
             // Fresh store, empty backlog -> TAIL.
             assertEquals(EdgeFrame.Mode.TAIL, ok.mode());
 
-            // Drive committed writes -> receive verbatim NOTIFY.
             long seq1 = putCommitted(http, base, "svc/a", "v-a");
             long lastSeq = collectNotifiedSeqUpTo(edge, seq1);
             assertEquals(seq1, lastSeq, "the committed seq must be delivered as a NOTIFY");
             edge.cursorAck(lastSeq);
 
-            // A second write also flows through verbatim, in order.
             long seq2 = putCommitted(http, base, "svc/b", "v-b");
             long lastSeq2 = collectNotifiedSeqUpTo(edge, seq2);
             assertEquals(seq2, lastSeq2);
             edge.cursorAck(lastSeq2);
 
-            // HEARTBEAT cadence when idle (no writes).
             EdgeFrame.Heartbeat hb = (EdgeFrame.Heartbeat) readUntil(edge, EdgeFrame.Heartbeat.class);
             assertNotNull(hb, "must observe a HEARTBEAT when the stream is idle");
             assertTrue(hb.serverNowMillis() > 0);
@@ -118,7 +114,6 @@ class FanOutServerIntegrationTest {
                     readUntilDemotionDraining(edge);
             assertEquals(io.configd.distribution.wire.ErrorCode.DEMOTED_TO_CATCHUP, demote.code());
 
-            // After demotion the server sends a chunked snapshot.
             EdgeFrame.SnapshotBegin begin = (EdgeFrame.SnapshotBegin) readUntil(edge, EdgeFrame.SnapshotBegin.class);
             assertNotNull(begin, "demotion must be followed by SNAPSHOT_BEGIN");
             List<EdgeFrame.SnapshotChunk> chunks = new ArrayList<>();
@@ -149,7 +144,6 @@ class FanOutServerIntegrationTest {
             assertTrue(resumedSeq >= end.snapshotSeq() + 1, "tail resumes after the snapshot");
         }
 
-        // Metrics moved.
         String metrics = scrapeMetrics(http, base);
         assertMetricPresentAndMoved(metrics, "edge_fanout_notify_batches_total");
         assertMetricPresentAndMoved(metrics, "edge_fanout_heartbeats_total");
@@ -179,12 +173,10 @@ class FanOutServerIntegrationTest {
                 garbage[i] = (byte) 0xEE;
             }
             edge.sendRaw(garbage);
-            // The server should close the connection (we read EOF or an ERROR_CLOSE then EOF).
             boolean closed = drainUntilClosed(edge);
             assertTrue(closed, "server must close the connection on a corrupt first frame");
         }
 
-        // The server is still alive - a fresh, well-behaved subscriber still works.
         try (EdgeProtocolClient edge2 = EdgeProtocolClient.connectPlaintext(edgePort, 10_000)) {
             edge2.subscribeFullStore("edge-2", 0L);
             assertNotNull(readUntil(edge2, EdgeFrame.SubscribeOk.class),
@@ -197,14 +189,12 @@ class FanOutServerIntegrationTest {
         server = ConfigdServer.start(plaintextConfig());
         int edgePort = server.fanOutServer().localPort();
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(edgePort, 10_000)) {
-            // Sending CURSOR_ACK before SUBSCRIBE is a protocol violation -> close.
             edge.cursorAck(5);
             assertTrue(drainUntilClosed(edge),
                     "a non-SUBSCRIBE first frame must close the connection");
         }
     }
 
-    /** Reads frames until one of {@code type} arrives or the deadline elapses; returns it or fails. */
     private static EdgeFrame readUntil(EdgeProtocolClient edge, Class<? extends EdgeFrame> type) throws IOException {
         long deadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
         while (System.nanoTime() < deadline) {
@@ -212,7 +202,7 @@ class FanOutServerIntegrationTest {
             try {
                 f = edge.readFrame();
             } catch (java.net.SocketTimeoutException e) {
-                continue; // poll again until the deadline
+                continue;
             }
             if (f == null) {
                 fail("stream closed while waiting for " + type.getSimpleName());
@@ -225,7 +215,6 @@ class FanOutServerIntegrationTest {
         return null;
     }
 
-    /** Reads NOTIFY frames, returning the highest seq seen once it reaches {@code target}. */
     private static long collectNotifiedSeqUpTo(EdgeProtocolClient edge, long target) throws IOException {
         long deadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
         long max = -1;
@@ -288,7 +277,6 @@ class FanOutServerIntegrationTest {
                 }
                 // An ERROR_CLOSE then EOF is also a close.
             } catch (java.net.SocketTimeoutException e) {
-                // keep polling
             } catch (IOException e) {
                 return true; // reset -> closed
             }

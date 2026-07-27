@@ -61,13 +61,12 @@ class ServerObeysPathAliasingTest {
     void serverNeverAliasesTraversalOrEmptySegmentSpellingsToASensitiveKey() throws Exception {
         URI base = start();
 
-        // Baseline A: the sensitive key app/secret/x exists but is ACL-protected -- the principal (granted only
-        // app/public/ READ) is denied, and a 403 never carries the value.
+        // Baseline A: proves the ACL denial is real (not a misconfiguration) before testing whether traversal
+        // can bypass it.
         HttpResponse<byte[]> secret = raw(uri(base, "/v1/config/app/secret/x"), "user-tok");
         assertEquals(403, secret.statusCode(), "app/secret/x is READ-denied to the principal (baseline)");
         assertFalse(bodyText(secret).contains(SECRET), "a 403 never carries the sensitive value");
 
-        // Baseline B: the grant genuinely works -- a legitimate key under app/public/ reads back 200.
         HttpResponse<byte[]> legit = raw(uri(base, "/v1/config/app/public/y"), "user-tok");
         assertEquals(200, legit.statusCode(), "a legit key under the app/public/ grant reads 200 (grant is real)");
 
@@ -99,7 +98,7 @@ class ServerObeysPathAliasingTest {
             default -> new AuthInterceptor.AuthResult.Denied("unknown token");
         });
         AclService acl = new AclService();
-        acl.grant("app/public/", "user", Set.of(AclService.Permission.READ)); // READ on app/public/ ONLY
+        acl.grant("app/public/", "user", Set.of(AclService.Permission.READ));
         ConfigWriteService write = new ConfigWriteService(
                 (scope, keys, command) -> new ConfigWriteService.ProposeCommitResult.Committed(77L), null, null);
         server = new HttpApiServer(0, null, new HealthService(), new PrometheusExporter(new MetricsRegistry()),

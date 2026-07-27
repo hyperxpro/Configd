@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SanitizeTest {
 
-    private static final char ESC = (char) 0x1B; // ANSI CSI lead
+    private static final char ESC = (char) 0x1B;
     private static final char NUL = (char) 0x00;
 
     @Test

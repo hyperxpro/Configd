@@ -92,13 +92,10 @@ class NotSubscribedReadTest {
         await("edge caught up past both writes",
                 () -> edge.core().currentVersion() >= Math.max(seqIn, seqOut));
 
-        // (1) In-slice hit serves.
         HttpResponse<String> hit = get(edgeBase + "/v1/config/svc/present");
         assertEquals(200, hit.statusCode());
         assertEquals("in-slice", hit.body());
 
-        // (2) In-slice MISS is authoritative non-existence: plain 404, NO refusal header
-        //     — the edge has the full slice so an absence is genuine non-existence.
         HttpResponse<String> miss = get(edgeBase + "/v1/config/svc/absent");
         assertEquals(404, miss.statusCode());
         assertTrue(miss.headers().firstValue(EdgeHttpServer.HDR_REFUSED).isEmpty(),
@@ -111,14 +108,11 @@ class NotSubscribedReadTest {
         assertEquals("not-subscribed",
                 refused.headers().firstValue(EdgeHttpServer.HDR_REFUSED).orElse("missing"));
 
-        // (4) Strong-read keys keep the 503 fail-close with PRECEDENCE — secure/ is outside
-        //     svc/ but must never surface as a mere not-subscribed 404.
         HttpResponse<String> strong = get(edgeBase + "/v1/config/secure/killswitch");
         assertEquals(503, strong.statusCode());
         assertEquals("strong-read",
                 strong.headers().firstValue(EdgeHttpServer.HDR_FAIL_CLOSED).orElse("missing"));
 
-        // (5) The refusal is observable on its own per-reason series.
         String metrics = get(edgeBase + "/metrics").body();
         assertTrue(metrics.lines().anyMatch(l ->
                         l.startsWith("edge_read_refusals_not_subscribed_total ")
@@ -128,7 +122,6 @@ class NotSubscribedReadTest {
                                 .reduce("", (a, b) -> a + b + "\n"));
     }
 
-    // Helpers (deadline-polling; no sleep-as-sync)
 
     private void await(String what, BooleanSupplier condition) {
         long deadline = System.nanoTime() + DEADLINE.toNanos();

@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Concurrent consensus stress harness, and proof that it actually catches an injected
  * off-owner-thread access. This is the verification machinery that must exist and be shown to
  * catch a race before the per-owner re-threading model can be trusted
- * (see {@code docs/phase0/threading-contract.md}).
+ * (see {@code docs/architecture/raft-threading-contract.md}).
  *
  * <h2>What it models</h2>
  * The threading contract gives each group a single owner thread; every owner-only entry point of
@@ -54,7 +54,6 @@ class RaftNodeConcurrencyStressTest {
     private static final NodeId N1 = NodeId.of(1);
     private static final NodeId PHANTOM = NodeId.of(2); // not in the single-node config; benign sender
 
-    /** Single-node cluster has no peers, so the transport is essentially unused. */
     static final class NoOpTransport implements RaftTransport {
         @Override public void send(NodeId target, RaftMessage message) { }
     }
@@ -88,7 +87,7 @@ class RaftNodeConcurrencyStressTest {
                 new NoOpStateMachine(), new java.util.Random(42), Storage.inMemory(), checker);
         owner.submit(() -> {
             node.bindOwnerThread();                       // bind rule: first task on the owner executor
-            for (int i = 0; i < 301; i++) node.tick();    // self-elect (single-node)
+            for (int i = 0; i < 301; i++) node.tick();
             assertEquals(RaftRole.LEADER, node.role());
         }).get();
         return node;
@@ -188,7 +187,6 @@ class RaftNodeConcurrencyStressTest {
             // cancelCommitOutcome / proposeConfigChange) - the complete mutator/callback entry-point
             // surface of the threading contract.
             List<Runnable> offOwnerCalls = List.<Runnable>of(
-                    // core 7
                     () -> node.tick(),
                     () -> node.handleMessage(new RequestVoteRequest(0L, PHANTOM, 0L, 0L, true)),
                     () -> node.propose(new byte[]{1}),
@@ -196,7 +194,6 @@ class RaftNodeConcurrencyStressTest {
                     () -> node.readIndex(),
                     () -> node.whenCommitOutcome(1L, 1L, o -> { }),
                     () -> node.metrics(),
-                    // the remaining owner-only mutators
                     () -> node.transferLeadership(PHANTOM),
                     () -> node.triggerSnapshot(),
                     () -> node.isReadReady(1L),

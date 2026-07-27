@@ -5,10 +5,6 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-/**
- * Validates {@link FanOutConfig} defaults and every guard (named, validated config). Each
- * invalid-argument branch is exercised so the bounds are mutation-tight.
- */
 class FanOutConfigTest {
 
     @Test
@@ -26,11 +22,8 @@ class FanOutConfigTest {
 
     @Test
     void warnThresholdIsQueueFramesTimesPct() {
-        // 256 times 80 divided by 100 is 204
         assertEquals(204, FanOutConfig.defaults().queueWarnThresholdFrames());
-        // exact integer math at a small value: 5 times 80 divided by 100 is 4
         assertEquals(4, new FanOutConfig(5, 80, 1, 1024, 1L, 1L, 1L, 1024).queueWarnThresholdFrames());
-        // 0 percent warn gives 0
         assertEquals(0, new FanOutConfig(10, 0, 1, 1024, 1L, 1L, 1L, 1024).queueWarnThresholdFrames());
     }
 

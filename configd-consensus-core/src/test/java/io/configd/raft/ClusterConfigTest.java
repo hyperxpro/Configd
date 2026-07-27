@@ -8,9 +8,6 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link ClusterConfig} - simple and joint consensus configurations.
- */
 class ClusterConfigTest {
 
     private static final NodeId N1 = NodeId.of(1);
@@ -123,9 +120,8 @@ class ClusterConfigTest {
         @Test
         void isQuorumRequiresBothMajorities() {
             var cfg = ClusterConfig.joint(Set.of(N1, N2, N3), Set.of(N2, N3, N4));
-            // Need 2 of {1,2,3} AND 2 of {2,3,4}
-            assertTrue(cfg.isQuorum(Set.of(N1, N2, N3, N4))); // all 4
-            assertTrue(cfg.isQuorum(Set.of(N2, N3))); // 2/3 old, 2/3 new
+            assertTrue(cfg.isQuorum(Set.of(N1, N2, N3, N4)));
+            assertTrue(cfg.isQuorum(Set.of(N2, N3)));
             assertFalse(cfg.isQuorum(Set.of(N1, N2))); // 2/3 old but only 1/3 new
             assertFalse(cfg.isQuorum(Set.of(N3, N4))); // 1/3 old, 2/3 new
         }
@@ -133,10 +129,10 @@ class ClusterConfigTest {
         @Test
         void isVoterChecksAllVoters() {
             var cfg = ClusterConfig.joint(Set.of(N1, N2, N3), Set.of(N2, N3, N4));
-            assertTrue(cfg.isVoter(N1)); // only in old
-            assertTrue(cfg.isVoter(N4)); // only in new
-            assertTrue(cfg.isVoter(N2)); // in both
-            assertFalse(cfg.isVoter(N5)); // in neither
+            assertTrue(cfg.isVoter(N1));
+            assertTrue(cfg.isVoter(N4));
+            assertTrue(cfg.isVoter(N2));
+            assertFalse(cfg.isVoter(N5));
         }
 
         @Test

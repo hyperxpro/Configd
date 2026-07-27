@@ -77,7 +77,6 @@ final class KeyringCodec {
         }
     }
 
-    // ---- body serialization -----------------------------------------------------------------
 
     static byte[] encodeBody(Keyring k) {
         ByteBuffer head = ByteBuffer.allocate(2 + 8 + 4 + 4);
@@ -255,7 +254,6 @@ final class KeyringCodec {
         return roots;
     }
 
-    // ---- rotation pure-functions ------------------------------------------------------------
 
     /** First boot: a keyring with one random {@code root[1]}, {@code activeTerm=1}, {@code keyringSeq=1}. */
     static Keyring bootstrap(SecretKey kek, byte[] nodeKeyId, byte[] root1, java.security.SecureRandom rng) {

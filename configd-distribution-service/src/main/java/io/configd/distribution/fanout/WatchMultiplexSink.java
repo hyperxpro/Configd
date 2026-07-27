@@ -109,10 +109,8 @@ final class WatchMultiplexSink implements TransportSink {
     private final TransportSink delegate;
     private final WatchRegistry registry;
 
-    /** This sink's shard group id - stamped on every {@code WATCH_EVENT} / {@code WATCH_SNAPSHOT_*}. */
     private final int gid;
 
-    /** The cross-shard coalescer (the driver); receives this shard's SUBSCRIBE_OK and idle heartbeat. */
     private final Coordinator coordinator;
 
     /** Reader-set, session-read: false means legacy passthrough (byte-identical), true means translate. */
@@ -147,16 +145,10 @@ final class WatchMultiplexSink implements TransportSink {
         this.watchConnection = watch;
     }
 
-    /** True iff this connection has been flipped to watch translation. */
     boolean isWatchConnection() {
         return watchConnection;
     }
 
-    /**
-     * Records the drain-owning watch id that every {@code WATCH_SNAPSHOT_*} frame from this shard is
-     * tagged with (the first authorized watch; see {@link #snapshotOwnerWatchId}). Session-thread-
-     * only, set once when this shard's drain starts.
-     */
     void setSnapshotOwner(long watchId) {
         this.snapshotOwnerWatchId = watchId;
     }
@@ -171,12 +163,11 @@ final class WatchMultiplexSink implements TransportSink {
         return delegate.offer(frame);
     }
 
-    // TransportSink - the core's outbound boundary.
 
     @Override
     public boolean offer(EdgeFrame frame) {
         if (!watchConnection) {
-            return delegate.offer(frame); // legacy passthrough - byte-identical
+            return delegate.offer(frame);
         }
         return translate(frame);
     }
@@ -188,8 +179,6 @@ final class WatchMultiplexSink implements TransportSink {
         }
         closed = true;
         if (watchConnection) {
-            // Surface a connection-level terminal (e.g. GAP_UNRECOVERABLE, SERVER_SHUTDOWN)
-            // as a per-watch terminal for every live watch before the connection dies.
             for (WatchRegistry.WatchEntry e : registry.liveEntries()) {
                 delegate.offer(new EdgeFrame.WatchCanceled(e.watchId(), code, null, message));
             }
@@ -197,7 +186,6 @@ final class WatchMultiplexSink implements TransportSink {
         delegate.close(code, message);
     }
 
-    // Translation (session thread).
 
     private boolean translate(EdgeFrame frame) {
         return switch (frame) {
@@ -248,7 +236,7 @@ final class WatchMultiplexSink implements TransportSink {
                 EdgeFrame.WatchEvent event = new EdgeFrame.WatchEvent(
                         entry.watchId(), gid, cn.seq(), cn.commitTimestampMillis(), changes);
                 if (!delegate.offer(event)) {
-                    return false; // would block - core demotes; remaining events via snapshot resync
+                    return false;
                 }
             }
         }
@@ -270,7 +258,7 @@ final class WatchMultiplexSink implements TransportSink {
             if (m instanceof ConfigMutation.Put put) {
                 // valueUnsafe() is the store's internal array; WatchChange.put clones it once.
                 changes.add(EdgeFrame.WatchChange.put(put.key(), put.valueUnsafe()));
-            } else { // ConfigMutation.Delete
+            } else {
                 changes.add(EdgeFrame.WatchChange.delete(m.key()));
             }
         }

@@ -54,7 +54,6 @@ class RaftLogPhysicalReorderRedteamTest {
     void physicalReorderViaRealRaftLogAppendPathRefused(@TempDir Path tempDir) throws Exception {
         IntegrityEnvelope env = hmacEnvelope();
 
-        // Commit indices 1,2,3 through the REAL RaftLog append+fsync path (chained by RaftLog).
         RaftLog writer = new RaftLog(Storage.file(tempDir), env, GID);
         writer.append(new LogEntry(1, 1, "one".getBytes(StandardCharsets.UTF_8)));
         writer.append(new LogEntry(2, 1, "two".getBytes(StandardCharsets.UTF_8)));
@@ -78,9 +77,7 @@ class RaftLogPhysicalReorderRedteamTest {
                 "a physical frame swap of committed records must be refused on recovery, got: " + ex.getMessage());
     }
 
-    // Physical splice / substitution on already-committed on-disk bytes (index family).
 
-    /** (a) Duplicate a committed frame so index N appears twice on disk => REFUSE (contiguity). */
     @Test
     void duplicatedCommittedFrameRefused(@TempDir Path tempDir) throws Exception {
         IntegrityEnvelope env = hmacEnvelope();
@@ -102,7 +99,6 @@ class RaftLogPhysicalReorderRedteamTest {
                 "a duplicated committed record must be refused, got: " + ex.getMessage());
     }
 
-    /** (b) Delete a middle committed frame so there is a gap (1,2,4) on disk => REFUSE (contiguity). */
     @Test
     void deletedMiddleCommittedFrameGapRefused(@TempDir Path tempDir) throws Exception {
         IntegrityEnvelope env = hmacEnvelope();
@@ -169,9 +165,6 @@ class RaftLogPhysicalReorderRedteamTest {
                 "a mid-log term regression must be refused, got: " + ex.getMessage());
     }
 
-    // Interior stale-content splice. Index-preserving, term-monotonic content rollback that the
-    // position checks let through; the hash chain refuses it. Covered in both postures, and with
-    // the in-place prevHash re-stamp that the MAC/tag defeats.
 
     /**
      * A legal committed log is {@code [1/t1, 2/t2, 3/t3]}. An adversary who kept an OLD authentic frame
@@ -209,7 +202,7 @@ class RaftLogPhysicalReorderRedteamTest {
         byte[] wal = Files.readAllBytes(walPath(tempDir));
         List<byte[]> frames = readFrames(wal);
         List<byte[]> spliced = new ArrayList<>(frames);
-        spliced.set(1, staleFrame); // replace the CURRENT index-2 with the STALE index-2
+        spliced.set(1, staleFrame);
         Files.write(walPath(tempDir), reassemble(header(wal), spliced), StandardOpenOption.TRUNCATE_EXISTING);
 
         IntegrityException ex = assertThrows(IntegrityException.class,
@@ -234,8 +227,6 @@ class RaftLogPhysicalReorderRedteamTest {
         w.append(2, 2, "v2-CURRENT");
         w.append(3, 3, "v3");
 
-        // Build the stale frame, then re-stamp its plaintext prevHash to index-1's hash (the value that
-        // would make the chain link pass) and repair the envelope's own CRC - the MAC still fails.
         byte[] staleEnv = env.wrap(RaftArtifactMagic.WALE_MAGIC, GID,
                 ChainedWal.inner(2, 1, ChainedWal.GENESIS, "v2-STALE-ROLLED-BACK".getBytes(StandardCharsets.UTF_8)));
         restampPlaintextPrevHash(staleEnv, hashOfIndex1);
@@ -271,7 +262,7 @@ class RaftLogPhysicalReorderRedteamTest {
         // (plaintext offset 16 -> ciphertext offset ENC_PREFIX(44)+16) and repair both CRCs. The tag fails.
         byte[] staleEnv = env.wrap(RaftArtifactMagic.WALE_MAGIC, GID,
                 ChainedWal.inner(2, 1, ChainedWal.GENESIS, "v2-STALE-ROLLED-BACK".getBytes(StandardCharsets.UTF_8)));
-        staleEnv[44 + 16] ^= 0x01; // a byte of the encrypted prevHash region
+        staleEnv[44 + 16] ^= 0x01;
         repairEnvelopeCrc(staleEnv);
         byte[] staleFrame = frameOf(staleEnv);
 
@@ -322,7 +313,6 @@ class RaftLogPhysicalReorderRedteamTest {
         assertEquals(5, log.lastTerm());
     }
 
-    /** A single-record WAL must recover. */
     @Test
     void singleRecordWalRecoversCleanly(@TempDir Path tempDir) throws Exception {
         IntegrityEnvelope env = hmacEnvelope();
@@ -334,9 +324,6 @@ class RaftLogPhysicalReorderRedteamTest {
         assertEquals(1, log.lastIndex());
     }
 
-    // Front truncation of the WAL head fabricates a phantom compaction with no authenticated floor to
-    // compare against. Not a hash-chain gap: the surviving suffix [3,4,5] chains correctly to itself,
-    // but the head-anchor check below (W < anchor => REFUSE) catches it.
 
     @Test
     void frontTruncationFabricatesPhantomCompactionDocumentsGap(@TempDir Path tempDir) throws Exception {
@@ -362,7 +349,6 @@ class RaftLogPhysicalReorderRedteamTest {
                 "Gate 3a anchor must refuse the front-truncation phantom compaction, got: " + ex.getMessage());
     }
 
-    // Posture builders.
 
     private static IntegrityEnvelope hmacEnvelope() {
         return SnapshotIntegrityTest.keyedEnvelope();

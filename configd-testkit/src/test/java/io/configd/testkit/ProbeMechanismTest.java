@@ -52,7 +52,6 @@ class ProbeMechanismTest {
     private static final int EDGES = 3;
     private static final int TICKS = 1_200;
 
-    // The constructed staleness distribution (ms) - the exact samples the probe must record.
     private static final long D_A1 = 10;
     private static final long D_A2 = 50;
     private static final long D_B1 = 499;
@@ -72,14 +71,11 @@ class ProbeMechanismTest {
         EdgeActor edgeA = edges.get(0); // id 100
         EdgeActor edgeB = edges.get(1); // id 101
 
-        // Edge A applies two contiguous deltas with logical staleness +10 and +50.
         applyWithStaleness(probe, edgeA, /*seq*/ 1, /*from*/ 0, /*to*/ 1, "a/k1", "v1", D_A1);
         applyWithStaleness(probe, edgeA, /*seq*/ 2, /*from*/ 1, /*to*/ 2, "a/k2", "v2", D_A2);
-        // Edge B applies two contiguous deltas (its own version line) with +499 and +501.
         applyWithStaleness(probe, edgeB, /*seq*/ 3, /*from*/ 0, /*to*/ 1, "b/k1", "v1", D_B1);
         applyWithStaleness(probe, edgeB, /*seq*/ 4, /*from*/ 1, /*to*/ 2, "b/k2", "v2", D_B2);
 
-        // Reference histograms fed the identical values - the probe must match them exactly.
         Histogram refGlobal = newHistogram();
         Histogram refA = newHistogram();
         Histogram refB = newHistogram();
@@ -87,11 +83,9 @@ class ProbeMechanismTest {
         refA.recordValue(D_A1); refA.recordValue(D_A2);
         refB.recordValue(D_B1); refB.recordValue(D_B2);
 
-        // Per-edge exactness.
         assertHistogramMatches(refA, probe, edgeA.edgeId());
         assertHistogramMatches(refB, probe, edgeB.edgeId());
 
-        // Global exactness.
         assertEquals(4, probe.globalCount(), "global count");
         assertEquals(0, probe.globalUnmatched(), "no unmatched in this scenario");
         for (double p : new double[]{50.0, 90.0, 99.0, 99.9, 99.99}) {
@@ -105,7 +99,6 @@ class ProbeMechanismTest {
         assertEquals(50, probe.max(EdgeActor.EDGE_ID_BASE), "edge A max staleness == 50");
         assertEquals(501, probe.max(EdgeActor.EDGE_ID_BASE + 1), "edge B max staleness == 501");
 
-        // The greppable summary line must carry the exact stats for the global scope.
         String summary = probe.summaryLines();
         assertTrue(summary.contains(
                         "PROBE-HISTOGRAM: scope=global count=4 p50=" + refGlobal.getValueAtPercentile(50.0)
@@ -127,7 +120,6 @@ class ProbeMechanismTest {
     @Test
     void unmatchedVisibleSeqIsCountedAndKeptOutOfTheDistribution() {
         PropagationProbe probe = new PropagationProbe();
-        // seq 7 published at t=1000; a matched visible at t=1100 -> 100ms sample.
         probe.recordPublished(7, 1_000);
         probe.recordVisible(0, 7, 1_100);
         // seq 999 NEVER published -> unmatched, must not affect the distribution.
@@ -144,18 +136,18 @@ class ProbeMechanismTest {
                 "the report must surface unmatched counts");
     }
 
-    // (2b) the PROBE-HISTOGRAM report format. The staleness distribution is deliberately not
-    // a registry series; this line format is what a human or script greps for in both live
-    // modes. Asserted here, not in EdgeMetricsContractTest (configd-edge-node), because
-    // configd-testkit depends on configd-edge-node, so the probe cannot be referenced from
-    // that module without a dependency cycle.
+    // The PROBE-HISTOGRAM report format. The staleness distribution is deliberately not
+        // a registry series; this line format is what a human or script greps for in both live
+        // modes. Asserted here, not in EdgeMetricsContractTest (configd-edge-node), because
+        // configd-testkit depends on configd-edge-node, so the probe cannot be referenced from
+        // that module without a dependency cycle.
 
     @Test
     void reportEmitsOneGreppableProbeHistogramLinePerScope() {
         PropagationProbe probe = new PropagationProbe();
         probe.recordPublished(1, 1_000);
-        probe.recordVisible(7, 1, 1_010);  // observer 7: exactly one 10ms sample
-        probe.recordVisible(9, 1, 1_250);  // observer 9: exactly one 250ms sample
+        probe.recordVisible(7, 1, 1_010);
+        probe.recordVisible(9, 1, 1_250);
 
         String report = probe.report();
         // Single-sample scopes make every percentile exact regardless of histogram impl.
@@ -195,7 +187,6 @@ class ProbeMechanismTest {
                 "the recordPublished seam must fire from the FanOutBuffer listener under workload");
     }
 
-    // helpers
 
     /** The AdversarialSim/EdgeFanOutSim epoch: the sim clock before any tick advances it. */
     private static final long EPOCH_MS = 1_700_000_000_000L;

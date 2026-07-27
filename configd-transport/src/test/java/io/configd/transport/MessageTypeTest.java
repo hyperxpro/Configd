@@ -10,7 +10,6 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class MessageTypeTest {
 
-    // Unique non-zero codes
 
     @Nested
     class CodeUniqueness {
@@ -33,7 +32,6 @@ class MessageTypeTest {
         }
     }
 
-    // fromCode round-trip
 
     @Nested
     class FromCodeRoundTrip {
@@ -56,7 +54,6 @@ class MessageTypeTest {
         }
     }
 
-    // fromCode with invalid codes
 
     @Nested
     class FromCodeInvalid {
@@ -84,7 +81,6 @@ class MessageTypeTest {
         }
     }
 
-    // Specific code assignments
 
     @Nested
     class SpecificCodeAssignments {

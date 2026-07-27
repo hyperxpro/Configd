@@ -56,7 +56,6 @@ class MonotonicReadAcrossEdgeRestartTest {
     void readWithHeldCursorRefusesUntilPostRestartStoreCatchesUp() {
         EdgeActor edge = newEdge();
 
-        // The edge applies up to version 5; a client reads at version 5 and holds that cursor.
         for (long s = 1; s <= 5; s++) {
             edge.deliver(new EdgeStream.Notify(notif(s, s - 1, s, "k" + s, "v" + s)));
         }
@@ -66,7 +65,6 @@ class MonotonicReadAcrossEdgeRestartTest {
         ReadResult preCrash = edge.get("k5", heldCursor);
         assertTrue(preCrash.found(), "client reads k5 at version 5 before the crash");
 
-        // The edge CRASHES - a cache loses ALL state - then RESTARTS empty at cursor 0.
         edge.crash();
         edge.restart();
         assertEquals(0, edge.cursor(), "a restarted cache is empty at cursor 0");
@@ -107,8 +105,6 @@ class MonotonicReadAcrossEdgeRestartTest {
         edge.crash();
         edge.restart();
 
-        // A cursorless read after restart (empty store) must MISS - the pre-crash value is
-        // gone with the cache, never resurrected.
         assertFalse(edge.get("secret").found(),
                 "a restarted cache must not serve the pre-crash value (the cache was lost)");
     }

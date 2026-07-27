@@ -7,7 +7,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-/** A trivial map-backed {@link ConfigSource} for the module's unit tests (only the two primitives). */
 final class MapConfig implements ConfigSource {
 
     private final Map<String, String> map;

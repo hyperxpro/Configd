@@ -13,18 +13,6 @@ import java.util.random.RandomGenerator;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for InstallSnapshot RPC handling in the Raft consensus implementation.
- * <p>
- * Covers:
- * <ul>
- *   <li>Snapshot transfer from leader to lagging follower</li>
- *   <li>Follower state machine restoration from snapshot</li>
- *   <li>Leader nextIndex/matchIndex advancement after snapshot</li>
- *   <li>Term checking and stale snapshot rejection</li>
- *   <li>Integration: cluster with a node falling behind</li>
- * </ul>
- */
 class InstallSnapshotTest {
 
     static final class TestTransport implements RaftTransport {

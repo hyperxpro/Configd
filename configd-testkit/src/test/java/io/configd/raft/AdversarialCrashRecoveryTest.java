@@ -33,7 +33,6 @@ class AdversarialCrashRecoveryTest {
     private static final NodeId NODE = NodeId.of(1);
     private static final int ELECTION_TICKS = 400;
 
-    /** Throwing checker: a durable-prefix gap fails loudly (never silently skipped). */
     private static final RaftNode.InvariantChecker THROWING = (name, condition, message) -> {
         if (!condition) {
             throw new AssertionError("Invariant [" + name + "]: " + message);
@@ -71,7 +70,6 @@ class AdversarialCrashRecoveryTest {
             return false; // recorded liveness stall, not a failure
         }
 
-        // Commit a durable (synced) prefix and remember exactly what it contained.
         int writes = 3 + rng.nextInt(4);
         for (int i = 0; i < writes; i++) {
             if (!node.propose(KvStateMachine.put("key-" + i, "val-" + i)).accepted()) {
@@ -81,7 +79,7 @@ class AdversarialCrashRecoveryTest {
             for (int t = 0; t < 50 && log.commitIndex() < target; t++) {
                 node.tick();
             }
-            storage.sync(); // durable
+            storage.sync();
         }
         long durableCommit = log.commitIndex();
         Map<String, String> durableState = Map.copyOf(sm.snapshotState());
@@ -89,7 +87,6 @@ class AdversarialCrashRecoveryTest {
             return false;
         }
 
-        // Issue further UNSYNCED writes and arm a seed-derived crash among them.
         int unsynced = 1 + rng.nextInt(3);
         storage.armCrashAfterWrites(storage.operationCount() + 1 + rng.nextInt(unsynced + 1));
         for (int i = 0; i < unsynced && !storage.didCrash(); i++) {
@@ -99,8 +96,6 @@ class AdversarialCrashRecoveryTest {
             }
         }
 
-        // RESTART over the durable image; durable_prefix_no_gap (THROWING) fires
-        // during recovery if any committed entry is missing from the prefix.
         Storage recovered = storage.recoveredView();
         RaftLog recoveredLog = new RaftLog(recovered);
         KvStateMachine recoveredSm = new KvStateMachine();
@@ -118,7 +113,6 @@ class AdversarialCrashRecoveryTest {
             restarted.tick();
         }
 
-        // Every synced (durable) key/value must survive the crash unchanged.
         Map<String, String> recoveredState = recoveredSm.snapshotState();
         for (var e : durableState.entrySet()) {
             assertEquals(e.getValue(), recoveredState.get(e.getKey()),

@@ -11,7 +11,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** The auth SPI value types: credential redaction, Principal immutability, and the sealed AuthResult set. */
 class AuthValueTypesTest {
 
     @Test

@@ -33,7 +33,7 @@ class FrameCodecEpochReservationTest {
     private static final byte[] PAYLOAD = {(byte) 0xDE, (byte) 0xAD, (byte) 0xBE, (byte) 0xEF};
 
     // Offsets in the v2 layout: len(4) ver(1) type(1) gid(4) term(8) epoch(8) payload... crc(4).
-    private static final int EPOCH_OFFSET = 4 + 1 + 1 + 4 + 8; // = 18
+    private static final int EPOCH_OFFSET = 4 + 1 + 1 + 4 + 8;
     private static final int EPOCH_SIZE = 8;
 
     @Test
@@ -76,15 +76,13 @@ class FrameCodecEpochReservationTest {
         // valid CRC (so the MBZ check, not the checksum, is what fires), and assert decode refuses it.
         byte[] frame = FrameCodec.encode(MessageType.REQUEST_VOTE, GROUP_ID, TERM, PAYLOAD);
         for (int i = EPOCH_OFFSET; i < EPOCH_OFFSET + EPOCH_SIZE; i++) {
-            frame[i] = (byte) 0xFF; // populate the reserved field
+            frame[i] = (byte) 0xFF;
         }
-        // Recompute the CRC32C trailer over the mutated pre-trailer bytes so framing stays valid.
         int crcOffset = frame.length - FrameCodec.TRAILER_SIZE;
         CRC32C crc = new CRC32C();
         crc.update(frame, 0, crcOffset);
         ByteBuffer.wrap(frame, crcOffset, FrameCodec.TRAILER_SIZE).putInt((int) crc.getValue());
 
-        // Sanity: the epoch really is non-zero now.
         assertNotEquals(0L, ByteBuffer.wrap(frame, EPOCH_OFFSET, EPOCH_SIZE).getLong());
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
@@ -104,10 +102,6 @@ class FrameCodecEpochReservationTest {
                         + " the v1 frame — proving the only wire change is version + reserved epoch");
     }
 
-    /**
-     * Reconstructs what a v2 frame's v1 encoding would have been: splice out the 8 epoch bytes, reset
-     * the version byte to 0x01, fix the length prefix, and recompute the CRC32C trailer.
-     */
     private static byte[] downgradeV2ToV1(byte[] v2) {
         int v1len = v2.length - EPOCH_SIZE;
         byte[] v1 = new byte[v1len];
@@ -116,8 +110,8 @@ class FrameCodecEpochReservationTest {
         // skip epoch [EPOCH_OFFSET, EPOCH_OFFSET+8); copy payload + (old) trailer region after it
         int afterEpoch = EPOCH_OFFSET + EPOCH_SIZE;
         System.arraycopy(v2, afterEpoch, v1, EPOCH_OFFSET, v2.length - afterEpoch);
-        v1[4] = 0x01; // version 0x02 -> 0x01
-        ByteBuffer.wrap(v1, 0, 4).putInt(v1len); // fix length prefix
+        v1[4] = 0x01;
+        ByteBuffer.wrap(v1, 0, 4).putInt(v1len);
         CRC32C crc = new CRC32C();
         crc.update(v1, 0, v1len - FrameCodec.TRAILER_SIZE);
         ByteBuffer.wrap(v1, v1len - FrameCodec.TRAILER_SIZE, FrameCodec.TRAILER_SIZE)

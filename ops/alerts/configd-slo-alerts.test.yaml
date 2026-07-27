@@ -12,7 +12,6 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
-  # === write-commit burn-rate ============================================
   - interval: 1m
     name: write-commit fast-burn fires when fraction-under-150ms collapses
     input_series:
@@ -61,7 +60,6 @@ tests:
               summary: "Write commit p99 burning at 6x rate (1h window)"
               runbook_url: ops/runbooks/write-commit-latency.md
 
-  # === edge-read =========================================================
   - interval: 1m
     name: edge-read fast-burn fires when sub-1ms fraction collapses
     input_series:
@@ -122,7 +120,6 @@ tests:
         alertname: ConfigdEdgeReadP999Breach
         exp_alerts: []
 
-  # === edge staleness ====================================================
   - interval: 1m
     name: edge staleness warn + degraded fire on high staleness
     input_series:
@@ -157,7 +154,6 @@ tests:
         alertname: ConfigdEdgeStalenessDegraded
         exp_alerts: []
 
-  # === availability ======================================================
   - interval: 1m
     name: availability fires when writes fail
     input_series:
@@ -186,7 +182,6 @@ tests:
         alertname: ConfigdControlPlaneAvailability
         exp_alerts: []
 
-  # === overload + apply backlog ==========================================
   - interval: 1m
     name: overload shedding fires on sustained 429s
     input_series:
@@ -230,7 +225,6 @@ tests:
               summary: "Raft apply backlog > 5000 (leader applying slower than it commits)"
               runbook_url: ops/runbooks/raft-saturation.md
 
-  # === integrity (snapshot install, clock skew) ==========================
   - interval: 1m
     name: snapshot-install stalled fires on repeated failures
     input_series:
@@ -298,7 +292,6 @@ tests:
         alertname: ConfigdAclPolicyLoadFailed
         exp_alerts: []
 
-  # === runtime leaks =====================================================
   - interval: 1m
     name: FD + thread + heap leak alerts fire above the measured baselines
     input_series:

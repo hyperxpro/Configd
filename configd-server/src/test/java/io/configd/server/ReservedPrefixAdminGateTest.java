@@ -45,9 +45,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
  */
 class ReservedPrefixAdminGateTest {
 
-    // Harness: a capturing proposer (store-unchanged proxy) + synthetic, token-bearing AdminRequests.
 
-    /** Records whether (and with which keys) a write reached the Raft proposal stage. */
     private static final class CapturingProposer implements ConfigWriteService.RaftProposer {
         final AtomicInteger calls = new AtomicInteger();
         volatile List<String> lastKeys;
@@ -60,7 +58,6 @@ class ReservedPrefixAdminGateTest {
         }
     }
 
-    /** root -> "root" (no roles); admin -> "adminP"; writer -> "writerP"; anything else denied. */
     private static AuthInterceptor auth() {
         return new AuthInterceptor(token -> switch (token) {
             case "root" -> new AuthInterceptor.AuthResult.Authenticated("root", Set.of());
@@ -71,10 +68,10 @@ class ReservedPrefixAdminGateTest {
     }
 
     /**
-     * root: {@code allOf} at {@code ""} (the un-carveable break-glass). adminP: {@code ADMIN} on
-     * {@code _acl/}. writerP: {@code READ+WRITE} on {@code ""} (everything) but explicitly NOT {@code ADMIN}
-     * - the escalation principal whose broad WRITE must NOT reach the reserved subtree.
-     */
+         * root gets the un-carveable break-glass ({@code allOf} at {@code ""}); writerP deliberately gets
+         * broad {@code READ+WRITE} at {@code ""} but explicitly NOT {@code ADMIN} - the escalation principal
+         * whose broad WRITE must NOT reach the reserved subtree.
+         */
     private static AclService acl() {
         AclService acl = new AclService();
         acl.grant("", "root", EnumSet.allOf(AclService.Permission.class));
@@ -95,7 +92,6 @@ class ReservedPrefixAdminGateTest {
                 (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null);
     }
 
-    /** A synthetic request whose {@code uri().getPath()} decodes to {@code /v1/config/<key>}, with a token. */
     private static AdminApiHandler.AdminRequest req(String method, String key, String token, byte[] body) {
         final URI uri;
         try {
@@ -122,15 +118,12 @@ class ReservedPrefixAdminGateTest {
         return h.handle(req(method, key, token, body == null ? null : b(body))).status();
     }
 
-    // No unprotected window: a WRITE-but-not-ADMIN principal cannot reach `_acl/` (escalation).
 
     @Test
     void writeButNotAdminPrincipalCannotWriteReservedPrefix() throws Exception {
         CapturingProposer proposer = new CapturingProposer();
         AdminApiHandler h = handler(acl(), auth(), proposer);
 
-        // writerP holds WRITE on "" (so it can write every ORDINARY key) but NOT ADMIN. A reserved-prefix
-        // PUT/DELETE requires ADMIN => 403, and the write never reaches the proposer (no window).
         assertEquals(403, status(h, "PUT", "_acl/roles/x", "writer", "allow READ app."),
                 "WRITE-but-not-ADMIN must be forbidden from PUTting an _acl/ key (escalation closed)");
         assertEquals(403, status(h, "DELETE", "_acl/roles/x", "writer", null),
@@ -140,17 +133,14 @@ class ReservedPrefixAdminGateTest {
         assertEquals(0, proposer.calls.get(), "no reserved-prefix write may reach Raft without ADMIN");
     }
 
-    // ADMIN allowed: an ADMIN grant (and root's allOf) reach `_acl/`.
 
     @Test
     void adminPrincipalAndRootMayWriteReservedPrefix() throws Exception {
         CapturingProposer proposer = new CapturingProposer();
         AdminApiHandler h = handler(acl(), auth(), proposer);
 
-        // adminP holds ADMIN on _acl/ => a valid-policy PUT commits.
         assertEquals(200, status(h, "PUT", "_acl/roles/x", "admin", "allow READ app."),
                 "an ADMIN grant on _acl/ must allow a valid policy write");
-        // root holds allOf at "" (break-glass) => also allowed.
         assertEquals(200, status(h, "PUT", "_acl/roles/y", "root", "allow READ app."),
                 "root (allOf) must always reach _acl/");
         assertEquals(200, status(h, "DELETE", "_acl/roles/x", "admin", null),
@@ -158,8 +148,6 @@ class ReservedPrefixAdminGateTest {
         assertEquals(3, proposer.calls.get(), "each authorized reserved write must reach the proposer");
     }
 
-    // Decoded boundary: the dot-dot vector stays gated; leading-slash / upper-case are DISTINCT
-    // keys (the percent-decoding vectors %5Facl/ etc. are proven over real HTTP in the contract suite).
 
     @Test
     void dotDotInsideReservedPrefixStaysGated() throws Exception {
@@ -192,12 +180,10 @@ class ReservedPrefixAdminGateTest {
         assertEquals(List.of("_ACL/roles/x"), proposer.lastKeys, "routes to the verbatim upper-case key");
     }
 
-    // non-ADMIN is rejected for BOTH PUT and DELETE (a read-only principal too).
 
     @Test
     void nonAdminIsRejectedForBothPutAndDeleteOnReserved() throws Exception {
         CapturingProposer proposer = new CapturingProposer();
-        // A principal with READ on "" but neither WRITE nor ADMIN.
         AclService acl = acl();
         acl.grant("", "readerP", Set.of(AclService.Permission.READ));
         AuthInterceptor auth = new AuthInterceptor(token -> "reader".equals(token)
@@ -222,7 +208,7 @@ class ReservedPrefixAdminGateTest {
     @Test
     void rootStillReachesReservedAfterAnAdversarialSelfDenyPolicy() throws Exception {
         CapturingProposer proposer = new CapturingProposer();
-        AclService acl = acl(); // root allOf @ ""; adminP ADMIN @ "_acl/"
+        AclService acl = acl();
         VersionedConfigStore store = new VersionedConfigStore();
         AclConfigPolicyLoader loader = new AclConfigPolicyLoader(acl, store,
                 AclConfigPolicyLoader.RESERVED_ROLES, AclConfigPolicyLoader.RESERVED_PRINCIPALS, new MetricsRegistry());
@@ -254,17 +240,14 @@ class ReservedPrefixAdminGateTest {
                 "binding root to a deny role is rejected wholesale — root remains authorized");
     }
 
-    // Bad policy is rejected at write-time (pre-commit); well-formed-but-incomplete is NOT an error.
 
     @Test
     void malformedOrReservedAclWriteIsRejected400PreCommit() throws Exception {
         CapturingProposer proposer = new CapturingProposer();
         AdminApiHandler h = handler(acl(), auth(), proposer);
 
-        // Malformed shape / grammar (unknown capability) -> 400, never proposed.
         assertEquals(400, status(h, "PUT", "_acl/roles/x", "admin", "allow NOPE app."),
                 "a malformed role line must be rejected 400 at write-time");
-        // Unrecognized _acl/ key shape -> 400.
         assertEquals(400, status(h, "PUT", "_acl/zzz", "admin", "junk"),
                 "an unrecognized _acl/ key shape must be rejected 400 at write-time");
         // Reserved role name / reserved principal binding -> 400 (same reserved sets as reload).
@@ -281,18 +264,15 @@ class ReservedPrefixAdminGateTest {
         assertEquals(1, proposer.calls.get(), "the well-formed incomplete binding commits");
     }
 
-    // Auth-disabled: reserved WRITES are refused (footgun closed); ordinary writes + reserved READS
-    // are unaffected (auth-off stays otherwise fully open).
 
     @Test
     void authDisabledRefusesReservedWritesButNotOrdinaryWritesOrReservedReads() throws Exception {
         CapturingProposer proposer = new CapturingProposer();
         VersionedConfigStore store = new VersionedConfigStore();
-        store.put("_acl/roles/x", b("allow READ app."), 1); // a pre-existing reserved key, for the GET
+        store.put("_acl/roles/x", b("allow READ app."), 1);
         // Auth OFF and ACL OFF (the loudly-warned non-production mode).
         AdminApiHandler h = handler(/* acl */ null, /* auth */ null, proposer, store);
 
-        // Reserved WRITES are refused even with auth off - closes the bring-up poison footgun.
         assertEquals(403, status(h, "PUT", "_acl/roles/y", null, "allow READ app."),
                 "auth-off: an _acl/ PUT must be refused (it would be seeded into policy on the first secured boot)");
         assertEquals(403, status(h, "DELETE", "_acl/roles/x", null, null),
@@ -301,19 +281,14 @@ class ReservedPrefixAdminGateTest {
                 "auth-off: a _system/ write must be refused too");
         assertEquals(0, proposer.calls.get(), "no reserved write reaches Raft while auth is disabled (store unchanged)");
 
-        // ...but an ORDINARY write still commits (auth-off is otherwise fully open - we closed only the
-        // reserved-write footgun, not all writes).
         assertEquals(200, status(h, "PUT", "app/feature", null, "on"),
                 "auth-off: an ordinary write must still commit (only reserved writes are refused)");
         assertEquals(1, proposer.calls.get(), "the ordinary write reached Raft");
 
-        // ...and a reserved READ stays open (auth-off serves it from the store; only writes are the footgun).
         assertNotEquals(403, status(h, "GET", "_acl/roles/x", null, null),
                 "auth-off: a reserved READ is not refused (reads stay open when auth is disabled)");
     }
 
-    // Fail-closed corner: auth configured but NO ACL service. A reserved key requires ADMIN, which
-    // cannot be evaluated without an ACL, so it must DENY for every method (never fall through to ok).
 
     @Test
     void reservedKeyFailsClosedWhenAuthOnButNoAclService() throws Exception {
@@ -331,14 +306,11 @@ class ReservedPrefixAdminGateTest {
                 "reserved DELETE with auth-on but no ACL service must fail closed");
         assertEquals(0, proposer.calls.get(), "no reserved write reached Raft (store unchanged)");
 
-        // An ordinary key with no ACL service is authn-only - the gate changes nothing for non-reserved.
         assertEquals(200, status(h, "PUT", "app/feature", "admin", "on"),
                 "an ordinary key with no ACL service is authn-only (unchanged)");
         assertEquals(1, proposer.calls.get(), "only the ordinary write reached Raft");
     }
 
-    // No over-gating: the rule is EXACTLY the `_acl/` prefix; ordinary writes by a WRITE-only
-    // principal are unchanged (byte-identity at the gate).
 
     @Test
     void overGatingBoundsAreExactlyTheAclPrefix() throws Exception {

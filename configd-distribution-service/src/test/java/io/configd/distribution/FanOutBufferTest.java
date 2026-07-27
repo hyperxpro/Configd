@@ -492,7 +492,6 @@ class FanOutBufferTest {
                         long queryVersion = 0;
                         while (!writeDone.await(0, TimeUnit.MILLISECONDS)) {
                             List<ConfigDelta> deltas = buf.deltasSince(queryVersion);
-                            // Every returned delta must have fromVersion >= queryVersion.
                             for (ConfigDelta d : deltas) {
                                 if (d.fromVersion() < queryVersion) {
                                     throw new AssertionError(

@@ -166,7 +166,6 @@ class NodeAnchorRedteamTest {
         }
     }
 
-    // (A) attacks that MUST REFUSE
 
     @Test
     void mechanism_boundEpochMismatchRefuses_matchingEpochAccepts(@TempDir Path dir) throws Exception {
@@ -183,13 +182,12 @@ class NodeAnchorRedteamTest {
         IntegrityEnvelope env = keyed();
         Path dataDir = Files.createDirectories(dir.resolve("node"));
         Map<Integer, Long> boot = map(100, 200);
-        mint(dataDir, env, EPOCH, 2, boot, Set.of(), null); // node-anchor binds epoch=9
+        mint(dataDir, env, EPOCH, 2, boot, Set.of(), null);
 
         Path scratch = Files.createDirectories(dir.resolve("scratch"));
-        mint(scratch, env, EPOCH - 2, 2, boot, Set.of(), null); // a valid node-anchor binding epoch=7
+        mint(scratch, env, EPOCH - 2, 2, boot, Set.of(), null);
         Files.write(naFile(dataDir), Files.readAllBytes(naFile(scratch)), StandardOpenOption.TRUNCATE_EXISTING);
 
-        // descriptor epoch=9 vs node-anchor epoch=7 => REFUSE.
         IllegalStateException ex = assertThrows(IllegalStateException.class,
                 () -> NodeAnchorService.enforceNodeAnchor(dataDir, env, EPOCH, 2, boot, Set.of(), null));
         assertTrue(ex.getMessage().contains("topology"), ex.getMessage());
@@ -213,7 +211,7 @@ class NodeAnchorRedteamTest {
         mint(dir, env, EPOCH, 1, boot, Set.of(), null);
 
         byte[] bytes = Files.readAllBytes(naFile(dir));
-        bytes[36] ^= 0x40; // flip a byte inside the authenticated topologyEpoch field of slot 0
+        bytes[36] ^= 0x40;
         Files.write(naFile(dir), bytes, StandardOpenOption.TRUNCATE_EXISTING);
 
         IllegalStateException ex = assertThrows(IllegalStateException.class,
@@ -233,7 +231,7 @@ class NodeAnchorRedteamTest {
         mint(dataDir, env, EPOCH, 2, map(100, 200), Set.of(), null);
 
         Path scratch = Files.createDirectories(dir.resolve("scratch"));
-        mint(scratch, env, EPOCH, 3, map(100, 200, 300), Set.of(), null); // binds N=3
+        mint(scratch, env, EPOCH, 3, map(100, 200, 300), Set.of(), null);
         Files.write(naFile(dataDir), Files.readAllBytes(naFile(scratch)), StandardOpenOption.TRUNCATE_EXISTING);
 
         IllegalStateException ex = assertThrows(IllegalStateException.class,
@@ -318,7 +316,6 @@ class NodeAnchorRedteamTest {
                 "precondition: a NON-trivial digest over the committed heads is anchored (not the all-zero mint)");
         minted.close();
 
-        // the attack: physically wipe shard 1
         wipeShard(shardDir(dataDir, 1));
 
         Map<Integer, Long> boot2 = new HashMap<>();
@@ -346,7 +343,6 @@ class NodeAnchorRedteamTest {
         IntegrityEnvelope env = keyed();
         Path dataDir = Files.createDirectories(dir.resolve("node"));
 
-        // 1. first boot over empty shards: mint binds the all-zero digest.
         buildShard(shardDir(dataDir, 0), 0, env, 0);
         buildShard(shardDir(dataDir, 1), 1, env, 0);
         Map<Integer, Long> boot0 = new HashMap<>();
@@ -356,7 +352,6 @@ class NodeAnchorRedteamTest {
         assertArrayEquals(NodeAnchorRecord.computeShardAnchorDigest(map(0, 0)), na.current().shardAnchorDigest(),
                 "first-boot mint binds the all-zero digest (pre-tick)");
 
-        // 2. commit: advance the real per-shard raft-anchors to (5, 6).
         advanceShard(shardDir(dataDir, 0), 0, env, 0, 5);
         advanceShard(shardDir(dataDir, 1), 1, env, 0, 6);
 
@@ -366,9 +361,8 @@ class NodeAnchorRedteamTest {
         tick.run();
         assertArrayEquals(NodeAnchorRecord.computeShardAnchorDigest(live), na.current().shardAnchorDigest(),
                 "the periodic tick re-anchored the non-trivial digest over (5, 6)");
-        na.close(); // 4. shutdown
+        na.close();
 
-        // 5. wipe shard 1 to FRESH and reboot.
         wipeShard(shardDir(dataDir, 1));
         Map<Integer, Long> boot2 = new HashMap<>();
         Set<Integer> fresh2 = new HashSet<>();
@@ -415,7 +409,6 @@ class NodeAnchorRedteamTest {
         assertTrue(ex.getMessage().contains("audit-head"), ex.getMessage());
     }
 
-    // (B) legal crashes that MUST PROCEED (no false refuse)
 
     @Test
     void nofalse_n1CrashRestartAdvancedHead_realByte_acceptForward(@TempDir Path dir) throws Exception {
@@ -432,7 +425,7 @@ class NodeAnchorRedteamTest {
         long minted = mint(dataDir, env, EPOCH, 1, boot, Set.of(), null);
         assertEquals(1L, minted);
 
-        advanceShard(shardDir(dataDir, 0), 0, env, 3, 8); // ran forward, then "crashed"
+        advanceShard(shardDir(dataDir, 0), 0, env, 3, 8);
 
         Map<Integer, Long> boot2 = new HashMap<>();
         Set<Integer> fresh2 = new HashSet<>();
@@ -478,7 +471,6 @@ class NodeAnchorRedteamTest {
         // mint path. A brand-new node must NEVER be mistaken for a wiped one.
         IntegrityEnvelope env = keyed();
         Path dataDir = Files.createDirectories(dir.resolve("node"));
-        // Empty shard dirs => RaftLog boots FRESH and lays down a bootstrap anchor.
         buildShard(shardDir(dataDir, 0), 0, env, 0);
         buildShard(shardDir(dataDir, 1), 1, env, 0);
         Map<Integer, Long> boot = new HashMap<>();
@@ -508,11 +500,10 @@ class NodeAnchorRedteamTest {
             audit.record("alice", "PUT", "k" + i, "committed");
         }
         Map<Integer, Long> boot = map(10);
-        mint(dataDir, env, EPOCH, 1, boot, Set.of(), audit); // anchors head = record 4
+        mint(dataDir, env, EPOCH, 1, boot, Set.of(), audit);
         audit.record("bob", "DELETE", "k9", "committed");    // un-anchored tail
         audit.record("bob", "PUT", "k10", "committed");
 
-        // Re-run against the SAME dataDir the mint used: the anchored head is still present => PROCEED.
         NodeAnchorFile na = NodeAnchorService.enforceNodeAnchor(dataDir, env, EPOCH, 1, boot, Set.of(), audit);
         assertTrue(na.hasValidRecord(), "the un-anchored tail (R-e) must not false-refuse");
         na.close();
@@ -531,7 +522,7 @@ class NodeAnchorRedteamTest {
             audit.record("alice", "PUT", "k" + i, "committed");
         }
         Map<Integer, Long> boot = map(10);
-        mint(dataDir, env, EPOCH, 1, boot, Set.of(), audit); // anchors head = record 6 (the last)
+        mint(dataDir, env, EPOCH, 1, boot, Set.of(), audit);
 
         // Rotation drops the oldest 3 frames, retains 4..6 (the anchored head, record 6, survives).
         List<byte[]> raw = storage.readLog(AuditLog.LOG_NAME);
@@ -613,7 +604,6 @@ class NodeAnchorRedteamTest {
         assertTrue(ex.getMessage().contains("audit-head"), ex.getMessage());
     }
 
-    // (C) residuals that PROCEED by design
 
     @Test
     void bypass_partialWipe_anchorDeletedWalIntact_caughtByGate3a_beforeNodeAnchor(@TempDir Path dir) throws Exception {
@@ -647,21 +637,19 @@ class NodeAnchorRedteamTest {
         // case stands.
         IntegrityEnvelope env = keyed();
         Path dataDir = Files.createDirectories(dir.resolve("node"));
-        buildShard(shardDir(dataDir, 0), 0, env, 0); // both shards fresh at 0 on first boot
+        buildShard(shardDir(dataDir, 0), 0, env, 0);
         buildShard(shardDir(dataDir, 1), 1, env, 0);
         Map<Integer, Long> boot0 = new HashMap<>();
         bootInputs(dataDir, 2, env, boot0, new HashSet<>());
         mint(dataDir, env, EPOCH, 2, boot0, new HashSet<>(Set.of(0, 1)), null);
         byte[] firstMintImage = Files.readAllBytes(naFile(dataDir)); // attacker captures the all-zeros anchor
 
-        // The node runs: shards take writes and the node-anchor is refreshed to the nonzero heads.
         advanceShard(shardDir(dataDir, 0), 0, env, 0, 5);
         advanceShard(shardDir(dataDir, 1), 1, env, 0, 6);
         Map<Integer, Long> live = new HashMap<>();
         bootInputs(dataDir, 2, env, live, new HashSet<>());
-        mint(dataDir, env, EPOCH, 2, live, Set.of(), null); // node-anchor now binds digest over (5, 6)
+        mint(dataDir, env, EPOCH, 2, live, Set.of(), null);
 
-        // The attack: wipe BOTH shards AND roll the node-anchor back to the captured first-mint image.
         wipeShard(shardDir(dataDir, 0));
         wipeShard(shardDir(dataDir, 1));
         Files.write(naFile(dataDir), firstMintImage, StandardOpenOption.TRUNCATE_EXISTING);
@@ -694,7 +682,6 @@ class NodeAnchorRedteamTest {
         bootInputs(dataDir, 2, env, boot, new HashSet<>());
         mint(dataDir, env, EPOCH, 2, boot, Set.of(), null);
 
-        // Attack: delete the node-anchor AND wipe shard 1.
         Files.delete(naFile(dataDir));
         wipeShard(shardDir(dataDir, 1));
 

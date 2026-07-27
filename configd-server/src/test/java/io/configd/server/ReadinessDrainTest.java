@@ -41,7 +41,6 @@ class ReadinessDrainTest {
 
     @Test
     void singleShardWithLeaderIsReady() {
-        // N=1 byte-identical: one hosted group with a known leader -> ready, named "raft-leader".
         HealthService.CheckResult r = ConfigdServer.evaluateReadiness(false, new int[]{0}, gid -> L);
         assertTrue(r.healthy());
         assertEquals("raft-leader", r.name());
@@ -63,7 +62,6 @@ class ReadinessDrainTest {
 
     @Test
     void anyShardWithoutLeaderMakesNodeNotReady() {
-        // Group 0 has a leader but shard 2 lost quorum -> the whole node is NOT ready, and names shard 2.
         IntFunction<NodeId> leaderOf = gid -> gid == 2 ? null : L;
         HealthService.CheckResult r =
                 ConfigdServer.evaluateReadiness(false, new int[]{0, 1, 2}, leaderOf);
@@ -137,7 +135,6 @@ class ReadinessDrainTest {
             HttpRequest ready = HttpRequest.newBuilder()
                     .uri(URI.create("http://127.0.0.1:" + port + "/health/ready")).GET().build();
 
-            // Precondition: the single node self-elects and reports READY.
             long readyDeadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
             int status = -1;
             while (System.nanoTime() < readyDeadline) {

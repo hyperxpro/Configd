@@ -59,7 +59,6 @@ import java.util.concurrent.TimeUnit;
 @Fork(value = 2)
 public class AdminHttpAllocBenchmark {
 
-    /** off = no auth (isolate the JDK shell); on = production bearer+ACL read gate. */
     @Param({"off", "on"})
     String authMode;
 
@@ -157,7 +156,6 @@ public class AdminHttpAllocBenchmark {
         }
     }
 
-    /** The admin read path: GET /v1/config/{key} -> 200 + value, over real loopback. */
     @Benchmark
     public int configGet() throws Exception {
         HttpRequest req = configRequests[(cursor++ & 0x7fffffff) % KEY_COUNT];
@@ -165,7 +163,6 @@ public class AdminHttpAllocBenchmark {
         return resp.statusCode() + resp.body().length;
     }
 
-    /** CONTROL: GET /health/live - the JDK shell + client round-trip floor (no read path). */
     @Benchmark
     public int healthLive() throws Exception {
         HttpResponse<byte[]> resp = client.send(healthRequest, HttpResponse.BodyHandlers.ofByteArray());

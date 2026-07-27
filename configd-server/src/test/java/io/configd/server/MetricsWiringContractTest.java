@@ -61,7 +61,6 @@ class MetricsWiringContractTest {
         return new PrometheusExporter(registry, ConfigdMetrics.histogramSchedules()).export();
     }
 
-    /** Returns the value of an unlabeled series line ({@code name value}); fails if absent. */
     private static double seriesValue(String scrape, String series) {
         Matcher m = Pattern.compile("(?m)^" + Pattern.quote(series) + "\\s+(\\S+)\\s*$")
                 .matcher(scrape);
@@ -73,7 +72,6 @@ class MetricsWiringContractTest {
         return io.configd.store.CommandCodec.encodePut(key, value.getBytes(StandardCharsets.UTF_8));
     }
 
-    /** Minimal raft state machine for the forced-leader cases (nothing ever commits -> never applies). */
     private static final class NoopSM implements StateMachine {
         @Override public long apply(long index, long term, byte[] command) { return StateMachine.NON_MUTATING; }
         @Override public byte[] snapshot() { return new byte[0]; }
@@ -162,7 +160,7 @@ class MetricsWiringContractTest {
             ConfigdMetrics metrics = new ConfigdMetrics(registry, () -> 0L);
             RaftNode leader = forcedUncommittableLeader(exec, 1024);
             ConfigWriteService.RaftProposer proposer =
-                    ConfigdServer.raftProposer(driverFor(leader), GROUP, exec, 200 /* ms */, metrics);
+                    ConfigdServer.raftProposer(driverFor(leader), GROUP, exec, 200, metrics);
             var result = proposer.propose(null, java.util.List.of("k"), put("k", "v"));
             assertInstanceOf(ConfigWriteService.ProposeCommitResult.Indeterminate.class, result,
                     "a leader that cannot reach quorum must report the write as Indeterminate");
@@ -230,8 +228,6 @@ class MetricsWiringContractTest {
 
     @Test
     void snapshotProducesSnapshotBytesGauge() {
-        // The last-snapshot-size gauge must render at 0 on the first scrape and equal the byte length
-        // of the snapshot the state machine produces (driven through the ServerStateMachineMetrics bridge).
         MetricsRegistry registry = new MetricsRegistry();
         ConfigdMetrics metrics = new ConfigdMetrics(registry, () -> 0L);
         assertEquals(0.0, seriesValue(scrape(registry), "configd_snapshot_bytes"),
@@ -278,7 +274,6 @@ class MetricsWiringContractTest {
                 new ServerStateMachineMetrics(metrics));
         metrics.bindStateMachineHashGauge(sm::stateMachineHashHex);
 
-        // First scrape: applied index at its published 0, hash present over the empty store.
         assertEquals(0.0, seriesValue(scrape(registry), "configd_raft_last_applied_index"));
 
         sm.apply(1, 1, io.configd.store.CommandCodec.encodePut("k", "v".getBytes(StandardCharsets.UTF_8)));

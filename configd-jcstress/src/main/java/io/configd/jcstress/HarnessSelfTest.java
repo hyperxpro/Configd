@@ -43,12 +43,12 @@ public final class HarnessSelfTest {
 
         @Actor
         public void actor1(II_Result r) {
-            r.r1 = ++x; // non-atomic RMW
+            r.r1 = ++x;
         }
 
         @Actor
         public void actor2(II_Result r) {
-            r.r2 = ++x; // non-atomic RMW
+            r.r2 = ++x;
         }
     }
 

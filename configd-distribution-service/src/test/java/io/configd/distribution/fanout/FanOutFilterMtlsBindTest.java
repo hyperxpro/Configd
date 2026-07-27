@@ -52,8 +52,6 @@ class FanOutFilterMtlsBindTest {
 
     @Test
     void mtlsIdentityRebindPreservesAcceptsFiltered() {
-        // A verified (non-plaintext) cert identity: bindIdentity rebuilds the SUBSCRIBE. filtering must
-        // still activate (SUBSCRIBE_OK.filtered == true == filterActive).
         EdgeFrame.SubscribeOk ok = subscribeAndReadOk(driver("cn=edge,ou=fleet"), true);
         assertTrue(ok.filtered(),
                 "the mTLS identity rebind must carry acceptsFiltered so filtering activates in production");
@@ -62,14 +60,12 @@ class FanOutFilterMtlsBindTest {
 
     @Test
     void mtlsOptOutStaysUnfiltered() {
-        // The same mTLS path with acceptsFiltered=false stays the byte-identical full-chain session.
         EdgeFrame.SubscribeOk ok = subscribeAndReadOk(driver("cn=edge,ou=fleet"), false);
         assertFalse(ok.filtered(), "a non-opting mTLS edge is not filtered");
     }
 
     @Test
     void plaintextIdentityAlsoActivatesFiltering() {
-        // Over plaintext bindIdentity returns the wire frame unchanged; acceptsFiltered survives that path too.
         EdgeFrame.SubscribeOk ok = subscribeAndReadOk(driver("plaintext"), true);
         assertTrue(ok.filtered(), "the plaintext path also preserves acceptsFiltered");
     }

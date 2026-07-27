@@ -49,7 +49,6 @@ class EdgeFrameCodecGoldenFixtureTest {
                     assertEquals(EdgeFrameGoldenBytes.goldenCrc(), crc.getValue(),
                             "1 MiB snapshot-chunk frame CRC drifted — wire change without a"
                                     + " EDGE_WIRE_VERSION bump (see EdgeFrameGoldenBytes rebaseline rule)");
-                    // And it must decode back to the same frame.
                     assertEquals(frame, EdgeFrameCodec.decode(live));
                     return;
                 }
@@ -63,7 +62,6 @@ class EdgeFrameCodecGoldenFixtureTest {
                         "edge wire drift for " + name + ": expected " + hf.formatHex(expected)
                                 + " but got " + hf.formatHex(live)
                                 + ". Revert, or bump EDGE_WIRE_VERSION and regenerate.");
-                // Round-trip: golden bytes decode back to the canonical frame.
                 assertEquals(frame, EdgeFrameCodec.decode(expected),
                         "golden bytes for " + name + " must decode to the canonical frame");
             }));
@@ -71,13 +69,11 @@ class EdgeFrameCodecGoldenFixtureTest {
         return tests;
     }
 
-    /** Every golden hex entry is a structurally valid frame the decoder accepts. */
     @Test
     void everyGoldenEntryDecodesCleanly() {
         Map<String, byte[]> golden = EdgeFrameGoldenBytes.forVersion(EdgeFrameCodec.EDGE_WIRE_VERSION & 0xFF);
         for (Map.Entry<String, byte[]> e : golden.entrySet()) {
             EdgeFrame f = EdgeFrameCodec.decode(e.getValue());
-            // peekLength agrees with the actual length on every golden frame.
             assertEquals(e.getValue().length, EdgeFrameCodec.peekLength(e.getValue()),
                     "peekLength mismatch on golden " + e.getKey());
             assertEquals(EdgeFrameCodec.encode(f).length, e.getValue().length,
@@ -115,7 +111,6 @@ class EdgeFrameCodecGoldenFixtureTest {
                 fail("no golden fixture covers error code " + ec);
             }
         }
-        // Empty-NOTIFY edge case present (v1).
         boolean emptyNotify = EdgeFrameFixtures.build().values().stream().anyMatch(f ->
                 f instanceof EdgeFrame.Notify n && n.notifications().isEmpty());
         if (!emptyNotify) {

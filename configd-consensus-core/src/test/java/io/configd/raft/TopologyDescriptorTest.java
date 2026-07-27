@@ -12,11 +12,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Unit tests for {@link TopologyDescriptor} - the authenticated, versioned deploy-time topology
- * descriptor. Covers the round-trip in both postures, the reserved-illegal epoch, the MBZ reserved
- * field, formatVersion rolling, and tamper detection under a key.
- */
 class TopologyDescriptorTest {
 
     private static IntegrityEnvelope keyed() {
@@ -65,7 +60,6 @@ class TopologyDescriptorTest {
     @Test
     void topologyEpochZeroRejected() {
         IntegrityEnvelope env = keyed();
-        // A well-formed envelope whose inner epoch is the reserved-illegal 0 must be refused on decode.
         byte[] enveloped = env.wrap(TopologyDescriptor.TOPO_MAGIC, IntegrityEnvelope.NODE_SCOPE,
                 craftPayload(TopologyDescriptor.FORMAT_VERSION, 1, 0L, 0));
         IllegalStateException e = assertThrows(IllegalStateException.class,
@@ -97,7 +91,7 @@ class TopologyDescriptorTest {
     void tamperDetectedUnderKey() {
         IntegrityEnvelope env = keyed();
         byte[] enveloped = new TopologyDescriptor(2, 1L).toEnvelope(env);
-        enveloped[enveloped.length / 2] ^= 0x01; // flip a byte: MAC/CRC catches it
+        enveloped[enveloped.length / 2] ^= 0x01;
         assertThrows(IntegrityException.class, () -> TopologyDescriptor.fromEnvelope(env, enveloped));
     }
 }

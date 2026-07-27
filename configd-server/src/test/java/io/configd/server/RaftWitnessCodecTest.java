@@ -18,10 +18,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Codec proof for the anchor-witness wire types ({@code RAFT_WITNESS} / {@code RAFT_WITNESS_REPLY}).
- * Pins the frozen 29-byte body layout (golden), the round-trip, the fail-closed decode paths, and the
- * security-relevant property that the sender identity is the transport-authenticated {@code from}, never
- * a spoofable body field.
+ * Codec proof for the anchor-witness wire types. Pins the frozen 29-byte body layout (golden) and the
+ * security property that sender identity comes from the transport-authenticated {@code from}, never a
+ * spoofable body field.
  */
 final class RaftWitnessCodecTest {
 
@@ -30,7 +29,6 @@ final class RaftWitnessCodecTest {
 
     @Test
     void witnessBodyIsFrozen29ByteGolden() {
-        // selfAnchorSeq=7, selfTerm=3, selfVotedFor=5, seenOfYouSeq=4, query=true.
         WitnessMessage m = new WitnessMessage(SENDER, 7L, 3L, 5, 4L, true);
         FrameCodec.Frame frame = RaftMessageCodec.encode(m, GID);
         assertEquals(MessageType.RAFT_WITNESS, frame.messageType());
@@ -89,8 +87,6 @@ final class RaftWitnessCodecTest {
 
     @Test
     void senderIsFromNotBody_spoofResistant() {
-        // A hostile-but-authenticated peer forges a body claiming to be node 999. The wire carries no
-        // in-body sender, so after decode the attributed sender is the transport-authenticated `from`.
         WitnessMessage forged = new WitnessMessage(NodeId.of(999), 5L, 1L, 999, 5L, false);
         FrameCodec.Frame frame = RaftMessageCodec.encode(forged, GID);
         NodeId authenticatedFrom = NodeId.of(2);
@@ -119,7 +115,7 @@ final class RaftWitnessCodecTest {
     @Test
     void decodeWitnessRejectsTruncatedBody() {
         FrameCodec.Frame truncated = new FrameCodec.Frame(
-                MessageType.RAFT_WITNESS, GID, 0L, new byte[10]); // < 29
+                MessageType.RAFT_WITNESS, GID, 0L, new byte[10]);
         assertThrows(IllegalArgumentException.class,
                 () -> RaftMessageCodec.decodeWitness(truncated, NodeId.of(1)));
     }
@@ -133,8 +129,6 @@ final class RaftWitnessCodecTest {
 
     @Test
     void existingRaftGoldenPathsUnaffected() {
-        // Sanity: a RequestVote still encodes/decodes through the generic path (witness additions did not
-        // disturb the existing sealed-switch cases).
         RaftMessage rv = new io.configd.raft.RequestVoteRequest(3L, SENDER, 1L, 1L, false);
         FrameCodec.Frame frame = RaftMessageCodec.encode(rv, GID);
         assertEquals(MessageType.REQUEST_VOTE, frame.messageType());

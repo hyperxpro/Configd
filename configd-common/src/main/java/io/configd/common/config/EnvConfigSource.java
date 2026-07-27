@@ -39,7 +39,6 @@ public final class EnvConfigSource implements ConfigSource {
 
     private final Map<String, String> byCanonicalKey;
 
-    /** Snapshots the current process environment. */
     public EnvConfigSource() {
         this(System.getenv());
     }

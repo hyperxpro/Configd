@@ -63,7 +63,6 @@ class EdgePrefixStorageFilterTest {
 
         @Test
         void emptySubscriptionStoresEveryKey() {
-            // No addSubscription() calls -> empty prefix set -> full store.
             client.applyDelta(put(0, 1, "svc/a", "1", "other/b", "2", "misc/c", "3"), clock.currentTimeMillis());
 
             assertEquals(1, client.currentVersion());
@@ -92,9 +91,7 @@ class EdgePrefixStorageFilterTest {
         void nonMatchingKeyIsNotStoredButVersionAdvances() {
             client.applyDelta(put(0, 1, "other/b", "2"), clock.currentTimeMillis());
 
-            // Not stored - outside the subscription, no payload kept.
             assertFalse(client.get("other/b").found());
-            // But the chain version STILL advanced (gap detection unaffected).
             assertEquals(1, client.currentVersion());
         }
 
@@ -110,7 +107,6 @@ class EdgePrefixStorageFilterTest {
 
         @Test
         void allNonMatchingBatchStillAdvancesVersion() {
-            // Every mutation filtered out -> an empty filtered delta - version still advances.
             client.applyDelta(put(0, 1, "other/b", "2", "misc/c", "3"), clock.currentTimeMillis());
             assertEquals(1, client.currentVersion());
             assertFalse(client.get("other/b").found());
@@ -123,13 +119,11 @@ class EdgePrefixStorageFilterTest {
 
         @Test
         void secureKeyStoredEvenWhenNotSubscribed() {
-            client.addSubscription("svc/"); // does NOT cover secure/
+            client.addSubscription("svc/");
             client.applyDelta(put(0, 1, "secure/killswitch", "ON", "other/x", "y"), clock.currentTimeMillis());
 
-            // secure/ is a strong-read key - ALWAYS stored regardless of subscription.
             assertTrue(client.get("secure/killswitch").found(),
                     "secure/ keys must be stored regardless of subscription (CT-37)");
-            // The non-matching, non-secure key is still filtered out.
             assertFalse(client.get("other/x").found());
             assertEquals(1, client.currentVersion());
         }
@@ -189,7 +183,6 @@ class EdgePrefixStorageFilterTest {
             ConfigDelta original = put(0, 1, "svc/a", "1", "other/b", "2");
             ConfigDelta filtered = client.filterForStorage(original);
 
-            // Same versions, only the matching mutation kept.
             assertEquals(0, filtered.fromVersion());
             assertEquals(1, filtered.toVersion());
             assertEquals(1, filtered.mutations().size());

@@ -40,7 +40,6 @@ class Rr095StallSeedDiagnosisTest {
             double endDropRate = sim.network().dropRateForTest();
             int endPartitions = sim.network().activePartitionsForTest();
 
-            // Characterize the schedule: unpaired drop windows + net unhealed partitions.
             Map<AdversarialSchedule.FaultKind, Integer> counts =
                     new EnumMap<>(AdversarialSchedule.FaultKind.class);
             for (AdversarialSchedule.Event e : sim.schedule().events()) {
@@ -64,7 +63,6 @@ class Rr095StallSeedDiagnosisTest {
                     networkUnhealedAtEnd ? "NEVER-HEALED ARTIFACT (benign)"
                             : "HEALED-BUT-STUCK (would be a real liveness bug!)");
 
-            // (1) Still stalls after the inflight-window-leak fix - confirms it was not the root cause.
             assertFalse(leaderElected,
                     "seed " + seed + " was a registered RR-095 stall; post-RR-103-fix it must"
                             + " still stall (RR-103 is a leader-side window leak, a different"

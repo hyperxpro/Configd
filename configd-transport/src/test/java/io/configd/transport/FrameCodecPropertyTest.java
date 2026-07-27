@@ -26,10 +26,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class FrameCodecPropertyTest {
 
-    /**
-     * Encode/decode roundtrip preserves all four header fields and the
-     * payload bytes, for any well-formed input.
-     */
     @Property(tries = 500)
     void encodeDecodeRoundtripPreservesAllFields(
             @ForAll MessageType type,
@@ -159,7 +155,7 @@ class FrameCodecPropertyTest {
             @ForAll @Size(max = 64) byte[] payload,
             @ForAll @ByteRange(min = 0, max = 127) byte rawVersion) {
 
-        if (rawVersion == FrameCodec.WIRE_VERSION) return;  // skip the legitimate version
+        if (rawVersion == FrameCodec.WIRE_VERSION) return;
 
         // Hand-craft a frame with the bogus wire-version byte and a valid
         // CRC32C trailer so the decoder rejects on version, not on checksum.
@@ -183,10 +179,6 @@ class FrameCodecPropertyTest {
         assertEquals(rawVersion & 0xFF, ex.observedVersion());
     }
 
-    /**
-     * A frame whose declared length disagrees with its actual length must
-     * be rejected, even if every other field is well-formed.
-     */
     @Property(tries = 200)
     void lengthFieldMismatchIsRejected(
             @ForAll MessageType type,
@@ -201,7 +193,6 @@ class FrameCodecPropertyTest {
         int corrupted = frame.length + delta;
         if (corrupted < 0 || corrupted > Integer.MAX_VALUE - 8) return;
 
-        // Overwrite the length prefix in-place with a wrong value.
         ByteBuffer.wrap(frame).putInt(corrupted);
 
         assertThrows(Exception.class, () -> FrameCodec.decode(frame));

@@ -98,7 +98,6 @@ final class NettyConsensusLivenessTest {
     private static final int GROUP = 0;
     private static final long BASE_SEED = 0xC0FFEEL;
 
-    // election budget (ratio = electionMinTicks/heartbeatTicks = 100/5 = 20; see class doc)
     private static final int TICK_PERIOD_MS = 10;
     private static final int HEARTBEAT_MS = 50;     // 5 ticks
     private static final int ELECTION_MIN_MS = 1000; // 100 ticks
@@ -148,8 +147,6 @@ final class NettyConsensusLivenessTest {
                 "a stable leader must be elected on the real Netty wire within " + STABILIZE_BUDGET_MS + "ms");
         long term0 = cluster.maxTerm();
 
-        // Phase A, sustained load: propose every tick on the leader. Entry-carrying appends and coalesced
-        // heartbeats flow; the transport must deliver them faithfully enough that no follower times out.
         cluster.startLoad(leader);
         long loadObservations = assertNoChurn(leader, term0, WINDOW_MS,
                 "under sustained load");
@@ -172,10 +169,6 @@ final class NettyConsensusLivenessTest {
                 + " across load(" + loadObservations + " obs)+idle(" + idleObservations + " obs) over the real Netty wire");
     }
 
-    /**
-     * Polls the cluster for {@code windowMs}, asserting on every poll that the cluster-wide max term stays
-     * at {@code term0} and {@code leader} stays LEADER. Returns the number of polls performed.
-     */
     private long assertNoChurn(int leader, long term0, long windowMs, String phase) throws InterruptedException {
         long end = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(windowMs);
         long observations = 0;
@@ -214,8 +207,6 @@ final class NettyConsensusLivenessTest {
                         + STABILIZE_BUDGET_MS + "ms)");
         long term0 = cluster.maxTerm();
 
-        // Idle, then sever the leader's coalesced heartbeats. No proposes means no entry-carrying appends
-        // either, so the leader goes completely silent toward its followers.
         cluster.severHeartbeats(leader);
 
         // 1) Detect destabilization (term rise OR the leader stepping down - CheckQuorum is invisible to
@@ -295,13 +286,11 @@ final class NettyConsensusLivenessTest {
             receiver.start();
             sender.start();
 
-            // Warm up: establish the connection and confirm the first frame round-trips before measuring.
             sentAtNanos[0] = System.nanoTime();
             sender.send(b, heartbeatFrame(0));
             assertTrue(warmedUp.await(10, TimeUnit.SECONDS),
                     "the warm-up frame must establish the connection within 10s");
 
-            // Blast K heartbeat-sized frames back-to-back over the live connection.
             for (int seq = warmup; seq < total; seq++) {
                 sentAtNanos[seq] = System.nanoTime();
                 sender.send(b, heartbeatFrame(seq));
@@ -337,7 +326,6 @@ final class NettyConsensusLivenessTest {
         boolean met();
     }
 
-    /** Polls {@code cond} every {@link #POLL_MS} until it is met or {@code budgetMs} elapses. */
     private static boolean awaitUntil(long budgetMs, Condition cond) throws InterruptedException {
         long end = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
         while (System.nanoTime() < end) {
@@ -373,12 +361,6 @@ final class NettyConsensusLivenessTest {
         return ports;
     }
 
-    /**
-     * A genuinely concurrent real-wire Raft cluster: N nodes, each on its own owner thread, each behind its
-     * own {@link NettyRaftTransport}, all wired through the {@link CoalescingRaftTransport} drain pipeline
-     * (coalescing active). Built and started in the constructor; {@link #close()} is idempotent and called
-     * from {@code @AfterEach}.
-     */
     private final class RealWireCluster {
         private final NodeId[] ids = new NodeId[NODES];
         private final RaftNode[] nodes = new RaftNode[NODES];
@@ -410,7 +392,6 @@ final class NettyConsensusLivenessTest {
             }
 
             for (int i = 0; i < NODES; i++) {
-                // Peer address map: every other node (a node never sends to itself).
                 Map<NodeId, InetSocketAddress> peerAddrs = new HashMap<>();
                 Set<NodeId> peerIds = new HashSet<>();
                 for (int j = 0; j < NODES; j++) {
@@ -449,15 +430,11 @@ final class NettyConsensusLivenessTest {
                 });
             }
 
-            // bindOwnerThread() is the owner's first task, before start() (which publishes the inbound
-            // handler) and before ticks are scheduled. Single-thread FIFO then guarantees every later
-            // tick, handleMessage, or propose call runs after the bind, so assertOwnerThread() never trips.
             for (int i = 0; i < NODES; i++) {
                 final int idx = i;
                 owners[i].execute(() -> nodes[idx].bindOwnerThread());
             }
 
-            // Inbound (arrives on a Netty event-loop thread) - marshal handleMessage onto the node's owner.
             for (int i = 0; i < NODES; i++) {
                 final int idx = i;
                 adapters[i].registerInboundHandler((from, gid, msg) ->
@@ -469,7 +446,6 @@ final class NettyConsensusLivenessTest {
                 transports[i].start();
             }
 
-            // Drive real scheduled ticks per node on its own owner (fixed-delay - see class doc).
             for (int i = 0; i < NODES; i++) {
                 final int idx = i;
                 tickFutures[i] = owners[i].scheduleWithFixedDelay(
@@ -477,7 +453,6 @@ final class NettyConsensusLivenessTest {
             }
         }
 
-        /** One tick on node {@code i}'s owner: open the coalescing window, tick, drain + send heartbeats. */
         private void tickOnce(int i) {
             HeartbeatCoalescer hc = coalescers[i];
             hc.beginTick();
@@ -502,12 +477,11 @@ final class NettyConsensusLivenessTest {
             for (Map.Entry<NodeId, Map<Integer, AppendEntriesRequest>> peerEntry : drained.entrySet()) {
                 NodeId peer = peerEntry.getKey();
                 for (AppendEntriesRequest hb : peerEntry.getValue().values()) {
-                    adapters[i].send(peer, hb); // encodes and hands off to netty.send (non-blocking offer); runs on the owner thread
+                    adapters[i].send(peer, hb);
                 }
             }
         }
 
-        // off-owner observation (monitorView: volatile, never-torn (role, currentTerm) snapshot)
 
         long maxTerm() {
             long max = 0;
@@ -535,7 +509,6 @@ final class NettyConsensusLivenessTest {
             return leader;
         }
 
-        /** Drive until one node is the sole LEADER for {@link #STABLE_OBSERVATIONS} consecutive polls. */
         int electStableLeader(long budgetMs) throws InterruptedException {
             long end = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
             int candidate = -1;
@@ -555,7 +528,6 @@ final class NettyConsensusLivenessTest {
             return -1;
         }
 
-        /** Continuous write load: propose a PUT on the leader's owner every {@link #PROPOSE_PERIOD_MS}. */
         void startLoad(int leader) {
             AtomicInteger n = new AtomicInteger();
             loadFuture = owners[leader].scheduleWithFixedDelay(() -> {
@@ -594,7 +566,7 @@ final class NettyConsensusLivenessTest {
             }
             for (NettyRaftTransport t : transports) {
                 if (t != null) {
-                    t.close(); // idempotent; stops inbound + outbound, awaits the listen-FD close
+                    t.close();
                 }
             }
             for (ScheduledExecutorService o : owners) {

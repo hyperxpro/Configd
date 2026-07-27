@@ -58,19 +58,16 @@ public final class ConfigClient {
         this.authToken = (authToken != null && !authToken.isBlank()) ? authToken : null;
     }
 
-    /** Adds the {@code Authorization: Bearer} header when the auth-on posture supplied a token. */
     private HttpRequest.Builder auth(HttpRequest.Builder b) {
         return authToken == null ? b : b.header("Authorization", "Bearer " + authToken);
     }
 
-    /** Result of one client operation, ready to hand to the recorder. */
     public record OpResult(Op.Status status, String value, long callNs, long retNs) {}
 
     public int suspectedLeaderId() {
         return suspectedLeaderId;
     }
 
-    // writes
 
     /**
      * PUT {@code token} as the value of {@code key}. Tries {@code target}; on a
@@ -100,14 +97,10 @@ public final class ConfigClient {
                 HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
                 int code = resp.statusCode();
                 if (code == 200) {
-                    // 200 "Committed: seq=S" is returned ONLY after quorum commit + local apply,
-                    // so the write definitely happened -> OK.
                     suspectedLeaderId = node.id();
                     return new OpResult(Op.Status.OK, value, call, System.nanoTime());
                 }
                 if (code == 504) {
-                    // Indeterminate - commit unconfirmed within the deadline; the write MAY still
-                    // commit later, so it is INFO (indeterminate), never a definite FAIL.
                     return new OpResult(Op.Status.INFO, value, call, System.nanoTime());
                 }
                 if (code == 503) {
@@ -116,11 +109,11 @@ public final class ConfigClient {
                         suspectedLeaderId = hint.get();
                         ClusterNode next = byId(all, hint.get());
                         if (next != null && hop == 0) {
-                            node = next; // follow the hint once
+                            node = next;
                             continue;
                         }
                     }
-                    return new OpResult(Op.Status.FAIL, value, call, System.nanoTime()); // definite Lost/NotLeader
+                    return new OpResult(Op.Status.FAIL, value, call, System.nanoTime());
                 }
                 if (code == 400 || code == 401 || code == 403 || code == 429) {
                     // Definite rejections the server contract guarantees never committed
@@ -134,14 +127,12 @@ public final class ConfigClient {
                 // direction - it could mask a real lost-write anomaly. Record INFO.
                 return new OpResult(Op.Status.INFO, value, call, System.nanoTime());
             } catch (Exception e) {
-                // timeout / connection refused (node killed) / reset: may have committed
                 return new OpResult(Op.Status.INFO, value, call, System.nanoTime());
             }
         }
         return new OpResult(Op.Status.FAIL, value, call, System.nanoTime());
     }
 
-    // linearizable read
 
     /**
      * Linearizable GET of {@code key} against {@code target} (no hint-following - a
@@ -165,7 +156,7 @@ public final class ConfigClient {
             if (code == 404) {
                 return new OpResult(Op.Status.OK, "", call, ret); // absent = bottom
             }
-            return new OpResult(Op.Status.INFO, "", call, ret); // 503: indeterminate read
+            return new OpResult(Op.Status.INFO, "", call, ret);
         } catch (Exception e) {
             return new OpResult(Op.Status.INFO, "", call, System.nanoTime());
         }
@@ -211,7 +202,6 @@ public final class ConfigClient {
         }
     }
 
-    // leader discovery
 
     /**
      * Discovers the current leader via a throwaway probe PUT (NOT recorded into any

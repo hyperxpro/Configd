@@ -54,7 +54,6 @@ class StalenessTrackerTest {
 
         @Test
         void initialStateIsDisconnected() {
-            // No frontier known yet - the edge has covered nothing.
             assertEquals(StalenessTracker.State.DISCONNECTED, tracker.currentState());
         }
 
@@ -103,10 +102,8 @@ class StalenessTrackerTest {
 
         @Test
         void stalenessUsesCommitTimestampNotRecordTime() {
-            // Commit ts LAGS wall-now by 300ms at record time (network/propagation latency):
-            // staleness is measured from the commit ts (data age), not the local record time.
             clock.timeMs = 10_300;
-            tracker.recordUpdate(1, 10_000); // commit ts 10_000, wall-now 10_300
+            tracker.recordUpdate(1, 10_000);
             assertEquals(300, tracker.stalenessMs(),
                     "staleness must be wall_now − commit_ts (ADR-0039 data-age term)");
         }
@@ -155,12 +152,10 @@ class StalenessTrackerTest {
         @Test
         void idleButHeartbeatingEdgeStaysCurrentIndefinitely() {
             long cursor = 5;
-            tracker.recordUpdate(cursor, 10_000); // applied up to seq 5 at commit ts 10_000
+            tracker.recordUpdate(cursor, 10_000);
 
-            // No new deltas for a long time, but the server keeps heartbeating "you're
-            // caught up" (latestSeq == cursor) with its advancing clock.
             for (int i = 0; i < 1000; i++) {
-                clock.advance(250); // a heartbeat interval
+                clock.advance(250);
                 long serverNow = clock.currentTimeMillis();
                 boolean advanced = tracker.recordFrontier(cursor, cursor, serverNow);
                 assertTrue(advanced, "a cursor-matched heartbeat must advance the frontier");
@@ -176,7 +171,6 @@ class StalenessTrackerTest {
             tracker.recordUpdate(cursor, 10_000);
             clock.advance(600); // would be STALE without a frontier advance
 
-            // Server says latestSeq=7 > cursor=5 - the edge is genuinely behind (2 seqs).
             boolean advanced = tracker.recordFrontier(7, cursor, clock.currentTimeMillis());
             assertFalse(advanced, "latestSeq > cursor must NOT advance the frontier");
             assertEquals(StalenessTracker.State.STALE, tracker.currentState(),
@@ -189,8 +183,7 @@ class StalenessTrackerTest {
             // (e.g. the heartbeat came from a node with a slightly behind clock). The
             // frontier must not regress.
             clock.timeMs = 11_000;
-            tracker.recordUpdate(3, 11_000); // frontier = 11_000
-            // A cursor-matched heartbeat with an EARLIER serverNow - refused as a regression.
+            tracker.recordUpdate(3, 11_000);
             tracker.recordFrontier(3, 3, 10_900);
             assertEquals(0, tracker.stalenessMs(),
                     "frontier must hold at 11_000 (the heartbeat regression is refused)");
@@ -226,7 +219,6 @@ class StalenessTrackerTest {
 
         @Test
         void stalenessNeverNegative() {
-            // A frontier slightly ahead of wall-now (within skew allowance) clamps to 0.
             clock.timeMs = 10_000;
             tracker.recordUpdate(1, 10_030); // 30ms ahead - within the 50ms skew allowance
             assertEquals(0, tracker.stalenessMs());

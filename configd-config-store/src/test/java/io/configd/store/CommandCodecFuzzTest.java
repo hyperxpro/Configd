@@ -173,7 +173,6 @@ class CommandCodecFuzzTest {
         }
     }
 
-    // Permanent regression corpus: hostile byte shapes pinned as fixed test cases.
 
     /** The empty payload is the noop sentinel - a stable, distinguished accept. */
     @Property(tries = 1, seed = "2000")

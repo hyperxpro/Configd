@@ -79,6 +79,5 @@ fi
 echo "======================================================="
 if [ "$overall" = 0 ]; then echo "DISCRIMINATION PASS: both seeds turn the checker RED; controls GREEN."
 else echo "DISCRIMINATION FAIL: see above — do not proceed to the green gate."; fi
-# safety: ensure source is clean
 git checkout -- configd-common configd-consensus-core 2>/dev/null
 exit $overall

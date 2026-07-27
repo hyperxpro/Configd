@@ -15,18 +15,6 @@ import java.util.random.RandomGenerator;
 import static io.configd.raft.ProposalResult.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for Raft joint consensus reconfiguration (Raft section 6).
- * <p>
- * Covers:
- * <ul>
- *   <li>Adding a node via joint consensus</li>
- *   <li>Removing a node via joint consensus</li>
- *   <li>Preconditions: only leader, no-op committed, no pending change</li>
- *   <li>Safety: both old and new majorities required during joint config</li>
- *   <li>Leader step-down when removed from cluster</li>
- * </ul>
- */
 class ReconfigurationTest {
 
     static final class TestTransport implements RaftTransport {
@@ -148,7 +136,6 @@ class ReconfigurationTest {
             }
         }
 
-        /** Delivers messages only among the given nodes (isolates everyone else). */
         void deliverAmong(Set<NodeId> members, int maxRounds) {
             for (int round = 0; round < maxRounds; round++) {
                 Map<NodeId, List<RaftMessage>> toDeliver = new HashMap<>();
@@ -173,7 +160,6 @@ class ReconfigurationTest {
             }
         }
 
-        /** Number of nodes currently in the LEADER role (across all terms). */
         int countLeaders() {
             int n = 0;
             for (RaftNode node : nodes.values()) if (node.role() == RaftRole.LEADER) n++;
@@ -302,11 +288,9 @@ class ReconfigurationTest {
             leader.handleMessage(new RequestVoteResponse(leader.currentTerm(), true, n3, false));
             assertEquals(RaftRole.LEADER, leader.role(), "node 1 must have won the election");
 
-            // No-op is appended (index 1) but uncommitted (no responses delivered).
             assertTrue(leader.log().commitIndex() < 1,
                     "no-op must be uncommitted at this point");
 
-            // Precondition violated -> config change rejected.
             assertFalse(leader.proposeConfigChange(
                             Set.of(NodeId.of(1), NodeId.of(2), NodeId.of(3), NodeId.of(4))),
                     "config change before the no-op commits must be rejected");
@@ -390,9 +374,6 @@ class ReconfigurationTest {
 
         @Test
         void configChangePreservedAcrossElections() {
-            // Performs a real membership change (3 -> 4 nodes), drives the full
-            // joint->final transition to commitment, then forces a leadership
-            // change and asserts the new leader still serves the 4-voter config.
             TestCluster cluster = new TestCluster(3);
             NodeId n1 = NodeId.of(1), n2 = NodeId.of(2), n3 = NodeId.of(3), n4 = NodeId.of(4);
 
@@ -401,18 +382,15 @@ class ReconfigurationTest {
             assertEquals(RaftRole.LEADER, leader.role());
             cluster.addNode(n4, Set.of(n1, n2, n3));
 
-            // Real RCFG config change {1,2,3} -> {1,2,3,4}, driven to completion.
             assertTrue(leader.proposeConfigChange(Set.of(n1, n2, n3, n4)));
             assertTrue(leader.clusterConfig().isJoint());
             cluster.deliverAllMessages(20); // commit C_old,new, append+commit C_new
 
-            // Reconfiguration completed: simple 4-voter config, no pending change.
             assertFalse(leader.clusterConfig().isJoint(),
                     "joint->final transition must complete to a simple config");
             assertEquals(Set.of(n1, n2, n3, n4), leader.clusterConfig().voters());
             long committedBefore = leader.log().commitIndex();
 
-            // Force a leadership change: isolate n1, elect a survivor among {2,3,4}.
             cluster.dropAllMessages();
             Set<NodeId> survivors = Set.of(n2, n3, n4);
             RaftNode newLeader = cluster.electAmong(n2, survivors, 6);
@@ -462,7 +440,6 @@ class ReconfigurationTest {
             long preReconfigCommit = leader.log().commitIndex();
             assertTrue(preReconfigCommit >= 2, "no-op + pre-reconfig command committed");
 
-            // Propose {1,2,3} -> {1,2,3,4}: enters joint C_old,new.
             assertTrue(leader.proposeConfigChange(Set.of(n1, n2, n3, n4)));
             assertTrue(leader.clusterConfig().isJoint());
             assertEquals(Set.of(n1, n2, n3), leader.clusterConfig().voters());
@@ -482,7 +459,6 @@ class ReconfigurationTest {
             assertTrue(leader.log().commitIndex() > preReconfigCommit,
                     "post-reconfig write must commit under the new config");
 
-            // Followers (including the newly added n4) converged on the 4-voter config.
             for (NodeId id : List.of(n2, n3, n4)) {
                 ClusterConfig cfg = cluster.nodes.get(id).clusterConfig();
                 assertFalse(cfg.isJoint(), id + " must have left the joint config");
@@ -536,7 +512,6 @@ class ReconfigurationTest {
                     "RR-018: the survivor n2 must still be MID-JOINT before the isolation — "
                             + "this is the 'leader election DURING the joint phase' the test name claims");
 
-            // Leadership change: isolate n1, elect the still-joint survivor n2.
             cluster.dropAllMessages();
             long oldTerm = leader.currentTerm();
             Set<NodeId> survivors = Set.of(n2, n3, n4);
@@ -545,7 +520,6 @@ class ReconfigurationTest {
             assertTrue(newLeader.currentTerm() > oldTerm, "term must advance");
             assertTrue(cluster.atMostOneLeaderPerTerm(), "single-leader-per-term must hold");
 
-            // Let the new leader finalize the reconfiguration.
             cluster.deliverAmong(survivors, 40);
             assertFalse(newLeader.clusterConfig().isJoint(),
                     "the new leader must complete the joint->final transition");
@@ -559,7 +533,7 @@ class ReconfigurationTest {
         // finalizes. The tests below pin the historically-deadly negative property -
         // that a single majority (old-only or new-only) cannot elect during the joint
         // phase - plus the restart cell that recovers the JOINT (not just the final)
-        // config. See docs/session-4/experiments/joint-consensus-election-safety.md.
+        // config.
         @Test
         void oldMajorityAloneCannotElectDuringJointPhase_splitBrainPrevention() {
             // The split-brain test for joint consensus. Membership change
@@ -592,7 +566,6 @@ class ReconfigurationTest {
             cluster.deliverAllMessages(20);
             long committedBefore = leader.log().commitIndex();
 
-            // Enter joint C_old,new = ({1,2,3}, {3,4,5}).
             assertTrue(leader.proposeConfigChange(Set.of(n3, n4, n5)));
             assertTrue(leader.clusterConfig().isJoint());
             assertEquals(Set.of(n1, n2, n3), leader.clusterConfig().voters());
@@ -721,7 +694,6 @@ class ReconfigurationTest {
             assertEquals(Set.of(n1, n2, n3), n2After.clusterConfig().voters(),
                     "pre-joint recovery must restore the OLD 3-voter config");
 
-            // The change is still re-proposable on the (untouched) leader.
             cluster.addNode(n4, Set.of(n1, n2, n3));
             assertTrue(leader.proposeConfigChange(Set.of(n1, n2, n3, n4)),
                     "the config change must remain proposable after a pre-joint crash of a follower");

@@ -8,9 +8,6 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link PrefixSubscription} - prefix-based subscription management.
- */
 class PrefixSubscriptionTest {
 
     private PrefixSubscription subs;
@@ -145,7 +142,6 @@ class PrefixSubscriptionTest {
             subs.subscribe("app.");
             Set<String> snapshot = subs.prefixes();
             subs.subscribe("db.");
-            // Snapshot should not include "db." added after snapshot was taken
             assertFalse(snapshot.contains("db."));
         }
 

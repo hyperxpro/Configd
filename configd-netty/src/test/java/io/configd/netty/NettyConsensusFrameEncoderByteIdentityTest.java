@@ -82,17 +82,14 @@ class NettyConsensusFrameEncoderByteIdentityTest {
         }
     }
 
-    /** Varied {@link MessageType}, groupId, term, and payload size (incl. empty, 256B, 4KB) + extremes. */
     private static List<FrameCodec.Frame> representativeFrames() {
         List<FrameCodec.Frame> frames = new ArrayList<>();
         // Empty heartbeat - the coalesced hot path.
         frames.add(new FrameCodec.Frame(MessageType.HEARTBEAT, 0, 0L, new byte[0]));
-        // Small + medium + large payloads with varied content.
         frames.add(new FrameCodec.Frame(MessageType.APPEND_ENTRIES, 1, 5L, payload(1)));
         frames.add(new FrameCodec.Frame(MessageType.APPEND_ENTRIES, 7, 42L, payload(17)));
         frames.add(new FrameCodec.Frame(MessageType.APPEND_ENTRIES, 7, 42L, payload(256)));
         frames.add(new FrameCodec.Frame(MessageType.APPEND_ENTRIES, 13, 99L, payload(4096)));
-        // Type spread.
         frames.add(new FrameCodec.Frame(MessageType.REQUEST_VOTE, 2, 3L, payload(8)));
         frames.add(new FrameCodec.Frame(MessageType.PRE_VOTE, 4, 7L, payload(0)));
         frames.add(new FrameCodec.Frame(MessageType.INSTALL_SNAPSHOT, 9, 1024L, payload(512)));

@@ -22,12 +22,6 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
-/**
- * The flag-OFF byte-identity proof: with server-side filtering off, the emitted frame
- * stream of a prefix session is identical to the classic full-chain path, and the
- * genuine-eviction gap path is unchanged, since server-side gap detection is preserved.
- * The flag is the only switch: the same subscribe under flag-ON diverges, since it filters.
- */
 class FanOutFilterDivergenceTest {
 
     private static ReplaySource snapshotAt(long version) {
@@ -41,7 +35,6 @@ class FanOutFilterDivergenceTest {
                         List.of(new ConfigMutation.Put(key, "v".getBytes(StandardCharsets.UTF_8)))));
     }
 
-    /** Runs a session over a fixed input and returns the frames it emitted. */
     private static List<EdgeFrame> drain(FanOutConfig cfg, EdgeFrame.Subscribe subscribe) {
         FakeClock clock = new FakeClock(1_000L);
         RecordingTransportSink sink = new RecordingTransportSink();
@@ -62,14 +55,11 @@ class FanOutFilterDivergenceTest {
         // A prefix subscribe that opted in, but the deployment posture is off, so the classic path.
         List<EdgeFrame> prefixFlagOff = drain(flagOff,
                 new EdgeFrame.Subscribe(false, List.of("svc/"), 0L, -1L, "edge-1", true));
-        // The classic full-store baseline over the identical input.
         List<EdgeFrame> classic = drain(flagOff,
                 new EdgeFrame.Subscribe(true, List.of(), 0L, -1L, "edge-1", false));
 
-        // Same frames (the flag-OFF prefix session delivers the whole chain, like full-store).
         assertEquals(classic, prefixFlagOff,
                 "flag-OFF filtering emits the identical frame stream as the classic full-chain path");
-        // And byte-identical on the wire (deterministic encode).
         for (int i = 0; i < classic.size(); i++) {
             assertArrayEquals(EdgeFrameCodec.encode(classic.get(i)),
                     EdgeFrameCodec.encode(prefixFlagOff.get(i)),
@@ -86,7 +76,6 @@ class FanOutFilterDivergenceTest {
                 new EdgeFrame.Subscribe(true, List.of(), 0L, -1L, "edge-1", false));
         assertNotEquals(classic, filtered,
                 "flag-ON filtering diverges from the classic path (it drops the other/ deltas)");
-        // The filtered stream carries fewer NOTIFY notifications (only svc/).
         int filteredCount = filtered.stream().filter(f -> f instanceof EdgeFrame.Notify)
                 .mapToInt(f -> ((EdgeFrame.Notify) f).notifications().size()).sum();
         int classicCount = classic.stream().filter(f -> f instanceof EdgeFrame.Notify)
@@ -106,7 +95,6 @@ class FanOutFilterDivergenceTest {
         FanOutBuffer buffer = new FanOutBuffer(4);
         FanOutSessionCore s = new FanOutSessionCore(buffer, snapshotAt(20), sink, cfg,
                 FanOutSessionMetrics.NOOP, clock);
-        // Fill past capacity so early seqs are evicted, then subscribe with a stale cursor (1).
         for (long i = 1; i <= 10; i++) {
             buffer.publish(put(i, "svc/k" + i));
         }

@@ -20,13 +20,6 @@ import java.util.Objects;
  * into the signature payload so an attacker cannot replay a captured delta after the receiver
  * has rolled back. Older delta records use {@code epoch == 0} and an empty nonce, which the
  * verifier interprets as an unversioned / legacy delta.
- *
- * @param fromVersion source snapshot version
- * @param toVersion   target snapshot version
- * @param mutations   ordered list of mutations (puts and deletes)
- * @param signature   optional Ed25519 signature over the delta payload (may be null)
- * @param epoch       monotonic epoch for replay protection (0 = unversioned/legacy)
- * @param nonce       random 8-byte nonce bound into the signature (empty = legacy)
  */
 public record ConfigDelta(
         long fromVersion,
@@ -37,7 +30,6 @@ public record ConfigDelta(
         byte[] nonce
 ) {
 
-    /** Standard nonce length in bytes. */
     public static final int NONCE_LEN = 8;
 
     public ConfigDelta {
@@ -49,8 +41,8 @@ public record ConfigDelta(
                     "toVersion (" + toVersion + ") must be >= fromVersion (" + fromVersion + ")");
         }
         Objects.requireNonNull(mutations, "mutations must not be null");
-        mutations = List.copyOf(mutations); // defensive immutable copy
-        signature = signature != null ? signature.clone() : null; // defensive copy
+        mutations = List.copyOf(mutations);
+        signature = signature != null ? signature.clone() : null;
         if (epoch < 0) {
             throw new IllegalArgumentException("epoch must be non-negative: " + epoch);
         }
@@ -65,10 +57,6 @@ public record ConfigDelta(
     /**
      * Backward-compatible constructor that creates an unsigned legacy delta
      * (epoch 0, empty nonce).
-     *
-     * @param fromVersion source snapshot version
-     * @param toVersion   target snapshot version
-     * @param mutations   ordered list of mutations (puts and deletes)
      */
     public ConfigDelta(long fromVersion, long toVersion, List<ConfigMutation> mutations) {
         this(fromVersion, toVersion, mutations, null, 0L, new byte[0]);
@@ -77,11 +65,6 @@ public record ConfigDelta(
     /**
      * Backward-compatible constructor that creates a signed legacy delta
      * (epoch 0, empty nonce).
-     *
-     * @param fromVersion source snapshot version
-     * @param toVersion   target snapshot version
-     * @param mutations   ordered list of mutations (puts and deletes)
-     * @param signature   Ed25519 signature over the canonical payload (may be null)
      */
     public ConfigDelta(long fromVersion, long toVersion,
                        List<ConfigMutation> mutations, byte[] signature) {
@@ -100,12 +83,10 @@ public record ConfigDelta(
         return nonce.clone();
     }
 
-    /** True if this delta contains no mutations. */
     public boolean isEmpty() {
         return mutations.isEmpty();
     }
 
-    /** Number of mutations in this delta. */
     public int size() {
         return mutations.size();
     }

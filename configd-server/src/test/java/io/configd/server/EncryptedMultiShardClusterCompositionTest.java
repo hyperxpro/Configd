@@ -82,7 +82,6 @@ class EncryptedMultiShardClusterCompositionTest {
     private static final long RESTART_MS = 90_000;
     private static final long POLL_MS = 50;
 
-    // System properties this test drives; saved/restored so it never leaks posture into sibling tests.
     private static final String[] PROPS = {
             "configd.raft.encryption.enabled",
             "configd.raft.shardCount",
@@ -125,7 +124,6 @@ class EncryptedMultiShardClusterCompositionTest {
             try {
                 s.shutdown();
             } catch (RuntimeException ignored) {
-                // best-effort teardown
             }
         }
         running.clear();
@@ -147,7 +145,7 @@ class EncryptedMultiShardClusterCompositionTest {
         // guarantee it backs) and pre-created so the three concurrent boots never race to mint it.
         Path signingKey = root.resolve("secrets").resolve("signing-key.bin");
         Files.createDirectories(signingKey.getParent());
-        SigningKeyStore.loadOrCreate(signingKey); // mint once; all nodes load this same key
+        SigningKeyStore.loadOrCreate(signingKey);
 
         int[] bindPorts = reserveDistinctPorts(NODES);
         ServerConfig[] configs = new ServerConfig[NODES];
@@ -199,7 +197,6 @@ class EncryptedMultiShardClusterCompositionTest {
         long[] before1 = appliedIndexes(servers, 1);
         long committed0 = commitAndAwaitReplication(servers, 0, "cfg/alpha", "v-alpha");
         assertTrue(committed0 > 0, "shard-0 write must reach a committed index");
-        // shard-0 replication must not have advanced shard-1 (independent groups).
         long[] after1beforeWrite = appliedIndexes(servers, 1);
         assertArrayEqualsL(before1, after1beforeWrite,
                 "a shard-0 write must not advance any node's shard-1 applied index (cross-shard isolation)");
@@ -207,7 +204,6 @@ class EncryptedMultiShardClusterCompositionTest {
         long committed1 = commitAndAwaitReplication(servers, 1, "cfg/beta", "v-beta");
         assertTrue(committed1 > 0, "shard-1 write must reach a committed index");
 
-        // A watch registered on a FOLLOWER of shard 0 fires when a shard-0 write replicates to it.
         int leader0 = leaderFor(servers, 0);
         int follower0 = firstFollower(servers, 0, leader0);
         assertTrue(follower0 >= 0, "shard 0 must have at least one follower node");
@@ -254,7 +250,6 @@ class EncryptedMultiShardClusterCompositionTest {
         assertTrue(caughtUp1, "restarted node must recover + catch shard 1 up to " + postDown1
                 + " (got " + appliedIndex(restarted, 1) + ")");
 
-        // A fresh write after recovery still commits + replicates to all three (the cluster is whole again).
         long finalCommit = commitAndAwaitReplication(servers, 0, "cfg/epsilon", "v-epsilon");
         assertTrue(finalCommit > postDown0, "a post-recovery write commits + replicates across the whole cluster");
     }
@@ -292,7 +287,6 @@ class EncryptedMultiShardClusterCompositionTest {
             running.add(servers[i]);
         }
 
-        // Elect a stable leader per shard, then commit a pre-kill write on each shard to all three.
         for (int gid = 0; gid < SHARDS; gid++) {
             assertTrue(awaitStableLeader(servers, gid, STABILIZE_MS) >= 0,
                     "shard " + gid + " must elect a stable leader before the kill: "
@@ -301,7 +295,6 @@ class EncryptedMultiShardClusterCompositionTest {
         long preKill0 = commitAndAwaitReplication(servers, 0, "cfg/kill-alpha", "v-alpha");
         long preKill1 = commitAndAwaitReplication(servers, 1, "cfg/kill-beta", "v-beta");
 
-        // Kill the shard-0 LEADER (crash equivalent). Any shard it also led must re-elect too.
         int victim = leaderFor(servers, 0);
         assertTrue(victim >= 0, "shard 0 must have a single stable leader to kill: " + leadershipSnapshot(servers, 0));
         servers[victim].shutdown();
@@ -332,15 +325,11 @@ class EncryptedMultiShardClusterCompositionTest {
                             + ", got " + appliedIndex(servers[i], 1) + ")");
         }
 
-        // A post-kill write commits on the NEW leader and replicates to the two survivors.
         long postKill0 = commitAndAwaitReplicationExcluding(servers, 0, victim, "cfg/kill-gamma", "v-gamma");
         long postKill1 = commitAndAwaitReplicationExcluding(servers, 1, victim, "cfg/kill-delta", "v-delta");
         assertTrue(postKill0 > preKill0, "a post-kill shard-0 write must commit at a higher index on the new leader");
         assertTrue(postKill1 > preKill1, "a post-kill shard-1 write must commit on the survivors");
 
-        // Rejoin: restart the killed EX-LEADER from its data dir. Recovery through the encrypted
-        // keyring + term-versioned anchors must NOT fail closed; it catches BOTH shards up past the
-        // post-kill commits (proving it decrypted its persisted state and replayed the gap).
         ConfigdServer rejoined = ConfigdServer.start(configs[victim]);
         servers[victim] = rejoined;
         running.add(rejoined);
@@ -351,7 +340,6 @@ class EncryptedMultiShardClusterCompositionTest {
                 "the rejoined ex-leader must catch shard 1 up to " + postKill1
                         + " (got " + appliedIndex(rejoined, 1) + ")");
 
-        // The whole restored cluster commits again.
         long finalCommit = commitAndAwaitReplication(servers, 0, "cfg/kill-epsilon", "v-epsilon");
         assertTrue(finalCommit > postKill0,
                 "a post-recovery write commits + replicates across the whole restored cluster");
@@ -437,7 +425,6 @@ class EncryptedMultiShardClusterCompositionTest {
         return -1;
     }
 
-    /** Polls until one node is the sole LEADER for {@code gid} across several consecutive observations. */
     private static int awaitStableLeader(ConfigdServer[] servers, int gid, long budgetMs)
             throws InterruptedException {
         long end = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
@@ -478,7 +465,6 @@ class EncryptedMultiShardClusterCompositionTest {
         return leader;
     }
 
-    /** {@link #awaitStableLeader} among the nodes other than {@code excluded} (the killed leader). */
     private static int awaitStableLeaderExcluding(ConfigdServer[] servers, int gid, int excluded, long budgetMs)
             throws InterruptedException {
         long end = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
@@ -508,8 +494,6 @@ class EncryptedMultiShardClusterCompositionTest {
         return sb.append(']').toString();
     }
 
-    /** Proposes a PUT on {@code gid}'s current leader and waits until ALL nodes apply it; returns the
-     *  committed index. */
     private long commitAndAwaitReplication(ConfigdServer[] servers, int gid, String key, String value)
             throws Exception {
         return commitAndAwaitReplicationExcluding(servers, gid, -1, key, value);
@@ -545,7 +529,6 @@ class EncryptedMultiShardClusterCompositionTest {
                 Thread.sleep(POLL_MS);
                 continue;
             }
-            // Wait for the leader to apply past its pre-propose index (the write committed).
             while (System.nanoTime() < deadline) {
                 long now = appliedIndex(servers[leader], gid);
                 if (now > before) {

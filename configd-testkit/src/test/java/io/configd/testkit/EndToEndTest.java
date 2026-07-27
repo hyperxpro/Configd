@@ -19,12 +19,6 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * End-to-end integration test verifying the full write -> store -> edge pipeline.
- * Exercises {@link VersionedConfigStore} (control plane),
- * {@link DeltaComputer}, {@link LocalConfigStore} (edge),
- * {@link VersionCursor}, and {@link StalenessTracker} together.
- */
 class EndToEndTest {
 
     private VersionedConfigStore controlPlane;

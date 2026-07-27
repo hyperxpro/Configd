@@ -5,7 +5,6 @@ import io.configd.common.config.ConfigSource;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-/** Built-in factory for the {@code none} (authentication-disabled) mode. Emits a loud boot warning. */
 public final class NoAuthAuthenticatorFactory implements AuthenticatorFactory {
 
     private static final Logger LOG = Logger.getLogger(NoAuthAuthenticatorFactory.class.getName());

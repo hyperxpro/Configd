@@ -57,10 +57,9 @@ class PartitionMatrixTest {
     private static final int N = 5;
     private static final int ELECT_BOUND = 600;
     private static final int RECOVER_BOUND = 1500;   // re-election after a disruption (3-cycle worst)
-    private static final int PROPAGATE_BOUND = 1500; // post-heal whole-cluster convergence
+    private static final int PROPAGATE_BOUND = 1500;
     private static final int SEEDS = Integer.getInteger("configd.partition.seeds", 12);
 
-    /** A scripted deterministic 5-node Raft cluster over {@link AdversarialNetwork}. */
     static final class Cluster {
         final List<RaftNode> nodes = new ArrayList<>();
         final List<RaftLog> logs = new ArrayList<>();
@@ -105,7 +104,6 @@ class PartitionMatrixTest {
             }
         }
 
-        /** Steps {@code times}, checking the safety oracles every step. */
         void stepChecked(int times, String ctx) {
             for (int i = 0; i < times; i++) {
                 step();
@@ -204,7 +202,6 @@ class PartitionMatrixTest {
         }
     }
 
-    /** Elects a leader and commits a baseline write; returns the leader index. */
     private static int bootstrap(Cluster c, long seed, String ctx) {
         int elect = c.stepUntilLeader(ELECT_BOUND, ctx);
         assertTrue(elect > 0, ctx + " seed " + seed + ": no leader within " + ELECT_BOUND);
@@ -228,7 +225,6 @@ class PartitionMatrixTest {
         }
     }
 
-    // C-1: single-region isolation - majority continues, minority stalls, heal converges
     @Test
     void singleRegionIsolation_majorityContinues_minorityStalls_healConverges() {
         long worstReElect = 0, worstConverge = 0;
@@ -238,7 +234,6 @@ class PartitionMatrixTest {
             int leader0 = bootstrap(c, seed, ctx);
             Map<Long, Long> baseline = c.committedPrefix(leader0);
 
-            // Isolate the leader + one follower into a 2-node minority; 3-node majority keeps quorum.
             RandomGenerator r = RandomGeneratorFactory.of("L64X128MixRandom")
                     .create(AdversarialSchedule.mixSeed(seed, 9_001));
             int mate;
@@ -263,7 +258,6 @@ class PartitionMatrixTest {
             assertTrue(reElect > 0, ctx + ": majority did not re-elect within " + RECOVER_BOUND);
             worstReElect = Math.max(worstReElect, reElect);
 
-            // Soak: majority commits writes the minority cannot see.
             long minorityCommitAtIsolation = Math.max(c.commitOf(leader0), c.commitOf(mate));
             for (int t = 0; t < 500; t++) {
                 c.step();
@@ -273,13 +267,11 @@ class PartitionMatrixTest {
                     c.proposeOn(ldr, "k/maj", "v" + seed + "-" + t);
                 }
             }
-            // Minority made NO progress (cannot commit without quorum).
             for (int m : minority) {
                 assertTrue(c.commitOf(m) <= minorityCommitAtIsolation + 1,
                         ctx + ": minority node " + m + " committed during isolation (no-quorum violation)");
             }
 
-            // Heal -> whole cluster converges; baseline survives everywhere.
             long preHeal = c.maxCommitIndex();
             c.net.healAll();
             c.net.setDropRate(0.0);
@@ -299,7 +291,6 @@ class PartitionMatrixTest {
                 + " worstReElectTicks=" + worstReElect + " worstConvergeTicks=" + worstConverge);
     }
 
-    // C-2: leader isolation - old leader steps down, majority re-elects, no split-brain commit
     @Test
     void leaderIsolation_oldLeaderStepsDown_majorityReElects_noSplitBrain() {
         long worstReElect = 0;
@@ -309,7 +300,6 @@ class PartitionMatrixTest {
             int leader0 = bootstrap(c, seed, ctx);
             Map<Long, Long> baseline = c.committedPrefix(leader0);
 
-            // Isolate ONLY the leader from the other 4 (leader on a 1-node minority side).
             for (int y = 0; y < N; y++) {
                 if (y != leader0) {
                     c.net.isolate(NodeId.of(leader0), NodeId.of(y));
@@ -325,7 +315,6 @@ class PartitionMatrixTest {
             assertTrue(reElect > 0, ctx + ": 4-node majority did not re-elect within " + RECOVER_BOUND);
             worstReElect = Math.max(worstReElect, reElect);
 
-            // The isolated old leader must NOT still be committing (CheckQuorum sheds it).
             long oldLeaderCommit = c.commitOf(leader0);
             c.stepChecked(300, ctx);
             int newLeader = c.findLeader();
@@ -335,7 +324,6 @@ class PartitionMatrixTest {
             assertTrue(c.commitOf(leader0) <= oldLeaderCommit + 1,
                     ctx + ": the isolated old leader kept committing (CheckQuorum failed)");
 
-            // Heal -> no divergent commit; baseline preserved.
             c.net.healAll();
             c.net.setDropRate(0.0);
             long preHeal = c.maxCommitIndex();
@@ -354,7 +342,6 @@ class PartitionMatrixTest {
                 + " worstReElectTicks=" + worstReElect);
     }
 
-    // C-3: asymmetric partition (A->B cut, B->A intact) - no split-brain, heal converges
     @Test
     void asymmetricPartition_noSplitBrainCommit_healConverges() {
         for (long seed = 0; seed < SEEDS; seed++) {
@@ -371,12 +358,8 @@ class PartitionMatrixTest {
                     c.net.addPartition(NodeId.of(leader0), NodeId.of(y));
                 }
             }
-            // Soak the asymmetric cut - safety asserted every step.
             c.stepChecked(800, ctx);
-            // A leader must still exist somewhere and safety must hold (no two leaders same term).
-            // (The partition may resolve to a new leader among the reachable majority.)
 
-            // Heal both directions -> converge, no divergent commit, baseline preserved.
             c.net.healAll();
             c.net.setDropRate(0.0);
             long preHeal = c.maxCommitIndex();
@@ -394,7 +377,6 @@ class PartitionMatrixTest {
         System.out.println("PARTITION-RECOVERY: scenario=asymmetric-partition seeds=" + SEEDS + " (safety held throughout)");
     }
 
-    // C-4: partial partition (a subset of links cut; no clean majority/minority split)
     @Test
     void partialPartition_safetyHolds_connectedMajorityProgresses() {
         for (long seed = 0; seed < SEEDS; seed++) {
@@ -409,7 +391,6 @@ class PartitionMatrixTest {
             c.net.isolate(NodeId.of(0), NodeId.of(2));
 
             c.stepChecked(800, ctx);
-            // A connected majority component {2,3,4} (or similar) must still make progress.
             int ldr = c.findLeader();
             if (ldr >= 0) {
                 c.proposeOn(ldr, "k/partial", "v" + seed);
@@ -433,7 +414,6 @@ class PartitionMatrixTest {
         System.out.println("PARTITION-RECOVERY: scenario=partial-partition seeds=" + SEEDS + " (safety held throughout)");
     }
 
-    // C-6: clock skew - consensus safety does not depend on synchronized wall clocks.
     @Test
     void clockSkew_consensusSafetyAndLivenessHoldUnderUnsynchronizedClocks() {
         // Each node's state-machine wall clock is skewed by a DIFFERENT, large offset (+/-~hours) -
@@ -449,8 +429,6 @@ class PartitionMatrixTest {
             int leader0 = bootstrap(c, seed, ctx); // elects + commits despite skew -> liveness under skew
             Map<Long, Long> baseline = c.committedPrefix(leader0);
 
-            // Isolate leader + a mate, force a re-election on the majority, soak, heal - all the
-            // partition safety checks, but now under maximal clock skew.
             RandomGenerator r = RandomGeneratorFactory.of("L64X128MixRandom")
                     .create(AdversarialSchedule.mixSeed(seed, 9_001));
             int mate;
@@ -490,7 +468,6 @@ class PartitionMatrixTest {
                 + " (consensus safety+liveness independent of synchronized clocks — charter §6 proven)");
     }
 
-    // C-5: gray failure (elevated latency, no drops) - safety holds, no excessive leadership flap
     @Test
     void grayFailure_latencySpike_safetyHolds_noExcessiveFlap() {
         for (long seed = 0; seed < SEEDS; seed++) {

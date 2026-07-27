@@ -31,7 +31,6 @@ import java.util.Set;
  */
 public record ConfigPolicy(Map<String, Role> roles, Map<String, Set<String>> bindings) {
 
-    /** The empty config-policy: no roles, no bindings; contributes nothing to authorization. */
     public static final ConfigPolicy EMPTY = new ConfigPolicy(Map.of(), Map.of());
 
     public ConfigPolicy {

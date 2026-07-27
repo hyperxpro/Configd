@@ -84,35 +84,25 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
 
     private static final Logger LOG = Logger.getLogger(FanOutConnectionDriver.class.getName());
 
-    /** The connection type, decided by the first inbound frame (reader-thread-only). */
     private enum ConnType {
-        /** No frame seen yet - the next frame decides. */
         UNDECIDED,
-        /** {@code SUBSCRIBE}-first: the legacy connection-level fan-out path (unchanged). */
         LEGACY,
-        /** {@code WATCH_CREATE}-first: the the watch protocol multiplexed watch path. */
         WATCH
     }
 
-    /** The single-shard resolver used by the back-compat constructors: every target covers gid 0. */
     private static final ShardResolver SINGLE_SHARD = target -> new int[]{0};
 
-    /** The per-shard commit sources (the {@link CommitNotificationSource} each core drains). */
     private final Map<Integer, CommitNotificationSource> sources;
 
-    /** The per-shard replay sources (each core's catch-up snapshot floor). */
     private final Map<Integer, ReplaySource> replaySources;
 
     /** The connection's shard set, ascending (StaticShardMap: {@code [0, N)}). */
     private final int[] allGids;
 
-    /** Fast membership test for the cursor gid-spoof guard: a component gid MUST be a known gid. */
     private final Set<Integer> knownGids;
 
-    /** The primary shard - core built eagerly (legacy byte-identity + the {@link #session()} accessor). */
     private final int primaryGid;
 
-    /** Resolves a watch target to its covered shard set (KEY -> one shard; PREFIX/FULL -> all). */
     private final ShardResolver shardResolver;
 
     /**
@@ -125,7 +115,6 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
      */
     private final long topologyEpoch;
 
-    /** The connection's real outbound - shared by every per-shard decorator; router frames go here. */
     private final TransportSink transportSink;
 
     private final SlowConsumerGovernor governor;
@@ -156,13 +145,10 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
     /** The per-connection watch table (session-thread-confined). */
     private final WatchRegistry watchRegistry;
 
-    /** gid -> that shard's core (core {@link #primaryGid} eager; the rest lazy on the first WATCH). */
     private final Map<Integer, FanOutSessionCore> cores = new LinkedHashMap<>();
 
-    /** gid -> that shard's translating decorator (one per core, over the shared transport sink). */
     private final Map<Integer, WatchMultiplexSink> sinks = new LinkedHashMap<>();
 
-    /** gid -> that shard's snapshot filter (narrows the drain-owner watch's catch-up to its target). */
     private final Map<Integer, FilteringReplaySource> filteringReplaySources = new LinkedHashMap<>();
 
     /**
@@ -238,7 +224,6 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
     // near Long.MIN_VALUE overflows).
     private long nextGovernorEvalMillis = Long.MIN_VALUE;
 
-    /** Back-compat constructor (no watch capability): delegates with a {@code null} authorizer. */
     public FanOutConnectionDriver(CommitNotificationSource source, ReplaySource replaySource,
                                   TransportSink sink, FanOutConfig config, FanOutSessionMetrics metrics,
                                   Clock clock, SlowConsumerGovernor governor, String edgeIdentity,
@@ -323,7 +308,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
         this.edgeIdentity = Objects.requireNonNull(edgeIdentity, "edgeIdentity");
         this.edgeRoles = Set.copyOf(Objects.requireNonNull(edgeRoles, "edgeRoles"));
         this.teardownHook = Objects.requireNonNull(teardownHook, "teardownHook");
-        this.authorizer = authorizer; // nullable => no watch capability => fail-closed
+        this.authorizer = authorizer;
         this.knownGids = new java.util.HashSet<>(this.allGids.length);
         for (int g : this.allGids) {
             // cores.keySet() == allGids by construction (below) requires a source for every gid;
@@ -335,8 +320,6 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
         }
         this.primaryGid = this.allGids[0];
         this.watchRegistry = new WatchRegistry();
-        // Build the primary-shard core eagerly (legacy path + session() accessor). The rest are
-        // materialized lazily when the connection turns to WATCH (materializeAllCores).
         buildCore(primaryGid);
         this.governorEvalCadenceMs = Math.max(1L,
                 Math.min(1_000L, governor.config().queueWarnWindowMs() / 2));
@@ -344,11 +327,6 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
         this.lastAckSeen = cores.get(primaryGid).lastAckedSeq();
     }
 
-    /**
-     * Builds one shard's core + its gid-stamped translating decorator + its snapshot filter. The
-     * decorator wraps the shared transport sink (always installed; passthrough until the connection is
-     * a watch connection). Idempotent per gid (a second call is a no-op).
-     */
     private void buildCore(int g) {
         if (cores.containsKey(g)) {
             return;
@@ -362,7 +340,6 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
         filteringReplaySources.put(g, frs);
     }
 
-    /** The primary-shard session this driver owns (diagnostics / tests / legacy plane). */
     public FanOutSessionCore session() {
         return cores.get(primaryGid);
     }
@@ -434,7 +411,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
             // governor identity so the slow-consumer ladder covers this connection. A reconnect storm
             // cannot dodge its cooldown by dialing WATCH_CREATE-first.
             if (!admitWatchConnection()) {
-                return; // refused -> torn down (QUARANTINED)
+                return;
             }
             sinks.get(primaryGid).setWatchConnection(true);
             sessionCommands.add(() -> handleWatchCreate(create));
@@ -453,10 +430,6 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
      */
     private void admitLegacySubscribe(EdgeFrame.Subscribe sub) {
         EdgeFrame.Subscribe bound = bindIdentity(sub);
-        // Authorize the whole-store feed on the verified identity BEFORE governor admission and before
-        // any session command is posted. A denied feed never enters the governor ledger and never
-        // drains, so not a single data frame flows. A null authorizer means the deployment wired no
-        // principal model (auth off), so the feed is admitted exactly as it was before this gate.
         if (!authorizeSubscribe()) {
             teardownHook.accept(ErrorCode.NOT_AUTHORIZED,
                     "subscribe refused: " + edgeIdentity + " lacks whole-store READ");
@@ -478,7 +451,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
             case ALLOW_FORCE_SNAPSHOT -> bound = new EdgeFrame.Subscribe(
                     bound.fullStore(), bound.prefixes(), bound.topologyEpoch(), 0L, -1L, bound.edgeId(),
                     bound.acceptsFiltered());
-            case ALLOW -> { /* admit as requested */ }
+            case ALLOW -> { }
         }
         EdgeFrame.Subscribe admitted = bound;
         // On a filtered legacy session, narrow the catch-up snapshot to the same prefix-plus-
@@ -537,7 +510,6 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
             // CURSOR_ACK is the connection-level flow-control scalar shared by all watches AND all
             // shards: broadcast it to every shard core (per-(watch,shard) acks do not exist yet).
             case EdgeFrame.CursorAck ack -> sessionCommands.add(() -> broadcastCursorAck(ack.seq()));
-            // SUBSCRIBE cannot be mixed onto a watch connection - the two are kept distinct.
             case EdgeFrame.Subscribe ignored -> teardownHook.accept(ErrorCode.PROTOCOL_VIOLATION,
                     "cannot mix SUBSCRIBE on a watch connection");
             default -> teardownHook.accept(ErrorCode.PROTOCOL_VIOLATION,
@@ -584,7 +556,6 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
         long watchId = create.watchId();
         byte[] pathBytes = create.path(); // defensive clone (pathUnsafe is wire-package-private)
 
-        // (1) validate target grammar + scope/kind ranges + known flag bits -> BAD_SUBSCRIBE
         String error = WatchTargetValidator.validate(
                 create.scope(), create.targetKind(), pathBytes, create.flags());
         if (error != null) {
@@ -604,15 +575,12 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
         // unused).
         long versionAtCreate = (authorizer != null) ? authorizer.policyVersion() : 0L;
 
-        // (2) AUTHORIZE the whole target ONCE - the security crux. Zero data frames, and NO shard leg
-        // seeded/tailed, precede a reject.
         if (!authorize(target)) {
             rejectWatch(watchId, ErrorCode.NOT_AUTHORIZED,
                     "watch not authorized: principal lacks READ ∧ WATCH over the whole target");
             return;
         }
 
-        // (3) reject id-reuse - a watch_id is never reused (live OR canceled)
         if (watchRegistry.isUsed(watchId)) {
             rejectWatch(watchId, ErrorCode.BAD_SUBSCRIBE,
                     "watch_id already used on this connection (no reuse, W2-8): " + watchId);
@@ -671,10 +639,6 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
                 startCursorS(create.cursor(), primaryGid), create.flags()));
         if (!coreSubscribed) {
             coreSubscribed = true;
-            // Seed the bounded-revocation cursor from the version read BEFORE the authorize
-            // gate (at or before the version the gate authorized against), so any later revoking
-            // reload advances past it and triggers re-auth. The authorizer is non-null here (the watch
-            // passed the gate).
             lastReauthVersion = versionAtCreate;
             materializeAllCores();
             seedAllCores(create, target, coveredGids);
@@ -867,7 +831,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
         try {
             return authorizer.authorizeWatch(edgeIdentity, edgeRoles, target);
         } catch (Throwable t) {
-            return false; // fail-closed on ANY throwable (W7 / SPI contract)
+            return false;
         }
     }
 
@@ -882,12 +846,12 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
      */
     private boolean authorizeSubscribe() {
         if (authorizer == null) {
-            return true; // auth off: no principal model to evaluate, admit as before this gate existed
+            return true;
         }
         try {
             return authorizer.authorizeSubscribe(edgeIdentity, edgeRoles);
         } catch (Throwable t) {
-            return false; // fail-closed on ANY throwable (same contract as the watch gate)
+            return false;
         }
     }
 
@@ -937,13 +901,11 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
 
     @Override
     public void onShardCreated(int gid, long latestSeq, EdgeFrame.Mode mode) {
-        // Collected during the first watch's seed loop; drained into the one coalesced WATCH_CREATED.
         pendingShardModes.put(gid, new EdgeFrame.ShardMode(gid, latestSeq, mode));
     }
 
     @Override
     public boolean onIdleProgress(long serverNowMillis) {
-        // Several idle shards heartbeat in one sweep; emit ONE coalesced WATCH_PROGRESS per live watch.
         if (progressEmittedThisSweep) {
             return true; // already advertised this sweep - swallow (accepted, no wire frame)
         }
@@ -964,7 +926,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
         for (WatchRegistry.WatchEntry e : watchRegistry.liveEntries()) {
             WatchCursor cursor = progressVector(e.coveredGids());
             if (!transportSink.offer(new EdgeFrame.WatchProgress(e.watchId(), cursor, serverNowMillis))) {
-                return false; // shared-fate backpressure
+                return false;
             }
         }
         return true;
@@ -977,11 +939,9 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
             long drainedS = Math.max(0L, cores.get(g).cursor());
             comps.add(new WatchCursor.Component(g, drainedS));
         }
-        // Stamp the server's current topology epoch so the client can detect a superseded cursor.
         return new WatchCursor(topologyEpoch, comps);
     }
 
-    /** Broadcasts one connection-level {@code CURSOR_ACK} to every shard core (shared scalar). */
     private void broadcastCursorAck(long seq) {
         for (FanOutSessionCore core : cores.values()) {
             core.onCursorAck(seq);
@@ -1006,7 +966,6 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
         }
     }
 
-    // Session loop (session thread).
 
     /**
      * Drives the session - drain inbound commands, sweep the shard cores, feed the governor, run the
@@ -1054,14 +1013,13 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
                     }
                 }
 
-                // Bounded watch revocation - the version-gated re-auth tick step.
                 maybeReauthorizeWatches();
 
                 boolean madeProgress = drainedCommand
                         || aggregateCursor() != beforeCursor
                         || aggregateInFlight() != beforeDepth;
                 if (madeProgress) {
-                    idleParkNanos = 0; // active: immediate re-poll
+                    idleParkNanos = 0;
                 } else {
                     long capNanos = config.idlePollMs() * 1_000_000L;
                     idleParkNanos = Math.min(capNanos,
@@ -1093,7 +1051,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
             }
             core.tick(nowMillis);
             if (core.state() == FanOutSessionCore.SessionState.CLOSED) {
-                return; // terminal - stop the sweep; runSessionLoop tears down
+                return;
             }
         }
     }

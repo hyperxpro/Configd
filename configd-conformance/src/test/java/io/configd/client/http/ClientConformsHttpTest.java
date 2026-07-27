@@ -23,10 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Client-conforms tests for the HTTP control plane: drives the reference {@link ConfigdHttpClient} against
- * the scriptable {@link MockControlPlane} (reused via the configd-client-http test-jar) and asserts the
- * client obeys each normative MUST -- the cursor placement (seq-in-body vs version-in-header), the
- * status-to-reaction taxonomy, the 503 sub-cause disambiguation, the indeterminate-write contract, and
- * branch-on-code-not-body.
+ * the scriptable {@link MockControlPlane} (reused via the configd-client-http test-jar).
  */
 @Timeout(30)
 class ClientConformsHttpTest {

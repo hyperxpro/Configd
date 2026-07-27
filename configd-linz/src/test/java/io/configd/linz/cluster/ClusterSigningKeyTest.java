@@ -45,7 +45,6 @@ class ClusterSigningKeyTest {
                 // path must NOT be inside the data dir, otherwise the guard fails the node closed.
                 assertFalse(keyFile.startsWith(dataDir),
                         "signing key " + keyFile + " must live OUTSIDE data dir " + dataDir);
-                // The harness convention: a stable per-node file under a sibling secrets/ dir.
                 assertEquals(node.signingKeyFile().toAbsolutePath().normalize(), keyFile);
                 assertTrue(keyFile.startsWith(baseDir.resolve("secrets").toAbsolutePath().normalize()),
                         "signing key should live under the cluster secrets/ dir");

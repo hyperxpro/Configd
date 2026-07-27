@@ -44,8 +44,6 @@ class AnchorFileTest {
         assertEquals(0L, r.snapshotIndex());
         anchor.close();
 
-        // File is fully preallocated at creation (header + both 512-B slots) so steady-state writes
-        // never allocate - anchor-ENOSPC is impossible after boot.
         assertEquals(AnchorFile.FILE_SIZE,
                 Files.size(dir.resolve(FileAnchorIO.ANCHOR_FILE_NAME)),
                 "the anchor file must be preallocated to 1032 bytes");
@@ -55,8 +53,8 @@ class AnchorFileTest {
     void termVoteAndDurableHeadRoundTripAcrossReopen(@TempDir Path dir) {
         AnchorFile a = AnchorFile.openInDirectory(dir, GID, keyed());
         a.bootstrapFresh();
-        a.writeTermVote(5, 3);          // term 5, voted for node 3
-        a.writeDurableHead(10, 5);      // durable head at index 10, term 5
+        a.writeTermVote(5, 3);
+        a.writeDurableHead(10, 5);
         long seqAfterWrites = a.current().anchorSeq();
         a.close();
 
@@ -78,7 +76,7 @@ class AnchorFileTest {
         a.bootstrapFresh();
         a.writeDurableHead(4, 2);
         long seq = a.current().anchorSeq();
-        a.writeDurableHead(4, 2); // same head - must not churn the seq / write a slot
+        a.writeDurableHead(4, 2);
         assertEquals(seq, a.current().anchorSeq(), "an unchanged head must not advance the anchorSeq");
         a.close();
     }
@@ -86,10 +84,10 @@ class AnchorFileTest {
     @Test
     void reopenPicksTheHighestValidAnchorSeq(@TempDir Path dir) {
         AnchorFile a = AnchorFile.openInDirectory(dir, GID, keyed());
-        a.bootstrapFresh();                     // seq 1 -> slot 0
-        a.writeDurableHead(1, 1);               // seq 2 -> slot 1
-        a.writeDurableHead(2, 1);               // seq 3 -> slot 0 (stale slot overwritten)
-        a.writeDurableHead(3, 1);               // seq 4 -> slot 1
+        a.bootstrapFresh();
+        a.writeDurableHead(1, 1);
+        a.writeDurableHead(2, 1);
+        a.writeDurableHead(3, 1);
         assertEquals(4L, a.current().anchorSeq());
         a.close();
 
@@ -102,8 +100,8 @@ class AnchorFileTest {
     @Test
     void tornLiveSlotFallsBackToTheStaleSlot(@TempDir Path dir) throws Exception {
         AnchorFile a = AnchorFile.openInDirectory(dir, GID, keyed());
-        a.bootstrapFresh();          // seq 1 -> slot 0
-        a.writeDurableHead(1, 1);    // seq 2 -> slot 1 (this becomes the LIVE slot)
+        a.bootstrapFresh();
+        a.writeDurableHead(1, 1);
         a.close();
 
         // Corrupt slot 1 (the live, higher-seq slot). Its CRC/MAC now fails, so recovery must fall back
@@ -123,7 +121,6 @@ class AnchorFileTest {
         a.writeDurableHead(1, 1);
         a.close();
 
-        // Corrupt BOTH slots: neither authenticates -> present-but-both-invalid (the caller REFUSEs).
         corruptByte(dir, AnchorFile.SLOT0_OFFSET + AnchorFile.RECORD_LEN_PREFIX + 20);
         corruptByte(dir, AnchorFile.SLOT1_OFFSET + AnchorFile.RECORD_LEN_PREFIX + 20);
 
@@ -139,7 +136,6 @@ class AnchorFileTest {
         a.bootstrapFresh();
         a.close();
 
-        // Flip the first magic byte: the unauthenticated container header must fail closed on open.
         corruptByte(dir, 0);
         IntegrityException ex = assertThrows(IntegrityException.class,
                 () -> AnchorFile.openInDirectory(dir, GID, keyed()));
@@ -180,7 +176,6 @@ class AnchorFileTest {
         victim.close();
     }
 
-    /** Flips one byte at the given file offset (a torn/tamper simulation). */
     private static void corruptByte(Path dir, int offset) throws Exception {
         Path file = dir.resolve(FileAnchorIO.ANCHOR_FILE_NAME);
         byte[] bytes = Files.readAllBytes(file);

@@ -12,13 +12,13 @@ import java.security.SecureRandom;
 import java.util.Map;
 
 /**
- * A ServiceLoader-registered EXTERNAL KMS provider used only to prove the {@code ConfigdServer} external-custody
- * boot path end-to-end without a live backend: it seals the per-node secret reversibly (XOR with a fixed pad -
- * a TEST DOUBLE, not real custody) so a first boot can provision + persist the carrier and a second boot can
- * read + unseal it. Registered under the type {@code test-kms} via
- * {@code META-INF/services/io.configd.common.kms.KmsProviderFactory} on the configd-server TEST classpath; it is
- * never on the production classpath. Selecting {@code configd.raft.encryption.kms.provider=test-kms} routes the
- * boot through {@link KmsSealedRootStore} and {@code SegmentKeyManager}, exactly as {@code vault-transit} would.
+ * A ServiceLoader-registered EXTERNAL KMS provider used only to prove the {@code ConfigdServer}
+ * external-custody boot path end-to-end without a live backend: it reversibly XOR-seals the per-node
+ * secret (a TEST DOUBLE, not real custody). Discovered via
+ * {@code META-INF/services/io.configd.common.kms.KmsProviderFactory} on the configd-server TEST
+ * classpath only - never on the production classpath. Selecting
+ * {@code configd.raft.encryption.kms.provider=test-kms} routes the boot through the same
+ * {@link KmsSealedRootStore} / {@code SegmentKeyManager} path {@code vault-transit} would.
  */
 public final class InMemoryTestKmsProviderFactory implements KmsProviderFactory {
 
@@ -35,7 +35,6 @@ public final class InMemoryTestKmsProviderFactory implements KmsProviderFactory 
         return new InMemoryProvider();
     }
 
-    /** The reversible-seal provider. */
     static final class InMemoryProvider implements KmsProvider {
 
         private final SecureRandom rng = new SecureRandom();

@@ -129,7 +129,6 @@ abstract class AbstractFanOutServerContract {
         exportCert(serverKeyStore, "server", serverCert);
         exportCert(clientKeyStore, "client", clientCert);
 
-        // Rogue client cert - self-signed, NOT imported into the server trust store.
         genKeyPair(rogueKeyStore, "rogue", "CN=rogue-edge,O=attacker", "-validity", "1");
 
         // CA + CA-signed expired END-ENTITY: a self-signed expired LEAF would be accepted as a trust
@@ -158,7 +157,6 @@ abstract class AbstractFanOutServerContract {
                 try {
                     Files.deleteIfExists(p);
                 } catch (IOException ignored) {
-                    // best-effort temp cleanup
                 }
             });
         }
@@ -170,7 +168,6 @@ abstract class AbstractFanOutServerContract {
             try {
                 s.close();
             } catch (IOException ignored) {
-                // best-effort
             }
         }
         if (server != null) {
@@ -228,9 +225,9 @@ abstract class AbstractFanOutServerContract {
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 3_000)) {
             edge.subscribeFullStore("plaintext-attacker", 0L);
             EdgeFrame f = readUntilSubscribeOk(edge, 3);
-            rejected = (f == null); // no SUBSCRIBE_OK -> rejected
+            rejected = (f == null);
         } catch (IOException e) {
-            rejected = true; // connection reset by the TLS server -> rejected
+            rejected = true;
         }
         assertTrue(rejected,
                 "a plaintext SUBSCRIBE must never receive SUBSCRIBE_OK from the TLS-only edge server");
@@ -327,9 +324,6 @@ abstract class AbstractFanOutServerContract {
             throws Exception {
         int port = startServer();
 
-        // Phase 1: quarantine. Subscribe, never ack; every 3 publishes overflow the
-        // 2-frame queue -> demotion. The 2nd demotion trips demoteLimit -> QUARANTINED ->
-        // ERROR_CLOSE code 8 + socket close.
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge.subscribeFullStore(EDGE_ID, 0L);
             EdgeFrame.SubscribeOk ok =
@@ -362,7 +356,6 @@ abstract class AbstractFanOutServerContract {
         assertEquals(1, governorMetrics.quarantines.get(),
                 "edge_fanout_quarantines_total must move exactly once");
 
-        // Phase 2: reconnect during the cooldown -> REFUSED at SUBSCRIBE with code 8.
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge.subscribeFullStore(EDGE_ID, 6L);
             EdgeFrame.ErrorClose refusal =
@@ -378,8 +371,6 @@ abstract class AbstractFanOutServerContract {
         assertEquals(ConsumerState.QUARANTINED, governor.state(EDGE_ID),
                 "a refusal must not mutate the state");
 
-        // Phase 3: the cooldown elapses (clock advance, no sleep) -> readmitted with
-        // the re-bootstrap FORCED: SNAPSHOT_FIRST despite the high resume cursor.
         clock.advance(60_001);
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge.subscribeFullStore(EDGE_ID, 999_999L); // bogus-high cursor: must be ignored
@@ -392,8 +383,6 @@ abstract class AbstractFanOutServerContract {
                     "edge_fanout_readmissions_total must move on the cooldown exit");
             assertEquals(ConsumerState.CATCHUP, governor.state(EDGE_ID));
 
-            // The snapshot lands at the published head (seq 6); acking it resolves
-            // CATCHUP -> HEALTHY (the snapshot+resume-ok exit).
             EdgeFrame.SnapshotEnd end =
                     (EdgeFrame.SnapshotEnd) readUntil(edge, EdgeFrame.SnapshotEnd.class);
             assertEquals(6L, end.snapshotSeq(), "the re-bootstrap snapshot is the head");
@@ -458,7 +447,6 @@ abstract class AbstractFanOutServerContract {
         int port = startServer(new SlowConsumerPolicyConfig(
                 10_000L, 1, 10, 60_000L, 60_000L, 2, 3_600_000L, 120_000L, 4_096));
 
-        // Quarantine #1: one overflow demotion suffices (demoteLimit=1).
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge.subscribeFullStore(EDGE_ID, 0L);
             readUntil(edge, EdgeFrame.SubscribeOk.class);
@@ -470,7 +458,6 @@ abstract class AbstractFanOutServerContract {
         awaitGovernorState(ConsumerState.QUARANTINED, "first quarantine");
         assertEquals(1, governorMetrics.quarantines.get());
 
-        // Readmission, then quarantine #2 -> UNHEALTHY through the live teardown arm.
         clock.advance(60_001);
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge.subscribeFullStore(EDGE_ID, 0L);
@@ -492,7 +479,6 @@ abstract class AbstractFanOutServerContract {
         assertEquals(1, governorMetrics.unhealthy.get(),
                 "edge_fanout_unhealthy_total must move exactly once (alert-grade)");
 
-        // Refused throughout the unhealthy cooldown, with the state named.
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge.subscribeFullStore(EDGE_ID, 6L);
             EdgeFrame.ErrorClose refusal =
@@ -506,7 +492,6 @@ abstract class AbstractFanOutServerContract {
         assertTrue(governorMetrics.reconnectsRefused.get() >= 1);
         assertEquals(ConsumerState.UNHEALTHY, governor.state(EDGE_ID));
 
-        // The unhealthy cooldown alone readmits, snapshot-first forced.
         clock.advance(120_001);
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge.subscribeFullStore(EDGE_ID, 999_999L);
@@ -543,7 +528,6 @@ abstract class AbstractFanOutServerContract {
         }
         awaitGovernorState(ConsumerState.QUARANTINED, "fixture: edge-q quarantined");
 
-        // The policy keys on the subscriber identity: another edge subscribes fine.
         try (EdgeProtocolClient good = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             good.subscribeFullStore("edge-ok", 0L);
             EdgeFrame.SubscribeOk ok =
@@ -582,7 +566,7 @@ abstract class AbstractFanOutServerContract {
             try (Socket third = new Socket(InetAddress.getLoopbackAddress(), port)) {
                 third.setSoTimeout(5_000);
                 try (InputStream in = third.getInputStream()) {
-                    refusedObserved = (in.read() == -1); // EOF = closed by the server, nothing served
+                    refusedObserved = (in.read() == -1);
                 }
             } catch (IOException e) {
                 refusedObserved = true; // reset-on-close is an equally valid refusal observation
@@ -640,13 +624,11 @@ abstract class AbstractFanOutServerContract {
         int port = server.localPort();
 
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 15_000)) {
-            // SUBSCRIBE -> SUBSCRIBE_OK(TAIL) on an empty buffer.
             edge.subscribeFullStore("edge-prop", 0L);
             EdgeFrame.SubscribeOk ok =
                     (EdgeFrame.SubscribeOk) readUntil(edge, EdgeFrame.SubscribeOk.class);
             assertEquals(EdgeFrame.Mode.TAIL, ok.mode(), "empty buffer at subscribe → TAIL");
 
-            // Two committed mutations delivered verbatim, strictly increasing seq.
             publish("svc/a", "v-a");
             long seqA = expectVerbatimNotify(edge, "svc/a", "v-a", 0L);
             edge.cursorAck(seqA);
@@ -656,7 +638,6 @@ abstract class AbstractFanOutServerContract {
             assertTrue(seqB > seqA, "version monotonicity: the second NOTIFY seq must exceed the first");
             edge.cursorAck(seqB);
 
-            // Stop acking + flood ~300 publishes -> DEMOTED_TO_CATCHUP then chunked SNAPSHOT.
             long floodTarget = seqB;
             for (int i = 0; i < 300; i++) {
                 publish("flood/" + i, "x" + i);
@@ -687,7 +668,6 @@ abstract class AbstractFanOutServerContract {
             assertTrue(end.snapshotSeq() > 0 && end.snapshotSeq() <= floodTarget,
                     "snapshot seq must be a valid committed seq in (0, floodTarget]: " + end.snapshotSeq());
 
-            // Ack the snapshot point; tailing resumes with a NOTIFY seq > snapshotSeq.
             edge.cursorAck(end.snapshotSeq());
             publish("after/snap", "post");
             long resumedSeq = collectNotifiedSeqAtLeast(edge, end.snapshotSeq() + 1);
@@ -710,12 +690,10 @@ abstract class AbstractFanOutServerContract {
                 garbage[i] = (byte) 0xEE;
             }
             edge.sendRaw(garbage);
-            // The server should close the connection (we read EOF or an ERROR_CLOSE then EOF).
             boolean closed = drainUntilClosed(edge);
             assertTrue(closed, "server must close the connection on a corrupt first frame");
         }
 
-        // The server is still alive - a fresh, well-behaved subscriber still works.
         try (EdgeProtocolClient edge2 = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge2.subscribeFullStore("edge-2", 0L);
             assertNotNull(readUntil(edge2, EdgeFrame.SubscribeOk.class),
@@ -727,7 +705,6 @@ abstract class AbstractFanOutServerContract {
     void nonSubscribeFirstFrameIsProtocolViolation() throws Exception {
         int port = startPlaintextServer();
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
-            // Sending CURSOR_ACK before SUBSCRIBE is a protocol violation -> close.
             edge.cursorAck(5);
             assertTrue(drainUntilClosed(edge),
                     "a non-SUBSCRIBE first frame must close the connection");
@@ -756,7 +733,6 @@ abstract class AbstractFanOutServerContract {
             assertTrue(drainUntilClosed(edge),
                     "the server must close a connection opened with an unknown wire version");
         }
-        // The server survived the malformed-version connection: a fresh well-behaved subscriber works.
         try (EdgeProtocolClient edge2 = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge2.subscribeFullStore("edge-after-badver", 0L);
             assertNotNull(readUntil(edge2, EdgeFrame.SubscribeOk.class),
@@ -842,15 +818,13 @@ abstract class AbstractFanOutServerContract {
         boolean rejected = false;
         try {
             sock.startHandshake();
-            // Handshake "succeeded" on the client side - try to use the connection. A rejected
-            // client must NOT receive a SUBSCRIBE_OK; the I/O fails or the stream EOFs.
             try (EdgeProtocolClient edge = new EdgeProtocolClient(sock)) {
                 edge.subscribeFullStore("rejected", 0L);
                 EdgeFrame f = readUntilSubscribeOk(edge, 4);
-                rejected = (f == null); // no SUBSCRIBE_OK -> rejected
+                rejected = (f == null);
             }
         } catch (IOException e) {
-            rejected = true; // handshake or first-I/O failure -> rejected
+            rejected = true;
         } finally {
             closeQuietly(sock);
         }
@@ -892,12 +866,12 @@ abstract class AbstractFanOutServerContract {
             try {
                 f = edge.readFrame();
             } catch (java.net.SocketTimeoutException e) {
-                return null; // no reply within the SO_TIMEOUT -> not acknowledged
+                return null;
             } catch (EdgeFrameCodec.CodecException e) {
-                return null; // server bytes (e.g. a TLS alert) did not decode -> not acknowledged
+                return null;
             }
             if (f == null) {
-                return null; // EOF
+                return null;
             }
             if (f instanceof EdgeFrame.SubscribeOk) {
                 return f;
@@ -1040,10 +1014,10 @@ abstract class AbstractFanOutServerContract {
             } catch (java.net.SocketTimeoutException e) {
                 continue;
             } catch (IOException | EdgeFrameCodec.CodecException e) {
-                return true; // reset or torn bye - the socket is gone
+                return true;
             }
             if (f == null) {
-                return true; // EOF
+                return true;
             }
             if (f instanceof EdgeFrame.ErrorClose ec && ec.code() == ErrorCode.QUARANTINED) {
                 return true; // the clean wire evidence: code 8
@@ -1060,7 +1034,6 @@ abstract class AbstractFanOutServerContract {
                     return true;
                 }
             } catch (java.net.SocketTimeoutException e) {
-                // keep polling
             } catch (IOException e) {
                 return true;
             }
@@ -1081,15 +1054,14 @@ abstract class AbstractFanOutServerContract {
             } catch (java.net.SocketTimeoutException e) {
                 continue;
             } catch (IOException e) {
-                return null; // connection reset == closed, no ERROR_CLOSE observed
+                return null;
             }
             if (f == null) {
-                return null; // EOF == closed
+                return null;
             }
             if (f instanceof EdgeFrame.ErrorClose) {
                 return f;
             }
-            // any other frame (a HEARTBEAT etc.) - keep reading toward the close
         }
         return null;
     }
@@ -1147,7 +1119,6 @@ abstract class AbstractFanOutServerContract {
         try {
             c.close();
         } catch (Exception ignored) {
-            // best-effort
         }
     }
 

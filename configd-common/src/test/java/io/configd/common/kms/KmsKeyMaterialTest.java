@@ -12,10 +12,6 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Tests the typed key-material carriers: {@link RootKey} (live, wipeable, redacted),
- * {@link WrappedKey} (sealed, persistable, redacted), {@link KeyId} (non-secret identity).
- */
 class KmsKeyMaterialTest {
 
     private static byte[] material() {
@@ -39,11 +35,9 @@ class KmsKeyMaterialTest {
 
         key.destroy();
         assertTrue(key.isDestroyed());
-        // idempotent + never throws
         key.destroy();
         key.close();
 
-        // material is gone: any live access now throws
         assertThrows(IllegalStateException.class, key::length);
         assertThrows(IllegalStateException.class, () -> key.withMaterial(m -> {
             System.arraycopy(m, 0, captured, 0, m.length);
@@ -70,7 +64,6 @@ class KmsKeyMaterialTest {
             return m.clone();               // a snapshot of the contents during the call
         });
         assertArrayEquals(material(), observed, "consumer sees the real key bytes during the call");
-        // the array handed to the consumer is zeroed after withMaterial returns
         assertArrayEquals(new byte[32], escaped[0], "the transient clone is wiped after use");
         // the RootKey itself is untouched (still usable)
         assertArrayEquals(material(), key.withMaterial(byte[]::clone));
@@ -93,7 +86,6 @@ class KmsKeyMaterialTest {
         String s = key.toString();
         assertTrue(s.contains("local:test-ref#1"), "renders the non-secret identity");
         assertTrue(s.contains("destroyed=false"));
-        // must render neither the hex nor a Arrays.toString() of the key bytes
         assertFalse(s.contains("010203"), "must not render key bytes (hex)");
         assertFalse(s.contains("1, 2, 3"), "must not render key bytes (array form)");
     }

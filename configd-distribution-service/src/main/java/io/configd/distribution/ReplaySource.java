@@ -34,21 +34,10 @@ import io.configd.store.ConfigSnapshot;
  */
 public interface ReplaySource {
 
-    /**
-     * Produces a snapshot-equivalent replay of the current committed state.
-     *
-     * @return the replay (snapshot + its sequence floor)
-     */
     Replay replayFromSnapshot();
 
     /**
-     * A replay payload: a config snapshot and the sequence S it encodes. After
-     * applying {@link #snapshot()} the consumer sets its cursor to {@link #seq()}
-     * and resumes {@link CommitNotificationSource#readSince(long)} from there.
-     *
      * @param snapshot the cumulative committed state (immutable, shareable)
-     * @param seq       the applied-mutation sequence S this snapshot encodes;
-     *                  the consumer's post-replay cursor
      */
     record Replay(ConfigSnapshot snapshot, long seq) {
         public Replay {

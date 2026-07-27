@@ -112,8 +112,6 @@ class CatchUpProtocolTest {
         assertEquals(1, sink.sentOfType(EdgeFrame.SnapshotEnd.class).size());
         assertEquals(30L, s.cursor(), "deltas resume from the snapshot point");
 
-        // Post-snapshot writes stream as deltas with seq greater than the snapshot point,
-        // contiguous.
         commit(buffer, "post", "p1");
         sink.clear();
         clock.advance(10);

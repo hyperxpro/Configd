@@ -74,11 +74,6 @@ public final class EdgeNodeMain {
         this.httpServer = httpServer;
     }
 
-    /**
-     * Builds and starts an edge node from configuration. The TLS context is built from the
-     * config's triple via {@link TlsConfig#mtls} (the control plane's empty-store-password
-     * policy) when {@link EdgeNodeConfig#tlsEnabled()}.
-     */
     public static EdgeNodeMain start(EdgeNodeConfig config) {
         TlsManager tlsManager = null;
         if (config.tlsEnabled()) {
@@ -124,7 +119,6 @@ public final class EdgeNodeMain {
 
         Clock clock = Clock.system();
         MetricsRegistry registry = new MetricsRegistry();
-        // JVM/process runtime gauges on the edge process (runtime board + leak alerts).
         io.configd.observability.JvmMetrics.bind(registry);
         // Fail-open, matching the control plane: an invariant violation increments
         // invariant.violation.* and keeps serving -- never throws in-process.
@@ -189,7 +183,6 @@ public final class EdgeNodeMain {
         }
     }
 
-    /** System property that opts a prefix-scoped edge into server-side filtering. */
     static final String ACCEPT_FILTERED_PROP = "configd.edge.accept_filtered";
 
     /**
@@ -225,12 +218,10 @@ public final class EdgeNodeMain {
         return core;
     }
 
-    /** The stream client (tests / diagnostics — the re-bootstrap orchestration seam). */
     EdgeStreamClient streamClient() {
         return streamClient;
     }
 
-    /** The process metrics registry (tests / diagnostics). */
     public MetricsRegistry metricsRegistry() {
         return metricsRegistry;
     }

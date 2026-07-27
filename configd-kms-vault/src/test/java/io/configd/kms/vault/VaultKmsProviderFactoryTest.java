@@ -15,10 +15,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Tests that the Vault factory is ServiceLoader-discovered under {@code vault-transit} (so the boot path finds
- * it when this module is on the classpath) and that a bad config fails loud at {@code create()}.
- */
 class VaultKmsProviderFactoryTest {
 
     private static final KmsBootContext CTX = new KmsBootContext("node-1");

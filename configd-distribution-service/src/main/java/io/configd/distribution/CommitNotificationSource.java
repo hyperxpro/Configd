@@ -69,10 +69,6 @@ public interface CommitNotificationSource {
      */
     long droppedTotal();
 
-    /**
-     * The outcome of {@link #readSince(long)}: either a contiguous batch of
-     * notifications or a GAP signal carrying the replay floor.
-     */
     sealed interface Result permits Result.Ok, Result.Gap {
 
         /** A contiguous (possibly empty) run of notifications, in ascending seq. */
@@ -103,7 +99,6 @@ public interface CommitNotificationSource {
             return new Gap(oldestRetainedSeq);
         }
 
-        /** Convenience: true if this is a GAP signal. */
         default boolean isGap() {
             return this instanceof Gap;
         }

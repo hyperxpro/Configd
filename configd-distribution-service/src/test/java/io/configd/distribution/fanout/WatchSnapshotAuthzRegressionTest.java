@@ -71,8 +71,6 @@ class WatchSnapshotAuthzRegressionTest {
 
     @Test
     void fromNowNarrowWatchTailsWithNoSnapshot() {
-        // A fresh from-now KEY watch on a non-empty store TAILs - no catch-up snapshot, so there is
-        // no whole-store exposure path at all.
         driver = newDriver(snapshot(1L, "/k/a", "public", "/secret/x", "TOPSECRET-cross-tenant"));
         feed(new EdgeFrame.WatchCreate(1L, 0, EdgeFrame.WATCH_TARGET_KEY,
                 "/k/a".getBytes(StandardCharsets.UTF_8), WatchCursor.fromNow(), 0));
@@ -88,8 +86,6 @@ class WatchSnapshotAuthzRegressionTest {
 
     @Test
     void withInitialSnapshotNarrowWatchGetsTargetFilteredSnapshotNotWholeStore() {
-        // with_initial_snapshot is the snapshot-then-tail path; the snapshot must be filtered to the
-        // watch's target. A /k/a-only watch must not receive /secret/x.
         driver = newDriver(snapshot(1L, "/k/a", "public-value", "/secret/x", "TOPSECRET-cross-tenant"));
         feed(new EdgeFrame.WatchCreate(1L, 0, EdgeFrame.WATCH_TARGET_KEY,
                 "/k/a".getBytes(StandardCharsets.UTF_8), WatchCursor.fromNow(),
@@ -112,7 +108,6 @@ class WatchSnapshotAuthzRegressionTest {
 
     @Test
     void fullWatchWithInitialSnapshotReceivesWholeStore() {
-        // FULL is root-authorized, so it is never filtered; it legitimately receives every key.
         driver = newDriver(snapshot(1L, "/k/a", "public", "/secret/x", "secret"));
         feed(new EdgeFrame.WatchCreate(1L, 0, EdgeFrame.WATCH_TARGET_FULL,
                 new byte[0], WatchCursor.fromNow(), EdgeFrame.WATCH_FLAG_WITH_INITIAL_SNAPSHOT));
@@ -146,7 +141,7 @@ class WatchSnapshotAuthzRegressionTest {
         assertTrue(out.sentOfType(EdgeFrame.WatchSnapshotBegin.class).isEmpty(), "BEGIN paused");
 
         feed(new EdgeFrame.WatchCancel(1L));   // cancel the drain owner A mid-transfer
-        driver.session().tick(clock.now());    // snapshot resumes
+        driver.session().tick(clock.now());
 
         List<EdgeFrame.WatchSnapshotBegin> begins = out.sentOfType(EdgeFrame.WatchSnapshotBegin.class);
         assertEquals(1, begins.size());
@@ -154,7 +149,6 @@ class WatchSnapshotAuthzRegressionTest {
                 "FIXED (F2): the snapshot stays tagged to drain-owner A (1), not sibling B (2)");
     }
 
-    // ---- helpers ----
 
     private static ConfigSnapshot reassemble(List<EdgeFrame.WatchSnapshotChunk> chunks) {
         ByteArrayOutputStream body = new ByteArrayOutputStream();

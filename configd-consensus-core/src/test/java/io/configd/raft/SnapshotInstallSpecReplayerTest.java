@@ -179,7 +179,6 @@ class SnapshotInstallSpecReplayerTest {
         }
     }
 
-    // Invariant assertions
 
     private void assertAllInvariants(World w) {
         // TypeOK
@@ -236,7 +235,6 @@ class SnapshotInstallSpecReplayerTest {
         }
     }
 
-    // Action arbitraries
 
     @Provide
     Arbitrary<List<Action>> traces() {

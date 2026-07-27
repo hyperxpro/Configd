@@ -64,7 +64,6 @@ class NettyEdgeReadServerCorrectnessTest {
 
     @Test
     void nettyServerServesReadPathEquivalentlyToJdkServer() throws Exception {
-        // JDK production server (best-JDK form).
         MetricsRegistry reg1 = new MetricsRegistry();
         EdgeNodeMetrics m1 = new EdgeNodeMetrics(reg1);
         EdgeHttpServer jdk = new EdgeHttpServer(0, newCore(), StrongReadKeyClass.DEFAULT,
@@ -81,8 +80,8 @@ class NettyEdgeReadServerCorrectnessTest {
                 .connectTimeout(Duration.ofSeconds(5)).build();
         try {
             String[] paths = {
-                    "/v1/config/config/svc-0",   // hit
-                    "/v1/config/config/svc-7",   // hit
+                    "/v1/config/config/svc-0",
+                    "/v1/config/config/svc-7",
                     "/v1/config/config/nope",    // not-subscribed -> 404 + X-Configd-Refused
             };
             for (String path : paths) {

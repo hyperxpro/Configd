@@ -18,32 +18,9 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * Applies committed Raft log entries to the {@link VersionedConfigStore}.
- * <p>
- * This is the bridge between the Raft consensus layer and the MVCC config
- * store. Each committed log entry is deserialized using {@link CommandCodec}
- * and applied to the store as a put, delete, or atomic batch.
- * <p>
- * <b>Thread safety:</b> This class is designed to be called from the Raft
- * apply thread only (single-threaded). No internal synchronization is provided
- * for the {@link #apply} method. Listeners are stored in a
- * {@link CopyOnWriteArrayList} so that {@link #addListener} may be called
- * from any thread, but listener notification happens on the apply thread.
- * <p>
- * <b>Snapshot format (binary):</b>
- * <pre>
- *   [8-byte sequence counter]
- *   [4-byte entry count]
- *   for each entry:
- *     [4-byte key length][key bytes][4-byte value length][value bytes]
- * </pre>
- * The snapshot format is deterministic: entries are serialized in the order
- * returned by {@link HamtMap#forEach}, which is consistent for the same
- * logical map contents.
- *
- * @see StateMachine
- * @see VersionedConfigStore
- * @see CommandCodec
+ * <b>Thread safety:</b> Only {@link #apply} runs on the single Raft apply thread; no internal
+ * synchronization guards it. {@link #addListener} may be called from any thread - listeners are
+ * stored in a {@link CopyOnWriteArrayList} - but notification still happens on the apply thread.
  */
 public final class ConfigStateMachine implements StateMachine {
 
@@ -59,25 +36,10 @@ public final class ConfigStateMachine implements StateMachine {
     // must be fast and non-blocking.
     private final List<Runnable> snapshotListeners = new CopyOnWriteArrayList<>();
 
-    /**
-     * Optional invariant monitor for runtime assertion checking.
-     * When non-null, every apply checks sequence monotonicity and gap-freedom.
-     * In test mode, violations throw immediately; in production, they increment
-     * a metric counter.
-     */
     private final InvariantChecker invariantChecker;
 
-    /**
-     * Optional Ed25519 signer for signing applied entries. When non-null,
-     * each PUT/DELETE/BATCH apply computes a signature over the command
-     * bytes. The signature can be retrieved via {@link #lastSignature()}.
-     */
     private final ConfigSigner signer;
 
-    /**
-     * Cached signature of the last applied command, or null if no signer
-     * is configured or no command has been applied yet.
-     */
     private byte[] lastSignature;
 
     /**
@@ -102,30 +64,14 @@ public final class ConfigStateMachine implements StateMachine {
 
     private record HashCache(ConfigSnapshot snap, long epoch, String hex) {}
 
-    /**
-     * 8-byte random nonce bound into the last signed payload, or null if no signed delta has
-     * been produced yet.
-     */
     private byte[] lastNonce;
 
-    /**
-     * Epoch attached to the last signed delta, or 0 if no signed delta has been produced yet.
-     */
     private long lastEpoch;
 
-    /** Secure random source for nonces (lazy; costs nothing when unsigned). */
     private final SecureRandom secureRandom = new SecureRandom();
 
-    /**
-     * Observability sink for write-commit and snapshot-install outcomes. Defaults to
-     * {@link StateMachineMetrics#NOOP} so existing constructors stay byte-equivalent.
-     */
     private final StateMachineMetrics metrics;
 
-    /**
-     * Monotonic sequence counter incremented on each non-noop apply.
-     * This is used as the version/sequence number passed to the store.
-     */
     private long sequenceCounter;
 
     /**
@@ -136,25 +82,11 @@ public final class ConfigStateMachine implements StateMachine {
      */
     private Thread applyOwnerThread;
 
-    /**
-     * Creates a state machine wrapping the given store, clock, invariant checker,
-     * and optional config signer.
-     *
-     * @param store            the versioned config store to apply mutations to (non-null)
-     * @param clock            the clock to use for timestamps during snapshot restore (non-null)
-     * @param invariantChecker optional runtime invariant checker (may be null for no-op checking)
-     * @param signer           optional Ed25519 signer for signing applied entries (may be null)
-     */
     public ConfigStateMachine(VersionedConfigStore store, Clock clock,
                               InvariantChecker invariantChecker, ConfigSigner signer) {
         this(store, clock, invariantChecker, signer, StateMachineMetrics.NOOP);
     }
 
-    /**
-     * Full constructor - accepts a {@link StateMachineMetrics} sink so
-     * {@code configd_write_commit_*} and {@code configd_snapshot_install_failed_total} get values.
-     * All other constructors delegate here with {@link StateMachineMetrics#NOOP}.
-     */
     public ConfigStateMachine(VersionedConfigStore store, Clock clock,
                               InvariantChecker invariantChecker, ConfigSigner signer,
                               StateMachineMetrics metrics) {
@@ -168,42 +100,18 @@ public final class ConfigStateMachine implements StateMachine {
         this.sequenceCounter = store.currentVersion();
     }
 
-    /**
-     * Creates a state machine wrapping the given store, clock, and invariant checker.
-     *
-     * @param store            the versioned config store to apply mutations to (non-null)
-     * @param clock            the clock to use for timestamps during snapshot restore (non-null)
-     * @param invariantChecker optional runtime invariant checker (may be null for no-op checking)
-     */
     public ConfigStateMachine(VersionedConfigStore store, Clock clock, InvariantChecker invariantChecker) {
         this(store, clock, invariantChecker, null);
     }
 
-    /**
-     * Creates a state machine wrapping the given store, clock, and config signer
-     * (no invariant checking).
-     *
-     * @param store  the versioned config store to apply mutations to (non-null)
-     * @param clock  the clock to use for timestamps during snapshot restore (non-null)
-     * @param signer the Ed25519 signer for signing applied entries (non-null)
-     */
     public ConfigStateMachine(VersionedConfigStore store, Clock clock, ConfigSigner signer) {
         this(store, clock, null, signer);
     }
 
-    /**
-     * Creates a state machine wrapping the given store and clock (no invariant checking,
-     * no signing).
-     */
     public ConfigStateMachine(VersionedConfigStore store, Clock clock) {
         this(store, clock, null, null);
     }
 
-    /**
-     * Creates a state machine wrapping the given store, using the system clock.
-     *
-     * @param store the versioned config store to apply mutations to (non-null)
-     */
     public ConfigStateMachine(VersionedConfigStore store) {
         this(store, Clock.system(), null, null);
     }
@@ -219,40 +127,24 @@ public final class ConfigStateMachine implements StateMachine {
     @FunctionalInterface
     public interface InvariantChecker {
         /**
-         * Checks an invariant condition. Behavior on violation depends
-         * on the implementation (throw in test, metric in production).
-         *
-         * @param name      invariant name (e.g., "sequence_monotonic")
-         * @param condition true if invariant holds
-         * @param message   description of violation if condition is false
+         * Behavior on violation depends on the implementation: throws in test, records a metric
+         * in production.
          */
         void check(String name, boolean condition, String message);
 
-        /** No-op checker that never throws and never records. */
         InvariantChecker NOOP = (name, condition, message) -> {};
     }
 
     /**
-     * Applies a committed Raft log entry to the config store.
+     * Empty commands (no-op entries committed for leader election) are silently ignored; the
+     * sequence counter is not incremented.
      * <p>
-     * Empty commands (no-op entries committed for leader election) are
-     * silently ignored - the sequence counter is not incremented.
+     * Returns the applied-mutation sequence (the client's commit-sequence / read cursor), or
+     * {@link StateMachine#NON_MUTATING} ({@code -1}) for a no-op.
      * <p>
-     * After a successful mutation, all registered {@link ConfigChangeListener}s
-     * are notified with the list of applied mutations and the new version.
-     * <p>
-     * Returns the applied-mutation sequence assigned to a mutating entry (the client's
-     * commit-sequence / read cursor), or {@link StateMachine#NON_MUTATING} ({@code -1}) for a
-     * no-op.
-     * <p>
-     * The first apply binds this state machine to the calling (Raft apply / tick) thread; every
-     * later apply asserts it runs on that same owner thread. A violation throws in test/sim (via
-     * the invariant checker) and increments a violation metric in production.
-     *
-     * @param index   the log index of the committed entry
-     * @param term    the term of the committed entry
-     * @param command the opaque command bytes (may be empty for no-op entries)
-     * @return the applied-mutation sequence, or {@code -1} for a non-mutating entry
+     * The first call binds this state machine to the calling (Raft apply / tick) thread; every
+     * later call asserts it runs on that same owner thread. A violation throws in test/sim and
+     * increments a metric in production.
      */
     @Override
     public long apply(long index, long term, byte[] command) {
@@ -296,11 +188,6 @@ public final class ConfigStateMachine implements StateMachine {
         return mutating ? sequenceCounter : StateMachine.NON_MUTATING;
     }
 
-    /**
-     * Owner-thread tripwire. Binds the owner thread on first apply and asserts it on every
-     * subsequent apply. In test/sim the invariant checker throws on violation; in production it
-     * records a metric.
-     */
     private void assertOwnerThread() {
         Thread current = Thread.currentThread();
         Thread owner = applyOwnerThread;
@@ -325,7 +212,6 @@ public final class ConfigStateMachine implements StateMachine {
     private void applySwitch(CommandCodec.DecodedCommand decoded, byte[] command) {
         switch (decoded) {
             case CommandCodec.DecodedCommand.Noop _ -> {
-                // No-op entry - nothing to apply
             }
             case CommandCodec.DecodedCommand.Put put -> {
                 long prevSeq = sequenceCounter;
@@ -378,14 +264,11 @@ public final class ConfigStateMachine implements StateMachine {
      *   for each entry:
      *     [4-byte key length][key bytes][4-byte value length][value bytes]
      * </pre>
-     *
-     * @return serialized snapshot bytes
      */
     @Override
     public byte[] snapshot() {
         ConfigSnapshot snap = store.snapshot();
 
-        // First pass: collect entries and compute total size
         List<byte[]> keys = new ArrayList<>();
         List<byte[]> values = new ArrayList<>();
         snap.data().forEach((key, vv) -> {
@@ -493,15 +376,6 @@ public final class ConfigStateMachine implements StateMachine {
         }
     }
 
-    /**
-     * Restores the state machine from a previously taken snapshot.
-     * <p>
-     * This rebuilds the store from scratch by applying all entries from the
-     * snapshot as a single atomic batch. The sequence counter is restored
-     * to the value at the time the snapshot was taken.
-     *
-     * @param snapshot serialized snapshot bytes produced by {@link #snapshot()}
-     */
     @Override
     public void restoreSnapshot(byte[] snapshot) {
         Objects.requireNonNull(snapshot, "snapshot must not be null");
@@ -535,7 +409,6 @@ public final class ConfigStateMachine implements StateMachine {
                             + " (max " + MAX_SNAPSHOT_ENTRIES + ")");
         }
 
-        // Build a new HAMT from the snapshot entries
         HamtMap<String, VersionedValue> data = HamtMap.empty();
         long timestamp = clock.currentTimeMillis();
 
@@ -591,7 +464,7 @@ public final class ConfigStateMachine implements StateMachine {
     private void decodeTrailer(ByteBuffer buf) {
         int remaining = buf.remaining();
         if (remaining >= 8 && buf.getInt(buf.position()) == SNAPSHOT_TRAILER_MAGIC) {
-            buf.getInt(); // consume magic
+            buf.getInt();
             int trailerLen = buf.getInt();
             if (trailerLen < 0 || trailerLen > MAX_SNAPSHOT_TRAILER_LEN) {
                 throw new IllegalArgumentException(
@@ -661,37 +534,20 @@ public final class ConfigStateMachine implements StateMachine {
      */
     private static final int MAX_SNAPSHOT_TRAILER_LEN = 65_536;
 
-    /**
-     * Registers a listener that will be notified after each successful mutation.
-     * Listeners are invoked on the Raft apply thread in registration order.
-     *
-     * @param listener the listener to register (non-null)
-     */
+    /** Listeners are invoked on the Raft apply thread, in registration order. */
     public void addListener(ConfigChangeListener listener) {
         Objects.requireNonNull(listener, "listener must not be null");
         listeners.add(listener);
     }
 
-    /**
-     * Removes a previously registered listener.
-     *
-     * @param listener the listener to remove
-     * @return true if the listener was found and removed
-     */
     public boolean removeListener(ConfigChangeListener listener) {
         return listeners.remove(listener);
     }
 
     /**
-     * Registers a listener invoked AFTER a successful {@link #restoreSnapshot}. Because a snapshot
-     * install wholesale-replaces the store without per-mutation {@link ConfigChangeListener}
-     * notifications, this is how a consumer (e.g. the config-policy loader) learns the store
-     * contents changed via InstallSnapshot (follower catch-up / runtime restore) and can re-derive
-     * its view. Invoked on the snapshot-install/restore thread in registration order; implementations
-     * must be fast and non-blocking. A throwing listener is isolated and logged rather than allowed
-     * to fail the install.
-     *
-     * @param listener the snapshot-install callback (non-null)
+     * Registers a listener invoked AFTER a successful {@link #restoreSnapshot}, in registration
+     * order. Implementations must be fast and non-blocking; a throwing listener is isolated and
+     * logged rather than allowed to fail the install.
      */
     public void addSnapshotListener(Runnable listener) {
         Objects.requireNonNull(listener, "listener must not be null");
@@ -699,23 +555,17 @@ public final class ConfigStateMachine implements StateMachine {
     }
 
     /**
-     * Signs the given command bytes using the configured signer, caching
-     * the result in {@link #lastSignature}. If no signer is configured,
-     * this is a no-op and {@link #lastSignature} remains null.
+     * No-op if no signer is configured. The command is normalized to batch-canonical form before
+     * signing so the edge verifier (which only has the mutation list, not the original encoding)
+     * can reconstruct the same byte sequence - without this, a single-mutation batch
+     * ({@code 0x03}) would sign differently from a standalone PUT ({@code 0x01}) despite carrying
+     * the same mutation.
      * <p>
-     * The command is normalized to batch-canonical form before signing so
-     * that the edge verifier (which only has the mutation list, not the
-     * original encoding) can reconstruct the same byte sequence. Without
-     * this normalization, a single-mutation batch command ({@code 0x03})
-     * would be signed differently from a standalone PUT ({@code 0x01})
-     * even though they carry the same logical mutation.
-     *
-     * @param decoded the command decoded once at the {@link #apply} boundary and threaded through
-     *                so signing never re-decodes the raw bytes
-     * @param command the raw command bytes (used only for the no-op canonical passthrough)
-     * @param seq     the applied-mutation sequence this command commits at (== the delta's
-     *                {@code toVersion}; {@code seq - 1} is the {@code fromVersion}). Bound into
-     *                the signed payload so the version position is authenticated.
+     * {@code decoded} is the command already decoded once at the {@link #apply} boundary, threaded
+     * through so signing never re-decodes the raw bytes; {@code command} is kept only for the no-op
+     * passthrough. {@code seq} is the applied-mutation sequence this command commits at
+     * ({@code seq - 1} is the fromVersion) and is bound into the signed payload so the version
+     * position is authenticated.
      */
     private void signCommand(CommandCodec.DecodedCommand decoded, byte[] command, long seq) {
         if (signer == null) {
@@ -794,13 +644,9 @@ public final class ConfigStateMachine implements StateMachine {
     }
 
     /**
-     * Returns the Ed25519 signature of the last applied command, or null
-     * if no signer is configured or no mutating command has been applied.
-     * <p>
-     * The server layer can call this after {@link #apply} to attach the
-     * signature to the outgoing {@link ConfigDelta} for distribution.
-     *
-     * @return signature bytes (defensive copy), or null
+     * Returns the Ed25519 signature of the last applied command (defensive copy), or null if no
+     * signer is configured or no mutating command has been applied. The server layer calls this
+     * after {@link #apply} to attach the signature to the outgoing {@link ConfigDelta}.
      */
     public byte[] lastSignature() {
         return lastSignature != null ? lastSignature.clone() : null;
@@ -831,12 +677,10 @@ public final class ConfigStateMachine implements StateMachine {
         return signingEpoch;
     }
 
-    /** Returns the current monotonic sequence counter. */
     public long sequenceCounter() {
         return sequenceCounter;
     }
 
-    /** Returns the underlying versioned config store. */
     public VersionedConfigStore store() {
         return store;
     }
@@ -862,22 +706,12 @@ public final class ConfigStateMachine implements StateMachine {
     }
 
     /**
-     * Callback interface for receiving notifications when config mutations
-     * are applied to the store.
-     * <p>
-     * Implementations are invoked on the Raft apply thread. They must be
-     * fast and non-blocking - any expensive work should be dispatched to
-     * a separate thread.
+     * Implementations are invoked on the Raft apply thread; they must be fast and non-blocking,
+     * and should dispatch expensive work to a separate thread.
      */
     @FunctionalInterface
     public interface ConfigChangeListener {
 
-        /**
-         * Called after one or more mutations have been applied to the store.
-         *
-         * @param mutations the mutations that were applied (immutable)
-         * @param version   the new store version after applying the mutations
-         */
         void onConfigChange(List<ConfigMutation> mutations, long version);
     }
 }

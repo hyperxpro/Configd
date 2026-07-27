@@ -42,7 +42,6 @@ class EdgeClientCoreTest {
         void advance(long ms) { timeMs += ms; }
     }
 
-    /** Recording sink: captures every edge->server frame; offer always succeeds. */
     static final class RecordingSink implements EdgeClientCore.FrameSink {
         final List<EdgeFrame> sent = new ArrayList<>();
         boolean block; // when true, offer refuses (would-block)
@@ -102,7 +101,6 @@ class EdgeClientCoreTest {
         return new ConfigSnapshot(data, version, version);
     }
 
-    /** Builds the SNAPSHOT_BEGIN..CHUNK*..END frame flow for a snapshot at seq. */
     private static List<EdgeFrame> snapshotFrames(ConfigSnapshot snap, long seq) {
         byte[] body = EdgeSnapshotCodec.serialize(snap);
         List<EdgeFrame.SnapshotChunk> chunks = EdgeSnapshotCodec.chunk(body, 4096);
@@ -159,7 +157,7 @@ class EdgeClientCoreTest {
         void gapMidBatchIsRecordedAndAcksRealCursor() {
             core.onFrame(new EdgeFrame.Notify(List.of(
                     notif(1, 0, 1, clock.timeMs, "a", "1"),
-                    notif(3, 2, 3, clock.timeMs, "c", "3")))); // from=2 != current 1 -> GAP
+                    notif(3, 2, 3, clock.timeMs, "c", "3"))));
             assertEquals(1, core.cursor(), "cursor stops at the last contiguous applied seq");
             assertEquals(1, core.gapsDetected());
             assertEquals(1, sink.lastAck(), "ack reflects the real cursor, not the gapped seq");
@@ -237,7 +235,6 @@ class EdgeClientCoreTest {
 
         @Test
         void backwardSnapshotIsRefusedAndReAcksRealCursor() {
-            // Advance the edge to cursor 8 via notifies.
             for (long s = 1; s <= 8; s++) {
                 core.onFrame(new EdgeFrame.Notify(List.of(
                         notif(s, s - 1, s, clock.timeMs, "k" + s, "v"))));
@@ -245,7 +242,6 @@ class EdgeClientCoreTest {
             assertEquals(8, core.cursor());
             int acksBefore = sink.acks().size();
 
-            // A backward snapshot at seq 4 (< cursor 8) must be REFUSED (monotonicity).
             for (EdgeFrame f : snapshotFrames(snapshot(4, "x", "1"), 4)) {
                 core.onFrame(f);
             }
@@ -258,7 +254,6 @@ class EdgeClientCoreTest {
 
         @Test
         void forwardSnapshotAfterGapHeals() {
-            // Create a gap: apply seq 1, then a seq-3 notify (from=2 != 1) -> GAP.
             core.onFrame(new EdgeFrame.Notify(List.of(notif(1, 0, 1, clock.timeMs, "a", "1"))));
             core.onFrame(new EdgeFrame.Notify(List.of(notif(3, 2, 3, clock.timeMs, "c", "3"))));
             assertEquals(1, core.gapsDetected());
@@ -270,7 +265,6 @@ class EdgeClientCoreTest {
             assertEquals(3, core.cursor());
             assertTrue(core.get("c").found());
 
-            // A subsequent contiguous notify (from=3) applies cleanly post-heal.
             core.onFrame(new EdgeFrame.Notify(List.of(notif(4, 3, 4, clock.timeMs, "d", "4"))));
             assertEquals(4, core.cursor());
         }
@@ -285,7 +279,6 @@ class EdgeClientCoreTest {
     @Nested
     class HeartbeatFrontier {
 
-        /** Applies seqs 1..n contiguously (from 0) so the cursor reaches n. */
         private void advanceCursorTo(long n) {
             for (long s = 1; s <= n; s++) {
                 core.onFrame(new EdgeFrame.Notify(List.of(
@@ -295,7 +288,7 @@ class EdgeClientCoreTest {
 
         @Test
         void cursorMatchedHeartbeatKeepsIdleEdgeCurrent() {
-            advanceCursorTo(5); // cursor = 5, fully applied
+            advanceCursorTo(5);
             // No new deltas, but the server heartbeats "you're caught up" (latestSeq==cursor).
             for (int i = 0; i < 200; i++) {
                 clock.advance(250);
@@ -309,7 +302,7 @@ class EdgeClientCoreTest {
 
         @Test
         void behindHeartbeatDoesNotAdvanceFrontierAndShowsLag() {
-            advanceCursorTo(5); // cursor = 5
+            advanceCursorTo(5);
             clock.advance(600); // would be STALE without a frontier advance
             // Server says latestSeq=8 > cursor=5 - genuinely behind by 3.
             core.onFrame(new EdgeFrame.Heartbeat(8, clock.currentTimeMillis()));
@@ -341,7 +334,6 @@ class EdgeClientCoreTest {
 
         @Test
         void heartbeatSilenceEmitsReconnectDirective() {
-            // Establish a heartbeat baseline.
             core.onFrame(new EdgeFrame.Heartbeat(0, clock.currentTimeMillis()));
             assertFalse(core.hasDirective());
 
@@ -376,7 +368,6 @@ class EdgeClientCoreTest {
             core.pollDirective();
 
             core.onReconnected();
-            // After reconnect, no heartbeat seen yet -> no immediate re-trigger.
             clock.advance(5000);
             core.tick(clock.currentTimeMillis());
             assertFalse(core.hasDirective(),
@@ -390,7 +381,6 @@ class EdgeClientCoreTest {
         @Test
         void gapQueuesResubscribeAtCurrentCursorOnce() {
             core.onFrame(new EdgeFrame.Notify(List.of(notif(1, 0, 1, clock.timeMs, "a", "1"))));
-            // Seqs 2..4 were lost: the next notification gaps (fromVersion 4 != 1).
             core.onFrame(new EdgeFrame.Notify(List.of(notif(5, 4, 5, clock.timeMs, "a", "5"))));
 
             assertEquals(1, core.gapsDetected());
@@ -401,7 +391,6 @@ class EdgeClientCoreTest {
                             + "decision resolves replay vs re-bootstrap (no new wire surface)");
             assertTrue(r.reason().startsWith("gap-detected:"), r.reason());
 
-            // A second gapped notification does not spam a second directive (latch).
             core.onFrame(new EdgeFrame.Notify(List.of(notif(6, 5, 6, clock.timeMs, "a", "6"))));
             assertEquals(2, core.gapsDetected());
             assertFalse(core.hasDirective(), "one directive per wedge (reconnectPending latch)");
@@ -418,7 +407,6 @@ class EdgeClientCoreTest {
             assertEquals(1, core.gapsDetected());
             assertFalse(core.hasDirective(), "gap suppressed while a snapshot is in flight");
 
-            // The owed snapshot lands; a LATER gap (new wedge) queues the recovery again.
             for (EdgeFrame f : snapshotFrames(snapshot(5, "a", "5"), 5)) {
                 core.onFrame(f);
             }
@@ -462,7 +450,6 @@ class EdgeClientCoreTest {
                             + "server decides; cursor 0 is reserved for the poison terminal path");
             assertTrue(r.reason().startsWith("disconnected-rebootstrap:"), r.reason());
 
-            // Staying DISCONNECTED does not re-fire (entry-edge semantics).
             core.onReconnected();
             clock.advance(1_000);
             core.tick(clock.currentTimeMillis());
@@ -495,7 +482,6 @@ class EdgeClientCoreTest {
             core.pollDirective();
             core.onReconnected();
 
-            // Heals (fresh apply advances the frontier), then stalls again -> re-fires.
             core.onFrame(new EdgeFrame.Notify(List.of(notif(2, 1, 2, clock.timeMs, "a", "2"))));
             core.tick(clock.currentTimeMillis());
             assertEquals(StalenessTracker.State.CURRENT, core.stalenessState());
@@ -637,7 +623,6 @@ class EdgeClientCoreTest {
         @Test
         void verifierConstructorAcceptsAndAppliesUnsignedlessFlowViaEpochDir(
                 @org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) throws Exception {
-            // The full constructor wires a real verifier + the epoch.lock dir.
             java.security.KeyPair kp =
                     java.security.KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
             io.configd.store.ConfigSigner leaderSigner = new io.configd.store.ConfigSigner(kp);
@@ -650,7 +635,6 @@ class EdgeClientCoreTest {
                     EdgeClientCore.DEFAULT_HEARTBEAT_MS, EdgeClientCore.DEFAULT_SILENCE_FACTOR,
                     edgeVerifier, tmp);
 
-            // A correctly signed delta (epoch 1, canonical payload) applies.
             ConfigDelta unsigned = new ConfigDelta(0, 1,
                     List.of(new ConfigMutation.Put("k", bytes("v"))), null, 1L, new byte[8]);
             byte[] sig = leaderSigner.sign(unsigned.signingPayload());
@@ -679,7 +663,6 @@ class EdgeClientCoreTest {
 
         @Test
         void snapshotCutoverDoesNotTripImplausibilityCounter() {
-            // Establish a real frontier first (an applied delta at the current clock).
             core.onFrame(new EdgeFrame.Notify(List.of(notif(1, 0, 1, clock.timeMs, "a", "1"))));
             long before = metrics.counter(StalenessTracker.IMPLAUSIBLE_METRIC).get();
 

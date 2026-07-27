@@ -320,11 +320,9 @@ class HamtMapCollisionTest {
 
         @Test
         void collisionKeysCoexistWithNonCollidingKeys() {
-            // Two keys with identical hash (deep collision)
             CollisionKey ck1 = new CollisionKey("col-1", 99);
             CollisionKey ck2 = new CollisionKey("col-2", 99);
 
-            // Two keys with distinct hashes (no collision)
             CollisionKey nk1 = new CollisionKey("normal-1", 1000);
             CollisionKey nk2 = new CollisionKey("normal-2", 2000);
 
@@ -435,7 +433,7 @@ class HamtMapCollisionTest {
             // We need another hash with low 5 bits = 20 but different overall.
             // 20 + 32 = 52 -> 0b110100, low 5 bits = 0b10100 = 20
             CollisionKey shallow1 = new CollisionKey("shallow-1", 20);
-            CollisionKey shallow2 = new CollisionKey("shallow-2", 52); // 20 + 32
+            CollisionKey shallow2 = new CollisionKey("shallow-2", 52);
 
             HamtMap<CollisionKey, String> map = HamtMap.<CollisionKey, String>empty()
                     .put(deep1, "D1")

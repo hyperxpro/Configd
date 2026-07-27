@@ -92,7 +92,6 @@ class EdgeStalenessDistributionLoadSimTest {
         long p9999 = probe.globalPercentile(99.99);
         long max = probe.globalMax();
 
-        // Distribution well-formedness.
         assertTrue(p50 <= p99 && p99 <= p999 && p999 <= p9999 && p9999 <= max,
                 "distribution must be monotone: p50=" + p50 + " p99=" + p99
                         + " p999=" + p999 + " p9999=" + p9999 + " max=" + max);
@@ -116,7 +115,6 @@ class EdgeStalenessDistributionLoadSimTest {
                         + " component); measured p9999=" + p9999 + " ms (tail samples="
                         + cntAtP9999 + ")");
 
-        // A live, caught-up edge under a no-fault schedule must not end DISCONNECTED.
         for (EdgeActor edge : sim.edges()) {
             if (edge.alive() && edge.cursor() > 0) {
                 assertTrue(edge.staleness() != StalenessTracker.State.DISCONNECTED,
@@ -126,7 +124,6 @@ class EdgeStalenessDistributionLoadSimTest {
             }
         }
 
-        // Per-edge tail (the multi-edge fan-out: each edge is one fan-out leaf).
         StringBuilder perEdge = new StringBuilder();
         for (int id : probe.observerIds()) {
             perEdge.append("\n  edge-").append(id)

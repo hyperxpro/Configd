@@ -104,7 +104,6 @@ class WatchAuthzGateContractTest {
 
     @Test
     void fullAndFullChainVerifyMapToRootAndDependOnAWholeStoreGrant() {
-        // A root-scope READ and WATCH grant authorizes FULL and full_chain_verify (effective target "").
         AclService rootGranted = new AclService();
         rootGranted.grant("", "rooty", EnumSet.of(Permission.READ, Permission.WATCH));
         AclServiceWatchAuthorizer rootAuthz = new AclServiceWatchAuthorizer(rootGranted);

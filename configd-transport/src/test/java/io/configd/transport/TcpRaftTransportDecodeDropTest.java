@@ -86,7 +86,7 @@ class TcpRaftTransportDecodeDropTest {
      *  stays valid (the reader consumes the whole frame) but {@link FrameCodec#decode} fails the CRC. */
     private static byte[] corruptWire(NodeId from) {
         byte[] encoded = FrameCodec.encode(MessageType.HEARTBEAT, 1, 1L, "corrupt".getBytes());
-        encoded[encoded.length - 1] ^= 0xFF; // break the CRC trailer -> decode fails -> connection dropped
+        encoded[encoded.length - 1] ^= 0xFF;
         byte[] wire = new byte[4 + encoded.length];
         int id = from.id();
         wire[0] = (byte) (id >>> 24);

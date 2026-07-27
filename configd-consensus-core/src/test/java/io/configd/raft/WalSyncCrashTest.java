@@ -44,16 +44,6 @@ class WalSyncCrashTest {
         return s.getBytes();
     }
 
-    /**
-     * Full-compaction WAL deletion durability: after a snapshot folds in the
-     * whole WAL and {@code compact} deletes the WAL prefix, that deletion MUST
-     * survive a crash. With the {@code compact} {@code storage.sync()} removed,
-     * the WAL-deletion rename is not durable; on crash it reverts and recovery
-     * sees the STALE WAL - dropping the snapshot boundary
-     * ({@code snapshotIndex} reverts to 0) and re-exposing the compacted-away
-     * entries. This is the durable-prefix / log-matching regression the sync
-     * guards against.
-     */
     @Test
     void compactionWalDeletionSurvivesCrashRestart() {
         CrashStorage storage = new CrashStorage();
@@ -78,11 +68,6 @@ class WalSyncCrashTest {
         storage.crash();
         RaftLog recovered = new RaftLog(storage.recoveredView());
 
-        // The compaction must be durable: the snapshot boundary must be 3 and the
-        // compacted-away entries must NOT reappear. If the compact() sync was
-        // removed, the WAL-deletion rename reverts on crash,
-        // recovery reads the stale [1,2,3] WAL, snapshotIndex resolves back to 0,
-        // and entryAt(1)/entryAt(2) reappear - these assertions then fail.
         assertEquals(3, recovered.snapshotIndex(),
                 "RR-086: the snapshot boundary must survive the crash — a removed compact() "
                         + "sync reverts the WAL deletion and recovery falls back to snapshotIndex 0");

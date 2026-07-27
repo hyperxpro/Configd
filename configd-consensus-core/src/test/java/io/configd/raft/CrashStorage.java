@@ -52,12 +52,10 @@ import java.util.Map;
  */
 final class CrashStorage implements Storage {
 
-    /** A buffered, not-yet-durable mutation. */
     private interface Pending {
         void applyTo(Image image);
     }
 
-    /** The logical durable state: kv map + named logs (each a list of frames). */
     static final class Image {
         final Map<String, byte[]> kv = new LinkedHashMap<>();
         final Map<String, List<byte[]>> logs = new LinkedHashMap<>();
@@ -85,11 +83,9 @@ final class CrashStorage implements Storage {
     /** Rename-style mutations awaiting the directory fsync (sync()). */
     private final List<Pending> pendingRenames = new ArrayList<>();
 
-    /** Count of mutating operations issued (for crash-point arming/inspection). */
     private int operationCount;
     /** -1 = disarmed; otherwise auto-crash once operationCount reaches this. */
     private int crashAfter = -1;
-    /** Set once any armed auto-crash fires, so callers can detect it. */
     private boolean crashed;
     /**
      * Set once an ARMED crash has fired: the modelled process is dead, so any
@@ -103,17 +99,12 @@ final class CrashStorage implements Storage {
      */
     private boolean dead;
 
-    /** When set, crash just BEFORE the first {@code put} to this key. */
     private String crashBeforeKeyPut;
-    /** When set, crash just BEFORE the first mutation that deletes/renames this log. */
     private String crashBeforeLogDelete;
-    /** When set, crash just AFTER the named key's value is made durable. */
     private String crashAfterKeySynced;
-    /** When set, a {@code put} to this key is fsync-LIED: visible (working) but never durable. */
     private String lieOnSyncKey;
 
     CrashStorage() {
-        // Empty durable image - models a brand-new node with no prior state.
     }
 
     private CrashStorage(Image durableSeed) {
@@ -181,12 +172,10 @@ final class CrashStorage implements Storage {
         this.lieOnSyncKey = key;
     }
 
-    /** Number of mutating operations issued so far. */
     int operationCount() {
         return operationCount;
     }
 
-    /** True if an armed auto-crash has fired. */
     boolean didCrash() {
         return crashed;
     }
@@ -203,7 +192,6 @@ final class CrashStorage implements Storage {
         working = durable.copy();
     }
 
-    // Self-durable writes: reach the durable image immediately.
 
     @Override
     public void put(String key, byte[] value) {
@@ -212,7 +200,7 @@ final class CrashStorage implements Storage {
         }
         if (crashBeforeKeyPut != null && crashBeforeKeyPut.equals(key) && !crashed) {
             fireArmedCrash();
-            return; // crashed before this put landed
+            return;
         }
         byte[] v = value.clone();
         if (lieOnSyncKey != null && lieOnSyncKey.equals(key)) {
@@ -245,7 +233,6 @@ final class CrashStorage implements Storage {
         maybeAutoCrash();
     }
 
-    // Rename-style ops: durable only after the next sync() (directory fsync).
 
     @Override
     public void truncateLog(String logName) {
@@ -285,7 +272,6 @@ final class CrashStorage implements Storage {
         maybeAutoCrash();
     }
 
-    /** Crashes (and returns true) iff a before-delete crash is armed for {@code logName}. */
     private boolean crashBeforeDelete(String logName) {
         if (crashBeforeLogDelete != null && crashBeforeLogDelete.equals(logName) && !crashed) {
             fireArmedCrash();
@@ -300,7 +286,6 @@ final class CrashStorage implements Storage {
         }
     }
 
-    /** Fires an armed crash and marks the modelled process dead. */
     private void fireArmedCrash() {
         crashed = true;
         dead = true;
@@ -319,7 +304,6 @@ final class CrashStorage implements Storage {
         pendingRenames.clear();
     }
 
-    // Reads: served from the working image (durable + pending renames).
 
     @Override
     public byte[] get(String key) {

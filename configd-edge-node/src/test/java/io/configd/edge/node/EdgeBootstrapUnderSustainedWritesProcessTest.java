@@ -100,9 +100,7 @@ class EdgeBootstrapUnderSustainedWritesProcessTest {
         }
     }
 
-    // The write storm (one sequential writer; unique value per write)
 
-    /** A sustained sequential write storm on a virtual thread; per-write-unique values. */
     private final class WriteStorm {
         final AtomicInteger written = new AtomicInteger();
         final AtomicLong lastSeq = new AtomicLong();
@@ -118,7 +116,7 @@ class EdgeBootstrapUnderSustainedWritesProcessTest {
                     int i = 0;
                     while (!stop) {
                         String key = "svc/k" + (i % STORM_KEYS);
-                        String value = "w-" + i; // unique per write
+                        String value = "w-" + i;
                         long seq = putCommitted(serverBase, key, value);
                         expected.put(key, value);
                         lastSeq.set(seq);
@@ -141,7 +139,6 @@ class EdgeBootstrapUnderSustainedWritesProcessTest {
         }
     }
 
-    // Leg 1 - production defaults
 
     @Test
     void freshEdgeJoinsMidStormAndConvergesWithExactCutoverAtProductionDefaults()
@@ -154,14 +151,10 @@ class EdgeBootstrapUnderSustainedWritesProcessTest {
         await("a populated store exists before the join (BEFORE-phase writes)",
                 () -> storm.written.get() >= 30);
 
-        // The zero-state edge joins MID-storm against the production-default endpoint.
         int writtenAtEdgeStart = storm.written.get();
         edge = startEdge("edge-c5-defaults", verifyKey, server.fanOutServer().localPort());
         String edgeBase = "http://127.0.0.1:" + edge.apiPort();
 
-        // While bootstrapping, the HTTP surface must hold the consistent-refusal line:
-        // every response to a read at the writer's current frontier is either the
-        // cursor-behind refusal or a served version ≥ that cursor — NEVER stale-under-cursor.
         long deadline = System.nanoTime() + POLL_DEADLINE.toNanos();
         while (edge.core().snapshotsApplied() == 0) {
             assertTrue(System.nanoTime() < deadline, "bootstrap transfer must land");
@@ -189,20 +182,15 @@ class EdgeBootstrapUnderSustainedWritesProcessTest {
         assertTrue(storm.written.get() >= writtenAtEdgeStart,
                 "the storm kept writing through the join");
 
-        // AFTER-phase: keep the storm going past the cutover, then stop and fence.
         int targetAfter = storm.written.get() + 30;
         await("AFTER-phase writes flow past the cutover",
                 () -> storm.written.get() >= targetAfter);
         storm.stopAndJoin();
         long fenceSeq = putCommitted(serverBase, "svc/fence", "fence-1");
 
-        // Convergence at the HTTP surface: served at the fence cursor, refusal-or-≥cursor
-        // on every poll along the way (pollUntilServed enforces it per response).
         HttpResponse<String> fenced = pollUntilServed(edgeBase, "svc/fence", fenceSeq);
         assertEquals("fence-1", fenced.body());
 
-        // Byte sweep: every storm key serves EXACTLY the last written unique value — a
-        // double-apply with different effect (an older w-i resurrecting) fails here.
         for (int k = 0; k < STORM_KEYS; k++) {
             String key = "svc/k" + k;
             String want = storm.expected.get(key);
@@ -214,7 +202,6 @@ class EdgeBootstrapUnderSustainedWritesProcessTest {
                     "key " + key + " must serve the LAST written unique value");
         }
 
-        // Cutover exactness, observable on the core counters over ordered loopback TCP:
         assertEquals(io.configd.distribution.wire.EdgeFrame.Mode.SNAPSHOT_FIRST,
                 edge.core().mode(),
                 "a zero-state join against a populated store IS the snapshot bootstrap");
@@ -230,7 +217,6 @@ class EdgeBootstrapUnderSustainedWritesProcessTest {
                 "the edge store version equals the last committed seq");
     }
 
-    // Leg 2 - wide transfer window: big store / small chunks / small queue
 
     @Test
     void wideWindowBootstrapPacedByBoundedTransportStraddlesWritesAndConvergesExactly()
@@ -246,7 +232,6 @@ class EdgeBootstrapUnderSustainedWritesProcessTest {
             putCommitted(serverBase, "bulk/k" + i, bulkValue + "-" + i);
         }
 
-        // The wide-window endpoint (same pattern as EdgeFailoverTest).
         FanOutConfig smallChunks = new FanOutConfig(
                 256, 80, 64, 262_144, 8_192L, 250L, 5L, 2_048);
         endpointB = new FanOutServer(
@@ -272,7 +257,6 @@ class EdgeBootstrapUnderSustainedWritesProcessTest {
                         + "window; storm advanced " + writtenAtEdgeStart + " → "
                         + writtenAtCutover);
 
-        // Keep writing past the cutover, then fence and judge.
         int targetAfter = storm.written.get() + 20;
         await("AFTER-phase writes", () -> storm.written.get() >= targetAfter);
         storm.stopAndJoin();
@@ -280,8 +264,6 @@ class EdgeBootstrapUnderSustainedWritesProcessTest {
         HttpResponse<String> fenced = pollUntilServed(edgeBase, "svc/fence", fenceSeq);
         assertEquals("fence-2", fenced.body());
 
-        // The snapshot CONTENT arrived intact through the paced transfer (sampled), and
-        // the storm keys serve their last unique values (no double-apply divergence).
         for (int i = 0; i < 96; i += 8) {
             HttpResponse<String> r = pollUntilServed(edgeBase, "bulk/k" + i, fenceSeq);
             assertEquals(bulkValue + "-" + i, r.body(), "bulk/k" + i + " byte-exact");
@@ -312,7 +294,6 @@ class EdgeBootstrapUnderSustainedWritesProcessTest {
         assertEquals(fenceSeq, edge.core().currentVersion());
     }
 
-    // Fixture
 
     private ConfigdServer startServer() throws Exception {
         Path signingKey = tempDir.resolve("signing-key.bin");
@@ -341,9 +322,7 @@ class EdgeBootstrapUnderSustainedWritesProcessTest {
         return EdgeNodeMain.start(cfg);
     }
 
-    // Helpers (deadline-polling; no sleep-as-sync)
 
-    /** Polls until served at the cursor; every non-200 must be the consistent refusal. */
     private HttpResponse<String> pollUntilServed(String edgeBase, String key, long seq)
             throws Exception {
         long deadline = System.nanoTime() + POLL_DEADLINE.toNanos();

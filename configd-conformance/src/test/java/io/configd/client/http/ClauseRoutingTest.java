@@ -20,17 +20,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Runner II -- CLIENT-CONFORMS, §05 routing / leader-following: drives the reference {@link ConfigdHttpClient}
- * against the scriptable {@link MockControlPlane} (reused via the configd-client-http test-jar) and asserts the
- * client obeys the normative routing MUSTs -- read the hint from the {@code X-Leader-Hint} <b>header</b> only
- * (never the body), resolve the bare numeric {@code NodeId} through its own map (anti-SSRF), follow-and-retry
- * even at N = 1, be ready for a {@code 503} on any read, do <b>no</b> client-side sharding (and never cache a
- * hint across keys), and fail closed on an HTTP {@code 3xx} / a richer wire-supplied address.
- *
- * <p>The server-side half of §05 (R3-2 no discovery endpoint, R8-4 the hint is authz-gated) is proven against
- * the live {@code HttpApiServer} in {@code ServerObeysRoutingTest}.
- */
 @Timeout(30)
 class ClauseRoutingTest {
 
@@ -80,7 +69,7 @@ class ClauseRoutingTest {
         // HINTLESS 503 (leaderId() is null), and the ONLY correct action is back off + retry the SAME endpoint
         // until it becomes leader. A driver MUST implement the 503-then-backoff-retry loop even at N=1.
         try (MockControlPlane s = new MockControlPlane()) {
-            s.enqueue(Response.text(503, "Not Leader")); // no X-Leader-Hint -- the normal N=1 election window
+            s.enqueue(Response.text(503, "Not Leader"));
             s.enqueue(Response.committed(9));
             try (ConfigdHttpClient c = client(s)) {
                 assertEquals(9L, c.blocking().put("k", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults()).seq());
@@ -113,7 +102,7 @@ class ClauseRoutingTest {
             s.enqueue(Response.of(503, Map.of("X-Fail-Closed", "strong-read"), "Fail-closed: strong-read"));
             s.enqueue(Response.value("v", 4));
             try (ConfigdHttpClient c = client(s)) {
-                GetResult r = c.blocking().get("app/ordinary", GetOptions.defaults()); // a plain stale read
+                GetResult r = c.blocking().get("app/ordinary", GetOptions.defaults());
                 assertTrue(r.found());
                 assertEquals(4L, r.version());
                 assertEquals(2, s.requestCount(), "the plain read was retried through a 503 — R6 applied to a read");
@@ -145,9 +134,9 @@ class ClauseRoutingTest {
         // reuse it for another key. Here key "a" is redirected to node 2; the very next op on key "b" MUST start
         // at the configured entry node (node 1), not reuse node 2 -- proving each request routes independently.
         try (MockControlPlane n1 = new MockControlPlane(); MockControlPlane n2 = new MockControlPlane()) {
-            n1.enqueue(Response.of(503, Map.of("X-Leader-Hint", "2"), "Not Leader")); // key "a" follows to node 2
+            n1.enqueue(Response.of(503, Map.of("X-Leader-Hint", "2"), "Not Leader"));
             n2.enqueue(Response.committed(1));
-            n1.enqueue(Response.committed(2));                                         // key "b" served at entry node 1
+            n1.enqueue(Response.committed(2));
             try (ConfigdHttpClient c = twoNodeClient(n1, n2)) {
                 assertEquals(1L, c.blocking().put("a", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults()).seq());
                 assertEquals(2L, c.blocking().put("b", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults()).seq());
@@ -176,7 +165,7 @@ class ClauseRoutingTest {
         // client degrades it to hintless (R2-2 anti-SSRF: it MUST NOT accept a wire-supplied address) and
         // retries the endpoints it knows.
         try (MockControlPlane s = new MockControlPlane()) {
-            s.enqueue(Response.of(503, Map.of("X-Leader-Hint", "10.0.0.5:8080"), "Not Leader")); // not a bare NodeId
+            s.enqueue(Response.of(503, Map.of("X-Leader-Hint", "10.0.0.5:8080"), "Not Leader"));
             s.enqueue(Response.committed(3));
             try (ConfigdHttpClient c = client(s)) {
                 assertEquals(3L, c.blocking().put("k", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults()).seq());

@@ -61,10 +61,10 @@ public class ConsensusWireH2HBenchmark {
     private long term;
     private int senderId;
     private byte[] payload;
-    private byte[] preEncoded;   // a complete frame matching the param, for the decode leg
-    private ByteBuffer reuseBuf; // BEST-JDK reused destination ([senderId][frame])
-    private ByteBufAllocator alloc; // BEST-NETTY pooled allocator
-    private ByteBuf reusedNettyBuf; // diagnostic: one ByteBuf reused across ops (no per-op alloc)
+    private byte[] preEncoded;
+    private ByteBuffer reuseBuf;
+    private ByteBufAllocator alloc;
+    private ByteBuf reusedNettyBuf;
     private int wireCapacity;
 
     @Setup(Level.Trial)
@@ -79,7 +79,6 @@ public class ConsensusWireH2HBenchmark {
         }
         preEncoded = FrameCodec.encode(type, groupId, term, payload);
         wireCapacity = 4 + FrameCodec.frameSize(payloadBytes);
-        // Capacity: 4-byte sender id + the full frame.
         reuseBuf = ByteBuffer.allocate(wireCapacity);
         alloc = PooledByteBufAllocator.DEFAULT;
         // Warm the pool once so the first measured op isn't a one-time arena/chunk allocation.

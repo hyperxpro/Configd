@@ -11,14 +11,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Backup/restore round-trip test with a state-equality assertion. Captures a snapshot (the
- * backup), restores it into a fresh, empty state machine (a fresh cluster's bootstrap), and
- * proves the restored state equals the original key-for-key - including an overwrite and a
- * delete - and that the restored applied version matches. The snapshot bytes are
- * {@link ConfigStateMachine#snapshot()}; restore is
- * {@link ConfigStateMachine#restoreSnapshot(byte[])} (the InstallSnapshot / disaster-recovery path).
- */
 class BackupRestoreRoundTripTest {
 
     private static byte[] b(String s) {
@@ -32,9 +24,9 @@ class BackupRestoreRoundTripTest {
         long idx = 0;
         source.apply(++idx, 1, CommandCodec.encodePut("svc/a", b("alpha")));
         source.apply(++idx, 1, CommandCodec.encodePut("svc/b", b("beta-0")));
-        source.apply(++idx, 1, CommandCodec.encodePut("svc/b", b("beta-1")));   // overwrite
+        source.apply(++idx, 1, CommandCodec.encodePut("svc/b", b("beta-1")));
         source.apply(++idx, 1, CommandCodec.encodePut("svc/c", b("gamma")));
-        source.apply(++idx, 1, CommandCodec.encodeDelete("svc/c"));             // delete
+        source.apply(++idx, 1, CommandCodec.encodeDelete("svc/c"));
         long sourceVersion = origin.currentVersion();
 
         byte[] backup = source.snapshot();

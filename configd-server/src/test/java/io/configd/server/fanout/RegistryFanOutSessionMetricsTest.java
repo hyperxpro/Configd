@@ -9,21 +9,15 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Verifies {@link RegistryFanOutSessionMetrics} registers its metrics series eagerly (a metric the
- * exporter can find from the first scrape, not one that blinks in on first event) and that they render
- * with the exact {@code edge_fanout_*} Prometheus names.
- */
 class RegistryFanOutSessionMetricsTest {
 
     @Test
     void allSeriesAreEagerlyRegisteredAndExportedWithExactNames() {
         MetricsRegistry registry = new MetricsRegistry();
-        new RegistryFanOutSessionMetrics(registry); // constructor registers everything
+        new RegistryFanOutSessionMetrics(registry);
 
         String out = new PrometheusExporter(registry).export();
 
-        // Counters get a *_total suffix; gauges stay bare. (Present at value 0 before any event.)
         assertTrue(out.contains("edge_fanout_heartbeats_total"), out);
         assertTrue(out.contains("edge_fanout_slow_consumer_warnings_total"), out);
         assertTrue(out.contains("edge_fanout_notify_batches_total"), out);
@@ -36,18 +30,15 @@ class RegistryFanOutSessionMetricsTest {
         assertTrue(out.contains("edge_fanout_demotions_" + DemotionEvent.REASON_QUEUE_OVERFLOW + "_total"), out);
         assertTrue(out.contains("edge_fanout_demotions_" + DemotionEvent.REASON_GAP + "_total"), out);
         assertTrue(out.contains("edge_fanout_demotions_" + DemotionEvent.REASON_TRANSPORT_BLOCK + "_total"), out);
-        // Per-reason session-closed counters.
         assertTrue(out.contains("edge_fanout_sessions_closed_server_shutdown_total"), out);
         assertTrue(out.contains("edge_fanout_sessions_closed_quarantined_total"), out);
         // The legacy-SUBSCRIBE refusal at N>1 gets its own series (not folded into other).
         assertTrue(out.contains("edge_fanout_sessions_closed_bad_subscribe_total"), out);
-        // Slow-consumer policy series.
         assertTrue(out.contains("edge_fanout_slow_transitions_total"), out);
         assertTrue(out.contains("edge_fanout_quarantines_total"), out);
         assertTrue(out.contains("edge_fanout_unhealthy_total"), out);
         assertTrue(out.contains("edge_fanout_reconnects_refused_total"), out);
         assertTrue(out.contains("edge_fanout_readmissions_total"), out);
-        // The consumer_state{state} gauge, per-suffix encoded (one gauge per state).
         assertTrue(out.contains("edge_fanout_consumer_state_healthy"), out);
         assertTrue(out.contains("edge_fanout_consumer_state_slow"), out);
         assertTrue(out.contains("edge_fanout_consumer_state_catchup"), out);
@@ -107,8 +98,7 @@ class RegistryFanOutSessionMetricsTest {
         assertEquals(1, registry.counter("edge.fanout.demotions." + DemotionEvent.REASON_ACK_LAG).get());
         assertEquals(1, registry.counter("edge.fanout.snapshot_transfers").get());
         assertEquals(1, registry.counter("edge.fanout.sessions_closed.server_shutdown").get());
-        assertEquals(1, m.connectedSubscribers()); // 2 up - 1 down
-        // notify_batch_size histogram recorded the batch size.
+        assertEquals(1, m.connectedSubscribers());
         assertEquals(1, registry.histogram("edge.fanout.notify_batch_size").count());
     }
 

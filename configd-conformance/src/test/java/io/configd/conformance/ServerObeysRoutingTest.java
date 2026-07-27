@@ -119,7 +119,6 @@ class ServerObeysRoutingTest {
         assertFalse(anonymous.headers().firstValue("X-Leader-Hint").isPresent(),
                 "an unauthenticated caller gets NO leader hint (topology non-disclosure)");
 
-        // Authenticated but unauthorized (reader lacks WRITE): 403 BEFORE any hint.
         HttpResponse<String> forbidden = put("/v1/config/app/x", "reader-tok", "v");
         assertEquals(403, forbidden.statusCode(), "authenticated but not permitted ⇒ 403");
         assertFalse(forbidden.headers().firstValue("X-Leader-Hint").isPresent(),

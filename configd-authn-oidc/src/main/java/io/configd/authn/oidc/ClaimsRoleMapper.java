@@ -44,15 +44,12 @@ import java.util.Set;
  */
 final class ClaimsRoleMapper {
 
-    /** The dotted claim selector, or {@code null} to always deny (no roles claim configured). */
     private final String claimPath;
-    /** External-value to Configd-role map; empty means pass-through. */
     private final Map<String, String> roleMap;
-    /** Prefix prepended to a pass-through role name (empty by default); ignored when {@link #roleMap} is set. */
     private final String rolePrefix;
 
     ClaimsRoleMapper(String claimPath, Map<String, String> roleMap, String rolePrefix) {
-        this.claimPath = claimPath; // nullable: absent => default deny
+        this.claimPath = claimPath;
         this.roleMap = Map.copyOf(Objects.requireNonNull(roleMap, "roleMap"));
         this.rolePrefix = Objects.requireNonNull(rolePrefix, "rolePrefix");
     }
@@ -70,22 +67,17 @@ final class ClaimsRoleMapper {
         Set<String> roles = new LinkedHashSet<>();
         for (String external : externals) {
             if (roleMap.isEmpty()) {
-                roles.add(rolePrefix + external); // pass-through
+                roles.add(rolePrefix + external);
             } else {
                 String mapped = roleMap.get(external);
                 if (mapped != null) {
-                    roles.add(mapped); // allowlist
+                    roles.add(mapped);
                 }
             }
         }
         return Set.copyOf(roles);
     }
 
-    /**
-     * Resolves {@code path} against a decoded JSON object. Tries the whole path as a single top-level key
-     * first (so a namespaced/URI claim name survives), then falls back to a dotted descent through nested
-     * objects. Returns {@code null} if any segment is missing or a non-object is encountered mid-path.
-     */
     static Object resolve(Map<String, Object> root, String path) {
         if (root.containsKey(path)) {
             return root.get(path);
@@ -103,11 +95,6 @@ final class ClaimsRoleMapper {
         return current;
     }
 
-    /**
-     * Coerces a claim value to a list of external role/group/scope strings: a JSON array yields its string
-     * elements (non-strings skipped); a single string is split on whitespace (covering space-delimited
-     * scopes); anything else yields an empty list.
-     */
     static List<String> coerce(Object leaf) {
         if (leaf instanceof List<?> list) {
             List<String> out = new ArrayList<>(list.size());

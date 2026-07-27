@@ -31,8 +31,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  *       {@link io.configd.raft.RaftLog} can replay it).</li>
  *   <li>Remove {@link Disabled} and ensure CI runs this test.</li>
  *   <li>If the replay path needs a migration, add it to
- *       {@code ops/scripts/migrate-<from>-to-<to>.sh} and reference it
- *       from {@code ops/runbooks/upgrade.md}.</li>
+ *       {@code ops/scripts/migrate-<from>-to-<to>.sh}.</li>
  * </ol>
  *
  * <p>NOT pretending this passes - the {@link Disabled} annotation is
@@ -40,7 +39,6 @@ import static org.junit.jupiter.api.Assertions.fail;
  */
 class WalWireCompatStubTest {
 
-    /** Path within the test classpath where v0 WAL fixtures are expected. */
     private static final String FIXTURE_RESOURCE = "wal-fixtures/v0/wal-000001.log";
 
     /** Working-tree fallback path (covers IDE runs from repo root). */

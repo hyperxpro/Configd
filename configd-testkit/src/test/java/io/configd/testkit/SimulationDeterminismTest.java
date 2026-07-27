@@ -81,8 +81,6 @@ class SimulationDeterminismTest {
 
         assertEquals(a1, a2, "RR-010: seed 2 must replay identically");
         assertEquals(b1, b2, "RR-010: seed 7 must replay identically");
-        // Guard against a degenerate all-constant digest: two different seeds
-        // must drive observably different schedules.
         org.junit.jupiter.api.Assertions.assertNotEquals(a1, b1,
                 "Distinct seeds must produce distinct schedules (digest is not vacuous)");
     }
@@ -109,7 +107,7 @@ class SimulationDeterminismTest {
         ByteArrayOutputStream scratch = new ByteArrayOutputStream(64);
         DataOutputStream dos = new DataOutputStream(scratch);
 
-        int isolateAt = TICKS / 3; // deterministic, structure-only fault point
+        int isolateAt = TICKS / 3;
         for (int t = 0; t < TICKS; t++) {
             cluster.tick();
 

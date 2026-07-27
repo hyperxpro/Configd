@@ -49,7 +49,6 @@ class EdgeFrameCodecV3GoldenFixtureTest {
                 assertArrayEquals(expected, live,
                         "edge 0x03 wire drift for " + name + ": expected " + hf.formatHex(expected)
                                 + " but got " + hf.formatHex(live) + ". Revert, or regenerate.");
-                // Golden bytes decode back to the canonical frame.
                 assertEquals(frame, EdgeFrameCodec.decode(expected),
                         "v3 golden bytes for " + name + " must decode to the canonical frame");
             }));
@@ -57,7 +56,6 @@ class EdgeFrameCodecV3GoldenFixtureTest {
         return tests;
     }
 
-    /** Every v3 golden entry is a structurally valid frame the decoder accepts, and peekLength agrees. */
     @Test
     void everyV3GoldenEntryDecodesCleanly() {
         Map<String, byte[]> golden = EdgeFrameGoldenBytes.forVersion(V3 & 0xFF);
@@ -80,7 +78,6 @@ class EdgeFrameCodecV3GoldenFixtureTest {
     void filteredFieldExistsOnlyUnderV3() {
         EdgeFrame.Subscribe filtered = (EdgeFrame.Subscribe)
                 EdgeFrameFixtures.buildV3().get("subscribe_prefixes_filtered.bin");
-        // Same wire fields as the v1 subscribe_prefixes fixture, differing only by the 0x03 opt-in.
         byte[] atV1 = EdgeFrameCodec.encode(filtered);        // 0x01: acceptsFiltered byte absent
         byte[] atV3 = EdgeFrameCodec.encode(filtered, V3);    // 0x03: acceptsFiltered byte present
         assertEquals(atV1.length + 1, atV3.length,
@@ -88,21 +85,19 @@ class EdgeFrameCodecV3GoldenFixtureTest {
         byte[] v1Golden = EdgeFrameGoldenBytes.forVersion(1).get("subscribe_prefixes.bin");
         assertArrayEquals(v1Golden, atV1,
                 "a filtered SUBSCRIBE encoded at 0x01 equals the frozen v1 subscribe_prefixes image");
-        // And the acceptsFiltered opt-in round-trips under 0x03.
         assertEquals(filtered, EdgeFrameCodec.decode(atV3));
         // While the same bytes decoded at 0x01 yield acceptsFiltered=false (the field is 0x03-only).
         EdgeFrame.Subscribe atV1Decoded = (EdgeFrame.Subscribe) EdgeFrameCodec.decode(atV1);
         org.junit.jupiter.api.Assertions.assertFalse(atV1Decoded.acceptsFiltered());
     }
 
-    /** A 0x03 frame on a 0x01/0x02-negotiated connection fails closed (and each reverse). */
+    /** A 0x03 frame on a 0x01-negotiated connection fails closed (and the reverse). */
     @Test
     void decodeVersionPinRejectsCrossVersionFrames() {
         byte[] v3Frame = EdgeFrameCodec.encode(
                 EdgeFrameFixtures.buildV3().get("subscribe_ok_filtered.bin"), V3);
         byte[] v1Frame = EdgeFrameCodec.encode(new EdgeFrame.CursorAck(9));
 
-        // Matching pin succeeds.
         assertEquals(new EdgeFrame.SubscribeOk(12345L, EdgeFrame.Mode.TAIL, true),
                 EdgeFrameCodec.decode(v3Frame, V3));
 
@@ -115,7 +110,6 @@ class EdgeFrameCodecV3GoldenFixtureTest {
         assertEquals(ErrorCode.BAD_WIRE_VERSION, b.code());
     }
 
-    /** A 0x03 SUBSCRIBE truncated before the acceptsFiltered byte is FRAME_CORRUPT. */
     @Test
     void truncatedV3SubscribeMissingOptInByteRejected() {
         byte[] wire = EdgeFrameCodec.encode(

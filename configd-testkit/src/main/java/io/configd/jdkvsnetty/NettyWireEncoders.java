@@ -17,17 +17,16 @@ import java.util.zip.CRC32C;
  * BEST-NETTY single-pass, into-{@link ByteBuf} encoders - the "Netty done properly" side of
  * the codec race. Each method writes the production wire bytes <b>directly into one pooled
  * {@code ByteBuf}</b> (the framework/caller obtains it from {@code PooledByteBufAllocator}),
- * exactly as a Netty {@code MessageToByteEncoder} with {@code preferDirect=true} would (see
- * {@code docs/jdk-vs-netty/netty42-api.md} section 5.2). The CRC32C trailer is computed over a
- * zero-copy {@code nioBuffer} view of the written region - no intermediate {@code byte[]} for
- * the framing.
+ * exactly as a Netty {@code MessageToByteEncoder} with {@code preferDirect=true} would. The
+ * CRC32C trailer is computed over a zero-copy {@code nioBuffer} view of the written region - no
+ * intermediate {@code byte[]} for the framing.
  *
  * <p><b>Byte-identity is the contract.</b> {@code NettyWireH2HCorrectnessTest} proves these
  * reproduce the exact bytes of the production {@code FrameCodec}/{@code EdgeFrameCodec} (and
  * therefore of the best-JDK {@link H2HCodecs}). The Netty {@code ByteBuf} default byte order is
  * BIG_ENDIAN, matching the JDK {@code ByteBuffer} default the production codecs use.
  *
- * <p><b>What these encoders, like the JDK ones, do NOT remove:</b> the message-building term - 
+ * <p><b>What these encoders, like the JDK ones, do NOT remove:</b> the message-building term -
  * {@link CommandCodec#encodeBatch} blobs and {@link ConfigDelta#signature()} /
  * {@link ConfigDelta#nonce()} defensive clones. Those are heap allocations <em>upstream of the
  * wire</em>; a pooled {@code ByteBuf} (off-heap, direct) does not touch them. This is the crux
@@ -50,9 +49,6 @@ final class NettyWireEncoders {
      */
     private static final ThreadLocal<CRC32C> CRC = ThreadLocal.withInitial(CRC32C::new);
 
-    // ---------------------------------------------------------------------
-    // Consensus (surface 4): [4B BE senderId] || FrameCodec frame
-    // ---------------------------------------------------------------------
 
     /**
      * BEST-NETTY consensus send into a pooled {@code ByteBuf}: 4-byte big-endian sender id +
@@ -77,9 +73,6 @@ final class NettyWireEncoders {
         out.writeInt((int) crc.getValue());
     }
 
-    // ---------------------------------------------------------------------
-    // Fan-out (surface 3): NOTIFY frame, single pass into one pooled ByteBuf
-    // ---------------------------------------------------------------------
 
     /**
      * BEST-NETTY NOTIFY encode into a pooled {@code ByteBuf} - single pass, no intermediate
@@ -100,7 +93,6 @@ final class NettyWireEncoders {
             byte[] batch = CommandCodec.encodeBatch(d.mutations());
             byte[] sig = d.signature(); // defensive clone (null if unsigned)
             byte[] nonce = d.nonce();   // defensive clone (never null)
-            // framing written straight into the pooled buffer, no intermediates:
             out.writeLong(n.seq());
             out.writeLong(n.commitTimestampMillis());
             out.writeLong(d.fromVersion());

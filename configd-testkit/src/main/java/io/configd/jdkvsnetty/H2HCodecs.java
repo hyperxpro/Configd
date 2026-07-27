@@ -39,17 +39,12 @@ final class H2HCodecs {
     private H2HCodecs() {
     }
 
-    // ---------------------------------------------------------------------
-    // Consensus (surface 4): [4B big-endian senderId] || FrameCodec frame
-    // ---------------------------------------------------------------------
 
-    /**
-     * BEST-JDK consensus send into a reused buffer: the 4-byte big-endian sender id followed
-     * by the codec frame, via the existing {@link FrameCodec#encode(ByteBuffer, MessageType,
-     * int, long, byte[])} into-variant. Byte-identical to {@code TcpRaftTransport.encodeWire}.
-     *
-     * @return the total number of bytes written (4 + frame size)
-     */
+        /**
+         * BEST-JDK consensus send into a reused buffer: the 4-byte big-endian sender id followed
+         * by the codec frame, via the existing {@link FrameCodec#encode(ByteBuffer, MessageType,
+         * int, long, byte[])} into-variant. Byte-identical to {@code TcpRaftTransport.encodeWire}.
+         */
     static int encodeSendWireInto(ByteBuffer out, int senderId, MessageType type,
                                   int groupId, long term, byte[] payload) {
         out.clear();
@@ -58,9 +53,6 @@ final class H2HCodecs {
         return out.position();
     }
 
-    // ---------------------------------------------------------------------
-    // Fan-out (surface 3): NOTIFY frame, single pass into one buffer
-    // ---------------------------------------------------------------------
 
     /**
      * BEST-JDK NOTIFY encode into a reused heap buffer - single pass, no intermediate
@@ -74,7 +66,7 @@ final class H2HCodecs {
      */
     static int encodeNotifyInto(ByteBuffer out, EdgeFrame.Notify frame) {
         out.clear();
-        final int base = out.arrayOffset(); // 0 for allocate()
+        final int base = out.arrayOffset();
         out.putInt(0); // total-length placeholder, back-patched below
         out.put(EdgeFrameCodec.EDGE_WIRE_VERSION);
         out.put((byte) FrameType.NOTIFY.code());
@@ -83,11 +75,9 @@ final class H2HCodecs {
         out.putInt(ns.size());
         for (CommitNotification n : ns) {
             ConfigDelta d = n.delta();
-            // message-building term (codec-internal; not removed by buffer reuse):
             byte[] batch = CommandCodec.encodeBatch(d.mutations());
             byte[] sig = d.signature(); // defensive clone (null if unsigned)
             byte[] nonce = d.nonce();   // defensive clone (never null)
-            // framing written straight into the reused buffer, no intermediates:
             out.putLong(n.seq());
             out.putLong(n.commitTimestampMillis());
             out.putLong(d.fromVersion());
@@ -114,7 +104,6 @@ final class H2HCodecs {
         return totalLen;
     }
 
-    /** Copies the written prefix [0, length) of a heap buffer into a fresh exact-size array. */
     static byte[] toBytes(ByteBuffer buf, int length) {
         byte[] b = new byte[length];
         System.arraycopy(buf.array(), buf.arrayOffset(), b, 0, length);

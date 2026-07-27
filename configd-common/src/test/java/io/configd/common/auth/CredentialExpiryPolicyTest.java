@@ -14,7 +14,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** The pure lead-time-window + clock-skew model: window clamp, close deadline, fail-closed config. */
 class CredentialExpiryPolicyTest {
 
     private static ConfigSource cfg(Map<String, String> m) {

@@ -44,7 +44,6 @@ class EdgeLeaderKillScenarioTest {
         // invariant also enforces it by throwing).
         Map<Integer, Long> maxVersion = new HashMap<>();
 
-        // Phase 1: run until a leader is elected and edges have applied some versions.
         int t = 0;
         int establishedTick = -1;
         for (; t < TICKS; t++) {
@@ -64,10 +63,8 @@ class EdgeLeaderKillScenarioTest {
         int oldLeader = sim.cpSim().findLeader();
         assertTrue(oldLeader >= 0, "leader present at kill time");
 
-        // Phase 2: KILL the leader - isolate it from every peer on the CP network.
         killLeader(sim, oldLeader);
 
-        // Phase 3: keep ticking through re-election; versions must never decrease.
         int newLeader = -1;
         for (; t < TICKS; t++) {
             sim.tick();
@@ -86,8 +83,7 @@ class EdgeLeaderKillScenarioTest {
                         || sim.cpSim().findLeader() != oldLeader,
                 "the killed leader must no longer be the cluster's serving leader");
 
-        // Phase 4: heal everything and drain - the edges must converge to the authoritative
-        // store. finalCheck throws on divergence (here it must NOT throw).
+        // finalCheck throws on divergence (here it must NOT throw).
         sim.finalCheck();
 
         // The no-decrease invariant held continuously (else tick() would have thrown); the

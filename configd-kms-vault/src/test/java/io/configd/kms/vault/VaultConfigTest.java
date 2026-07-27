@@ -11,7 +11,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-/** Tests {@link VaultConfig} parsing: required keys, defaults, auth methods, and fail-loud validation. */
 class VaultConfigTest {
 
     private static final KmsBootContext CTX = new KmsBootContext("node-7");

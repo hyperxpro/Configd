@@ -40,14 +40,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @Timeout(60)
 abstract class AbstractEdgeReadServerContract {
 
-    /** A started server: its bound port and a stop hook. */
     interface ServerHandle {
         int port();
 
         void stop();
     }
 
-    /** Starts the transport under test on {@code port} (0 = ephemeral). */
     abstract ServerHandle start(int port, EdgeClientCore core, StrongReadKeyClass strongReadKeyClass,
                                 PrometheusExporter exporter, EdgeNodeMetrics metrics) throws Exception;
 
@@ -91,7 +89,6 @@ abstract class AbstractEdgeReadServerContract {
         }
     }
 
-    /** Applies one Put notification at {@code seq} through the real core. */
     private void apply(long seq, String key, String value) {
         ConfigDelta delta = new ConfigDelta(seq - 1, seq,
                 List.of(new ConfigMutation.Put(key, value.getBytes(StandardCharsets.UTF_8))));
@@ -108,7 +105,6 @@ abstract class AbstractEdgeReadServerContract {
         return http.send(b.build(), HttpResponse.BodyHandlers.ofString());
     }
 
-    // Serving + cursor echo
 
     @Test
     void servedReadCarriesVersionAndCursor() throws Exception {
@@ -150,7 +146,6 @@ abstract class AbstractEdgeReadServerContract {
                 "a served read must record a configd_edge_read_seconds sample:\n" + scrape);
     }
 
-    // /metrics scrape-token auth (the staleness/version reconnaissance leak)
 
     @Test
     void metricsScrapeTokenGatesUnauthenticatedScrape() throws Exception {
@@ -169,13 +164,11 @@ abstract class AbstractEdgeReadServerContract {
             assertTrue(noTok.headers().firstValue("WWW-Authenticate").isPresent(),
                     "a 401 must advertise Bearer auth");
 
-            // Wrong token → 401.
             HttpResponse<String> wrong = http.send(HttpRequest.newBuilder()
                     .uri(URI.create(g + "/metrics")).header("Authorization", "Bearer nope").GET().build(),
                     HttpResponse.BodyHandlers.ofString());
             assertEquals(401, wrong.statusCode(), "a wrong scrape token is refused");
 
-            // Correct token → 200 + the exposition.
             HttpResponse<String> ok = http.send(HttpRequest.newBuilder()
                     .uri(URI.create(g + "/metrics")).header("Authorization", "Bearer scrape-secret").GET().build(),
                     HttpResponse.BodyHandlers.ofString());
@@ -188,7 +181,6 @@ abstract class AbstractEdgeReadServerContract {
 
     @Test
     void metricsOpenWhenNoScrapeTokenConfigured() throws Exception {
-        // Backward compat: the @BeforeEach server was built with no token → /metrics stays open (200).
         assertEquals(200, get("/metrics").statusCode(),
                 "with no scrape token configured, /metrics stays open (legacy / infra segmentation)");
     }
@@ -208,7 +200,6 @@ abstract class AbstractEdgeReadServerContract {
         assertEquals("v1", resp.body());
     }
 
-    // Consistent refusal
 
     @Test
     void cursorBehindIsRefusedNeverServedStale() throws Exception {
@@ -244,7 +235,6 @@ abstract class AbstractEdgeReadServerContract {
         assertEquals(400, get("/v1/config/svc/a", EdgeHttpServer.HDR_CURSOR, "-3").statusCode());
     }
 
-    // Stale header / readiness gating
 
     @Test
     void staleHeaderSetOnAllReadsWhenStalePlus() throws Exception {
@@ -275,7 +265,6 @@ abstract class AbstractEdgeReadServerContract {
         assertEquals(200, get("/health/live").statusCode(), "liveness is unconditional");
     }
 
-    // Strong reads: stored but never served
 
     @Test
     void strongReadKeyFailsClosedEvenThoughStored() throws Exception {
@@ -294,7 +283,6 @@ abstract class AbstractEdgeReadServerContract {
                 EdgeHttpServer.HDR_CURSOR, "1").statusCode());
     }
 
-    // Surface hygiene
 
     @Test
     void nonGetIs405AndMissingKeyPathIs400() throws Exception {

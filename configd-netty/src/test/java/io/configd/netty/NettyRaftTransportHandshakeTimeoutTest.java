@@ -62,7 +62,6 @@ class NettyRaftTransportHandshakeTimeoutTest {
                 try {
                     Files.deleteIfExists(p);
                 } catch (IOException ignored) {
-                    // best-effort temp cleanup
                 }
             });
         }

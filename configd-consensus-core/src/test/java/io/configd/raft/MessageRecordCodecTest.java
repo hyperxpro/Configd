@@ -23,7 +23,6 @@ class MessageRecordCodecTest {
     private static final NodeId L1 = NodeId.of(1);
     private static final NodeId L2 = NodeId.of(2);
 
-    // InstallSnapshotRequest
 
     @Nested
     class InstallSnapshot {
@@ -39,7 +38,7 @@ class MessageRecordCodecTest {
                     new byte[]{1, 2, 3}, true, new byte[]{9});
             assertEquals(a, b);
             assertEquals(a.hashCode(), b.hashCode());
-            assertEquals(a, a); // reflexive
+            assertEquals(a, a);
             assertNotEquals(a, "not a request");
             assertNotEquals(a, null);
         }
@@ -96,7 +95,6 @@ class MessageRecordCodecTest {
         }
     }
 
-    // SnapshotState
 
     @Nested
     class Snapshot {
@@ -148,7 +146,6 @@ class MessageRecordCodecTest {
         }
     }
 
-    // LogEntry
 
     @Nested
     class Entry {
@@ -157,9 +154,6 @@ class MessageRecordCodecTest {
         void equalsAndHashCodeUseByteAwareComparison() {
             LogEntry a = new LogEntry(4, 2, new byte[]{1, 2});
             LogEntry b = new LogEntry(4, 2, new byte[]{1, 2});
-            // A default record equals would compare the command arrays by identity
-            // (different instances) and report NOT equal. The hand-written equals must
-            // report EQUAL.
             assertEquals(a, b);
             assertEquals(a.hashCode(), b.hashCode());
             assertNotEquals(a, "x");

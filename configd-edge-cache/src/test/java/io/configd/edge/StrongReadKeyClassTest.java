@@ -7,12 +7,6 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link StrongReadKeyClass} - the shared strong-read key-class predicate.
- * Pins the default prefix, the matching predicate (incl. the null-key and non-matching
- * branches), constructor validation (null/blank prefix rejection), and that the default
- * constant is the {@code secure/} single-prefix class.
- */
 class StrongReadKeyClassTest {
 
     @Test

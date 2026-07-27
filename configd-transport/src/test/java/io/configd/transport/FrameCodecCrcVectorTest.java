@@ -61,11 +61,9 @@ class FrameCodecCrcVectorTest {
 
     @Test
     void liveEncoderReproducesHeartbeatFixtureByteForByte() {
-        // The frame the fixture file represents.
         byte[] live = FrameCodec.encode(MessageType.HEARTBEAT,
                 0x01020304, 0x0A0B0C0D0E0F1011L, new byte[0]);
 
-        // Reconstruct the expected bytes: pre-trailer || CRC.
         byte[] expected = new byte[HEARTBEAT_PRE_TRAILER.length + FrameCodec.TRAILER_SIZE];
         System.arraycopy(HEARTBEAT_PRE_TRAILER, 0, expected, 0,
                 HEARTBEAT_PRE_TRAILER.length);

@@ -36,7 +36,6 @@ class ChunkedInstallSnapshotTest {
     private static final NodeId N1 = NodeId.of(1);
     private static final NodeId N2 = NodeId.of(2);
 
-    /** A deterministic snapshot blob whose every byte is a function of its index. */
     private static byte[] blob(int size) {
         byte[] b = new byte[size];
         for (int i = 0; i < size; i++) {
@@ -45,7 +44,6 @@ class ChunkedInstallSnapshotTest {
         return b;
     }
 
-    /** Builds a fresh follower node (empty log, term 0) wired to a capture transport. */
     private static RaftNode newFollower(InstallSnapshotTest.TestTransport transport,
                                         InstallSnapshotTest.TestStateMachine sm) {
         RaftConfig config = RaftConfig.of(N2, Set.of(N1));
@@ -122,11 +120,9 @@ class ChunkedInstallSnapshotTest {
             byte[] full = blob(12);
 
             follower.handleMessage(chunk(10, 1, 0, full, 4, false, null));
-            // Gap: offset 8 skips [4,8). Must NOT be appended, even though it is not the final chunk.
             follower.handleMessage(chunk(10, 1, 8, full, 12, true, null));
             assertNull(sm.restoredFrom, "a gap chunk must never be spliced into the buffer");
 
-            // The missing chunk arrives in order, then the final chunk completes the transfer.
             follower.handleMessage(chunk(10, 1, 4, full, 8, false, null));
             follower.handleMessage(chunk(10, 1, 8, full, 12, true, null));
             assertArrayEquals(full, sm.restoredFrom);
@@ -198,11 +194,11 @@ class ChunkedInstallSnapshotTest {
 
             byte[] full = blob(12);
 
-            follower.handleMessage(chunk(10, 1, 0, full, 4, false, null));   // -> accumulated 4
-            follower.handleMessage(chunk(10, 1, 4, full, 8, false, null));   // -> accumulated 8
-            follower.handleMessage(chunk(10, 1, 10, full, 12, false, null)); // gap (10 > 8), no append
-            follower.handleMessage(chunk(10, 1, 8, full, 10, false, null));  // -> accumulated 10
-            follower.handleMessage(chunk(10, 1, 10, full, 12, true, null));  // done -> install
+            follower.handleMessage(chunk(10, 1, 0, full, 4, false, null));
+            follower.handleMessage(chunk(10, 1, 4, full, 8, false, null));
+            follower.handleMessage(chunk(10, 1, 10, full, 12, false, null));
+            follower.handleMessage(chunk(10, 1, 8, full, 10, false, null));
+            follower.handleMessage(chunk(10, 1, 10, full, 12, true, null));
 
             List<InstallSnapshotResponse> r = transport.messagesOfType(InstallSnapshotResponse.class);
             assertEquals(5, r.size());
@@ -221,11 +217,11 @@ class ChunkedInstallSnapshotTest {
             var transport = new InstallSnapshotTest.TestTransport();
             var sm = new InstallSnapshotTest.TestStateMachine();
             RaftNode follower = newFollower(transport, sm);
-            follower.setMaxReassembledSnapshotBytesForTest(6); // tiny heap cap
+            follower.setMaxReassembledSnapshotBytesForTest(6);
 
             byte[] full = blob(10);
 
-            follower.handleMessage(chunk(10, 1, 0, full, 4, false, null)); // accumulated 4 (<= cap)
+            follower.handleMessage(chunk(10, 1, 0, full, 4, false, null));
             // Next in-order chunk would push accumulated to 8 > cap 6: refused, partial dropped, no install.
             follower.handleMessage(chunk(10, 1, 4, full, 8, false, null));
 
@@ -248,7 +244,6 @@ class ChunkedInstallSnapshotTest {
         }
     }
 
-    // Sender-side chunk emission and ack-driven advancement.
 
     @Nested
     class SenderChunkingTests {
@@ -343,7 +338,6 @@ class ChunkedInstallSnapshotTest {
             assertEquals(matchBefore, leader.matchIndexForTest(lagging),
                     "an intermediate-chunk ack must not advance matchIndex");
 
-            // Final (install) ack: the follower reports the installed index. matchIndex advances.
             leader.handleMessage(new InstallSnapshotResponse(leaderTerm, true, lagging, snapIndex));
             assertTrue(leader.matchIndexForTest(lagging) >= snapIndex,
                     "the final install ack advances matchIndex to the snapshot index");
@@ -376,7 +370,6 @@ class ChunkedInstallSnapshotTest {
                         "sender must re-send the follower's reported offset, not count acks forward");
             }
 
-            // When the follower finally reports forward progress (offset 4), the sender advances.
             leaderTransport.clear();
             leader.handleMessage(new InstallSnapshotResponse(term, true, lagging, 1L, 4));
             List<InstallSnapshotRequest> advanced = leaderTransport.messagesTo(lagging, InstallSnapshotRequest.class);
@@ -431,7 +424,7 @@ class ChunkedInstallSnapshotTest {
             }
             long term = leader.currentTerm();
             long leaderLast = leader.log().lastIndex();
-            leader.handleMessage(new InstallSnapshotResponse(term, true, lagging, 1L, 2)); // progress to offset 2
+            leader.handleMessage(new InstallSnapshotResponse(term, true, lagging, 1L, 2));
             leaderTransport.clear();
 
             // The follower now goes fully silent (no acks at all - e.g. crashed). Nothing resets the
@@ -471,7 +464,7 @@ class ChunkedInstallSnapshotTest {
             }
             long term = leader.currentTerm();
             long leaderLast = leader.log().lastIndex();
-            leader.handleMessage(new InstallSnapshotResponse(term, true, lagging, 1L, 2)); // advance to offset 2
+            leader.handleMessage(new InstallSnapshotResponse(term, true, lagging, 1L, 2));
 
             // The follower is SLOW but ALIVE: it acks the SAME offset (2) every heartbeat - e.g. its
             // chunk round-trip exceeds the heartbeat interval, or it is stuck at a gap it keeps
@@ -481,8 +474,8 @@ class ChunkedInstallSnapshotTest {
             // reset and livelock the transfer.)
             boolean sawRestartFromZero = false;
             for (int hb = 0; hb <= RaftNode.SNAPSHOT_TRANSFER_STALL_HEARTBEATS + 3; hb++) {
-                leader.handleMessage(new AppendEntriesResponse(term, true, leaderLast, n2)); // keep leader alive
-                leader.handleMessage(new InstallSnapshotResponse(term, true, lagging, 1L, 2)); // slow ack, same pos
+                leader.handleMessage(new AppendEntriesResponse(term, true, leaderLast, n2));
+                leader.handleMessage(new InstallSnapshotResponse(term, true, lagging, 1L, 2));
                 leaderTransport.clear();
                 for (int t = 0; t < 60; t++) {
                     leader.tick();
@@ -529,7 +522,6 @@ class ChunkedInstallSnapshotTest {
         return snapIndex;
     }
 
-    // Full leader->follower loop through the cluster harness.
 
     @Nested
     class EndToEndTests {
@@ -540,7 +532,7 @@ class ChunkedInstallSnapshotTest {
             cluster.electLeader(N1);
             RaftNode leader = cluster.nodes.get(N1);
             NodeId lagging = NodeId.of(3);
-            leader.setSnapshotChunkBytesForTest(2); // multi-chunk over the small test snapshot
+            leader.setSnapshotChunkBytesForTest(2);
 
             for (int i = 0; i < 5; i++) {
                 leader.propose(new byte[]{(byte) i});
@@ -580,7 +572,7 @@ class ChunkedInstallSnapshotTest {
         @Test
         void multiChunkTransferSurvivesMiddleChunkLoss() {
             InstallSnapshotTest.TestCluster cluster = new InstallSnapshotTest.TestCluster(3);
-            setUpLaggingSnapshot(cluster, 2); // multi-chunk over the small test snapshot
+            setUpLaggingSnapshot(cluster, 2);
             RaftNode leader = cluster.nodes.get(N1);
             NodeId n3 = NodeId.of(3);
             InstallSnapshotTest.TestStateMachine sm3 = cluster.stateMachines.get(n3);
@@ -677,7 +669,6 @@ class ChunkedInstallSnapshotTest {
                     .messagesTo(lagging, InstallSnapshotRequest.class);
             assertFalse(reqs.isEmpty());
             InstallSnapshotRequest req = reqs.getFirst();
-            // Matches the unchunked single-blob wire: offset 0, done true, full data, config.
             assertEquals(0, req.offset());
             assertTrue(req.done());
             assertTrue(req.data().length > 0);

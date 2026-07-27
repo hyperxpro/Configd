@@ -68,7 +68,6 @@ class RehomingHandoffTest {
         @Override public void restoreSnapshot(byte[] snapshot) { }
     }
 
-    /** Counts raft_owner_thread fires AND throws on any violation (sim/macro discipline). */
     private static final class CountingThrowingChecker implements RaftNode.InvariantChecker {
         final AtomicInteger ownerFires = new AtomicInteger();
         final AtomicReference<String> firstViolation = new AtomicReference<>();
@@ -83,7 +82,6 @@ class RehomingHandoffTest {
         }
     }
 
-    /** Builds a storage-backed single-node leader, bound + self-elected on its floorMod owner. */
     private static RaftNode buildLeaderBoundTo(OwnerExecutorPool pool, int gid,
                                                RaftNode.InvariantChecker checker) throws Exception {
         Storage storage = Storage.inMemory();
@@ -97,7 +95,6 @@ class RehomingHandoffTest {
         return node;
     }
 
-    /** Proposes + ticks {@code rounds} times on the group's CURRENT owner (commit advances). */
     private static void driveCommits(OwnerExecutorPool pool, MultiRaftDriver driver, int gid, int rounds)
             throws Exception {
         final int owner = driver.currentOwnerIndex(gid);
@@ -112,7 +109,7 @@ class RehomingHandoffTest {
     @Test
     @Timeout(30)
     void cleanRehome_preservesState_keepsCommitting_zeroFires() throws Exception {
-        OwnerExecutorPool pool = new OwnerExecutorPool(2); // group 0 -> owner0 by floorMod
+        OwnerExecutorPool pool = new OwnerExecutorPool(2);
         CountingThrowingChecker checker = new CountingThrowingChecker();
         MultiRaftDriver driver = new MultiRaftDriver(LOCAL, Clock.system());
         driver.setOwnerPool(pool);
@@ -120,12 +117,10 @@ class RehomingHandoffTest {
         driver.addGroup(0, g);
         assertEquals(0, driver.currentOwnerIndex(0), "group 0 starts on owner0 (floorMod)");
 
-        // Commit on the ORIGINAL owner (owner0), then record the baseline.
         driveCommits(pool, driver, 0, 20);
         long baseline = g.monitorView().commitIndex();
         assertTrue(baseline > 0, "precondition: committed on the original owner");
 
-        // REHOME 0: owner0 -> owner1.
         driver.rehomeGroup(0, 1);
         assertEquals(1, driver.currentOwnerIndex(0), "after rehome, group 0 is owned by owner1");
         assertEquals(RaftRole.LEADER, g.role(), "rehome must preserve group state (still LEADER, no torn state)");
@@ -140,7 +135,6 @@ class RehomingHandoffTest {
         // Stale routing: a message dispatched to the OLD owner (owner0) must BOUNCE to owner1, not fire.
         pool.ownerByIndex(0).submit(() ->
                 driver.routeMessage(0, new RequestVoteRequest(0L, PHANTOM, 0L, 0L, true))).get(5, TimeUnit.SECONDS);
-        // Drain owner1 so any bounced task completed.
         pool.ownerByIndex(1).submit(() -> { }).get(5, TimeUnit.SECONDS);
 
         assertEquals(0, checker.ownerFires.get(),
@@ -160,7 +154,6 @@ class RehomingHandoffTest {
         RaftNode g = buildLeaderBoundTo(pool, 0, checker);
         driver.addGroup(0, g);
 
-        // Partial handoff: detach on the losing owner (owner0). ownerThread -> HANDOFF.
         pool.ownerByIndex(0).submit(g::beginHandoff).get(5, TimeUnit.SECONDS);
 
         // INJECTED RACE (i): touch the group on the LOSING owner AFTER handoff - must trip.
@@ -184,7 +177,6 @@ class RehomingHandoffTest {
         RaftNode g = buildLeaderBoundTo(pool, 0, checker);
         driver.addGroup(0, g);
 
-        // Detach on the losing owner; do NOT adopt yet.
         pool.ownerByIndex(0).submit(g::beginHandoff).get(5, TimeUnit.SECONDS);
 
         // INJECTED RACE (ii): touch the group on the GAINING owner (owner1) BEFORE adopt - must trip.
@@ -208,7 +200,7 @@ class RehomingHandoffTest {
         RaftNode g = buildLeaderBoundTo(pool, 0, checker);
         driver.addGroup(0, g);
 
-        driver.rehomeGroup(0, 1); // owner0 -> owner1, fully (detach + adopt)
+        driver.rehomeGroup(0, 1);
 
         // NO DOUBLE-OWNERSHIP: the OLD owner (owner0) accessing the group must trip - it no longer owns it.
         ExecutionException ee = assertThrows(ExecutionException.class,
@@ -234,7 +226,7 @@ class RehomingHandoffTest {
         CountingThrowingChecker checker = new CountingThrowingChecker();
         MultiRaftDriver driver = new MultiRaftDriver(LOCAL, Clock.system());
         driver.setOwnerPool(pool);
-        RaftNode g = buildLeaderBoundTo(pool, 0, checker); // bound to owner0, NOT mid-handoff
+        RaftNode g = buildLeaderBoundTo(pool, 0, checker);
         driver.addGroup(0, g);
 
         // Adopting a node that is not mid-handoff (ownerThread != HANDOFF) must trip raft_owner_adopt.
@@ -256,8 +248,8 @@ class RehomingHandoffTest {
         OwnerExecutorPool pool = new OwnerExecutorPool(2);
         CountingThrowingChecker checker = new CountingThrowingChecker();
         MultiRaftDriver driver = new MultiRaftDriver(LOCAL, Clock.system());
-        driver.setOwnerPool(pool);                        // pool SET - the production wiring
-        RaftNode g = buildLeaderBoundTo(pool, 0, checker); // bound to owner0, NEVER rehomed
+        driver.setOwnerPool(pool);
+        RaftNode g = buildLeaderBoundTo(pool, 0, checker);
         driver.addGroup(0, g);
 
         // A MISSED marshalling hop - routeMessage called directly on a foreign (non-owner) thread,

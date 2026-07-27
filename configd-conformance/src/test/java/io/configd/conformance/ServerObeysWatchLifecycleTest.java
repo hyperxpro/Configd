@@ -64,12 +64,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * SERVER-OBEYS, the watch-authorization contract (§02 W7): drives the reference {@link Watch} against a live
- * {@link FanOutServer} whose {@link WatchAuthorizer} SPI is scripted, and asserts the veneer obeys the gate --
- * authorize-at-subscription BEFORE any data frame (W5-4 / W7-1), reject an over-broad target rather than
- * silently narrowing it (W7-2), a {@code full_chain_verify} target without root scope is rejected with ZERO
- * {@code NOTIFY} leaked (W7-3, the mandatory negative test), the {@code NOT_AUTHORIZED} 403-class per-watch
- * terminal (W7-5/W7-5a), and bounded revocation on an ACL policy-version advance (W7-7). The
- * authn-then-authz-then-stream order (W8-2) is exercised by the authenticated positive path.
+ * {@link FanOutServer} whose {@link WatchAuthorizer} SPI is scripted, and asserts the veneer obeys the gate.
  */
 @Timeout(60)
 class ServerObeysWatchLifecycleTest {
@@ -94,7 +89,6 @@ class ServerObeysWatchLifecycleTest {
     @Tag("clause:W7-1..W7-4")
     @Tag("clause:W8-2")
     void authorizedNarrowWatchIsAdmittedThenStreams() throws Exception {
-        // The gate authorizes a KEY /allowed watch (READ and WATCH over the whole, narrow target).
         int port = startServer(new ScriptedAuthorizer(t -> "/allowed".equals(t.path())));
         try (ConfigdEdgeClient client = ConfigdEdgeClient.open(bearerConfig(port))) {
             Watch watch = client.watch(WatchTarget.key("/allowed"), WatchOptions.defaults());
@@ -112,7 +106,6 @@ class ServerObeysWatchLifecycleTest {
     @Tag("clause:W7-1..W7-4")
     @Tag("clause:W7-5_W7-5a")
     void overBroadTargetIsRejectedNotSilentlyNarrowedWithZeroDataFrames() throws Exception {
-        // The gate authorizes only the exact key /data/pub; a FULL watch extends far beyond that grant.
         int port = startServer(new ScriptedAuthorizer(
                 t -> t.targetKind() == EdgeFrame.WATCH_TARGET_KEY && "/data/pub".equals(t.path())));
         try (ConfigdEdgeClient client = ConfigdEdgeClient.open(bearerConfig(port))) {
@@ -132,16 +125,14 @@ class ServerObeysWatchLifecycleTest {
     @Tag("clause:W7-1..W7-4")
     @Tag("clause:W7-5_W7-5a")
     void fullChainVerifyWithoutRootScopeIsRejectedWithNoChainLeaked() throws Exception {
-        // The gate denies any full_chain_verify target lacking a root grant (a non-root fcv watch).
         int port = startServer(new ScriptedAuthorizer(t -> !t.fullChainVerify()));
         try (ConfigdEdgeClient client = ConfigdEdgeClient.open(fullChainVerifyConfig(port))) {
             Watch watch = client.watch(WatchTarget.key("/k").with(WatchTarget.Flag.FULL_CHAIN_VERIFY),
                     WatchOptions.defaults());
             List<WatchEvent> events = subscribe(watch);
             assertThrows(ForbiddenException.class, () -> watch.awaitCreated(Duration.ofSeconds(20)));
-            // Publish under the requested target; the fcv carrier is the connection-level NOTIFY firehose. Because
-            // the reject precedes any data frame, ZERO events are delivered, so ZERO NOTIFY leaks to a non-root
-            // principal (W7-3 + the W7-5 mandatory "assert zero NOTIFY" negative case).
+            // The fcv carrier is the connection-level NOTIFY firehose — since the reject precedes any data frame,
+            // zero events means zero NOTIFY leaked to a non-root principal (W7-3, the mandatory negative test).
             publish(1, "/k", "v");
             assertNoEvents(events, "the verbatim signed chain MUST NOT stream to a principal lacking root scope");
         }
@@ -150,7 +141,6 @@ class ServerObeysWatchLifecycleTest {
     @Test
     @Tag("clause:W7-7")
     void liveWatchIsForceClosedWithinBoundedLatencyOnPolicyVersionAdvance() throws Exception {
-        // Initially authorized; the authorizer is then flipped to deny and its monotonic policy version advanced.
         ScriptedAuthorizer authorizer = new ScriptedAuthorizer(t -> "/allowed".equals(t.path()));
         int port = startServer(authorizer);
         try (ConfigdEdgeClient client = ConfigdEdgeClient.open(bearerConfig(port))) {
@@ -165,8 +155,8 @@ class ServerObeysWatchLifecycleTest {
             authorizer.version.incrementAndGet();
             publish(2, "/allowed", "v2"); // drive a session-loop iteration so the reauthorization tick runs
 
-            // The server re-authorizes every live watch on the version advance and force-closes the now-revoked
-            // one with NOT_AUTHORIZED within a bounded latency (W7-7).
+            // Re-authorization runs on EVERY live watch when the policy version advances, not just new
+            // subscriptions — this already-streaming watch is force-closed within a bounded latency (W7-7).
             ExecutionException ee = assertThrows(ExecutionException.class,
                     () -> watch.terminalFuture().get(20, TimeUnit.SECONDS));
             assertInstanceOf(ForbiddenException.class, ee.getCause(),

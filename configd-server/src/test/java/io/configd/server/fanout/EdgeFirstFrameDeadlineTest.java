@@ -120,7 +120,6 @@ class EdgeFirstFrameDeadlineTest {
 
     private void stalledPeerIsReaped(boolean netty) throws Exception {
         int port = startPlaintext(netty);
-        // Admission (plaintext) then send NOTHING - the slow-loris.
         client = new Socket();
         client.connect(new InetSocketAddress("127.0.0.1", port), 2_000);
         awaitReap();
@@ -135,7 +134,6 @@ class EdgeFirstFrameDeadlineTest {
         OutputStream out = client.getOutputStream();
         out.write(EdgeFrameCodec.encode(new EdgeFrame.Subscribe(true, List.of(), 0L, -1L, "edge-x")));
         out.flush();
-        // Wait well past the deadline: an established, idle subscriber must NOT be reaped.
         Thread.sleep(3L * DEADLINE_MS);
         assertEquals(0, firstFrameTimeouts(),
                 "an established subscriber that idles must not be first-frame-reaped");

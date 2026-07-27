@@ -49,7 +49,6 @@ class NodeAnchorBootTest {
         return na;
     }
 
-    // ------------------------------------------------------------------ topology + digest
 
     @Test
     void firstBootMintsTheNodeAnchor(@TempDir Path dir) {

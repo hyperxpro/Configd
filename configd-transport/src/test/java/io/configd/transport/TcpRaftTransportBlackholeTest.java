@@ -46,7 +46,6 @@ class TcpRaftTransportBlackholeTest {
     private static final String BLACKHOLE_HOST = "10.255.255.1";
     private static final int BLACKHOLE_PORT = 9999;
 
-    /** How long the production tick thread may be released within (the contract). */
     private static final long CALLER_RELEASE_BUDGET_MS = 2_000;
 
     /**
@@ -171,7 +170,6 @@ class TcpRaftTransportBlackholeTest {
         return transport;
     }
 
-    /** Renders the connect/handshake frames of a thread's current stack as evidence. */
     private static String stackSnippet(Thread t) {
         StringBuilder sb = new StringBuilder();
         sb.append("  state=").append(t.getState()).append('\n');

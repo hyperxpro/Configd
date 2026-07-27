@@ -125,7 +125,6 @@ final class AnchorFile implements Closeable {
         io.close();
     }
 
-    // --- internals ---
 
     /**
      * The core dual-slot write: bump the seq, encode into the STALE slot, {@code writeAt} + sync,

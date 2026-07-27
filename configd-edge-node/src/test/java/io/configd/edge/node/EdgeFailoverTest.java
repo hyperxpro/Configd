@@ -74,7 +74,6 @@ class EdgeFailoverTest {
     @Test
     void killSubscribedEndpointMidStreamFailsOverCursorMonotonicallyWithRefusalsDuringCatchUp()
             throws Exception {
-        // --- control plane + endpoint A (the server's own --edge-port fan-out) ---
         Path signingKey = tempDir.resolve("signing-key.bin");
         SigningKeyStore.loadOrCreate(signingKey);
         server = ConfigdServer.start(new ServerConfig(
@@ -91,7 +90,6 @@ class EdgeFailoverTest {
             portB = reserve.getLocalPort();
         }
 
-        // --- the edge, configured with BOTH endpoints (A first) ---
         edge = EdgeNodeMain.start(new EdgeNodeConfig(
                 "edge-failover",
                 List.of(InetSocketAddress.createUnresolved("127.0.0.1", portA),
@@ -101,15 +99,12 @@ class EdgeFailoverTest {
         String serverBase = "http://127.0.0.1:" + server.apiPort();
         String edgeBase = "http://127.0.0.1:" + edge.apiPort();
 
-        // --- steady state over A: write → propagate → cursor-bound read serves ---
         long seq1 = putCommitted(serverBase, "svc/x", "v1");
         HttpResponse<String> steady = pollUntilServed(edgeBase, "svc/x", seq1);
         assertEquals("v1", steady.body());
 
-        // --- kill the subscribed endpoint MID-STREAM ---
         server.fanOutServer().close();
 
-        // A write that commits at the control plane while the edge has no live stream.
         long seq2 = putCommitted(serverBase, "svc/x", "v2");
 
         // Consistent-refusal, deterministic window (no endpoint is reachable):
@@ -128,7 +123,6 @@ class EdgeFailoverTest {
         assertEquals(200, cursorless.statusCode());
         assertEquals("v1", cursorless.body(), "cursorless reads may serve the old value");
 
-        // --- bring up endpoint B over the SAME fan-out seams; the edge fails over ---
         endpointB = new FanOutServer(
                 new InetSocketAddress("127.0.0.1", portB), null,
                 server.commitNotificationSource(), server.replaySource(),
@@ -136,17 +130,12 @@ class EdgeFailoverTest {
                 new RegistryFanOutSessionMetrics(new MetricsRegistry()), Clock.system());
         endpointB.start();
 
-        // The edge reconnects to B carrying its cursor and catches up; the read at the
-        // seq2 cursor is served — and every response on the way was either the refusal
-        // or a version >= cursor (cursor-monotonic across the reconnect, enforced in
-        // pollUntilServed).
         HttpResponse<String> resumed = pollUntilServed(edgeBase, "svc/x", seq2);
         assertEquals("v2", resumed.body());
         long version = Long.parseLong(
                 resumed.headers().firstValue(EdgeHttpServer.HDR_VERSION).orElseThrow());
         assertTrue(version >= seq2, "post-failover read is at or past the failover cursor");
 
-        // The reconnect machinery actually ran and is observable.
         String metrics = get(edgeBase + "/metrics").body();
         assertTrue(metrics.lines().anyMatch(l -> l.startsWith("edge_reconnects_total ")
                         && !l.endsWith(" 0")),
@@ -154,13 +143,10 @@ class EdgeFailoverTest {
                         + metrics.lines().filter(l -> l.startsWith("edge_"))
                                 .reduce("", (a, b) -> a + b + "\n"));
 
-        // And the failover never regressed the store (monotonic cursor).
         assertTrue(edge.core().currentVersion() >= seq2);
     }
 
-    // Helpers (deadline-polling; no sleep-as-sync)
 
-    /** Polls until served at the cursor; every non-200 must be the consistent refusal. */
     private HttpResponse<String> pollUntilServed(String edgeBase, String key, long seq)
             throws Exception {
         long deadline = System.nanoTime() + DEADLINE.toNanos();

@@ -24,10 +24,7 @@ public final class IntegrityException extends RuntimeException {
         super(message);
     }
 
-    /**
-     * @param message the failure description
-     * @param cause   the underlying crypto failure (e.g. an AES-GCM bad-tag / decrypt error)
-     */
+    /** {@code cause} is typically an AES-GCM bad-tag / decrypt failure. */
     public IntegrityException(String message, Throwable cause) {
         super(message, cause);
     }

@@ -32,8 +32,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  *       {@link DurableRaftState} can read it).</li>
  *   <li>Remove {@link Disabled} and ensure CI runs this test.</li>
  *   <li>If the load path needs a migration, add it to
- *       {@code ops/scripts/migrate-<from>-to-<to>.sh} and reference it
- *       from {@code ops/runbooks/upgrade.md}.</li>
+ *       {@code ops/scripts/migrate-<from>-to-<to>.sh}.</li>
  * </ol>
  *
  * <p>NOT pretending this passes - the {@link Disabled} annotation is
@@ -41,7 +40,6 @@ import static org.junit.jupiter.api.Assertions.fail;
  */
 class SnapshotWireCompatStubTest {
 
-    /** Path within the test classpath where v0 snapshot fixtures are expected. */
     private static final String FIXTURE_RESOURCE = "snapshot-fixtures/v0/snapshot.bin";
 
     /** Working-tree fallback path (covers IDE runs from repo root). */
@@ -60,7 +58,6 @@ class SnapshotWireCompatStubTest {
     void v0SnapshotLoadsUnderCurrentCode() throws IOException {
         byte[] fixture = readFixture();
         if (fixture == null) {
-            // Honest failure: stub mode.
             fail("v0 snapshot fixture missing at " + FIXTURE_RESOURCE
                     + " — generate one from the previous release before enabling.");
         }

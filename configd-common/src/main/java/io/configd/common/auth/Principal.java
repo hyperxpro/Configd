@@ -34,7 +34,6 @@ public record Principal(String id, Set<String> roles, Map<String, String> attrib
         attributes = Map.copyOf(attributes);
     }
 
-    /** Convenience for the common case of an identity with roles and no extra attributes. */
     public Principal(String id, Set<String> roles, String provenance) {
         this(id, roles, Map.of(), provenance);
     }

@@ -55,7 +55,7 @@ class AclServiceEffectiveRulesTest {
             acl.grant("a.", "alice", Set.of(READ, WATCH));
             acl.grant("a.b.", "alice", Set.of(WRITE));
             acl.deny("a.secret.", "alice", Set.of(READ));
-            acl.grant("z.", "bob", Set.of(READ)); // a DIFFERENT principal - must not leak into alice's set
+            acl.grant("z.", "bob", Set.of(READ));
 
             Collection<PolicyRule> rules = acl.effectiveRules("alice", Set.of());
             assertEquals(3, rules.size(), "alice's three own prefixes, none of bob's");
@@ -72,9 +72,7 @@ class AclServiceEffectiveRulesTest {
             acl.deny("a.secret.", "alice", Set.of(READ));
 
             Collection<PolicyRule> rules = acl.effectiveRules("alice", Set.of());
-            // Whole-subtree watch over "a." is REJECTED by the interior DENY on the descendant "a.secret.".
             assertFalse(authorizesWatch(rules, "a."), "interior DENY on a.secret. blocks the whole-subtree watch");
-            // But the exact-key floor on a sibling leaf is unaffected (isAllowed sees only ancestors).
             assertTrue(acl.isAllowed("alice", "a.public", WATCH), "a.public is readable+watchable");
             assertFalse(acl.isAllowed("alice", "a.secret.x", READ), "a.secret.x inherits the descendant DENY");
         }
@@ -109,7 +107,6 @@ class AclServiceEffectiveRulesTest {
                                     List.of(new PolicyRule("cfg.", Set.of(READ, WATCH), Set.of())))))),
                     java.util.Map.of()));
 
-            // Asserting both role names resolves r-imp against the imperative defs and r-cfg against config.
             Collection<PolicyRule> rules = acl.effectiveRules("alice", Set.of("r-imp", "r-cfg"));
             assertTrue(hasRule(rules, "imp.", Set.of(READ, WATCH), Set.of()));
             assertTrue(hasRule(rules, "cfg.", Set.of(READ, WATCH), Set.of()));

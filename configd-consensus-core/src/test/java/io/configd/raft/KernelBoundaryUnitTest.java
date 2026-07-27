@@ -28,7 +28,6 @@ class KernelBoundaryUnitTest {
     private static final NodeId N3 = NodeId.of(3);
     private static final NodeId N4 = NodeId.of(4);
 
-    // ClusterConfig
 
     @Nested
     class ClusterConfigGuards {
@@ -42,7 +41,6 @@ class KernelBoundaryUnitTest {
                     () -> ClusterConfig.joint(Set.of(), Set.of(N1)));
             assertThrows(IllegalArgumentException.class,
                     () -> ClusterConfig.joint(Set.of(N1), Set.of()));
-            // A valid joint config is accepted.
             assertDoesNotThrow(() -> ClusterConfig.joint(Set.of(N1), Set.of(N2)));
         }
 
@@ -60,8 +58,6 @@ class KernelBoundaryUnitTest {
 
         @Test
         void equalsRejectsDifferentTypeAndNull() {
-            // equals must return false for a non-ClusterConfig and for null, and
-            // true for self.
             var cfg = ClusterConfig.simple(Set.of(N1, N2, N3));
             assertNotEquals(cfg, "not a config");
             assertNotEquals(cfg, null);
@@ -94,7 +90,6 @@ class KernelBoundaryUnitTest {
         }
     }
 
-    // ReadIndexState quorum boundaries
 
     @Nested
     class ReadIndexQuorumBoundaries {
@@ -105,12 +100,12 @@ class KernelBoundaryUnitTest {
             // ack == quorum confirms; ack == quorum-1 does not.
             ReadIndexState below = new ReadIndexState();
             long r1 = below.startRead(3);
-            below.confirmLeadership(r1, 2, 3); // ack 2 < quorum 3 -> not confirmed
+            below.confirmLeadership(r1, 2, 3);
             assertFalse(below.isReady(r1, 100), "ack below quorum must not confirm");
 
             ReadIndexState atQuorum = new ReadIndexState();
             long r2 = atQuorum.startRead(3);
-            atQuorum.confirmLeadership(r2, 3, 3); // ack == quorum -> confirmed
+            atQuorum.confirmLeadership(r2, 3, 3);
             assertTrue(atQuorum.isReady(r2, 100), "ack exactly at quorum must confirm");
         }
 
@@ -120,12 +115,12 @@ class KernelBoundaryUnitTest {
             // confirms; ack == quorum-1 does not.
             ReadIndexState atQuorum = new ReadIndexState();
             long a = atQuorum.startRead(3);
-            atQuorum.confirmAll(3, 3); // ack == quorum
+            atQuorum.confirmAll(3, 3);
             assertTrue(atQuorum.isReady(a, 3));
 
             ReadIndexState below = new ReadIndexState();
             long b = below.startRead(3);
-            below.confirmAll(2, 3); // ack == quorum-1
+            below.confirmAll(2, 3);
             assertFalse(below.isReady(b, 100));
         }
 
@@ -147,7 +142,7 @@ class KernelBoundaryUnitTest {
             ReadIndexState state = new ReadIndexState();
             long confirmed = state.startRead(2);
             long fresh = state.startRead(2);
-            state.confirmLeadership(confirmed, 5, 1); // confirm the first
+            state.confirmLeadership(confirmed, 5, 1);
             assertTrue(state.isReady(confirmed, 2));
 
             state.confirmAllLeadership();

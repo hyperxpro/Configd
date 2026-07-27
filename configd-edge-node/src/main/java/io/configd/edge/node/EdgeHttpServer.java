@@ -51,15 +51,10 @@ import java.util.concurrent.Executors;
  */
 public final class EdgeHttpServer {
 
-    /** Request/response header carrying the client's monotonic-read cursor. */
     public static final String HDR_CURSOR = "X-Configd-Cursor";
-    /** Response header: the served value's write version. */
     public static final String HDR_VERSION = "X-Configd-Version";
-    /** Response header on a cursor-behind / not-subscribed refusal. */
     public static final String HDR_REFUSED = "X-Configd-Refused";
-    /** Response header set on all reads while STALE+. */
     public static final String HDR_STALE = "X-Configd-Stale";
-    /** Response header on the strong-read fail-close. */
     public static final String HDR_FAIL_CLOSED = "X-Fail-Closed";
 
     /**
@@ -72,13 +67,6 @@ public final class EdgeHttpServer {
     private final HttpServer server;
     private final EdgeReadHandler handler;
 
-    /**
-     * @param port               the bind port (0 = ephemeral; see {@link #port()})
-     * @param core               the edge client core (lock-free read path + staleness)
-     * @param strongReadKeyClass the strong-read predicate (shared with the storage filter)
-     * @param exporter           the Prometheus exporter over the process registry
-     * @param metrics            the edge metric series (reads/refusals)
-     */
     public EdgeHttpServer(int port, EdgeClientCore core,
                           StrongReadKeyClass strongReadKeyClass,
                           PrometheusExporter exporter, EdgeNodeMetrics metrics)
@@ -96,7 +84,6 @@ public final class EdgeHttpServer {
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
     }
 
-    /** Starts the HTTP server. */
     public void start() {
         server.start();
     }
@@ -106,7 +93,6 @@ public final class EdgeHttpServer {
         return server.getAddress().getPort();
     }
 
-    /** Stops the server, waiting up to {@code delaySeconds} for in-flight requests. */
     public void stop(int delaySeconds) {
         server.stop(delaySeconds);
     }
@@ -115,7 +101,7 @@ public final class EdgeHttpServer {
         try {
             handler.handle(
                     exchange.getRequestMethod(),
-                    exchange.getRequestURI().getPath(), // URI.getPath() already strips the query
+                    exchange.getRequestURI().getPath(),
                     exchange.getRequestHeaders().getFirst(HDR_CURSOR),
                     exchange.getRequestHeaders().getFirst("Authorization"),
                     new JdkSink(exchange));
@@ -124,7 +110,6 @@ public final class EdgeHttpServer {
         }
     }
 
-    /** Renders an {@link EdgeReadHandler.Sink} onto a JDK {@link HttpExchange}. */
     private static final class JdkSink implements EdgeReadHandler.Sink {
         private final HttpExchange exchange;
 

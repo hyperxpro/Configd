@@ -52,7 +52,6 @@ final class WireCases {
         return cases;
     }
 
-    // ACCEPT direction: golden round-trips.
 
     private static List<Case> goldenRoundTrips() {
         List<Case> cases = new ArrayList<>();
@@ -79,7 +78,6 @@ final class WireCases {
         return java.util.Arrays.equals(golden, reencoded) ? "ACCEPT" : "MISMATCH";
     }
 
-    // REJECT direction: the poison corpus.
 
     private static List<Case> poison() {
         Map<String, byte[]> v1 = EdgeFrameGoldenBytes.forVersion(1);
@@ -257,7 +255,6 @@ final class WireCases {
         }
     }
 
-    // Byte manipulation helpers (all recompute the CRC unless testing the CRC itself).
 
     private static byte[] intBE(int value, int totalLen) {
         byte[] b = new byte[totalLen];
@@ -307,7 +304,7 @@ final class WireCases {
         byte[] c = new byte[frame.length + 1];
         int crcOffset = frame.length - EdgeFrameCodec.TRAILER_SIZE;
         System.arraycopy(frame, 0, c, 0, crcOffset);      // header + payload
-        c[crcOffset] = 0x00;                               // the extra payload byte
+        c[crcOffset] = 0x00;
         // trailer slot is the last 4 bytes of c (recomputed below)
         int newLength = c.length;
         c[0] = (byte) (newLength >>> 24);
