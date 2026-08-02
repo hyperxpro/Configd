@@ -220,11 +220,10 @@ step_jcstress() {
   # sources can't block the harness build — jcstress needs only the main artifacts.
   $MVN -q -o -pl configd-config-store,configd-distribution-service,configd-transport -am \
     install -Dmaven.test.skip=true 2>&1 | tee "$LOGDIR/jcstress-install.log" | tail -3
-  # The offline uber-jar build below runs `clean`, but the runner's system-Maven
-  # resolves maven-clean-plugin outside the wrapper's cached repository, so a fresh
-  # CI dependency cache can lack it and the -o build cannot resolve it. Prime it
-  # online once (pinned 3.2.0) into the wrapper's repo so the offline build finds
-  # it. Best-effort: if the prime cannot run, the offline build still fails loudly.
+  # jcstress-core itself is already resolved: the p0tests step above installs the WHOLE
+  # reactor, configd-jcstress included. maven-clean-plugin is not, because nothing in this
+  # gate has run `clean` and a plugin is only fetched when a goal needs it — so prime it
+  # online here, or the offline build below dies on the plugin rather than on any race.
   $MVN -q -N org.apache.maven.plugins:maven-clean-plugin:3.2.0:clean \
     >"$LOGDIR/jcstress-clean-prime.log" 2>&1 || true
   $MVN -q -o -pl configd-jcstress clean package -Dmaven.test.skip=true \
