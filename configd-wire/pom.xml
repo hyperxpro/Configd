@@ -11,6 +11,7 @@
     </parent>
 
     <artifactId>configd-wire</artifactId>
+    <!-- verification-only edit: changes hashFiles(**/pom.xml) to force a cold Maven cache -->
 
     <!--
       The frozen edge wire contract, as a thin dependency-light artifact a driver/SDK can depend on
