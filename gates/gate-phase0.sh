@@ -69,6 +69,8 @@ else
   echo "gate-phase0 build: installing module jars (skip tests) so the gate run is hermetic..."
   $MVN -q -pl "$MODULES" -am install -DskipTests >"$LOGDIR/build.txt" 2>&1 \
     || { tail -30 "$LOGDIR/build.txt"; fail build "module build/install failed"; }
+  bash "$ROOT/gates/prime-offline-repo.sh" >"$LOGDIR/prime.txt" 2>&1 \
+    || { tail -20 "$LOGDIR/prime.txt"; fail build "priming the offline repository failed"; }
 fi
 
 # (a) owner net non-vacuous at N>1 + the re-threading

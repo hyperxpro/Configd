@@ -35,6 +35,26 @@ Targeted invocations during development:
 ./mvnw test -pl configd-testkit -Dtest='*Simulation*'  # sim suite only
 ```
 
+### Gates and the local repository
+
+The scripts in `gates/` install their modules with tests skipped and then run targeted tests with
+`mvn -o`, pinning the run to the jars just installed. That makes them sensitive to what the local
+repository already holds, in a way an ordinary build is not. Two rules follow, and breaking either
+one is invisible on a developer box and red on a cold CI cache:
+
+- Surefire downloads its test-framework provider only when the test phase actually runs, so an
+  install that skips tests can never fetch it, and an offline run can never recover. Any gate that
+  runs Maven offline must first call `gates/prime-offline-repo.sh`, which runs surefire online once.
+  Fetching the provider by name does not work — surefire resolves it rooted at the provider, so the
+  junit-platform version its own POM declares wins, not this project's.
+- `-Dmaven.test.skip=true` skips test *compilation*, so a module that publishes a test-jar never
+  attaches one. Use `-DskipTests` anywhere a test-jar is consumed downstream, as `configd-testkit`
+  consumes `configd-consensus-core`'s.
+
+A gate that breaks either rule still passes whenever some earlier build happened to leave the
+artifact in `~/.m2`. It fails on a cold one — which CI hits on the first run after any `pom.xml`
+change, because the Maven cache is keyed on the poms.
+
 ## Comments
 
 A comment earns its place by carrying something the code cannot: a non-obvious invariant or ordering
