@@ -27,7 +27,6 @@ public final class Cluster implements AutoCloseable {
         return create(n, raftBase, apiBase, baseDir, jar, tls, ClusterNode.Posture.none());
     }
 
-    /** Creates a cluster whose nodes ALL run under the same uniform {@code posture}. */
     public static Cluster create(int n, int raftBase, int apiBase, Path baseDir, Path jar,
                                  ClusterNode.TlsFiles tls, ClusterNode.Posture posture) throws IOException {
         return create(n, raftBase, apiBase, baseDir, jar, tls, id -> posture);
@@ -73,7 +72,6 @@ public final class Cluster implements AutoCloseable {
         return nodes;
     }
 
-    /** Node by 1-based id. */
     public ClusterNode node(int id) {
         return nodes.get(id - 1);
     }

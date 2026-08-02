@@ -390,7 +390,7 @@ class EncryptedMultiShardClusterCompositionTest {
             RaftNode node = servers[i].driver().getGroup(gid);
             if (node != null && node.monitorView().role() == RaftRole.LEADER) {
                 if (leader >= 0) {
-                    return -1; // two leaders observed (transient), not stable
+                    return -1;
                 }
                 leader = i;
             }
@@ -457,7 +457,7 @@ class EncryptedMultiShardClusterCompositionTest {
             RaftNode node = servers[i].driver().getGroup(gid);
             if (node != null && node.monitorView().role() == RaftRole.LEADER) {
                 if (leader >= 0) {
-                    return -1; // two leaders observed (transient), not stable
+                    return -1;
                 }
                 leader = i;
             }
@@ -499,8 +499,6 @@ class EncryptedMultiShardClusterCompositionTest {
         return commitAndAwaitReplicationExcluding(servers, gid, -1, key, value);
     }
 
-    /** As {@link #commitAndAwaitReplication} but only requires replication on nodes other than
-     *  {@code excluded} (used while one node is intentionally down). */
     private long commitAndAwaitReplicationExcluding(ConfigdServer[] servers, int gid, int excluded,
                                                     String key, String value) throws Exception {
         byte[] cmd = CommandCodec.encodePut(key, value.getBytes(StandardCharsets.UTF_8));

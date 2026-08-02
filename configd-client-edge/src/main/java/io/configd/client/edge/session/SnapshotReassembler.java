@@ -74,7 +74,6 @@ public final class SnapshotReassembler {
         chunks.add(c);
     }
 
-    /** Ends transfer. Rejects truncation/mismatch (discards, re-bootstraps). */
     public ConfigSnapshot end(EdgeFrame.SnapshotEnd e) {
         if (!inProgress) {
             throw new ProtocolViolationException("SNAPSHOT_END received outside a snapshot transfer");

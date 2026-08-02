@@ -39,9 +39,9 @@ class EdgeAdversarialGateSeedSweepTest {
         // fault in the edge layer. So the meaningful edge-layer correctness signal is "edges
         // converge WHEN a quiet window exists"; the raw rate (which folds in CP
         // non-convergence) is reported, not gated.
-        int quietWindowSeeds = 0;     // CP fully converged after heal+settle
-        int convergedGivenQuiet = 0;  // edges converged among those
-        int convergedRaw = 0;         // edges converged over ALL seeds (reported only)
+        int quietWindowSeeds = 0;
+        int convergedGivenQuiet = 0;
+        int convergedRaw = 0;
 
         for (long seed : seeds) {
             EdgeFanOutSim sim = new EdgeFanOutSim(seed, CP_NODES, EDGES, TICKS,
@@ -58,7 +58,6 @@ class EdgeAdversarialGateSeedSweepTest {
                 seedsWithDelivery++;
             }
 
-            // Heal CP + settle; a quiet drain window exists iff the CP cluster fully converged.
             sim.settleCp();
             boolean quietWindow = sim.cpFullyConverged();
             if (quietWindow) {
@@ -79,13 +78,10 @@ class EdgeAdversarialGateSeedSweepTest {
             }
         }
 
-        // Non-vacuity: the C1StreamDriver must actually deliver on essentially every seed.
         assertTrue(seedsWithDelivery >= seeds.size() * 9 / 10,
                 "the C1 driver must deliver on the vast majority of seeds (delivered on "
                         + seedsWithDelivery + "/" + seeds.size() + ")");
 
-        // The meaningful correctness bar: when a quiet drain window exists (CP converged),
-        // the edges must converge at a high rate - the stream driver catch-up/heal path actually heals.
         assertTrue(quietWindowSeeds > 0, "the sweep must produce some quiet-window seeds");
         double convergenceGivenQuiet = (double) convergedGivenQuiet / quietWindowSeeds;
         assertTrue(convergenceGivenQuiet >= 0.9,

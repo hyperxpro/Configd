@@ -31,7 +31,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class TickLoopThrowableHandlerTest {
 
-    /** Captures every record emitted by the ConfigdServer logger. */
     private static final class CapturingHandler extends Handler {
         final List<LogRecord> records = new ArrayList<>();
 
@@ -73,7 +72,6 @@ class TickLoopThrowableHandlerTest {
 
         ConfigdServer.handleTickLoopThrowable(boom, metrics);
 
-        // (a) Counter family was incremented for the bucketed class label.
         String expectedLabel = SafeLog.cardinalityGuard("RuntimeException");
         String registryName = ConfigdMetrics.NAME_TICK_LOOP_THROWABLE_BASE + "." + expectedLabel;
         var snapshot = registry.snapshot().metrics();

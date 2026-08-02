@@ -109,7 +109,6 @@ class CommandCodecFuzzTest {
         assertOracleHolds(data);
     }
 
-    /** Truncate a valid command at EVERY offset - every prefix decodes-or-Malformed, never underflow. */
     @Property(tries = 120, seed = "1002")
     void truncateValidCommandAtEveryOffsetIsTotal(@ForAll("validCommands") byte[] valid) {
         for (int cut = 0; cut < valid.length; cut++) {
@@ -174,7 +173,6 @@ class CommandCodecFuzzTest {
     }
 
 
-    /** The empty payload is the noop sentinel - a stable, distinguished accept. */
     @Property(tries = 1, seed = "2000")
     void corpusEmptyIsNoop() {
         assertSame(CommandCodec.DecodedCommand.Noop.INSTANCE, CommandCodec.decode(new byte[0]));
@@ -233,7 +231,6 @@ class CommandCodecFuzzTest {
                 () -> CommandCodec.decode(buf.array()));
     }
 
-    /** A BATCH element with an unknown nested type byte is a clean Malformed. */
     @Property(tries = 1, seed = "2006")
     void corpusBatchUnknownNestedType() {
         ByteBuffer buf = ByteBuffer.allocate(1 + 4 + 1);
@@ -317,7 +314,6 @@ class CommandCodecFuzzTest {
         return Arbitraries.bytes().array(byte[].class).ofSize(size);
     }
 
-    /** Well-formed PUT / DELETE / BATCH commands - the mutation base. */
     @Provide
     Arbitrary<byte[]> validCommands() {
         Arbitrary<byte[]> puts = Combinators.combine(

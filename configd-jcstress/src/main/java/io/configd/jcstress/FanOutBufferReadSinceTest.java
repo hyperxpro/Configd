@@ -60,14 +60,14 @@ public final class FanOutBufferReadSinceTest {
         long prev = Long.MIN_VALUE;
         for (CommitNotification n : ns) {
             if (n == null) {
-                return TORN;               // null slot leaked through
+                return TORN;
             }
             long s = n.seq();
             if (s <= cursor) {
-                return TORN;               // a notification that should have been filtered
+                return TORN;
             }
             if (s <= prev) {
-                return TORN;               // duplicate or non-ascending
+                return TORN;
             }
             prev = s;
         }

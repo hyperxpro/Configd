@@ -106,7 +106,6 @@ class EdgeTokenAuthMtlsTest {
                 try {
                     Files.deleteIfExists(p);
                 } catch (IOException ignored) {
-                    // best-effort
                 }
             });
         }

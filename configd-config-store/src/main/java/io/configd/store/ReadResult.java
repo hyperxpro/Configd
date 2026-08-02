@@ -8,10 +8,8 @@ import java.util.Arrays;
  */
 public final class ReadResult {
 
-    /** Pre-allocated sentinel for cache-friendly "not found" responses. */
     private static final byte[] EMPTY = new byte[0];
 
-    /** Singleton not-found result -- zero allocation on miss. */
     public static final ReadResult NOT_FOUND = new ReadResult(EMPTY, 0, false);
 
     private final byte[] value;

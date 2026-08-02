@@ -37,7 +37,6 @@ class EdgeInvariantsTestTheTesterTest {
 
     private static final long SEED = 4242L;
 
-    /** A logical clock the test advances by hand. */
     private final AtomicLong now = new AtomicLong(1_700_000_000_000L);
 
     private EdgeActor newEdge(int subscribedCp) {
@@ -154,7 +153,6 @@ class EdgeInvariantsTestTheTesterTest {
                 "firing message must name the INV-M1 invariant: " + ex.getMessage());
         System.out.println("[capture a-read] " + ex.getMessage());
 
-        // Non-vacuity: a cursor at-or-below the store version reads cleanly.
         VersionCursor okCursor = new VersionCursor(3, now.get());
         assertEquals("v3", new String(edge.get("k", okCursor).value(), StandardCharsets.UTF_8),
                 "a cursor not ahead of the store must read normally");
@@ -204,7 +202,6 @@ class EdgeInvariantsTestTheTesterTest {
                 "firing message must be a precise diff: " + ex.getMessage());
         System.out.println("[capture c] " + ex.getMessage());
 
-        // And a CONVERGED edge passes (non-vacuity: the check is not always-throw).
         EdgeActor converged = newEdge(0);
         converged.deliver(new EdgeStream.Snapshot(snapshotWith(9, "k", "vLeader", 9), 9));
         converged.tick();
@@ -247,8 +244,6 @@ class EdgeInvariantsTestTheTesterTest {
 
     @Test
     void eventualDeliveryViolationIsNotRecordedWhenEdgeObservesInTime() {
-        // Non-vacuity for (d): an edge that observes the seq before the bound yields
-        // NO recorded violation.
         EdgeActivity activity = new EdgeActivity();
         long bound = EdgeInvariants.BOUND_MS;
         EdgeInvariants inv = new EdgeInvariants(SEED, activity, bound);
@@ -261,7 +256,7 @@ class EdgeInvariantsTestTheTesterTest {
         edge.tick();
         assertEquals(3, edge.cursor(), "edge must have observed seq 3");
 
-        now.set(publishedAt + bound + 1000); // well past the bound
+        now.set(publishedAt + bound + 1000);
         inv.checkAll(List.of(edge), now.get(), e -> true);
         assertEquals(0, activity.deliveryViolationCount(),
                 "no violation when the edge observed the seq before the bound");

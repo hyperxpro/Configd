@@ -37,7 +37,7 @@ class ReadinessDrainTest {
     @TempDir
     Path tempDir;
 
-    private static final NodeId L = NodeId.of(1); // a stand-in "known leader"
+    private static final NodeId L = NodeId.of(1);
 
     @Test
     void singleShardWithLeaderIsReady() {
@@ -91,7 +91,6 @@ class ReadinessDrainTest {
             HttpRequest ready = HttpRequest.newBuilder()
                     .uri(URI.create("http://127.0.0.1:" + port + "/health/ready")).GET().build();
 
-            // A zero-state single node self-elects; /health/ready then flips 503 -> 200.
             long deadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
             int status = -1;
             while (System.nanoTime() < deadline) {

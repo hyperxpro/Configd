@@ -22,12 +22,9 @@
         <dependency><groupId>io.configd</groupId><artifactId>configd-control-plane-api</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-edge-cache</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-observability</artifactId><version>${project.version}</version></dependency>
-        <!-- Netty 4.2 platform: shared transport selector + HTTP-transport closure. -->
         <dependency><groupId>io.configd</groupId><artifactId>configd-netty</artifactId><version>${project.version}</version></dependency>
-        <!-- YAML parser confined to configd-server (YamlConfigSource lives here). -->
         <dependency><groupId>org.yaml</groupId><artifactId>snakeyaml</artifactId></dependency>
 
-        <!-- Test-only: exercises Vault KMS provider via real Vault container (core never depends on configd-kms-vault). -->
         <dependency>
             <groupId>io.configd</groupId>
             <artifactId>configd-kms-vault</artifactId>
@@ -104,7 +101,6 @@
     </build>
 
     <profiles>
-        <!-- Mutation measurement (seam classes only, no hard threshold). -->
         <profile>
             <id>mutation</id>
             <build>

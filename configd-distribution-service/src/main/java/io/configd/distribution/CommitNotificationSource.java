@@ -71,7 +71,6 @@ public interface CommitNotificationSource {
 
     sealed interface Result permits Result.Ok, Result.Gap {
 
-        /** A contiguous (possibly empty) run of notifications, in ascending seq. */
         record Ok(List<CommitNotification> notifications) implements Result {
             public Ok {
                 Objects.requireNonNull(notifications, "notifications must not be null");

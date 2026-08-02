@@ -27,7 +27,6 @@ MVN="$ROOT/mvnw -B"
 LOGDIR="${GATE7_LOG_DIR:-$(mktemp -d /tmp/gate7-XXXXXX)}"
 mkdir -p "$LOGDIR"
 
-# Modules whose security tests gate-7 exercises.
 MODULES="configd-wire,configd-common,configd-consensus-core,configd-transport,configd-netty,configd-distribution-service,configd-control-plane-api,configd-server,configd-edge-node"
 
 echo "=== GATE-7 (Session 7: security & supply chain) — logs in $LOGDIR ==="
@@ -47,7 +46,6 @@ assert_class_green() {
   echo "GATE-7   ✓ ${cls}: ${line#*-- in }"
 }
 
-# Runs a targeted, offline test set across MODULES and asserts BUILD SUCCESS.
 run_tests() {
   local label="$1" tests="$2" log="$3"
   $MVN -o -pl "$MODULES" test -Dtest="$tests" -Dsurefire.failIfNoSpecifiedTests=false >"$log" 2>&1 \
@@ -61,7 +59,6 @@ if pgrep -f "[s]urefirebooter" >/dev/null 2>&1; then
   exit 1
 fi
 
-# cumulative: gate-6 (chains 5→4→3→2→1)
 if [ "${GATE7_SKIP_GATE6:-0}" = "1" ]; then
   echo "GATE-7 gate6: SKIPPED by GATE7_SKIP_GATE6=1 (LOUD: gates 1..6 NOT verified this run; CI supplies them via the gate-6 job)"
 else

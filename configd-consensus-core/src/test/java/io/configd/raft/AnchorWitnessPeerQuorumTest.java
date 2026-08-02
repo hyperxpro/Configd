@@ -46,7 +46,6 @@ class AnchorWitnessPeerQuorumTest {
         return SnapshotIntegrityTest.keyedEnvelope();
     }
 
-    // Test harness: N file-backed nodes on a shared, queue-driven "network".
 
     /** A captured rollback detection from a node's fail-closed handler. */
     private record Rollback(int gid, long bootAnchorSeq, long witnessedSeq, NodeId reporter) {}
@@ -209,7 +208,6 @@ class AnchorWitnessPeerQuorumTest {
         return new RequestVoteRequest(term, candidate, 0, 0, false);
     }
 
-    // The headline: a double vote blocked by a real on-disk rollback + reboot (N=3).
 
     @Test
     void headline_raPrimeDoubleVoteBlocked_realDiskRollback(@TempDir Path base) {
@@ -262,7 +260,6 @@ class AnchorWitnessPeerQuorumTest {
                 "V must NOT grant a second, conflicting vote at term " + T + " - split-brain blocked");
     }
 
-    // 2. Grant -> announce crash race: a crash before the announce+voteGranted leaves the vote UNUSABLE.
 
     @Test
     void grantAnnounceCrashRace_unusableVoteHasNoDoubleUse(@TempDir Path base) {
@@ -299,7 +296,6 @@ class AnchorWitnessPeerQuorumTest {
         assertTrue(v.grantedVoteTo(P), "V's ONE usable vote goes to Y - the earlier vote was never used");
     }
 
-    // 3. W1 - legit reboot, no rollback: PASSES and votes (no false positive).
 
     @Test
     void w1_legitReboot_passesAndVotes(@TempDir Path base) {
@@ -314,7 +310,6 @@ class AnchorWitnessPeerQuorumTest {
         v.raft.handleMessage(voteReq(T, X));
         c.pump();
 
-        // Clean crash + reboot from the SAME (latest) bytes - no rollback.
         c.kill(v);
         c.reboot(v);
         c.settle(6);
@@ -325,7 +320,6 @@ class AnchorWitnessPeerQuorumTest {
         assertTrue(v.grantedVoteTo(P), "after a clean reboot V votes normally");
     }
 
-    // 4. W2 - advanced past peers (local ahead of the witnessed floor): PASSES (writes lead witnessing).
 
     @Test
     void w2_advancedPastPeers_passes(@TempDir Path base) {
@@ -343,7 +337,7 @@ class AnchorWitnessPeerQuorumTest {
         v.raft.handleMessage(voteReq(T, X));
         long s1 = v.anchorSeq();
         assertTrue(s1 > s0);
-        c.dropWire(); // the announce never lands anywhere
+        c.dropWire();
 
         // Clean reboot with peers reachable. Peers' seenOfYou <= s0 < s1 = bootAnchorSeq -> W < s -> PASS.
         c.kill(v);
@@ -419,7 +413,7 @@ class AnchorWitnessPeerQuorumTest {
 
     @Test
     void strictMode_voteDeferredUntilPeerMajorityAcks(@TempDir Path base) {
-        Cluster c = new Cluster(base, true); // strict
+        Cluster c = new Cluster(base, true);
         Node v = c.add(V, Set.of(X, P));
         Node x = c.add(X, Set.of(V, P));
         Node p = c.add(P, Set.of(V, X));
@@ -444,9 +438,8 @@ class AnchorWitnessPeerQuorumTest {
     @Test
     void n1_gateDisabled_selfElectsNormally(@TempDir Path base) {
         Cluster c = new Cluster(base, false);
-        Node solo = c.add(V, Set.of()); // no peers
+        Node solo = c.add(V, Set.of());
         assertTrue(solo.raft.votingClearedForTest(), "N=1 clears immediately - no peer can witness, none needs to");
-        // It elects itself with no witness traffic at all.
         for (int i = 0; i < 400 && solo.raft.role() != RaftRole.LEADER; i++) {
             solo.raft.tick();
             c.pump();

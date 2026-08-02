@@ -50,7 +50,7 @@ class SeedSweepTestTheTesterTest {
         for (long seed = 0; seed < batch; seed++) {
             Outcome o = runWithInjection(seed);
             if (!o.reachedInjectionPoint) {
-                continue; // seed never committed+replicated; nothing to corrupt
+                continue;
             }
             reached++;
             assertTrue(o.violationCaught,

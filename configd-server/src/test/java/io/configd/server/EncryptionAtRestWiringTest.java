@@ -120,7 +120,6 @@ class EncryptionAtRestWiringTest {
                     keyStore(root), keyFile(root), dataDir(root));
             assertThrows(IntegrityException.class, () -> strict.unwrap(WAL_MAGIC, SCOPE,legacy),
                     "requireEncrypted must refuse a legacy algId=1 record");
-            // and it still round-trips its own encrypted writes
             assertArrayEquals(SECRET.getBytes(StandardCharsets.UTF_8),
                     strict.unwrap(WAL_MAGIC, SCOPE,strict.wrap(WAL_MAGIC, SCOPE,SECRET.getBytes(StandardCharsets.UTF_8))));
         } finally {
@@ -174,10 +173,8 @@ class EncryptionAtRestWiringTest {
     void tamperedKeyringRefusesBoot(@TempDir Path root) throws Exception {
         System.setProperty(ENABLE, "true");
         try {
-            // Boot #1 mints the keyring.
             ConfigdServer.deriveRaftIntegrityEnvelope(keyStore(root), keyFile(root), dataDir(root));
             Path keyring = dataDir(root).resolve("raft-keyring");
-            // Perform the attack: corrupt the live slot's sealed record on disk.
             byte[] image = java.nio.file.Files.readAllBytes(keyring);
             image[8 + 20] ^= 0x40; // slot 0 @ offset 8; flip a byte inside its envelope
             java.nio.file.Files.write(keyring, image);

@@ -22,7 +22,7 @@ public final class EdgeFrameReader {
             throws IOException {
         int first = in.read();
         if (first < 0) {
-            return null; // clean EOF at a frame boundary
+            return null;
         }
         byte[] header = new byte[4];
         header[0] = (byte) first;

@@ -71,7 +71,6 @@ public record ConfigDelta(
         this(fromVersion, toVersion, mutations, signature, 0L, new byte[0]);
     }
 
-    /** Returns a defensive copy of the signature bytes, or null if unsigned. */
     @Override
     public byte[] signature() {
         return signature != null ? signature.clone() : null;

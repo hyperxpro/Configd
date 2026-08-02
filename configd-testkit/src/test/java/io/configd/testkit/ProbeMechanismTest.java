@@ -107,7 +107,6 @@ class ProbeMechanismTest {
                                 + " max=501 unit=ms"),
                 "global summary line must report the exact constructed stats:\n" + summary);
 
-        // Evidence record: the sim-mode (logical-time) report.
         System.out.println("=== Configd propagation probe — SIM MODE (logical time) ===");
         System.out.println("constructed staleness distribution: edge-100={+10ms,+50ms} "
                 + "edge-101={+499ms,+501ms}; logical time → exact, no tolerance bands.");

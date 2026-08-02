@@ -131,7 +131,7 @@ class RaftInboundDemuxTest {
 
     private static RaftNode buildLeaderOnOwner(ScheduledExecutorService owner, RaftTransport transport)
             throws Exception {
-        RaftConfig config = RaftConfig.of(NodeId.of(1), Set.of()); // single-node cluster
+        RaftConfig config = RaftConfig.of(NodeId.of(1), Set.of());
         RaftNode node = new RaftNode(config, new RaftLog(), transport, new NoopStateMachine(),
                 new java.util.Random(42));
         owner.submit(() -> {

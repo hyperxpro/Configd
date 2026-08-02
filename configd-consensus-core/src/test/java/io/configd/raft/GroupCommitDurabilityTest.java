@@ -95,7 +95,6 @@ class GroupCommitDurabilityTest {
         RecordingTransport t = new RecordingTransport();
         RaftNode leader = electedLeader(t);
 
-        // Defer the flush into a queue the test pumps by hand (no INLINE auto-flush).
         Deque<Runnable> pending = new ArrayDeque<>();
         leader.setGroupCommit((flush, delayMicros) -> pending.add(flush), 4096, 0);
 
@@ -106,13 +105,10 @@ class GroupCommitDurabilityTest {
         assertEquals(base + 1, idx);
         assertEquals(1, pending.size(), "propose must have scheduled exactly one coalescing flush");
 
-        // A follower (N2) ACKs the entry - quorum-1 of three. Even WITH this ACK the entry must NOT
-        // commit, because the leader's own copy is still only buffered (durableIndex < idx).
         leader.handleMessage(new AppendEntriesResponse(leader.currentTerm(), true, idx, N2));
         assertEquals(base, leader.log().commitIndex(),
                 "must NOT commit before the leader's own fsync — counting a buffered self-copy would be a safety bug");
 
-        // Pump the deferred flush: the leader is now durable up to idx and self-counts -> quorum {self,N2}.
         pending.poll().run();
         assertEquals(idx, leader.log().commitIndex(),
                 "commits once the leader's entry is force-synced AND a follower quorum exists");
@@ -135,12 +131,9 @@ class GroupCommitDurabilityTest {
         leader.handleMessage(new AppendEntriesResponse(leader.currentTerm(), true, idx, N2));
         assertEquals(base, leader.log().commitIndex(), "not committed yet (leader copy still buffered)");
 
-        // Step down via a higher-term message BEFORE the queued flush runs.
         leader.handleMessage(new RequestVoteResponse(leader.currentTerm() + 5, false, N2, false));
         assertEquals(RaftRole.FOLLOWER, leader.role(), "higher term must step the leader down");
 
-        // Pump the now-stale flush. It advances durableIndex and calls maybeAdvanceCommitIndex, which
-        // must early-return because role != LEADER - so NOTHING commits as a follower.
         assertEquals(1, pending.size());
         pending.poll().run();
         assertEquals(base, leader.log().commitIndex(),

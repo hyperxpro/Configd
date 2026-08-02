@@ -47,10 +47,10 @@ class LeaderBalancePlannerTest {
         LeaderBalancePlanner.Plan plan = LeaderBalancePlanner.plan(snap, CLEAR, 2, new Random(1));
         assertEquals(8, plan.leaderSpread());
         assertTrue(plan.actionable());
-        assertEquals(NodeId.of(0), NodeId.of(0)); // self leads the moved group
+        assertEquals(NodeId.of(0), NodeId.of(0));
         assertEquals(0, plan.move().groupId()); // lowest gid this node leads
         assertTrue(nodes(4).contains(plan.move().target()));
-        assertFalse(plan.move().target().equals(NodeId.of(0))); // never sheds to self
+        assertFalse(plan.move().target().equals(NodeId.of(0)));
         assertTrue(plan.move().target().id() != 0);
     }
 
@@ -91,7 +91,7 @@ class LeaderBalancePlannerTest {
         List<LeaderView.GroupLeader> groups = new ArrayList<>();
         groups.add(new LeaderView.GroupLeader(0, NodeId.of(0), 1L));
         groups.add(new LeaderView.GroupLeader(1, NodeId.of(0), 1L));
-        groups.add(new LeaderView.GroupLeader(2, null, 1L)); // unknown
+        groups.add(new LeaderView.GroupLeader(2, null, 1L));
         LeaderView.Snapshot snap = new LeaderView.Snapshot(NodeId.of(0), nodes(4), groups);
         LeaderBalancePlanner.Plan plan = LeaderBalancePlanner.plan(snap, CLEAR, 2, new Random(1));
         assertTrue(plan.backedOff());
@@ -101,7 +101,7 @@ class LeaderBalancePlannerTest {
 
     @Test
     void termChurn_backsOff_evenWhenSkewed() {
-        int[] led = {0, 0, 0, 0}; // skewed, but the gate reports churn
+        int[] led = {0, 0, 0, 0};
         LeaderView.Snapshot snap = snapshot(NodeId.of(0), 4, led);
         LeaderBalancePlanner.Gate churning = new LeaderBalancePlanner.Gate(true, false);
         LeaderBalancePlanner.Plan plan = LeaderBalancePlanner.plan(snap, churning, 2, new Random(1));

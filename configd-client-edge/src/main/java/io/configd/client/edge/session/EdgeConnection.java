@@ -215,7 +215,6 @@ public final class EdgeConnection {
             try {
                 frame = EdgeFrameReader.readFrame(in, pinnedVersion, limits.maxFrameBytes());
             } catch (EdgeFrameCodec.CodecException ce) {
-                // A malformed / oversize / truncated / bad-CRC frame: fail clean, never a misparse.
                 deliverTerminal(new ProtocolViolationException(
                         "malformed server frame: " + ce.getMessage(), ce.code(), null));
                 return;
@@ -232,14 +231,14 @@ public final class EdgeConnection {
                 }
                 return;
             }
-            if (frame == null) { // clean end-of-stream at a frame boundary
+            if (frame == null) {
                 if (!closing) {
                     deliverTerminal(new UnavailableException("edge connection closed by server"));
                 }
                 return;
             }
             if (!dispatch(frame)) {
-                return; // a fatal frame closed the connection
+                return;
             }
         }
     }
@@ -322,7 +321,6 @@ public final class EdgeConnection {
             try {
                 s.close();
             } catch (IOException ignored) {
-                // best-effort
             }
         }
     }

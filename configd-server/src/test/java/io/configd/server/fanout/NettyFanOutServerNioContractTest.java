@@ -71,7 +71,6 @@ class NettyFanOutServerNioContractTest extends AbstractFanOutServerContract {
                 governor, metrics, clock);
     }
 
-    /** Sanity: with the property forced, the constructed Netty endpoint actually selected NIO. */
     @Test
     void transportTierIsNio() {
         MetricsRegistry registry = new MetricsRegistry();

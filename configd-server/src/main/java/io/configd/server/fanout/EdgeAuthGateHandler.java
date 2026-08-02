@@ -287,7 +287,7 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
             }
             case EdgeFrame.Auth ignored -> closePostAuth(ctx, ErrorCode.PROTOCOL_VIOLATION,
                     "AUTH received on an already-authenticated connection");
-            default -> ctx.fireChannelRead(frame); // business frame -> session
+            default -> ctx.fireChannelRead(frame);
         }
     }
 

@@ -94,8 +94,8 @@ abstract class AbstractFanOutServerContract {
     private static Path fixtureDir;
     private static Path serverKeyStore;
     private static Path serverTrustStore;
-    private static Path clientKeyStore;    // legit, trusted by the server
-    private static Path rogueKeyStore;     // self-signed, NOT trusted by the server
+    private static Path clientKeyStore;
+    private static Path rogueKeyStore;
     private static Path expiredKeyStore;   // CA-signed end-entity, validity window already past
 
     private FanOutEndpoint server;
@@ -305,7 +305,6 @@ abstract class AbstractFanOutServerContract {
         return server.localPort();
     }
 
-    /** Publishes one committed mutation: the buffer notification + the replay snapshot. */
     private void publish(String key, String value) {
         long s = ++seq;
         byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
@@ -464,7 +463,7 @@ abstract class AbstractFanOutServerContract {
             EdgeFrame.SubscribeOk ok =
                     (EdgeFrame.SubscribeOk) readUntil(edge, EdgeFrame.SubscribeOk.class);
             assertEquals(EdgeFrame.Mode.SNAPSHOT_FIRST, ok.mode(), "forced re-bootstrap");
-            readUntil(edge, EdgeFrame.SnapshotEnd.class); // re-bootstrap completed (sync)
+            readUntil(edge, EdgeFrame.SnapshotEnd.class);
 
             publish("u/4", "d");
             publish("u/5", "e");
@@ -520,7 +519,7 @@ abstract class AbstractFanOutServerContract {
                 publish("k/" + i, "v" + i);
             }
             awaitGovernorState(ConsumerState.CATCHUP, "first demotion");
-            readUntil(bad, EdgeFrame.SnapshotEnd.class); // first snapshot completed
+            readUntil(bad, EdgeFrame.SnapshotEnd.class);
             for (int i = 4; i <= 6; i++) {
                 publish("k/" + i, "v" + i);
             }
@@ -685,7 +684,7 @@ abstract class AbstractFanOutServerContract {
             garbage[0] = 0x00;
             garbage[1] = 0x00;
             garbage[2] = 0x00;
-            garbage[3] = 0x14; // length 20
+            garbage[3] = 0x14;
             for (int i = 4; i < 20; i++) {
                 garbage[i] = (byte) 0xEE;
             }
@@ -784,7 +783,6 @@ abstract class AbstractFanOutServerContract {
         return server.localPort();
     }
 
-    /** A direct plaintext server with a small buffer + EMPTY snapshot (the protocol-violation legs). */
     private int startPlaintextServer() throws Exception {
         MetricsRegistry registry = new MetricsRegistry();
         RegistryFanOutSessionMetrics metrics = new RegistryFanOutSessionMetrics(registry);
@@ -923,7 +921,7 @@ abstract class AbstractFanOutServerContract {
             if (governor.state(EDGE_ID) == expected) {
                 return;
             }
-            java.util.concurrent.locks.LockSupport.parkNanos(1_000_000L); // 1 ms poll
+            java.util.concurrent.locks.LockSupport.parkNanos(1_000_000L);
         }
         fail(what + " — governor state is " + governor.state(EDGE_ID)
                 + ", expected " + expected);
@@ -950,7 +948,6 @@ abstract class AbstractFanOutServerContract {
         return null;
     }
 
-    /** Reads NOTIFY frames, returning the highest seq seen once it reaches {@code target}. */
     private static long collectNotifiedSeqAtLeast(EdgeProtocolClient edge, long target)
             throws IOException {
         long deadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
@@ -1020,7 +1017,7 @@ abstract class AbstractFanOutServerContract {
                 return true;
             }
             if (f instanceof EdgeFrame.ErrorClose ec && ec.code() == ErrorCode.QUARANTINED) {
-                return true; // the clean wire evidence: code 8
+                return true;
             }
         }
         return false;
@@ -1141,7 +1138,6 @@ abstract class AbstractFanOutServerContract {
                 "-rfc", "-file", certOut.toString());
     }
 
-    /** Generates a long-lived CA keypair (alias {@code ca}, basicConstraints CA:true). */
     private static void genCa(Path caKeyStore, String dname) throws Exception {
         runKeytool("keytool", "-genkeypair", "-alias", "ca",
                 "-keyalg", "EC", "-groupname", "secp256r1", "-sigalg", "SHA256withECDSA",
@@ -1186,7 +1182,6 @@ abstract class AbstractFanOutServerContract {
         assertTrue(rc == 0, "keytool failed: " + String.join(" ", command));
     }
 
-    /** A manually-advanced {@link Clock}: the cooldown elapses by {@link #advance}. */
     private static final class MutableClock implements Clock {
         private final AtomicLong nowMillis;
 

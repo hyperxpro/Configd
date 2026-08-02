@@ -85,8 +85,6 @@ public final class FileStorage implements Storage {
                 }
                 channel.force(true);
             }
-            // Atomic rename: either the old file or the new file is visible,
-            // never a partial/corrupt state.
             Files.move(tmp, file,
                     java.nio.file.StandardCopyOption.REPLACE_EXISTING,
                     java.nio.file.StandardCopyOption.ATOMIC_MOVE);

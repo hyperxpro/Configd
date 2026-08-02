@@ -51,7 +51,6 @@ final class EdgeProtocolClient implements AutoCloseable {
                 new EdgeFrame.Auth(new Credential.BearerToken(token)), EdgeFrameCodec.EDGE_WIRE_VERSION_V4));
     }
 
-    /** Presents a bearer token in a REFRESH_AUTH frame (0x04) to extend an authenticated session. */
     void refreshBearer(String token) throws IOException {
         sendRaw(EdgeFrameCodec.encode(
                 new EdgeFrame.RefreshAuth(new Credential.BearerToken(token)), EdgeFrameCodec.EDGE_WIRE_VERSION_V4));
@@ -85,7 +84,6 @@ final class EdgeProtocolClient implements AutoCloseable {
         return EdgeFrameCodec.decode(frameBytes);
     }
 
-    /** Sends raw bytes (for the corruption / protocol-violation cases). */
     void sendRaw(byte[] bytes) throws IOException {
         out.write(bytes);
         out.flush();
@@ -96,7 +94,6 @@ final class EdgeProtocolClient implements AutoCloseable {
         try {
             socket.close();
         } catch (IOException ignored) {
-            // best-effort
         }
     }
 }

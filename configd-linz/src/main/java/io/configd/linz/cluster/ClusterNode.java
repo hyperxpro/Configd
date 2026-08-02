@@ -192,7 +192,6 @@ public final class ClusterNode {
         return p != null && p.isAlive();
     }
 
-    /** OS pid of the live process, or -1 if not running. */
     public long pid() {
         Process p = process;
         return p == null ? -1 : p.pid();

@@ -80,9 +80,6 @@ public final class WatchCoalescer {
         return elapsed >= windowNanos;
     }
 
-    /**
-     * @return a WatchEvent containing all batched mutations, or null if empty
-     */
     public WatchEvent flush() {
         if (pending.isEmpty()) {
             return null;

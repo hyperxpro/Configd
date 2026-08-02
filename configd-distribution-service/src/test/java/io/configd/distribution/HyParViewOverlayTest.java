@@ -84,7 +84,7 @@ class HyParViewOverlayTest {
 
     @Test
     void selfIsNeverAddedToViews() {
-        overlay.receiveJoin(NodeId.of(0)); // self
+        overlay.receiveJoin(NodeId.of(0));
         assertFalse(overlay.activeView().contains(NodeId.of(0)));
     }
 

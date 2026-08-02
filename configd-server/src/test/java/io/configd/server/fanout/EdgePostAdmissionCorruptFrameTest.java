@@ -49,7 +49,7 @@ class EdgePostAdmissionCorruptFrameTest {
         int port = startPlaintextServer(netty);
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge.subscribeFullStore("edge-corrupt", 0L);
-            readUntil(edge, EdgeFrame.SubscribeOk.class); // admitted; the connection is now post-SUBSCRIBE
+            readUntil(edge, EdgeFrame.SubscribeOk.class);
 
             // A well-formed length prefix + version + type, but a flipped CRC trailer -> the decoder
             // throws CodecException(FRAME_CORRUPT). On Netty that arrives at exceptionCaught wrapped in a

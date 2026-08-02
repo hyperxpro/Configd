@@ -388,7 +388,6 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
         }
     }
 
-    // Inbound (accepted) connection handler - admission, dispatch, and idle close.
 
     private final class InboundHandler extends SimpleChannelInboundHandler<InboundMessage> {
 

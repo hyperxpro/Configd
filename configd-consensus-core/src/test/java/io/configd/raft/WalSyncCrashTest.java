@@ -64,7 +64,6 @@ class WalSyncCrashTest {
         assertEquals(0, storage.recoveredView().readLog("raft-log").size(),
                 "with sync the WAL deletion is durable: zero WAL frames on the platter");
 
-        // Power loss, then restart over the bytes that actually reached the platter.
         storage.crash();
         RaftLog recovered = new RaftLog(storage.recoveredView());
 

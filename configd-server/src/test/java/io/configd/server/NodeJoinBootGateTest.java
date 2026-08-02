@@ -71,7 +71,7 @@ class NodeJoinBootGateTest {
         Certificate[] chain = src.getCertificateChain(alias);
         KeyStore dst = KeyStore.getInstance("PKCS12");
         dst.load(null, null);
-        dst.setKeyEntry(alias, key, new char[0], chain); // key protected by the empty store password
+        dst.setKeyEntry(alias, key, new char[0], chain);
         try (OutputStream out = Files.newOutputStream(p12)) {
             dst.store(out, new char[0]);
         }
@@ -83,7 +83,7 @@ class NodeJoinBootGateTest {
             src.load(in, "changeit".toCharArray());
         }
         try (OutputStream out = Files.newOutputStream(p12)) {
-            src.store(out, new char[0]); // trust entries only; re-MAC under the empty password
+            src.store(out, new char[0]);
         }
     }
 
@@ -97,7 +97,6 @@ class NodeJoinBootGateTest {
                 try {
                     Files.deleteIfExists(p);
                 } catch (IOException ignored) {
-                    // best-effort temp cleanup
                 }
             });
         }
@@ -134,7 +133,6 @@ class NodeJoinBootGateTest {
     @Test
     @Timeout(60)
     void authEnabledTlsWithAllowListBoots(@TempDir Path dataDir) {
-        // The intended production posture: an enumerated allow-list makes the gate pass; the server boots.
         System.setProperty(ALLOWED, "configd-test=0,peer=1");
         ServerConfig config = tlsConfig(dataDir, /*auth=*/true);
         ConfigdServer server = ConfigdServer.start(config);
@@ -166,7 +164,7 @@ class NodeJoinBootGateTest {
                 "--data-dir", dataDir.toString(),
                 "--peers", "0,1",
                 "--peer-addresses", "1=127.0.0.1:1",   // parses; the peer is never reached at boot
-                "--bind-port", "0",                      // ephemeral Raft listen port
+                "--bind-port", "0",
                 "--api-port", "0",
                 "--tls-cert", certFile.toString(),
                 "--tls-key", keyStorePath.toString(),

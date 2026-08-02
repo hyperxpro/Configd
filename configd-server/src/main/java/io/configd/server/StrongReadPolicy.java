@@ -17,8 +17,6 @@ public final class StrongReadPolicy {
     
     public StrongReadPolicy(Set<String> prefixes) {
         Objects.requireNonNull(prefixes, "prefixes must not be null");
-        // Defensive, order-preserving copy; reject blank prefixes so an empty
-        // token (e.g. a stray trailing comma) cannot silently match every key.
         Set<String> copy = new LinkedHashSet<>();
         for (String p : prefixes) {
             Objects.requireNonNull(p, "strong-read prefix must not be null");

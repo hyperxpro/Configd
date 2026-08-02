@@ -33,7 +33,6 @@ class RaftLogCompactionTriggerTest {
         @Override public void restoreSnapshot(byte[] snapshot) { }
     }
 
-    /** A single-node leader (empty peer set self-elects; proposals commit + apply at once). */
     private static RaftNode singleNodeLeader() {
         Storage storage = Storage.inMemory();
         RaftConfig config = RaftConfig.of(NodeId.of(1), Set.of());

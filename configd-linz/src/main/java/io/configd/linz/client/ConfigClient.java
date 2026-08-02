@@ -226,7 +226,6 @@ public final class ConfigClient {
                     return hint.get();
                 }
             } catch (Exception ignore) {
-                // try next node
             }
         }
         return -1;

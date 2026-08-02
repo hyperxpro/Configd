@@ -47,7 +47,6 @@ assert_class_green() {
   echo "gate-phase1   ✓ ${cls}: ${line#*-- in }"
 }
 
-# Runs a targeted, offline test set across MODULES (with optional extra -D props) and asserts BUILD SUCCESS.
 run_tests() {
   local label="$1" tests="$2" log="$3"; shift 3
   $MVN -o -pl "$MODULES" test -Dtest="$tests" -Dsurefire.failIfNoSpecifiedTests=false "$@" >"$log" 2>&1 \
@@ -64,7 +63,6 @@ if pgrep -f "[s]urefirebooter" >/dev/null 2>&1; then
   exit 1
 fi
 
-# cumulative: gate-B (chains gate-phase0 -> gate-7 -> ... -> 1)
 if [ "${GATE_PHASE1_SKIP_CHAIN:-0}" = "1" ]; then
   echo "gate-phase1 chain: SKIPPED by GATE_PHASE1_SKIP_CHAIN=1 (LOUD: gates 1..7 + phase0 + B NOT verified this run; CI supplies them via the gate jobs)"
 else

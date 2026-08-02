@@ -285,8 +285,6 @@ class SimulatedNetworkTest {
                 network.send(NODE_0, NODE_1, "msg" + i, 1000L);
             }
             int pending = network.pendingCount();
-            // With 50% drop rate over 1000 messages, we expect roughly 500 to get through.
-            // Allow wide tolerance for randomness.
             assertTrue(pending > 100 && pending < 900,
                     "Expected roughly 500 pending messages but got " + pending);
         }

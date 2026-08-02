@@ -324,7 +324,7 @@ class AclConfigPolicyLoaderMultiShardTest {
             loader.bootSeed();
             long before = acl.configPolicyVersion();
 
-            String carve = roleNameRoutingTo(map, "ver", 1); // strictly on the non-primary shard
+            String carve = roleNameRoutingTo(map, "ver", 1);
             String roleKey = "_acl/roles/" + carve;
             put(stores.get(1), roleKey, "deny READ,WATCH app.secret.");
             loader.onConfigChange(putMutation(roleKey), 1L);
@@ -378,7 +378,7 @@ class AclConfigPolicyLoaderMultiShardTest {
         assertEquals(1, spawned.size(), "the loader started exactly one worker thread");
         Thread worker = spawned.iterator().next();
 
-        loader.close(); // awaits termination internally
+        loader.close();
 
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (worker.isAlive() && System.nanoTime() < deadline) {

@@ -52,7 +52,6 @@
     </build>
 
     <profiles>
-        <!-- Safety-kernel profiles: RaftNode/RaftLog/DurableRaftState/ReadIndexState/ClusterConfig. -->
         <profile>
             <id>mutation</id>
             <build>

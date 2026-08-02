@@ -60,7 +60,7 @@ public final class WatchMultiplexHandler implements InboundFrameHandler {
     public void onFrame(EdgeFrame frame) {
         Long watchId = watchIdOf(frame);
         if (watchId == null) {
-            return; // not a per-watch frame; nothing on a watch connection consumes it
+            return;
         }
         WatchSession w = byWatchId.get(watchId);
         if (w != null) {

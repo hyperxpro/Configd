@@ -298,7 +298,6 @@ class NettyRaftPeerIdentityBindingTest {
         assertTrue(rejections.get() >= 1, "a missing SAN-URI marker must increment the mismatch counter");
     }
 
-    // Helpers.
 
     private NettyRaftTransport startClientTransport(NodeId peerId, int peerPort, PeerIdentityPolicy policy,
             AtomicInteger inbound, AtomicInteger rejections) throws Exception {
@@ -416,7 +415,6 @@ class NettyRaftPeerIdentityBindingTest {
         try {
             in.read(buf);
         } catch (java.net.SocketTimeoutException ignored) {
-            // no reply within the bound
         }
     }
 

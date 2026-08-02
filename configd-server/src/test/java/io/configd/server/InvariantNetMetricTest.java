@@ -80,7 +80,6 @@ class InvariantNetMetricTest {
     }
 
     private static String scrapeMetrics(ConfigdServer server) throws Exception {
-        // Admin server is Netty-based; the public bound-port accessor is transport-agnostic.
         int port = server.apiPort();
 
         HttpResponse<String> resp = HttpClient.newHttpClient().send(

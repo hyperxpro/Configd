@@ -734,17 +734,14 @@ public final class FanOutSessionCore {
         return state;
     }
 
-    /** The current cursor (highest seq streamed to the edge). */
     public long cursor() {
         return cursor;
     }
 
-    /** The highest seq the edge has acknowledged. */
     public long lastAckedSeq() {
         return lastAckedSeq;
     }
 
-    /** The number of in-flight (offered-not-acked) NOTIFY frames. */
     public int inFlightFrames() {
         return inFlightFrameMaxSeq.size();
     }
@@ -754,7 +751,6 @@ public final class FanOutSessionCore {
         return lastDemotion;
     }
 
-    /** The lifetime demotion count. */
     public int demotionCount() {
         return demotionCount;
     }

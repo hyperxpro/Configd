@@ -119,7 +119,7 @@ class MultiGroupBringupTest {
         driver.setOwnerPool(pool);
 
         ConfigdServer.RaftGroupRuntime[] rts = new ConfigdServer.RaftGroupRuntime[n];
-        Storage nodeStorage = Storage.file(dataDir); // node-level (would back the AuditLog in prod)
+        Storage nodeStorage = Storage.file(dataDir);
         for (int gid = 0; gid < n; gid++) {
             rts[gid] = bringUpLeader(driver, n, gid, dataDir, nodeStorage);
         }
@@ -174,7 +174,7 @@ class MultiGroupBringupTest {
         for (int gid : new int[] {0, 1, 7}) {
             RecordingEndpoint endpoint = new RecordingEndpoint();
             ConfigdServer.RaftGroupRuntime rt = ConfigdServer.buildRaftGroup(
-                    gid, /*shardCount=*/8, dataDir, /*nodeStorage=*/Storage.inMemory(),
+                    gid, /*shardCount=*/8, dataDir, Storage.inMemory(),
                     integrity(), Clock.system(), null, ConfigStateMachine.InvariantChecker.NOOP,
                     io.configd.raft.RaftNode.InvariantChecker.NOOP, testMetrics(),
                     RaftConfig.of(NODE, Set.of()), NODE, endpoint,

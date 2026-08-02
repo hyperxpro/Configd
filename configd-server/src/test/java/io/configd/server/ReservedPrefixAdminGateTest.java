@@ -193,7 +193,6 @@ class ReservedPrefixAdminGateTest {
 
         assertEquals(403, status(h, "PUT", "_acl/roles/x", "reader", "allow READ app."), "reader PUT _acl/ → 403");
         assertEquals(403, status(h, "DELETE", "_acl/roles/x", "reader", null), "reader DELETE _acl/ → 403");
-        // And the disclosure floor: a non-ADMIN GET of _acl/ is also 403 (ALL methods require ADMIN).
         assertEquals(403, status(h, "GET", "_acl/roles/x", "reader", null),
                 "a non-ADMIN GET of _acl/ must be 403 — policy DISCLOSURE is closed");
         assertEquals(403, status(h, "GET", "_acl/roles/x", "writer", null),
@@ -226,7 +225,6 @@ class ReservedPrefixAdminGateTest {
         // adminP is now locked out of _acl/ (config DENY of ADMIN is absolute, composes across layers)...
         assertEquals(403, status(h, "PUT", "_acl/roles/x", "admin", "allow READ app."),
                 "adminP self-denied its ADMIN — it is now locked out of _acl/");
-        // ...but root's static break-glass is un-carveable by any config role:
         assertEquals(200, status(h, "PUT", "_acl/roles/x", "root", "allow READ app."),
                 "root must STILL be able to write _acl/ (break-glass un-carveable)");
         assertEquals(200, status(h, "DELETE", "_acl/bindings/adminP", "root", null),
@@ -235,7 +233,7 @@ class ReservedPrefixAdminGateTest {
         // An even more direct attack - binding ROOT itself to the deny role - is rejected wholesale by the
         // loader (reserved principal), so the load fails closed and root keeps full authority.
         store.put("_acl/bindings/root", b("lockout"), ++seq);
-        loader.rebuild(); // REJECTED (reserved principal) => last-good kept
+        loader.rebuild();
         assertEquals(200, status(h, "PUT", "_acl/roles/z", "root", "allow READ app."),
                 "binding root to a deny role is rejected wholesale — root remains authorized");
     }
@@ -250,7 +248,6 @@ class ReservedPrefixAdminGateTest {
                 "a malformed role line must be rejected 400 at write-time");
         assertEquals(400, status(h, "PUT", "_acl/zzz", "admin", "junk"),
                 "an unrecognized _acl/ key shape must be rejected 400 at write-time");
-        // Reserved role name / reserved principal binding -> 400 (same reserved sets as reload).
         assertEquals(400, status(h, "PUT", "_acl/roles/admin", "admin", "allow READ app."),
                 "defining the reserved role 'admin' must be rejected 400 at write-time");
         assertEquals(400, status(h, "PUT", "_acl/bindings/root", "admin", "some-role"),
@@ -270,7 +267,6 @@ class ReservedPrefixAdminGateTest {
         CapturingProposer proposer = new CapturingProposer();
         VersionedConfigStore store = new VersionedConfigStore();
         store.put("_acl/roles/x", b("allow READ app."), 1);
-        // Auth OFF and ACL OFF (the loudly-warned non-production mode).
         AdminApiHandler h = handler(/* acl */ null, /* auth */ null, proposer, store);
 
         assertEquals(403, status(h, "PUT", "_acl/roles/y", null, "allow READ app."),

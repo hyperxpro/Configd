@@ -13,7 +13,7 @@ public final class ConfigSigner {
 
     private static final String ALGORITHM = "Ed25519";
 
-    private final PrivateKey signingKey;   // null on verify-only nodes (edges)
+    private final PrivateKey signingKey;
     private final PublicKey verifyKey;
 
     public ConfigSigner(KeyPair keyPair) {

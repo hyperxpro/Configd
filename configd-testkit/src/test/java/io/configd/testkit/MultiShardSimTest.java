@@ -68,7 +68,6 @@ class MultiShardSimTest {
         sim.checkAll(); // disjoint ownership + routing-to-owner + no-loss all hold
     }
 
-    /** NON-VACUITY: a router that is not a stable function fails routing correctness on the 2nd write. */
     @Test
     void nonVacuity_nonFunctionalRouter_failsRouting() {
         MultiShardSim sim = new MultiShardSim(1L, 4, R, ShardRouters.rotating(4), Set.of());
@@ -164,7 +163,7 @@ class MultiShardSimTest {
         sim.drain(80);
         for (int s = 0; s < 3; s++) sim.commitsAdvancedOn(s);
         for (int s = 0; s < 3; s++) sim.faultShardMajority(s);
-        sim.drain(300); // lagging replicas catch up here - the OLD sum witness would falsely rise
+        sim.drain(300);
         for (int s = 0; s < 3; s++) {
             assertFalse(sim.commitsAdvancedOn(s),
                     "a dead shard (lost quorum) must report NO new-commit progress — replica catch-up is "
@@ -188,7 +187,6 @@ class MultiShardSimTest {
         sim.checkAll(); // and never scattered the key across shards
     }
 
-    /** NON-VACUITY: with redirect DISABLED, the stale-leader write is never accepted -> lost. */
     @Test
     void nonVacuity_noRedirect_losesTheWrite() {
         MultiShardSim sim = new MultiShardSim(2L, 2, R, new StaticShardMap(2),
@@ -208,8 +206,6 @@ class MultiShardSimTest {
     @ParameterizedTest
     @MethodSource("smallSweep")
     void nEqualsOne_byteIdenticalToSingleGroup(long seed) {
-        // Generate one op stream, drive it through BOTH the N=1 multi-shard sim and a bare single-group
-        // control on the identical per-shard seed; the committed key->value views must be identical.
         MultiShardSim sim = new MultiShardSim(seed, 1, R, new StaticShardMap(1), Set.of());
         List<MultiShardSim.Op> ops = sim.generateOps(60);
         sim.electAllLeaders(ELECT_TICKS);
@@ -228,7 +224,6 @@ class MultiShardSimTest {
                 "N=1 multi-shard committed state must be byte-identical to the single-group control");
     }
 
-    /** NON-VACUITY: at N=1, dropping ops makes the multi-shard committed state diverge from the control. */
     @Test
     void nonVacuity_droppedOpAtN1_divergesFromSingleGroup() {
         // Deterministic: DROP_OP_AT_N1 skips every 7th op (indices 0,7,14,...); divergence requires at
@@ -267,7 +262,6 @@ class MultiShardSimTest {
         sim.checkDisjointOwnership();
     }
 
-    /** Vacuity guard: the sweep must actually commit writes on every shard (else it would pass empty). */
     @Test
     void sweepIsNotVacuous() {
         MultiShardSim sim = new MultiShardSim(11L, 4, R, new StaticShardMap(4), Set.of());

@@ -82,10 +82,6 @@ class CommandCodecPropertyTest {
         }
     }
 
-    /**
-     * Empty input is the noop sentinel - there is no bytes-in branch that
-     * decodes to anything else, even by accident.
-     */
     @Property(tries = 1)
     void emptyInputIsNoop() {
         var decoded = CommandCodec.decode(new byte[0]);

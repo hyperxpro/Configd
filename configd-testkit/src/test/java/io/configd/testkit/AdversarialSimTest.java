@@ -26,7 +26,6 @@ class AdversarialSimTest {
         AdversarialSim sim = new AdversarialSim(20260611L, NODES, TICKS);
         assertDoesNotThrow(sim::run,
                 "Adversarial run must not raise a safety violation on a clean system");
-        // The schedule actually contained faults and the run did work.
         assertFalse(sim.schedule().events().isEmpty(), "schedule must contain faults");
         assertTrue(sim.activity().faultsFired() > 0, "faults must have fired");
         assertTrue(sim.activity().leaderElected(),
@@ -61,7 +60,6 @@ class AdversarialSimTest {
                 "Adversarial sim must be deterministic under faults (seed=" + seed
                         + "): " + d1 + " vs " + d2);
 
-        // And a different seed must diverge (digest is not vacuously constant).
         assertNotEquals(d1, digestOfRun(seed + 1),
                 "Distinct seeds must produce distinct adversarial schedules");
     }
@@ -89,8 +87,6 @@ class AdversarialSimTest {
                 "[nightly-adversarial] seeds=%d wall=%.1fs (%.2fms/seed) elected=%d"
                         + " livenessStalls=%d totalFaults=%d safetyViolations=0%n",
                 count, secs, secs * 1000 / count, leaderElected, livenessStalls, faults);
-        // Liveness stalls are reported, not failed; safety violations would have
-        // already thrown. Sanity: the sweep did real work.
         assertTrue(faults > 0, "sweep must have injected faults");
     }
 

@@ -75,7 +75,6 @@ class SnapshotIntegrityTest {
         node.triggerSnapshot();
         assertEquals("AAAA", sm.snapshotState().get("secret"));
 
-        // Adversary (no key) flips a value byte in the on-disk blob payload.
         Path blob = tempDir.resolve(BLOB_FILE);
         byte[] raw = Files.readAllBytes(blob);
         flipFirst(raw, (byte) 'A', (byte) 'B');

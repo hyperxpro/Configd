@@ -75,7 +75,6 @@ class EdgeTokenAuthTest {
     private static final String PRINCIPAL = "edge-token-svc";
     private static final long LONG_TTL_MS = 3_600_000L;
 
-    /** Single-shard resolver: every target covers gid 0 (the N=1 shape). */
     private static final ShardResolver SINGLE_SHARD = t -> new int[]{0};
 
     private FanOutEndpoint server;
@@ -324,7 +323,6 @@ class EdgeTokenAuthTest {
         refreshDifferentPrincipalIsClosed(true);
     }
 
-    /** A single-bearer chain: the valid {@link #TOKEN} authenticates as {@code principal} with {@code roles}. */
     private static AuthenticatorChain bearerChain(String principal, String rolesCsv) {
         Map<String, String> m = new HashMap<>();
         m.put("configd.auth.bearer.token", TOKEN);
@@ -343,7 +341,6 @@ class EdgeTokenAuthTest {
         return AuthenticatorChain.build(List.of("bearer"), cfg);
     }
 
-    /** A test chain mapping two distinct tokens to two distinct principals (for the REFRESH-identity tests). */
     private static AuthenticatorChain twoPrincipalChain() {
         Authenticator a = new Authenticator() {
             @Override public String type() {
@@ -394,7 +391,6 @@ class EdgeTokenAuthTest {
         return server.localPort();
     }
 
-    /** Publishes one committed mutation (the buffer notification + the replay snapshot). */
     private void publish(String key, String value) {
         long s = ++seq;
         byte[] bytes = value.getBytes(StandardCharsets.UTF_8);

@@ -66,7 +66,6 @@ class OpHistoryTest {
         Path capture = Path.of("..", "docs", "session-2", "captures",
                 "sim-history-sample.jsonl");
         if (Files.isDirectory(capture.getParent())) {
-            // Keep the committed sample small and stable: first 25 ops.
             StringBuilder head = new StringBuilder();
             for (int i = 0; i < Math.min(25, lines.length); i++) {
                 head.append(lines[i]).append('\n');

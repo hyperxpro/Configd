@@ -40,12 +40,11 @@ class RaftLogRecoveryChecksTest {
 
     // scopeId assert: one negative test per at-rest read call-site.
 
-    /** WAL replay site: a record authored under gid=1, replayed by a gid=0 reader, is refused. */
     @Test
     void walRecordFromAnotherShardIsRefused(@TempDir Path tempDir) {
         Storage storage = Storage.file(tempDir);
         IntegrityEnvelope env = SnapshotIntegrityTest.keyedEnvelope();
-        new ChainedWal.Writer(storage, env, 1).append(1, 1, "shard-1-cmd"); // authored under gid=1
+        new ChainedWal.Writer(storage, env, 1).append(1, 1, "shard-1-cmd");
 
         IntegrityException ex = assertThrows(IntegrityException.class,
                 () -> new RaftLog(storage, env, 0));
@@ -53,7 +52,6 @@ class RaftLogRecoveryChecksTest {
                 "a cross-shard WAL record must be refused on replay, got: " + ex.getMessage());
     }
 
-    /** Snapshot persist->reload site: a blob authored under gid=1, reloaded by a gid=0 reader, refused. */
     @Test
     void snapshotBlobFromAnotherShardIsRefusedOnReload(@TempDir Path tempDir) throws Exception {
         IntegrityEnvelope env = SnapshotIntegrityTest.keyedEnvelope();
@@ -83,7 +81,6 @@ class RaftLogRecoveryChecksTest {
     @Test
     void installedSnapshotReloadedUnderWrongShardIsRefused(@TempDir Path tempDir) throws Exception {
         IntegrityEnvelope env = SnapshotIntegrityTest.keyedEnvelope();
-        // A follower on shard 1 installs a snapshot in its OWN dir, re-wrapping the blob under gid=1.
         Path shard1Dir = tempDir.resolve("shard1");
         Storage shard1Storage = Storage.file(shard1Dir);
         RaftLog log = new RaftLog(shard1Storage, env, 1);
@@ -113,7 +110,6 @@ class RaftLogRecoveryChecksTest {
                         + ex.getMessage());
     }
 
-    // Every WAL record must be enveloped; the legacy raw-record fallback is deleted.
 
     @Test
     void nonEnvelopedWalRecordRejectedUnderKey(@TempDir Path tempDir) {
@@ -158,7 +154,6 @@ class RaftLogRecoveryChecksTest {
     void reorderRefused(@TempDir Path tempDir) {
         Storage storage = Storage.file(tempDir);
         IntegrityEnvelope env = SnapshotIntegrityTest.keyedEnvelope();
-        // Two authentic records written in swapped order: embedded indices 2 then 1.
         ChainedWal.Writer w = new ChainedWal.Writer(storage, env, 0);
         w.append(2, 1, "b");
         w.append(1, 1, "a");

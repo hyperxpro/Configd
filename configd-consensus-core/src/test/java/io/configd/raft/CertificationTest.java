@@ -598,7 +598,6 @@ class CertificationTest {
                 cluster.deliverMessagesBetween(Set.of(n2, n3), Set.of(n2, n3));
             }
 
-            RaftNode node2After = cluster.nodes.get(n2);
             RaftNode node3 = cluster.nodes.get(n3);
 
             assertFalse(node3.clusterConfig().isJoint(),

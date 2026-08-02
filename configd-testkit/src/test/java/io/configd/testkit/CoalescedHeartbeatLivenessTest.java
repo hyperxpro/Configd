@@ -71,7 +71,7 @@ class CoalescedHeartbeatLivenessTest {
             }
             long term0 = maxTerm(c);
             for (int t = 0; t < idleTicks; t++) {
-                c.tick(); // idle - only heartbeats flow
+                c.tick();
                 assertEquals(term0, maxTerm(c),
                         "SPURIOUS ELECTION while idle WITH coalescing (seed=" + seed + ", tick=" + t
                                 + "): the coalesced heartbeat failed to keep a follower alive.");
@@ -128,7 +128,7 @@ class CoalescedHeartbeatLivenessTest {
             c.injectHeartbeatFault(DELAY, 600); // 600ms >> the 150-300ms election timeout
             boolean churned = false;
             for (int t = 0; t < 600; t++) {
-                c.tick(); // idle - only the (now delayed) heartbeats matter
+                c.tick();
                 // Detect destabilization either way: a follower winning a fresh election (maxTerm rises)
                 // OR the leader losing quorum and stepping down at the SAME term (CheckQuorum - invisible
                 // to maxTerm alone, so we also check leadership directly).
@@ -200,11 +200,11 @@ class CoalescedHeartbeatLivenessTest {
             }
             reached++;
             long term0 = maxTerm(c);
-            int victim = (leader + 1) % NODES; // a follower
+            int victim = (leader + 1) % NODES;
             int preVotesBefore = c.preVotesSent(victim);
             c.dropHeartbeatsToPeer(io.configd.common.NodeId.of(victim));
             for (int t = 0; t < 600; t++) {
-                c.tick(); // idle
+                c.tick();
                 assertEquals(term0, maxTerm(c),
                         "per-peer starvation caused a SPURIOUS ELECTION (seed=" + seed + ", tick=" + t
                                 + ") — PreVote should have shielded it.");
@@ -212,7 +212,7 @@ class CoalescedHeartbeatLivenessTest {
                         "leader stepped down under single-peer starvation (quorum should hold; seed=" + seed + ")");
             }
             if (c.preVotesSent(victim) > preVotesBefore) {
-                starved++; // the victim really was starved (it churned PreVotes) - non-vacuity
+                starved++;
             }
         }
         assertTrue(reached >= trials - 2, "vacuity: too few seeds elected a stable leader (" + reached + ")");

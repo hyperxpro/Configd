@@ -38,8 +38,6 @@ class AdversarialGateSeedSweepTest {
             }
         }
 
-        // Vacuity guard: the sweep must do
-        // real work. Faults fire on essentially every seed; most must still elect.
         assertEquals(seeds.size(), faultsExercised,
                 "every gate seed must exercise faults (else the gate is vacuous)");
         double electRate = (double) leaderElected / seeds.size();

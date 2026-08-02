@@ -27,7 +27,7 @@ import java.util.function.Function;
  */
 final class LeaderRouter {
 
-    private static final int MAX_HOPS = 1; // follow a hint at most once per logical attempt
+    private static final int MAX_HOPS = 1;
     private static final Duration MAX_RETRY_AFTER = Duration.ofSeconds(30);
 
     private final HttpClient httpClient;
@@ -161,7 +161,7 @@ final class LeaderRouter {
     /** Applies the credential as an {@code Authorization} header (mTLS presents its identity at the TLS layer). */
     private void applyAuthorization(HttpRequest.Builder b) {
         if (credentialSource == null) {
-            return; // mTLS / no-auth
+            return;
         }
         Credential credential = credentialSource.provide().credential();
         switch (credential) {

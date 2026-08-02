@@ -365,6 +365,9 @@ class InstallSnapshotTest {
 
             assertTrue(log.lastApplied() > 0);
             int sizeBeforeSnapshot = log.size();
+            // Non-vacuity: without this the compaction assertion below passes on a log that was
+            // already empty, proving nothing.
+            assertTrue(sizeBeforeSnapshot > 0, "log must hold entries before the snapshot compacts it");
 
             assertTrue(node.triggerSnapshot());
 

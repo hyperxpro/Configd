@@ -39,7 +39,7 @@ class RedTeamCoalescedWirePoCTest {
 
     private static final NodeId LEADER = NodeId.of(7);
     /** groupId(4)+term(8)+leaderId(4)+prevLogIndex(8)+prevLogTerm(8)+leaderCommit(8). */
-    private static final int RECORD = 4 + 8 + 4 + 8 + 8 + 8; // 40
+    private static final int RECORD = 4 + 8 + 4 + 8 + 8 + 8;
 
     private static AppendEntriesRequest hb(long term, long prevIdx, long prevTerm, long commit) {
         return new AppendEntriesRequest(term, LEADER, prevIdx, prevTerm, List.of(), commit);

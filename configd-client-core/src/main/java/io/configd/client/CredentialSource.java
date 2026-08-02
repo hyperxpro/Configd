@@ -33,7 +33,7 @@ public interface CredentialSource {
      * No framed credential — mTLS or no-auth posture: client certificate at handshake is the credential.
      */
     static CredentialSource none() {
-        return null; // an absent CredentialSource is the mTLS / no-auth posture; see ConfigdClientConfig
+        return null;
     }
 
     static CredentialSource staticBearer(String token) {

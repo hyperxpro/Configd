@@ -167,7 +167,6 @@ abstract class AbstractRaftTransportContract {
         transports.clear();
     }
 
-    // Construction helpers - the single point that parametrizes over transports.
 
     /** Calls {@link #newEndpoint} and tracks the result for {@link #tearDown} cleanup. */
     private RaftTransportEndpoint createEndpoint(NodeId self, InetSocketAddress bind,
@@ -184,7 +183,6 @@ abstract class AbstractRaftTransportContract {
         return createEndpoint(self, bindAddress, peers, null, handler);
     }
 
-    // Functional tests (folded from TcpRaftTransportTest).
 
     @Test
     void sendMessageBetweenTwoNodes() throws Exception {
@@ -239,21 +237,26 @@ abstract class AbstractRaftTransportContract {
         var receivedByA = new CopyOnWriteArrayList<InboundMessage>();
         var receivedByB = new CopyOnWriteArrayList<InboundMessage>();
 
+        // A peer map is fixed at construction (Map.copyOf), so a port learned from localPort()
+        // after start() can never be added to it. Both ports are reserved up front instead, or
+        // only the A->B leg could be wired and this would not be a bidirectional test at all.
+        int portA = freePort();
+        int portB = freePort();
+
         RaftTransportEndpoint transportB = createTransport(
                 nodeB,
-                new InetSocketAddress("127.0.0.1", 0),
-                Map.of(),
+                new InetSocketAddress("127.0.0.1", portB),
+                Map.of(nodeA, new InetSocketAddress("127.0.0.1", portA)),
                 msg -> {
                     receivedByB.add(msg);
                     latchB.countDown();
                 }
         );
         transportB.start();
-        int portB = transportB.localPort();
 
         RaftTransportEndpoint transportA = createTransport(
                 nodeA,
-                new InetSocketAddress("127.0.0.1", 0),
+                new InetSocketAddress("127.0.0.1", portA),
                 Map.of(nodeB, new InetSocketAddress("127.0.0.1", portB)),
                 msg -> {
                     receivedByA.add(msg);
@@ -261,7 +264,6 @@ abstract class AbstractRaftTransportContract {
                 }
         );
         transportA.start();
-        int portA = transportA.localPort();
 
         FrameCodec.Frame frameAtoB = new FrameCodec.Frame(
                 MessageType.APPEND_ENTRIES, 1, 10L, "from-a".getBytes());
@@ -270,6 +272,14 @@ abstract class AbstractRaftTransportContract {
         assertTrue(latchB.await(5, TimeUnit.SECONDS), "B should receive message from A");
         assertEquals(nodeA, receivedByB.getFirst().from());
         assertArrayEquals("from-a".getBytes(), receivedByB.getFirst().frame().payload());
+
+        FrameCodec.Frame frameBtoA = new FrameCodec.Frame(
+                MessageType.APPEND_ENTRIES_RESPONSE, 1, 11L, "from-b".getBytes());
+        transportB.send(nodeA, frameBtoA);
+
+        assertTrue(latchA.await(5, TimeUnit.SECONDS), "A should receive message from B");
+        assertEquals(nodeB, receivedByA.getFirst().from());
+        assertArrayEquals("from-b".getBytes(), receivedByA.getFirst().frame().payload());
     }
 
     @Test
@@ -310,7 +320,6 @@ abstract class AbstractRaftTransportContract {
         transportB.close();
         transports.remove(transportB);
 
-        // Small delay to let the close propagate.
         Thread.sleep(200);
 
         RaftTransportEndpoint transportB2 = createTransport(
@@ -573,7 +582,6 @@ abstract class AbstractRaftTransportContract {
                         + "hostname; a message should NOT have reached peer B.");
     }
 
-    // mTLS negative / attack tests (folded from RaftTransportMtlsAttackTest).
 
     @Test
     @Timeout(120)
@@ -640,7 +648,6 @@ abstract class AbstractRaftTransportContract {
         assertEquals(0, inboundCount.get(), "no frame may be delivered over a downgraded connection");
     }
 
-    // Mutual-auth negatives.
 
     @Test
     @Timeout(120)
@@ -678,14 +685,13 @@ abstract class AbstractRaftTransportContract {
                 "no frame may be delivered without a client certificate");
     }
 
-    // Slowloris / admission cap (folded from TcpRaftTransportSlowlorisTest).
 
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void slowDripPeerIsDroppedWithinTheReadIdleDeadline() throws Exception {
         String savedTimeout = System.getProperty("configd.raft.inboundReadTimeoutMs");
         try {
-            System.setProperty("configd.raft.inboundReadTimeoutMs", "500"); // short deadline for the test
+            System.setProperty("configd.raft.inboundReadTimeoutMs", "500");
             int port = freePort();
             startTransport(port);
 
@@ -746,7 +752,6 @@ abstract class AbstractRaftTransportContract {
         }
     }
 
-    // Blackhole tests: send must NEVER park the caller (folded from TcpRaftTransportBlackholeTest).
 
     /**
      * A non-routable destination on 10.255.255.0/24. SYNs sent here are dropped (no RST), so
@@ -858,7 +863,6 @@ abstract class AbstractRaftTransportContract {
         assertTrue(finished);
     }
 
-    // Transport starters (route construction through newEndpoint).
 
     private int startMtlsServer(Path keyStore, AtomicInteger inboundCount) throws Exception {
         TlsConfig serverTls = new TlsConfig(
@@ -902,11 +906,7 @@ abstract class AbstractRaftTransportContract {
         }
     }
 
-    // Attack helpers (verbatim from RaftTransportMtlsAttackTest).
 
-    /**
-     * Builds an {@link SSLSocket} from {@code clientCtx} and runs {@link #attemptHandshakeAndSend}.
-     */
     private boolean attemptHandshakeAndSend(SSLContext clientCtx, int port) throws Exception {
         SSLSocket sock = (SSLSocket) clientCtx.getSocketFactory().createSocket();
         return attemptHandshakeAndSend(sock, port);
@@ -956,7 +956,6 @@ abstract class AbstractRaftTransportContract {
         }
     }
 
-    /** Spin-waits up to {@code millis} asserting the inbound handler stays at zero. */
     private static void assertNoInboundWithin(AtomicInteger inboundCount, long millis)
             throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
@@ -992,7 +991,6 @@ abstract class AbstractRaftTransportContract {
         return sb.toString();
     }
 
-    // SSLContext + keystore loading.
 
     private static SSLContext clientContext(Path clientKs, Path trustStore) throws Exception {
         KeyManagerFactory kmf = null;
@@ -1019,7 +1017,6 @@ abstract class AbstractRaftTransportContract {
         return ks;
     }
 
-    // Keytool fixture builders.
 
     private static void genKeyPair(Path keyStore, String alias, String dname, String... validity)
             throws Exception {

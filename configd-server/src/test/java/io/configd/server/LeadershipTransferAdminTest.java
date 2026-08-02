@@ -204,7 +204,6 @@ class LeadershipTransferAdminTest {
                 "a non-integer group id must be 400");
         assertEquals(400, post(h, "/v1/admin/groups/0/nested/transfer-leadership", "target=2", "root").status(),
                 "a nested group segment must be 400");
-        // The group id omitted entirely (prefix abuts suffix) is a malformed request, not a crash.
         assertEquals(400, post(h, "/v1/admin/groups/transfer-leadership", "target=2", "root").status(),
                 "an omitted group id must be 400 (no substring fault)");
         assertEquals(0, seam.attempts.get(), "a malformed group id never reaches the mechanism");
@@ -299,7 +298,6 @@ class LeadershipTransferAdminTest {
         };
     }
 
-    // Restorability at the endpoint layer: a second transfer (back to the original) is equally allowed.
 
     @Test
     void leadershipIsOperatorManageableInBothDirections() throws Exception {

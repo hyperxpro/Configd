@@ -32,7 +32,6 @@ run_scenario() {
   echo "$code"
 }
 
-# expect <wantCode> <main> <br> <ba> <label> : retries up to 3x for the wanted code
 expect() {
   local want="$1" main="$2" br="$3" ba="$4" label="$5"
   local got=99 i=0
@@ -45,7 +44,7 @@ expect() {
   echo "$got"; return 1
 }
 
-discriminate() { # <name> <Main> <br> <ba> <patch>
+discriminate() {
   local name="$1" main="$2" br="$3" ba="$4" patch="$5" rc=0
   echo "================ DISCRIMINATION: $name ================"
   echo "--- control (unmutated jar) must be GREEN (exit 0) ---"

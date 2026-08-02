@@ -89,14 +89,14 @@ public final class RaftOwnerThreadGuardTest {
 
         @Actor
         public void owner() {
-            ownerThread = Thread.currentThread();   // bind: first task on the owner executor
-            inService = true;                       // node enters service (volatile release)
+            ownerThread = Thread.currentThread();
+            inService = true;
         }
 
         @Actor
         public void foreign(I_Result r) {
-            if (!inService) {                       // volatile acquire
-                r.r1 = PRE_SERVICE_INERT;           // arrived before the node served - inert window
+            if (!inService) {
+                r.r1 = PRE_SERVICE_INERT;
                 return;
             }
             // In service: assertOwnerThread() must see a non-null owner that is NOT this thread and
@@ -132,13 +132,12 @@ public final class RaftOwnerThreadGuardTest {
         volatile Thread ownerThread;
         int consensusState;
 
-        /** Mirror of assertOwnerThread() + a guarded RMW, with NO bind (guard is inert). */
         private int guardedIncrement() {
             Thread owner = ownerThread;
             if (owner != null && owner != Thread.currentThread()) {
-                return -1;                  // never fires (unbound)
+                return -1;
             }
-            return ++consensusState;        // non-atomic RMW through inert guard
+            return ++consensusState;
         }
 
         @Actor

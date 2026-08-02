@@ -80,8 +80,6 @@ class EdgeStalenessDistributionLoadSimTest {
         sim.run();
 
         long count = probe.globalCount();
-        // Non-vacuity: a sustained load must have produced a populated distribution. The tail
-        // assertions below are only meaningful with enough samples behind p9999.
         assertTrue(count >= 1_000,
                 "sustained load must produce a populated distribution (got " + count
                         + " samples; need >= 1000 for a credible p9999)");
@@ -136,8 +134,6 @@ class EdgeStalenessDistributionLoadSimTest {
                     .append(" ms");
         }
 
-        // The greppable summary line for the report. NOT a perf gate - the report's
-        // tables are filled from these numbers.
         System.out.println("STALENESS-LOAD-DIST: scope=local-fanout edges=" + EDGES
                 + " cp=" + CP_NODES + " ops=" + SUSTAINED_OPS + " ticks=" + TICKS
                 + " samples=" + count

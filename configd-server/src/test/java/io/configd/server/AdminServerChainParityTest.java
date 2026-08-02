@@ -105,13 +105,12 @@ class AdminServerChainParityTest {
         Server netty = netty(basicChain());
         HttpClient http = HttpClient.newHttpClient();
         try {
-            // {method, path, auth-header, body, expected-status}
             Object[][] cases = {
-                    {"GET", "/v1/config/app.feature", null, null, 401},                       // no credential
-                    {"GET", "/v1/config/app.feature", basic("alice", "WRONG"), null, 401},     // bad password
-                    {"GET", "/v1/config/app.feature", basic("alice", "wonderland"), null, 200},// reader OK
-                    {"PUT", "/v1/config/app.x", basic("alice", "wonderland"), "v", 403},        // reader lacks WRITE
-                    {"PUT", "/v1/config/app.x", basic("bob", "builder"), "v", 200},             // writer OK
+                    {"GET", "/v1/config/app.feature", null, null, 401},
+                    {"GET", "/v1/config/app.feature", basic("alice", "WRONG"), null, 401},
+                    {"GET", "/v1/config/app.feature", basic("alice", "wonderland"), null, 200},
+                    {"PUT", "/v1/config/app.x", basic("alice", "wonderland"), "v", 403},
+                    {"PUT", "/v1/config/app.x", basic("bob", "builder"), "v", 200},
             };
             for (Object[] c : cases) {
                 String method = (String) c[0], path = (String) c[1], auth = (String) c[2], body = (String) c[3];

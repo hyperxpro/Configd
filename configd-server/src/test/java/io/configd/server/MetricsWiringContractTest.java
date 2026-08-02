@@ -133,8 +133,6 @@ class MetricsWiringContractTest {
                     "a confirmed commit must increment write_commit_total");
             assertTrue(seriesValue(scrape, "configd_write_commit_seconds_count") >= 1.0,
                     "end-to-end commit latency must be recorded (write_commit_seconds)");
-            // The exact bucket series the WriteCommitFastBurn alert queries must render (proves the
-            // exporter was given histogramSchedules).
             assertTrue(scrape.contains("configd_write_commit_seconds_bucket{le=\"0.150\"}"),
                     "the le=0.150 bucket the burn-rate alert queries must be emitted:\n" + scrape);
             assertTrue(seriesValue(scrape, "configd_apply_seconds_count") >= 1.0,
@@ -179,7 +177,7 @@ class MetricsWiringContractTest {
         try {
             MetricsRegistry registry = new MetricsRegistry();
             ConfigdMetrics metrics = new ConfigdMetrics(registry, () -> 0L);
-            RaftNode leader = forcedUncommittableLeader(exec, 3); // maxPendingProposals = 3
+            RaftNode leader = forcedUncommittableLeader(exec, 3);
             // Pre-fill the queue to the bound on the exec thread: no-op@1 + 2 accepted = 3.
             exec.submit(() -> {
                 leader.propose(new byte[]{1});
@@ -277,7 +275,7 @@ class MetricsWiringContractTest {
         assertEquals(0.0, seriesValue(scrape(registry), "configd_raft_last_applied_index"));
 
         sm.apply(1, 1, io.configd.store.CommandCodec.encodePut("k", "v".getBytes(StandardCharsets.UTF_8)));
-        lastApplied.set(7); // the tick thread publishes the raft log index
+        lastApplied.set(7);
 
         String scrape = scrape(registry);
         assertEquals(7.0, seriesValue(scrape, "configd_raft_last_applied_index"),

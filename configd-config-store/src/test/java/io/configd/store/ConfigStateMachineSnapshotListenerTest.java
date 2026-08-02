@@ -20,7 +20,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class ConfigStateMachineSnapshotListenerTest {
 
     private static byte[] validSnapshot() {
-        // A snapshot of an empty store is a well-formed snapshot payload.
         return new ConfigStateMachine(new VersionedConfigStore()).snapshot();
     }
 

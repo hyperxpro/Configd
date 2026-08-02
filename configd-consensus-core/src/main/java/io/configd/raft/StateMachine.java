@@ -15,8 +15,5 @@ public interface StateMachine {
 
     byte[] snapshot();
 
-    /**
-     * Restore from snapshot bytes produced by snapshot().
-     */
     void restoreSnapshot(byte[] snapshot);
 }

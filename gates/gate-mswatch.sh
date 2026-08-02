@@ -20,7 +20,6 @@ MVN="$ROOT/mvnw -B"
 LOGDIR="${GATE_MSWATCH_LOG_DIR:-$(mktemp -d /tmp/gate-mswatch-XXXXXX)}"
 mkdir -p "$LOGDIR"
 
-# The two modules whose multi-shard watch tests this gate exercises.
 MODULES="configd-wire,configd-distribution-service,configd-server"
 
 echo "=== gate-mswatch (multi-shard client-facing WATCH seal) — logs in $LOGDIR ==="
@@ -37,7 +36,6 @@ assert_class_green() {
   echo "gate-mswatch   ✓ ${cls}: ${line#*-- in }"
 }
 
-# Runs a targeted, offline test set across MODULES and asserts BUILD SUCCESS.
 run_tests() {
   local label="$1" tests="$2" log="$3"
   $MVN -o -pl "$MODULES" test -Dtest="$tests" -Dsurefire.failIfNoSpecifiedTests=false >"$log" 2>&1 \

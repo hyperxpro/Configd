@@ -57,7 +57,7 @@ public final class Hkdf {
                     "HKDF expand length out of range [1, " + (255 * HASH_LEN) + "]: " + length);
         }
         byte[] ctx = (info == null) ? new byte[0] : info;
-        int n = (length + HASH_LEN - 1) / HASH_LEN; // ceil(length / HashLen)
+        int n = (length + HASH_LEN - 1) / HASH_LEN;
         byte[] okm = new byte[n * HASH_LEN];
         byte[] t = new byte[0]; // T(0) = empty
         for (int i = 1; i <= n; i++) {

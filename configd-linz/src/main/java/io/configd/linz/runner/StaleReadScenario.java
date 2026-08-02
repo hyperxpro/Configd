@@ -48,7 +48,7 @@ public final class StaleReadScenario {
             if (leader < 0) {
                 exit(2, "no leader elected");
             }
-            int followerId = (leader == 1) ? 2 : 1; // any non-leader
+            int followerId = (leader == 1) ? 2 : 1;
             ClusterNode F = cluster.node(followerId);
             System.out.println("[staleread/" + label + "] leader=node" + leader
                     + " lagging-follower=node" + followerId);
@@ -152,10 +152,9 @@ public final class StaleReadScenario {
             ClusterNode target = cluster.node(id > 0 && id <= cluster.size() ? id : 1);
             ConfigClient.OpResult r = client.put(target, cluster.nodes(), key, value);
             if (r.status() == Op.Status.OK) {
-                return r; // committed
+                return r;
             }
             last = r;
-            // re-probe leadership before the next attempt
             client.probeLeader(cluster.nodes());
             Thread.sleep(400);
         }

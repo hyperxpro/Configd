@@ -549,7 +549,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
             }
             FanOutConnectionDriver d = driver;
             if (d != null) {
-                d.onInboundFrame(frame); // routing is the driver's (SUBSCRIBE-first, CURSOR_ACK, ...)
+                d.onInboundFrame(frame);
             }
         }
 
@@ -609,7 +609,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         // Teardown is idempotent and callable from either the event loop or the session thread.
         private void teardown(ErrorCode code, String message) {
             if (!alive.compareAndSet(true, false)) {
-                return; // already torn down
+                return;
             }
             ScheduledFuture<?> ce = certExpiry;
             if (ce != null) {

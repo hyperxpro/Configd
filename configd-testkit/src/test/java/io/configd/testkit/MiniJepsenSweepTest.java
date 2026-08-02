@@ -58,7 +58,7 @@ class MiniJepsenSweepTest {
                     totalFaults++;
                     int roll = r.nextInt(6);
                     switch (roll) {
-                        case 0, 1 -> { // isolate a random pair (partial/asymmetric mix)
+                        case 0, 1 -> {
                             int a = r.nextInt(N), b = r.nextInt(N);
                             if (a != b) {
                                 if (r.nextBoolean()) {
@@ -68,18 +68,18 @@ class MiniJepsenSweepTest {
                                 }
                             }
                         }
-                        case 2 -> c.net.setDropRate(0.10 + 0.30 * r.nextDouble()); // 10 - 40% loss
-                        case 3 -> { // a latency spike on a random directed edge
+                        case 2 -> c.net.setDropRate(0.10 + 0.30 * r.nextDouble());
+                        case 3 -> {
                             int a = r.nextInt(N), b = r.nextInt(N);
                             if (a != b) {
                                 c.net.beginDelaySpike(a, b, 10 + r.nextInt(40));
                             }
                         }
-                        case 4 -> { // partial heal
+                        case 4 -> {
                             c.net.setDropRate(0.0);
                             c.net.endDelaySpike();
                         }
-                        case 5 -> c.net.healAll(); // full heal (transient calm before the next storm)
+                        case 5 -> c.net.healAll();
                     }
                 }
             }

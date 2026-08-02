@@ -80,7 +80,6 @@ class TcpRaftTransportTest {
                         try {
                             Files.deleteIfExists(p);
                         } catch (IOException ignored) {
-                            // best-effort cleanup of a temp fixture
                         }
                     });
         }
@@ -146,21 +145,26 @@ class TcpRaftTransportTest {
         var receivedByA = new CopyOnWriteArrayList<InboundMessage>();
         var receivedByB = new CopyOnWriteArrayList<InboundMessage>();
 
+        // A peer map is fixed at construction (Map.copyOf), so a port learned from localPort()
+        // after start() can never be added to it. Both ports are reserved up front instead, or
+        // only the A->B leg could be wired and this would not be a bidirectional test at all.
+        int portA = freePort();
+        int portB = freePort();
+
         TcpRaftTransport transportB = createTransport(
                 nodeB,
-                new InetSocketAddress("127.0.0.1", 0),
-                Map.of(),
+                new InetSocketAddress("127.0.0.1", portB),
+                Map.of(nodeA, new InetSocketAddress("127.0.0.1", portA)),
                 msg -> {
                     receivedByB.add(msg);
                     latchB.countDown();
                 }
         );
         transportB.start();
-        int portB = transportB.localPort();
 
         TcpRaftTransport transportA = createTransport(
                 nodeA,
-                new InetSocketAddress("127.0.0.1", 0),
+                new InetSocketAddress("127.0.0.1", portA),
                 Map.of(nodeB, new InetSocketAddress("127.0.0.1", portB)),
                 msg -> {
                     receivedByA.add(msg);
@@ -168,7 +172,6 @@ class TcpRaftTransportTest {
                 }
         );
         transportA.start();
-        int portA = transportA.localPort();
 
         FrameCodec.Frame frameAtoB = new FrameCodec.Frame(
                 MessageType.APPEND_ENTRIES, 1, 10L, "from-a".getBytes());
@@ -177,6 +180,14 @@ class TcpRaftTransportTest {
         assertTrue(latchB.await(5, TimeUnit.SECONDS), "B should receive message from A");
         assertEquals(nodeA, receivedByB.getFirst().from());
         assertArrayEquals("from-a".getBytes(), receivedByB.getFirst().frame().payload());
+
+        FrameCodec.Frame frameBtoA = new FrameCodec.Frame(
+                MessageType.APPEND_ENTRIES_RESPONSE, 1, 11L, "from-b".getBytes());
+        transportB.send(nodeA, frameBtoA);
+
+        assertTrue(latchA.await(5, TimeUnit.SECONDS), "A should receive message from B");
+        assertEquals(nodeB, receivedByA.getFirst().from());
+        assertArrayEquals("from-b".getBytes(), receivedByA.getFirst().frame().payload());
     }
 
     @Test
@@ -489,6 +500,13 @@ class TcpRaftTransportTest {
         assertEquals(0, rc, "keytool failed: " + command[0]);
     }
 
+
+    /** Grabs an ephemeral free port (closed immediately) for the transport to bind. */
+    private static int freePort() throws Exception {
+        try (java.net.ServerSocket s = new java.net.ServerSocket(0)) {
+            return s.getLocalPort();
+        }
+    }
 
     private TcpRaftTransport createTransport(
             NodeId self,

@@ -105,21 +105,17 @@ class AdminApiChainAuthTest {
                 cfg(Map.of("configd.auth.basic.users", "alice:" + aliceHash + ",bob:" + bobHash)));
 
         AclService acl = new AclService();
-        acl.grant("", "alice", EnumSet.of(AclService.Permission.READ));               // read-only
+        acl.grant("", "alice", EnumSet.of(AclService.Permission.READ));
         acl.grant("app.", "bob", EnumSet.of(AclService.Permission.READ, AclService.Permission.WRITE));
         AdminApiHandler h = handler(acl, chain);
 
-        // No credential -> 401; wrong password -> 401 (authentication, not authorization).
         assertEquals(401, status(h, "GET", "app.x", null, null));
         assertEquals(401, status(h, "GET", "app.x", basic("alice", "WRONG"), null));
 
-        // alice authenticates but has no WRITE -> 403 on PUT (authenticated-but-unauthorized).
         assertEquals(403, status(h, "PUT", "app.x", basic("alice", "wonderland"), "value"));
 
-        // bob has WRITE under app. -> the write is authorized (reaches the committing proposer) -> 200.
         assertEquals(200, status(h, "PUT", "app.x", basic("bob", "builder"), "value"));
 
-        // A read alice IS allowed: not a 401 and not a 403 (auth + READ both pass).
         int readStatus = status(h, "GET", "app.x", basic("alice", "wonderland"), null);
         assertNotEquals(401, readStatus);
         assertNotEquals(403, readStatus);
@@ -159,7 +155,6 @@ class AdminApiChainAuthTest {
                 EnumSet.of(AclService.Permission.READ, AclService.Permission.WRITE));
         AdminApiHandler h = handler(acl, chain);
 
-        // No Authorization header, but a verified client cert -> authenticate as the cert-DN principal.
         assertEquals(200, statusWithCert(h, "PUT", "app.x", cert, "value"));
         int get = statusWithCert(h, "GET", "app.x", cert, null);
         assertNotEquals(401, get);
@@ -189,7 +184,7 @@ class AdminApiChainAuthTest {
         AdminApiHandler.AdminRequest r = new AdminApiHandler.AdminRequest() {
             @Override public String method() { return method; }
             @Override public URI uri() { return uri; }
-            @Override public String header(String name) { return null; } // no Authorization header
+            @Override public String header(String name) { return null; }
             @Override public byte[] body() { return body == null ? new byte[0] : body.getBytes(StandardCharsets.UTF_8); }
             @Override public List<X509Certificate> peerCertificates() { return List.of(cert); }
         };

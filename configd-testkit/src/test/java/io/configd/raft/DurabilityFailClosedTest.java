@@ -66,7 +66,6 @@ class DurabilityFailClosedTest {
         assertEquals(ProposalResult.ACCEPTED, node.propose("x".getBytes()).result());
         assertEquals(1, pending.size(), "propose must have buffered exactly one flush");
 
-        // The WAL fsync (syncLog) throws on this flush.
         storage.failNextSyncs(1);
         assertThrows(IllegalStateException.class, () -> pending.poll().run(),
                 "a WAL fsync failure in the flush must panic");
@@ -97,7 +96,6 @@ class DurabilityFailClosedTest {
         long committedBefore = node.log().commitIndex();
         assertEquals(ProposalResult.ACCEPTED, node.propose("y".getBytes()).result());
 
-        // The WAL fsync succeeds but the ANCHOR fdatasync throws on this flush (the second seam).
         node.log().anchor().armSyncFailure(1);
         assertThrows(IllegalStateException.class, () -> pending.poll().run(),
                 "an anchor fsync failure in the flush must panic identically to the WAL seam");

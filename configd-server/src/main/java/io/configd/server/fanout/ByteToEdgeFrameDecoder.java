@@ -59,7 +59,7 @@ final class ByteToEdgeFrameDecoder extends ByteToMessageDecoder {
             }
         }
         if (in.readableBytes() < total) {
-            return; // the full frame has not arrived yet
+            return;
         }
         byte[] frameBytes = new byte[total];
         in.readBytes(frameBytes);

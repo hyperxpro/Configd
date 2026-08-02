@@ -80,7 +80,6 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
     private final CompletableFuture<Long> hydrated = new CompletableFuture<>();
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
-    // Reactive delivery (single subscriber).
     private final AtomicReference<Flow.Subscriber<? super ConfigChange>> subscriber = new AtomicReference<>();
     private final Object deliverLock = new Object();
     private final ArrayDeque<Buffered> deliveryBuffer = new ArrayDeque<>();
@@ -116,7 +115,6 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
         return new Subscription(options, fullStore, prefixes, verifier, reassembler, view, cursorStore);
     }
 
-    /** The verified, materialized local store. */
     public LocalConfigView view() {
         return view;
     }
@@ -183,7 +181,7 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
                 return;
             }
             synchronized (deliverLock) {
-                demand = demand + n < 0 ? Long.MAX_VALUE : demand + n; // saturate
+                demand = demand + n < 0 ? Long.MAX_VALUE : demand + n;
             }
             long acked = drainToSubscriber();
             EdgeConnection c = connection;

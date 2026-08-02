@@ -25,7 +25,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Smoke test for {@link NettyRaftTransport} (plaintext): round-trip, bidirectional, concurrency. */
 @Timeout(20)
 class NettyRaftTransportSmokeTest {
 

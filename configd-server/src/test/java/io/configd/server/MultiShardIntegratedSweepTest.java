@@ -61,29 +61,24 @@ class MultiShardIntegratedSweepTest {
         MultiRaftDriver driver = new MultiRaftDriver(NODE, Clock.system());
         driver.setOwnerPool(pool);
 
-        // (1) Real production bring-up: N groups via buildRaftGroup, registered + owner-bound + self-elected.
         Storage nodeStorage = Storage.file(dataDir);
         List<ConfigdServer.RaftGroupRuntime> runtimes = new ArrayList<>(n);
         for (int gid = 0; gid < n; gid++) {
             runtimes.add(bringUpLeader(driver, n, gid, dataDir, nodeStorage));
         }
-        // Distinct per-shard storage (N>1) - the bring-up really sharded.
         for (int gid = 0; gid < n; gid++) {
             assertEquals(RaftRole.LEADER, runtimes.get(gid).raftNode().role(), "group " + gid + " is LEADER");
         }
 
-        // (2) Real sharded fan-out wired over the real runtimes.
         ConfigdServer.ShardedFanOut fan = ConfigdServer.registerShardedFanOut(
                 runtimes, Clock.system(), new MetricsRegistry().counter("fanout.buffer.dropped"), 10_000);
         assertEquals(n, fan.buffers().size(), "one fan-out buffer per shard");
 
-        // (3) Commit a distinct key to each shard (on its owner), driving real consensus to apply.
         for (int gid = 0; gid < n; gid++) {
             proposeAndAwaitApply(driver, runtimes.get(gid), gid, "k" + gid,
                     ("val" + gid).getBytes(StandardCharsets.UTF_8));
         }
 
-        // (4a) Per-shard store isolation: group k holds only its own key.
         for (int writer = 0; writer < n; writer++) {
             for (int observer = 0; observer < n; observer++) {
                 boolean present = runtimes.get(observer).configStore().get("k" + writer).found();
@@ -95,8 +90,6 @@ class MultiShardIntegratedSweepTest {
             }
         }
 
-        // (4b) Per-shard fan-out isolation: each shard's buffer has exactly its own commit, at
-        // per-shard seq 1, carrying its own key - and no other shard's key.
         for (int gid = 0; gid < n; gid++) {
             List<CommitNotification> out = drain(fan.buffers().get(gid));
             assertEquals(1, out.size(), "shard " + gid + " fan-out buffer holds exactly its own commit");
@@ -106,7 +99,6 @@ class MultiShardIntegratedSweepTest {
         }
     }
 
-    // These helpers mirror MultiGroupBringupTest's.
     private ConfigdServer.RaftGroupRuntime bringUpLeader(
             MultiRaftDriver driver, int shardCount, int gid, Path dataDir, Storage nodeStorage)
             throws Exception {

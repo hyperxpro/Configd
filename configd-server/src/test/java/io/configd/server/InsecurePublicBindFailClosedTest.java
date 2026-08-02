@@ -23,7 +23,6 @@ class InsecurePublicBindFailClosedTest {
     @TempDir
     Path tempDir;
 
-    // direct enforcement (independent of ambient system properties)
 
     @Test
     void publicBindWithAuthOffAndNoOverrideThrows() {
@@ -83,15 +82,14 @@ class InsecurePublicBindFailClosedTest {
                 "the override path must warn loudly and name the override; stderr was:\n" + stderr);
     }
 
-    // end-to-end: startup is REFUSED (or proceeds under the override) at the real boot
 
     @Test
     void serverStartupRefusedOnPublicBindWithAuthOff() {
         String savedOverride = System.getProperty(OVERRIDE);
         String savedAuth = System.getProperty(AUTH_MODE);
         try {
-            System.setProperty(OVERRIDE, "false"); // no acknowledgement
-            System.clearProperty(AUTH_MODE);       // auth off (no SPI chain, no --auth-token)
+            System.setProperty(OVERRIDE, "false");
+            System.clearProperty(AUTH_MODE);
             ServerConfig config = ServerConfig.parse(new String[]{
                     "--node-id", "0", "--data-dir", tempDir.resolve("boot").toString(),
                     "--peers", "1,2", "--api-port", "0",
@@ -117,8 +115,8 @@ class InsecurePublicBindFailClosedTest {
         String savedOverride = System.getProperty(OVERRIDE);
         String savedAuth = System.getProperty(AUTH_MODE);
         try {
-            System.setProperty(OVERRIDE, "false");   // no acknowledgement
-            System.setProperty(AUTH_MODE, "none");    // auth explicitly disabled - the open gate
+            System.setProperty(OVERRIDE, "false");
+            System.setProperty(AUTH_MODE, "none");
             ServerConfig config = ServerConfig.parse(new String[]{
                     "--node-id", "0", "--data-dir", tempDir.resolve("modenone").toString(),
                     "--peers", "1,2", "--api-port", "0",
@@ -145,7 +143,7 @@ class InsecurePublicBindFailClosedTest {
         System.setErr(new PrintStream(errBuffer, true, StandardCharsets.UTF_8));
         ConfigdServer server = null;
         try {
-            System.setProperty(OVERRIDE, "true"); // explicit acknowledgement -> proceed, warn loudly
+            System.setProperty(OVERRIDE, "true");
             System.clearProperty(AUTH_MODE);
             ServerConfig config = ServerConfig.parse(new String[]{
                     "--node-id", "1", "--data-dir", tempDir.resolve("boot2").toString(),

@@ -44,7 +44,6 @@
     </dependencies>
 
     <profiles>
-        <!-- Control plane (65): CommitNotification*, WatchService*, SubscriptionManager*, wire.*, fanout.*. Excludes shelfware: HyParViewOverlay (untested). -->
         <profile>
             <id>mutation</id>
             <build>

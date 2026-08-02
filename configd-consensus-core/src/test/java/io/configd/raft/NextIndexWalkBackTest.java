@@ -69,7 +69,6 @@ class NextIndexWalkBackTest {
         RaftNode follower = new RaftNode(RaftConfig.of(FOLLOWER, Set.of(LEADER)),
                 followerLog, followerTx, new NoopStateMachine(), new java.util.Random(2));
 
-        // Elect the leader (both empty) and grow its log: no-op@1 + 5 entries = 6.
         for (int i = 0; i < 400 && leader.role() != RaftRole.LEADER; i++) {
             leader.tick();
             relay(leaderTx, follower);
@@ -77,7 +76,6 @@ class NextIndexWalkBackTest {
         }
         assertEquals(RaftRole.LEADER, leader.role(), "leader must self-elect with the follower's vote");
         for (int i = 0; i < 5; i++) leader.propose(new byte[]{(byte) (100 + i)});
-        // Bring the follower fully in sync so the leader's nextIndex[follower] == lastIndex+1 (7).
         for (int r = 0; r < 30; r++) {
             relay(leaderTx, follower);
             relay(followerTx, leader);
@@ -86,9 +84,6 @@ class NextIndexWalkBackTest {
         long top = leaderLog.lastIndex();
         assertTrue(top >= 6, "leader has a multi-entry log to walk back over (was " + top + ")");
 
-        // Tick until the leader emits a heartbeat AppendEntries. The follower is fully in sync,
-        // so its nextIndex is lastIndex+1 and the heartbeat carries prevLogIndex = lastIndex
-        // (an empty batch).
         AppendEntriesRequest first = null;
         for (int i = 0; i < 50 && first == null; i++) {
             leaderTx.clear();
@@ -100,9 +95,6 @@ class NextIndexWalkBackTest {
         assertEquals(top, prev,
                 "the in-sync follower's nextIndex is lastIndex+1, so the heartbeat prevLogIndex = lastIndex");
 
-        // Feed successive REJECTIONS; each must walk prevLogIndex back by EXACTLY one
-        // (nextIndex -= 1, then retry). With the ni-1 -> ni mutant prevLogIndex
-        // FREEZES at `top` and this loop catches it on the first iteration.
         for (long expected = prev - 1; expected >= 1; expected--) {
             leaderTx.clear();
             leader.handleMessage(new AppendEntriesResponse(leader.currentTerm(), false, 0, FOLLOWER));

@@ -126,7 +126,6 @@ class RaftPeerIdentityBindingTest {
                 try {
                     Files.deleteIfExists(p);
                 } catch (IOException ignored) {
-                    // best-effort temp cleanup
                 }
             });
         }
@@ -142,7 +141,6 @@ class RaftPeerIdentityBindingTest {
             try {
                 ss.close();
             } catch (IOException ignored) {
-                // best-effort
             }
         }
         maliciousServers.clear();

@@ -65,10 +65,8 @@ public final class PrometheusExporter {
         /** Number of finite buckets in this schedule (exclusive of {@code +Inf}). */
         public int size() { return cutoffs.length; }
 
-        /** Cutoff (in sample units) of the bucket at the given index. */
         public long cutoffAt(int i) { return cutoffs[i]; }
 
-        /** Label string ({@code le} value) of the bucket at the given index. */
         public String labelAt(int i) { return labels.get(i); }
     }
 

@@ -50,7 +50,6 @@ public final class RehomingDoubleOwnershipTest {
     // Verbatim mirror of RaftNode.HANDOFF: sentinel meaning "owned by nobody".
     private static final Thread HANDOFF = new Thread("raft-owner-handoff-sentinel");
 
-    // Overlap witness codes.
     private static final int DID_NOT_OWN = -1; // actor did not pass guard (lost field race)
     private static final int NO_OVERLAP = 0;   // owned, did not observe other owner active
     private static final int OVERLAP = 1;      // owned, did observe other owner active
@@ -86,14 +85,14 @@ public final class RehomingDoubleOwnershipTest {
 
         @Actor
         public void loser(II_Result r) {
-            ownerThread = Thread.currentThread();        // A becomes the owner (bind)
+            ownerThread = Thread.currentThread();
             int sawGainer = DID_NOT_OWN;
-            if (ownerThread == Thread.currentThread()) { // A passes its guard
+            if (ownerThread == Thread.currentThread()) {
                 loserInCrit = true;
                 sawGainer = gainerInCrit ? OVERLAP : NO_OVERLAP;
                 loserInCrit = false;
             }
-            ownerThread = HANDOFF;                        // A detaches (volatile release - the barrier publish)
+            ownerThread = HANDOFF;
             r.r1 = sawGainer;
         }
 
@@ -102,10 +101,10 @@ public final class RehomingDoubleOwnershipTest {
             int sawLoser = NOT_ADOPTED;
             // Adopt ONLY after observing A's detach (the .get() barrier, modelled as a bounded volatile spin).
             for (int spin = 0; spin < 4096; spin++) {
-                if (ownerThread == HANDOFF) {             // acquire: A's detach (and its critical section) visible
-                    ownerThread = Thread.currentThread(); // B adopts
+                if (ownerThread == HANDOFF) {
+                    ownerThread = Thread.currentThread();
                     sawLoser = DID_NOT_OWN;
-                    if (ownerThread == Thread.currentThread()) { // B passes its guard
+                    if (ownerThread == Thread.currentThread()) {
                         gainerInCrit = true;
                         sawLoser = loserInCrit ? OVERLAP : NO_OVERLAP;
                         gainerInCrit = false;
@@ -140,9 +139,9 @@ public final class RehomingDoubleOwnershipTest {
 
         @Actor
         public void loser(II_Result r) {
-            ownerThread = Thread.currentThread();        // A claims ownership
+            ownerThread = Thread.currentThread();
             int sawGainer = DID_NOT_OWN;
-            if (ownerThread == Thread.currentThread()) { // guard may be stale (the hazard)
+            if (ownerThread == Thread.currentThread()) {
                 loserInCrit = true;
                 sawGainer = gainerInCrit ? OVERLAP : NO_OVERLAP;
                 loserInCrit = false;
@@ -152,9 +151,9 @@ public final class RehomingDoubleOwnershipTest {
 
         @Actor
         public void gainer(II_Result r) {
-            ownerThread = Thread.currentThread();        // B adopts WITHOUT barrier (the bug)
+            ownerThread = Thread.currentThread();
             int sawLoser = DID_NOT_OWN;
-            if (ownerThread == Thread.currentThread()) { // guard may be stale
+            if (ownerThread == Thread.currentThread()) {
                 gainerInCrit = true;
                 sawLoser = loserInCrit ? OVERLAP : NO_OVERLAP;
                 gainerInCrit = false;
@@ -189,18 +188,18 @@ public final class RehomingDoubleOwnershipTest {
 
         @Actor
         public void handoff() {
-            ownerThread = HANDOFF;                  // A detaches
-            ownerThread = Thread.currentThread();   // B adopts (re-bind), ordered after the detach (single thread)
-            inService = true;                       // B enters the serving path (volatile release)
+            ownerThread = HANDOFF;
+            ownerThread = Thread.currentThread();
+            inService = true;
         }
 
         @Actor
         public void foreign(I_Result r) {
-            if (!inService) {                        // volatile acquire
+            if (!inService) {
                 r.r1 = PRE_SERVICE;
                 return;
             }
-            Thread owner = ownerThread;              // the re-bound owner B must be visible here
+            Thread owner = ownerThread;
             r.r1 = (owner != null && owner != Thread.currentThread()) ? GUARD_FIRED : FALSE_NEGATIVE;
         }
     }

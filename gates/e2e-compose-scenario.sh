@@ -128,7 +128,7 @@ resolve_leader() { # retry-across-churn wrapper, prints the node id
 }
 
 # Committed write with retry across leader churn; prints the committed seq.
-put_committed() { # <key> <value>
+put_committed() {
     local key=$1 val=$2 i
     for i in $(seq 1 60); do
         local l
@@ -149,7 +149,7 @@ put_committed() { # <key> <value>
 # Edge serves <key>=<value> at a version >= <seq>: the bounded read (the request
 # X-Configd-Cursor header makes "fresh enough" explicit — 404 cursor-behind until
 # the edge catches up, 200 + the value once it has).
-edge_serves_at() { # <edge-host:port> <key> <value> <seq>
+edge_serves_at() {
     local out
     out=$(curl -s --max-time 3 -H "X-Configd-Cursor: $4" "http://$1/v1/config/$2" 2>/dev/null)
     [ "$out" = "$3" ]
@@ -176,7 +176,7 @@ writer_loop() {
 # per-edge monotonic version watcher (background)
 # Samples X-Configd-Cursor from every response (hits, misses and refusals all
 # carry it). The kill-leader assertion replays the log: NEVER decreasing.
-watcher_loop() { # <edge-port> <outfile>
+watcher_loop() {
     while :; do
         local c
         c=$(curl -s --max-time 1 -D - -o /dev/null \
@@ -187,7 +187,7 @@ watcher_loop() { # <edge-port> <outfile>
     done
 }
 
-assert_monotonic() { # <file> <min-samples> <desc>
+assert_monotonic() {
     local n
     n=$(wc -l < "$1" 2>/dev/null || echo 0)
     [ "$n" -ge "$2" ] || fail "$3: watcher captured only $n samples (< $2) — watch was not live"

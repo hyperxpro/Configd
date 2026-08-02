@@ -102,7 +102,6 @@ class FrameCodecFuzzTest {
                 assertTrue(len >= MIN_FRAME && len <= FrameCodec.MAX_FRAME_SIZE,
                         "peekLength returned out-of-range " + len);
             } catch (IllegalArgumentException expected) {
-                // bounded, documented
             } catch (Throwable t) {
                 failForbidden("peekLength", data, t);
             }
@@ -185,7 +184,6 @@ class FrameCodecFuzzTest {
                     fail("truncated frame (" + truncated.length
                             + " bytes) must not decode");
                 } catch (IllegalArgumentException | BufferUnderflowException expected) {
-                    // bounded
                 } catch (Throwable t) {
                     failForbidden("truncate", truncated, t);
                 }
@@ -350,7 +348,6 @@ class FrameCodecFuzzTest {
             } catch (IllegalArgumentException
                      | FrameCodec.UnsupportedWireVersionException
                      | BufferUnderflowException expected) {
-                // bounded
             } catch (Throwable t) {
                 failForbidden(label, frame, t);
             }

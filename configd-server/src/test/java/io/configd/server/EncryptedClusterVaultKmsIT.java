@@ -186,7 +186,6 @@ final class EncryptedClusterVaultKmsIT {
             try {
                 s.shutdown();
             } catch (RuntimeException ignored) {
-                // best-effort teardown
             }
         }
         running.clear();
@@ -238,7 +237,6 @@ final class EncryptedClusterVaultKmsIT {
                     "node " + i + " carrier must be a real Vault Transit vault:vN: ciphertext, not a local seal");
             carriersBefore[i] = Files.readAllBytes(sealed);
 
-            // Encryption is genuinely on: every node minted the frozen dual-slot keyring at the encrypted size.
             assertEquals(131080L, Files.size(data.resolve("raft-keyring")),
                     "node " + i + " must mint the frozen preallocated keyring under encryption");
         }
@@ -305,7 +303,7 @@ final class EncryptedClusterVaultKmsIT {
      */
     @Test
     void bootFailsClosedWhenVaultUnreachable(@TempDir Path root) throws Exception {
-        System.setProperty("configd.kms.vault.address", "http://127.0.0.1:1"); // nothing listening
+        System.setProperty("configd.kms.vault.address", "http://127.0.0.1:1");
         Path signingKey = root.resolve("secrets").resolve("signing-key.bin");
         Files.createDirectories(signingKey.getParent());
         SigningKeyStore keyStore = SigningKeyStore.loadOrCreate(signingKey);
@@ -407,8 +405,6 @@ final class EncryptedClusterVaultKmsIT {
         return commitAndAwaitReplicationExcluding(servers, gid, -1, key, value);
     }
 
-    /** As {@link #commitAndAwaitReplication} but only requires replication on nodes other than
-     *  {@code excluded} (used while one node is intentionally down). */
     private long commitAndAwaitReplicationExcluding(ConfigdServer[] servers, int gid, int excluded,
                                                     String key, String value) throws Exception {
         byte[] cmd = CommandCodec.encodePut(key, value.getBytes(StandardCharsets.UTF_8));
@@ -475,7 +471,6 @@ final class EncryptedClusterVaultKmsIT {
         }
     }
 
-    /** First index of {@code needle} in {@code haystack}, or -1. Small inputs - a naive scan is fine. */
     private static int indexOf(byte[] haystack, byte[] needle) {
         if (needle.length == 0 || haystack.length < needle.length) {
             return -1;

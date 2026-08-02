@@ -24,7 +24,6 @@ class AckEqualsCommitTest {
     /** Cluster size - 5 nodes tolerates a single leader failure with a 3-node quorum. */
     private static final int NODES = 5;
 
-    /** Seeds swept per fault shape. Each seed is a fully reproducible scenario. */
     private static final int SEEDS = 200;
 
     @Test
@@ -46,10 +45,6 @@ class AckEqualsCommitTest {
         assertTrue(r.violations == 0,
                 "RR-004: " + r.violations + " write(s) ACKNOWLEDGED as committed but ABSENT after "
                         + shape + " in the append→commit window " + r);
-        // Non-vacuity: the sweep must genuinely acknowledge-and-survive writes, so
-        // "no acked write lost" cannot pass because nothing was ever acked. Every
-        // non-inconclusive seed produces at least one acknowledged-committed write
-        // (the baseline) that has to survive failover.
         assertTrue(r.ackedAndSurvived > 0,
                 "RR-004: non-vacuity — the sweep acknowledged ZERO committed writes (" + r
                         + "); the survival invariant would be vacuously true. " + shape);
@@ -95,7 +90,7 @@ class AckEqualsCommitTest {
 
         int leader = h.electLeader(1500);
         if (leader < 0) {
-            return new ScenarioResult(Outcome.INCONCLUSIVE, 0); // no stable leader under this seed
+            return new ScenarioResult(Outcome.INCONCLUSIVE, 0);
         }
 
         // Warm up: a committed baseline so the leader's term has a committed entry
@@ -104,7 +99,7 @@ class AckEqualsCommitTest {
         AckObserver baseline = h.ackObserver();
         long baseSeq = h.proposeAndAwaitAck(leader, "rr004.base", "base", 400, baseline);
         if (baseSeq <= 0 || !baseline.committed()) {
-            return new ScenarioResult(Outcome.INCONCLUSIVE, 0); // could not warm up under this seed
+            return new ScenarioResult(Outcome.INCONCLUSIVE, 0);
         }
 
         // Randomized kill point inside the append->commit window (1..4 ticks after
@@ -121,16 +116,12 @@ class AckEqualsCommitTest {
             }
         }
 
-        // Propose the target write and observe its ACK at the live boundary.
-        // Post-fix: register whenCommitOutcome (the seam the HTTP path blocks on).
-        // Pre-fix: that seam is absent; the ack is the propose acceptance.
         AckObserver obs = h.ackObserver();
         boolean appended = h.propose(leader, "rr004.key", "acked-value-" + seed, obs);
         if (!appended) {
-            return new ScenarioResult(Outcome.INCONCLUSIVE, 0); // leader stepped down at propose
+            return new ScenarioResult(Outcome.INCONCLUSIVE, 0);
         }
 
-        // Advance the append->commit window, then remove the leader.
         for (int t = 0; t < killAfterTicks; t++) {
             h.tick();
         }
@@ -142,7 +133,7 @@ class AckEqualsCommitTest {
 
         int newLeader = h.awaitStableLeader(Set.of(leader), 3000);
         if (newLeader < 0) {
-            return new ScenarioResult(Outcome.INCONCLUSIVE, 0); // surviving quorum could not elect
+            return new ScenarioResult(Outcome.INCONCLUSIVE, 0);
         }
         // Commit a fresh current-term entry on the new leader (Raft section 5.4.2) so it
         // applies everything it will ever apply at the old indices, and settle.
@@ -157,8 +148,6 @@ class AckEqualsCommitTest {
         boolean present = result.found()
                 && ("acked-value-" + seed).equals(new String(result.value(), StandardCharsets.UTF_8));
 
-        // Non-vacuity: the baseline write was acknowledged-committed; it must
-        // survive on the new leader too (a real surviving committed write).
         ReadResult baseResult = h.store(newLeader).get("rr004.base");
         boolean baselineSurvived = baseResult.found()
                 && "base".equals(new String(baseResult.value(), StandardCharsets.UTF_8));

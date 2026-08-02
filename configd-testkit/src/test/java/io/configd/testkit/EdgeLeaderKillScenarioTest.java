@@ -40,8 +40,6 @@ class EdgeLeaderKillScenarioTest {
                 /* edgeFaults */ false, new C1StreamDriver(),
                 AdversarialSchedule.defaultIntensity(), EdgeInvariants.BOUND_MS);
 
-        // Per-edge highest-seen version, to make the no-decrease claim explicit (the
-        // invariant also enforces it by throwing).
         Map<Integer, Long> maxVersion = new HashMap<>();
 
         int t = 0;

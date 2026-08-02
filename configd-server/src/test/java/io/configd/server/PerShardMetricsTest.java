@@ -71,7 +71,6 @@ class PerShardMetricsTest {
             assertNotNull(snap.metrics().get("raft.shard.append_send_rejected." + gid));
             assertNotNull(snap.metrics().get("raft.shard.snapshot_chunk_send_rejected." + gid));
             assertNotNull(snap.metrics().get("raft.shard.snapshot_reassembly_refused." + gid));
-            // Each group is its own single-node LEADER, so the leader gauge is 1 and term is greater than 0.
             assertEquals(1L, snap.metrics().get("raft.shard.leader." + gid).value(),
                     "shard " + gid + " must report itself LEADER");
             assertTrue(snap.metrics().get("raft.shard.current_term." + gid).value() > 0,

@@ -60,7 +60,6 @@ class FanOutServerIntegrationTest {
         }
     }
 
-    /** Single-node config with an ephemeral API port AND an ephemeral edge port (plaintext). */
     private ServerConfig plaintextConfig() {
         return new ServerConfig(
                 NodeId.of(0), tempDir, Set.of(), "127.0.0.1",
@@ -82,7 +81,6 @@ class FanOutServerIntegrationTest {
             edge.subscribeFullStore("edge-1", 0L);
             EdgeFrame.SubscribeOk ok = (EdgeFrame.SubscribeOk) readUntil(edge, EdgeFrame.SubscribeOk.class);
             assertNotNull(ok, "must receive SUBSCRIBE_OK");
-            // Fresh store, empty backlog -> TAIL.
             assertEquals(EdgeFrame.Mode.TAIL, ok.mode());
 
             long seq1 = putCommitted(http, base, "svc/a", "v-a");
@@ -99,7 +97,6 @@ class FanOutServerIntegrationTest {
             assertNotNull(hb, "must observe a HEARTBEAT when the stream is idle");
             assertTrue(hb.serverNowMillis() > 0);
 
-            // Stop acking + flood writes -> DEMOTED_TO_CATCHUP then SNAPSHOT then resumed NOTIFY.
             long floodTarget = lastSeq2;
             for (int i = 0; i < 400; i++) {
                 floodTarget = putCommitted(http, base, "flood/" + i, "x" + i);
@@ -168,7 +165,7 @@ class FanOutServerIntegrationTest {
             garbage[0] = 0x00;
             garbage[1] = 0x00;
             garbage[2] = 0x00;
-            garbage[3] = 0x14; // length 20
+            garbage[3] = 0x14;
             for (int i = 4; i < 20; i++) {
                 garbage[i] = (byte) 0xEE;
             }
@@ -273,12 +270,12 @@ class FanOutServerIntegrationTest {
             try {
                 EdgeFrame f = edge.readFrame();
                 if (f == null) {
-                    return true; // EOF -> server closed
+                    return true;
                 }
                 // An ERROR_CLOSE then EOF is also a close.
             } catch (java.net.SocketTimeoutException e) {
             } catch (IOException e) {
-                return true; // reset -> closed
+                return true;
             }
         }
         return false;

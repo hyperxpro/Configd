@@ -115,10 +115,9 @@ final class RaftFailoverE2ETest {
 
         final int keyCount = 5;
         for (int k = 0; k < keyCount; k++) {
-            long committed = cluster.commitAndAwaitReplication(leader0, "k" + k, "v" + k, /*excluded=*/-1);
+            long committed = cluster.commitAndAwaitReplication(leader0, "k" + k, "v" + k, -1);
             assertTrue(committed > 0, "write k" + k + " must reach a committed index pre-failover");
         }
-        // Every committed key is present on all three before we kill anyone (baseline).
         for (int i = 0; i < NODES; i++) {
             for (int k = 0; k < keyCount; k++) {
                 assertValue(cluster.stores[i], "k" + k, "v" + k, "node " + i + " pre-failover");

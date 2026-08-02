@@ -146,17 +146,16 @@ class CoalescedHeartbeatCodecTest {
 
     @Test
     void decodeRejectsDuplicateGroupId() {
-        // Two records with the same group id.
         int rec = 4 + 8 + 4 + 8 + 8 + 8;
         ByteBuffer buf = ByteBuffer.allocate(4 + 2 * rec);
         buf.putInt(2);
         for (int i = 0; i < 2; i++) {
             buf.putInt(7);       // same groupId both times
-            buf.putLong(1L);     // term
+            buf.putLong(1L);
             buf.putInt(LEADER.id());
-            buf.putLong(0L);     // prevLogIndex
-            buf.putLong(0L);     // prevLogTerm
-            buf.putLong(0L);     // leaderCommit
+            buf.putLong(0L);
+            buf.putLong(0L);
+            buf.putLong(0L);
         }
         assertThrows(IllegalArgumentException.class,
                 () -> RaftMessageCodec.decodeCoalescedHeartbeat(coalescedFrame(buf.array())));
@@ -167,7 +166,7 @@ class CoalescedHeartbeatCodecTest {
         Map<Integer, AppendEntriesRequest> one = new LinkedHashMap<>();
         one.put(1, heartbeat(1L, 0L, 0L, 0L));
         byte[] valid = RaftMessageCodec.encodeCoalescedHeartbeat(one).payload();
-        byte[] padded = new byte[valid.length + 3]; // 3 trailing junk bytes
+        byte[] padded = new byte[valid.length + 3];
         System.arraycopy(valid, 0, padded, 0, valid.length);
         assertThrows(IllegalArgumentException.class,
                 () -> RaftMessageCodec.decodeCoalescedHeartbeat(coalescedFrame(padded)),

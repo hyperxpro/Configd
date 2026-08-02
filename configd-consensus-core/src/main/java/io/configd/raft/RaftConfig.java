@@ -30,7 +30,7 @@ public record RaftConfig(
     public RaftConfig {
         Objects.requireNonNull(nodeId, "nodeId must not be null");
         Objects.requireNonNull(peers, "peers must not be null");
-        peers = Set.copyOf(peers); // defensive copy, unmodifiable
+        peers = Set.copyOf(peers);
         if (electionTimeoutMinMs <= 0) {
             throw new IllegalArgumentException("electionTimeoutMinMs must be positive: " + electionTimeoutMinMs);
         }
@@ -121,16 +121,10 @@ public record RaftConfig(
         return Math.max(1, Math.round((float) ms / tickPeriodMs));
     }
 
-    /**
-     * Total number of nodes in the cluster (this node + peers).
-     */
     public int clusterSize() {
         return peers.size() + 1;
     }
 
-    /**
-     * Majority quorum size: floor(clusterSize/2) + 1.
-     */
     public int quorumSize() {
         return clusterSize() / 2 + 1;
     }

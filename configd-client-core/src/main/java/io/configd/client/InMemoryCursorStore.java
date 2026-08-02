@@ -5,9 +5,6 @@ import io.configd.distribution.wire.WatchCursor;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Default CursorStore: process-local, does not survive restart. Thread-safe.
- */
 public final class InMemoryCursorStore implements CursorStore {
 
     private final ConcurrentHashMap<String, WatchCursor> cursors = new ConcurrentHashMap<>();

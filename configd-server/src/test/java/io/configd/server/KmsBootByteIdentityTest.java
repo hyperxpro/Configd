@@ -47,7 +47,7 @@ class KmsBootByteIdentityTest {
     static void mintFrozenFormulaKeyringAndRecord() throws Exception {
         keyFile = shared.resolve("secrets").resolve("signing-key.bin"); // deliberately outside dataDir
         dataDir = shared.resolve("data");
-        SigningKeyStore ks = SigningKeyStore.loadOrCreate(keyFile); // generates a fresh Ed25519 key (SecureRandom)
+        SigningKeyStore ks = SigningKeyStore.loadOrCreate(keyFile);
         frozenRecord = mintFrozenKeyringAndEncrypt(ks, dataDir, PLAINTEXT);
     }
 

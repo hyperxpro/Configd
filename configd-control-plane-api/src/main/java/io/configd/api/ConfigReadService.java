@@ -40,7 +40,6 @@ public final class ConfigReadService {
             return get(key);
         }
 
-        /** Scope-aware {@link #get(String, long)}; see {@link #get(ConfigScope, String)}. */
         default ReadResult get(ConfigScope scope, String key, long minVersion) {
             return get(key, minVersion);
         }
@@ -94,20 +93,12 @@ public final class ConfigReadService {
         Objects.requireNonNull(scope, "scope must not be null");
         Objects.requireNonNull(key, "key must not be null");
 
-        // Confirm leadership on the shard that OWNS (scope, key).
         if (leadershipConfirmer != null && !leadershipConfirmer.confirmLeadership(scope, key)) {
-            return null; // not leader - caller must distinguish from "key not found"
+            return null;
         }
         return reader.get(scope, key);
     }
 
-    /**
-     * Performs a stale read in the {@code GLOBAL} scope. Equivalent to
-     * {@link #staleRead(ConfigScope, String)} with {@link ConfigScope#GLOBAL}.
-     *
-     * @param key the config key
-     * @return the read result
-     */
     public ReadResult staleRead(String key) {
         return staleRead(ConfigScope.GLOBAL, key);
     }
@@ -139,10 +130,6 @@ public final class ConfigReadService {
         return reader.get(key, minVersion);
     }
 
-    /**
-     * @param prefix the key prefix
-     * @return map of matching key-value pairs
-     */
     public Map<String, ReadResult> prefixRead(String prefix) {
         Objects.requireNonNull(prefix, "prefix must not be null");
         return reader.getPrefix(prefix);

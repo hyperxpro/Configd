@@ -53,7 +53,6 @@ final class KmsSealedRootStore {
             try {
                 Files.deleteIfExists(tmp);
             } catch (IOException ignored) {
-                // best-effort cleanup of the staging file
             }
             throw new UncheckedIOException("failed to persist the KMS sealed-root carrier at " + file, e);
         }

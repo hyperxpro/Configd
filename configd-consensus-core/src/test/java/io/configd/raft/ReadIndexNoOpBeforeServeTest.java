@@ -30,7 +30,6 @@ final class ReadIndexNoOpBeforeServeTest {
         assertEquals(-1L, n1.readIndex(),
                 "a fresh leader must not serve a linearizable read before its term no-op commits");
 
-        // Let the no-op replicate to a quorum and commit.
         for (int r = 0; r < 10; r++) {
             c.deliverRound();
         }

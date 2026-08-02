@@ -106,7 +106,6 @@ class EdgeFirstFrameDeadlineTest {
                 .orElseThrow(() -> new AssertionError("counter not exported:\n" + scrape));
     }
 
-    /** Polls the reap counter up to a bound (event-driven; the reap fires at ~DEADLINE_MS). */
     private void awaitReap() throws InterruptedException {
         long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(30L * DEADLINE_MS);
         while (System.nanoTime() < deadlineNanos) {

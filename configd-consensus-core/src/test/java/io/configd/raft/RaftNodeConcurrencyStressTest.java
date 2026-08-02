@@ -52,7 +52,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RaftNodeConcurrencyStressTest {
 
     private static final NodeId N1 = NodeId.of(1);
-    private static final NodeId PHANTOM = NodeId.of(2); // not in the single-node config; benign sender
+    private static final NodeId PHANTOM = NodeId.of(2);
 
     static final class NoOpTransport implements RaftTransport {
         @Override public void send(NodeId target, RaftMessage message) { }
@@ -79,7 +79,6 @@ class RaftNodeConcurrencyStressTest {
         }
     }
 
-    /** Constructs a single-node node, binds the owner thread, and drives it to LEADER - all on the owner. */
     private static RaftNode newSingleNodeLeaderBoundTo(ExecutorService owner, RaftNode.InvariantChecker checker)
             throws Exception {
         RaftConfig config = RaftConfig.of(N1, Set.of());

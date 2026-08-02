@@ -31,10 +31,8 @@ import java.util.stream.Collectors;
  */
 public final class SloTracker {
 
-    /** Registered SLO definitions: name -> definition. */
     private final ConcurrentHashMap<String, SloDefinition> definitions = new ConcurrentHashMap<>();
 
-    /** Event logs per SLO: name -> event deque. */
     private final ConcurrentHashMap<String, ConcurrentLinkedDeque<SloEvent>> events = new ConcurrentHashMap<>();
 
     public void defineSlo(String name, double target, Duration window) {

@@ -35,7 +35,6 @@ class KmsExternalProviderBootTest {
         System.setProperty(ENABLE, "true");
         System.setProperty(PROVIDER, "test-kms");
         try {
-            // Boot #1: no sealed-root file yet -> the provider mints + seals the custody secret, we persist it.
             IntegrityEnvelope env1 = ConfigdServer.deriveRaftIntegrityEnvelope(
                     SigningKeyStore.loadOrCreate(keyFile), keyFile, dataDir);
             assertTrue(env1.isEncrypting(), "external provider + encryption ON must encrypt");

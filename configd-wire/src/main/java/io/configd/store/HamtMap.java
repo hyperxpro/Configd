@@ -81,7 +81,6 @@ public final class HamtMap<K, V> {
         return root.get(key, spread(key.hashCode()), 0);
     }
 
-    /** True if this map contains a mapping for {@code key}. */
     public boolean containsKey(K key) {
         return get(key) != null;
     }

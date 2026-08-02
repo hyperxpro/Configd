@@ -53,11 +53,8 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 final class EdgeNodeMetrics {
 
-    /** Refusal reason: cursor-behind monotonic-read refusal. */
     static final String REASON_CURSOR_BEHIND = "cursor_behind";
-    /** Refusal reason: strong-read fail-close. */
     static final String REASON_STRONG_READ = "strong_read";
-    /** Refusal reason: key outside the subscribed slice. */
     static final String REASON_NOT_SUBSCRIBED = "not_subscribed";
 
     private final MetricsRegistry registry;

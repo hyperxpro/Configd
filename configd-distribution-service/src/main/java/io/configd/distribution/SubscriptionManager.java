@@ -18,7 +18,6 @@ public final class SubscriptionManager {
 
     private final Map<NodeId, Set<String>> subscriptions;
 
-    /** Reverse index: prefix to set of subscribing nodes. */
     private final Map<String, Set<NodeId>> prefixIndex;
 
     public SubscriptionManager() {
@@ -26,9 +25,6 @@ public final class SubscriptionManager {
         this.prefixIndex = new HashMap<>();
     }
 
-    /**
-     * @return true if this is a new subscription for this node+prefix pair
-     */
     public boolean subscribe(NodeId node, String prefix) {
         Objects.requireNonNull(node, "node must not be null");
         Objects.requireNonNull(prefix, "prefix must not be null");
@@ -44,9 +40,6 @@ public final class SubscriptionManager {
         return added;
     }
 
-    /**
-     * @return true if the subscription existed and was removed
-     */
     public boolean unsubscribe(NodeId node, String prefix) {
         Objects.requireNonNull(node, "node must not be null");
         Objects.requireNonNull(prefix, "prefix must not be null");

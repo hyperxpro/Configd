@@ -186,7 +186,6 @@ public final class ConfigdServer {
     
     private final AclConfigPolicyLoader aclPolicyLoader;
 
-    // Distribution layer
     private final WatchService watchService;
     private final FanOutBuffer fanOutBuffer;
     private final Compactor compactor;
@@ -521,7 +520,6 @@ public final class ConfigdServer {
             }
         }
 
-        // Initialize multi-raft driver (groups are registered by the bring-up loop below).
         MultiRaftDriver driver = new MultiRaftDriver(config.nodeId(), clock);
 
         // Create the owner-executor pool HERE - before wiring the transport - so the inbound Raft
@@ -748,7 +746,6 @@ public final class ConfigdServer {
                 try {
                     startedTransport.close();
                 } catch (Exception ignored) {
-                    // best-effort teardown of a failed boot
                 }
             });
         }
@@ -785,7 +782,6 @@ public final class ConfigdServer {
         HyParViewOverlay hyParViewOverlay = new HyParViewOverlay(
                 config.nodeId(), 6, 30, 8, 4, random);
 
-        // Wire HyParView active view changes -> Plumtree eager/lazy peer sets
         hyParViewOverlay.setViewChangeListener((peer, added) -> {
             if (added) {
                 plumtreeNode.addEagerPeer(peer);
@@ -805,8 +801,6 @@ public final class ConfigdServer {
         // edge client.
         stateMachine.addListener(watchService::onConfigChange);
 
-        // (metricsRegistry + invariantMonitor were created earlier, before the state machine,
-        // so the runtime invariant net could be wired.)
         SloTracker sloTracker = new SloTracker();
         ProductionSloDefinitions.register(sloTracker);
         BurnRateAlertEvaluator burnRateAlertEvaluator = new BurnRateAlertEvaluator(sloTracker);
@@ -816,7 +810,6 @@ public final class ConfigdServer {
         // so both the tick-loop and inbound-routing throwable handlers have a stable metrics handle.
         // Eager construction populates the SLO counter families for the first scrape.
 
-        // Wire security. TLS is already initialized above, before the Raft transport.
         AuthInterceptor authInterceptor = null;
         AuthenticatorChain authChain = null;
         AclService aclService = null;
@@ -969,8 +962,6 @@ public final class ConfigdServer {
                 },
                 () -> new RateLimiter(clock, writeRatePerSec, writeBurst));
 
-        // (Tick / read-dispatch / TLS-reload executors are created earlier, right after the multi-raft
-        // driver, so the inbound Raft handler can marshal onto the tick executor.)
 
         // Config read service with linearizable read support. The ReadIndex protocol requires:
         //   1. Record commit index (readIndex())
@@ -2756,7 +2747,6 @@ public final class ConfigdServer {
 
         System.out.println("Configd server started successfully.");
 
-        // Block main thread until shutdown
         try {
             Thread.currentThread().join();
         } catch (InterruptedException e) {

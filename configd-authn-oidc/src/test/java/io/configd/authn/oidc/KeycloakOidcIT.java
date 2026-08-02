@@ -153,7 +153,6 @@ final class KeycloakOidcIT {
         // ...and during the overlap window the old-kid tokenA still validates (both keys in the JWKS).
         assertInstanceOf(AuthResult.Authenticated.class, auth.authenticate(new Credential.BearerToken(tokenA)));
 
-        // Retire the original key: its kid leaves the JWKS.
         realm.components().component(originalKeyComponentId).remove();
         Thread.sleep(2_500L); // outlive the 1s JWKS cache TTL so the next access refetches {kidB}
 

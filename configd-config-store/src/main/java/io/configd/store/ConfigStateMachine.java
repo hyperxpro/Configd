@@ -184,7 +184,6 @@ public final class ConfigStateMachine implements StateMachine {
             }
             throw e;
         }
-        // After a mutating apply, sequenceCounter holds the seq just assigned.
         return mutating ? sequenceCounter : StateMachine.NON_MUTATING;
     }
 

@@ -59,7 +59,7 @@ public final class BloomFilter {
 
     /** False negatives are impossible: a false answer means the key is definitely absent. */
     public boolean mightContain(String key) {
-        if (numBits == 0) return true; // empty filter: pass-through
+        if (numBits == 0) return true;
         int h1 = murmurHash3(key, 0);
         int h2 = murmurHash3(key, h1);
         for (int i = 0; i < numHashes; i++) {

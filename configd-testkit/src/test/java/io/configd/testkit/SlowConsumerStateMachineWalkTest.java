@@ -64,7 +64,6 @@ class SlowConsumerStateMachineWalkTest {
                 20L, 3, 10, 60_000L, 300L, 3, 3_600_000L, 3_600_000L, 64);
     }
 
-    /** One full deterministic walk; returns the recorded evidence for the replay compare. */
     private record WalkEvidence(List<SlowConsumerGovernor.TransitionEvent> transitions,
                                 int refusals, int quarantines, int readmissions) { }
 
@@ -145,10 +144,6 @@ class SlowConsumerStateMachineWalkTest {
 
     @Test
     void theWalkIsDeterministic_sameSeedReplaysIdentically() {
-        // The governor folds into the sim's determinism story: the same seed must replay
-        // the SAME structured transition events - timestamps, cursors, window counts -
-        // and the same refusal/quarantine/readmission counts. (The gate digest itself is
-        // governor-free because the governor is opt-in and absent on the gate path.)
         WalkEvidence first = runFullWalk();
         WalkEvidence second = runFullWalk();
         assertEquals(first.transitions(), second.transitions(),
@@ -278,7 +273,6 @@ class SlowConsumerStateMachineWalkTest {
                 "a healthy flapping edge must record NO policy transitions: " + transitions);
     }
 
-    // helpers (the EdgeGapRecoveryTest commit/tick discipline - no sleeps)
 
     private static void commit(EdgeFanOutSim sim, int observedCpNode, String key, String value) {
         byte[] expected = value.getBytes(StandardCharsets.UTF_8);

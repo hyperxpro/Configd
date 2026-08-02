@@ -66,7 +66,8 @@ class WalContainerRedteamTest {
 
     @Test
     void fileVersionZeroRejected() throws Exception {
-        // builder covers. Set the fileVersion byte (offset 4) to 0 and confirm the refusal.
+        // Version 0 is reserved-illegal ("unset/torn"), distinct from the higher-version case the
+        // builder covers.
         Path wal = writeRealWal("verzero", "entry");
         byte[] b = Files.readAllBytes(wal);
         b[4] = 0;
@@ -77,7 +78,6 @@ class WalContainerRedteamTest {
 
     @Test
     void reservedHighAndLowBytesRejectedSeparately() throws Exception {
-        // (offsets 6 and 7) individually so every MBZ byte is proven, not just the first.
         for (int off : new int[]{6, 7}) {
             Path wal = writeRealWal("mbz-" + off, "entry");
             byte[] b = Files.readAllBytes(wal);
@@ -138,7 +138,6 @@ class WalContainerRedteamTest {
                 "a corrupt (stale-CRC) complete frame must be refused");
     }
 
-    // Post-header frame-length field: allocation-attack probes.
 
     @Test
     void largeButNonOverflowingFrameLengthIsCleanlyDropped() throws Exception {

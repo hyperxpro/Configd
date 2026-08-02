@@ -928,7 +928,6 @@ class ConfigStateMachineTest {
             return b.array();
         }
 
-        /** entriesOnly + raw trailer bytes. */
         private static byte[] withTrailer(byte[] trailer) {
             byte[] head = emptyEntries();
             ByteBuffer b = ByteBuffer.allocate(head.length + trailer.length);

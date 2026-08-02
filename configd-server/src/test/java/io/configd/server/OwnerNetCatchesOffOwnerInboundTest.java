@@ -105,7 +105,7 @@ class OwnerNetCatchesOffOwnerInboundTest {
         InvariantMonitor monitor = new InvariantMonitor(registry, false); // false = production: metric, no throw
         RaftNode.InvariantChecker checker = monitor::check;
         NodeId id = NodeId.of(1);
-        RaftConfig config = RaftConfig.of(id, Set.of()); // single-node cluster self-elects
+        RaftConfig config = RaftConfig.of(id, Set.of());
         RaftNode node = new RaftNode(config, new RaftLog(), new NoopTransport(),
                 new NoopStateMachine(), new java.util.Random(42),
                 io.configd.common.Storage.inMemory(), checker);

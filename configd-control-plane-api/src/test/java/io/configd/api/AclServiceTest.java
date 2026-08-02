@@ -115,7 +115,7 @@ class AclServiceTest {
         @Test
         void descendantCapDoesNotShadowAncestorCap() {
             acl.grant("db.", "alice", Set.of(READ));
-            acl.grant("db.conn.", "alice", Set.of(WRITE)); // WRITE only - no READ at this level
+            acl.grant("db.conn.", "alice", Set.of(WRITE));
 
             // db.conn.pool matches both "db." (READ) and "db.conn." (WRITE) -> union READ+WRITE
             assertTrue(acl.isAllowed("alice", "db.conn.pool", READ),
@@ -123,7 +123,6 @@ class AclServiceTest {
             assertTrue(acl.isAllowed("alice", "db.conn.pool", WRITE));
         }
 
-        /** A key matching only the ancestor gets exactly the ancestor's caps. */
         @Test
         void keyMatchingOnlyAncestorGetsAncestorCaps() {
             acl.grant("db.", "alice", Set.of(READ));
@@ -134,7 +133,6 @@ class AclServiceTest {
             assertFalse(acl.isAllowed("alice", "db.host", WRITE));
         }
 
-        /** Three nested ancestors all contribute to the union. */
         @Test
         void allNestedAncestorsContributeToUnion() {
             acl.grant("/", "alice", Set.of(READ));
@@ -151,7 +149,6 @@ class AclServiceTest {
     @Nested
     class DenyPrecedence {
 
-        /** Deny at a LESS-specific ancestor beats an allow at a MORE-specific descendant. */
         @Test
         void denyAtAncestorOverridesAllowAtDescendant() {
             acl.deny("/a/", "alice", Set.of(WRITE));
@@ -184,7 +181,6 @@ class AclServiceTest {
                     "the carve-out denied only WRITE; READ (allowed by the ancestor) remains");
         }
 
-        /** Deny and allow of the same capability at the SAME prefix: deny wins. */
         @Test
         void denyAtSamePrefixOverridesAllowAtSamePrefix() {
             acl.grant("app.", "alice", Set.of(READ, WRITE));
@@ -195,7 +191,6 @@ class AclServiceTest {
                     "deny at the same prefix removes the co-located allow");
         }
 
-        /** Deny is absolute even for ADMIN ("deny beats sudo"). */
         @Test
         void denyIsAbsoluteEvenForAdmin() {
             acl.grant("/", "alice", Set.of(READ, WRITE, ADMIN));
@@ -207,7 +202,6 @@ class AclServiceTest {
                     "a DENY removes even ADMIN, regardless of any ALLOW");
         }
 
-        /** A deny removes only the named capabilities, not the rest of the union. */
         @Test
         void denyRemovesOnlyNamedCapabilities() {
             acl.grant("/", "alice", Set.of(READ, WRITE, ADMIN));
@@ -218,7 +212,6 @@ class AclServiceTest {
             assertTrue(acl.isAllowed("alice", "/a/x", ADMIN));
         }
 
-        /** A global deny at the empty prefix removes the capability everywhere, overriding a root allow. */
         @Test
         void globalDenyAtEmptyPrefixOverridesRootAllow() {
             acl.grant("", "alice", Set.of(READ, WRITE, ADMIN));
@@ -240,7 +233,6 @@ class AclServiceTest {
             assertFalse(acl.isAllowed("alice", "/a/secret/x", WRITE));
         }
 
-        /** Deny for one principal must not leak to another. */
         @Test
         void denyIsPerPrincipal() {
             acl.grant("/a/", "alice", Set.of(READ, WRITE));
@@ -253,7 +245,6 @@ class AclServiceTest {
         }
     }
 
-    // Default-deny - no ALLOW means denied; a lone DENY never grants
 
     @Nested
     class DefaultDeny {
@@ -284,12 +275,10 @@ class AclServiceTest {
         }
     }
 
-    // ALLOW / DENY independence - grant() and deny() are orthogonal effects at a prefix
 
     @Nested
     class GrantDenyIndependence {
 
-        /** Adding an ALLOW does not clear a previously-set DENY at the same prefix. */
         @Test
         void grantDoesNotClearExistingDeny() {
             acl.deny("/a/", "alice", Set.of(WRITE));
@@ -300,7 +289,6 @@ class AclServiceTest {
                     "a later grant() must not silently wipe a standing deny()");
         }
 
-        /** Adding a DENY does not clear the ALLOW for capabilities it does not name. */
         @Test
         void denyDoesNotClearUnrelatedGrant() {
             acl.grant("/a/", "alice", Set.of(READ, WRITE));
@@ -312,7 +300,6 @@ class AclServiceTest {
         }
     }
 
-    // LIST independent of READ - PROVES non-crossing in BOTH directions
 
     @Nested
     class ListIndependentOfRead {
@@ -320,7 +307,7 @@ class AclServiceTest {
         /** Holding READ must NOT confer LIST. Fails if LIST were folded into READ. */
         @Test
         void readGrantDoesNotConferList() {
-            acl.grant("a.", "alice", Set.of(READ)); // READ only, no LIST
+            acl.grant("a.", "alice", Set.of(READ));
 
             assertTrue(acl.isAllowed("alice", "a.x", READ));
             assertFalse(acl.isAllowed("alice", "a.x", LIST),
@@ -330,7 +317,7 @@ class AclServiceTest {
         /** Holding LIST must NOT confer READ. Fails if READ were folded into LIST. */
         @Test
         void listGrantDoesNotConferRead() {
-            acl.grant("a.", "alice", Set.of(LIST)); // LIST only, no READ
+            acl.grant("a.", "alice", Set.of(LIST));
 
             assertTrue(acl.isAllowed("alice", "a.x", LIST));
             assertFalse(acl.isAllowed("alice", "a.x", READ),
@@ -355,7 +342,6 @@ class AclServiceTest {
         }
     }
 
-    // effective-WATCH = WATCH AND READ - the load-bearing coupling
 
     @Nested
     class WatchRequiresRead {
@@ -363,13 +349,12 @@ class AclServiceTest {
         /** WATCH granted but READ absent -> NOT authorized to watch. The core WATCH-requires-READ proof. */
         @Test
         void watchWithoutReadIsNotAuthorized() {
-            acl.grant("a.", "alice", Set.of(WATCH)); // WATCH but no READ
+            acl.grant("a.", "alice", Set.of(WATCH));
 
             assertFalse(acl.isAllowed("alice", "a.x", WATCH),
                     "WATCH without READ yields NO effective watch authz (INV-WATCH-READ)");
         }
 
-        /** WATCH AND READ -> authorized to watch. */
         @Test
         void watchWithReadIsAuthorized() {
             acl.grant("a.", "alice", Set.of(READ, WATCH));
@@ -381,7 +366,7 @@ class AclServiceTest {
         /** READ alone is not WATCH - WATCH is a separate grantable capability. */
         @Test
         void readGrantAloneDoesNotConferWatch() {
-            acl.grant("a.", "alice", Set.of(READ)); // READ, no WATCH
+            acl.grant("a.", "alice", Set.of(READ));
 
             assertFalse(acl.isAllowed("alice", "a.x", WATCH),
                     "READ alone must not confer WATCH (WATCH is separately grantable)");
@@ -391,7 +376,7 @@ class AclServiceTest {
         @Test
         void denyingReadKillsEffectiveWatch() {
             acl.grant("a.", "alice", Set.of(READ, WATCH));
-            acl.deny("a.secret.", "alice", Set.of(READ)); // deny READ on a sensitive child
+            acl.deny("a.secret.", "alice", Set.of(READ));
 
             assertFalse(acl.isAllowed("alice", "a.secret.k", WATCH),
                     "denying READ must kill effective WATCH — INV-WATCH-READ");
@@ -399,11 +384,10 @@ class AclServiceTest {
                     "outside the READ carve-out, WATCH ∧ READ still holds");
         }
 
-        /** Denying WATCH removes effective WATCH while leaving READ intact. */
         @Test
         void denyingWatchKillsEffectiveWatchButNotRead() {
             acl.grant("a.", "alice", Set.of(READ, WATCH));
-            acl.deny("a.secret.", "alice", Set.of(WATCH)); // deny WATCH only
+            acl.deny("a.secret.", "alice", Set.of(WATCH));
 
             assertFalse(acl.isAllowed("alice", "a.secret.k", WATCH),
                     "deny(WATCH) removes effective WATCH");
@@ -411,7 +395,6 @@ class AclServiceTest {
                     "READ remains — only WATCH was denied");
         }
 
-        /** The WATCH coupling must not perturb the other capabilities' evaluation. */
         @Test
         void watchCouplingDoesNotLeakIntoOtherCaps() {
             acl.grant("a.", "alice", Set.of(READ, WATCH));
@@ -426,15 +409,13 @@ class AclServiceTest {
         }
     }
 
-    // ADMIN is NOT a super-capability (no "ADMIN implies others")
 
     @Nested
     class AdminIsNotSuperCapability {
 
-        /** An ADMIN-only principal is authorized for ADMIN alone - never for the other four caps. */
         @Test
         void adminOnlyPrincipalIsNotAuthorizedForOtherCaps() {
-            acl.grant("a.", "alice", Set.of(ADMIN)); // ADMIN only
+            acl.grant("a.", "alice", Set.of(ADMIN));
 
             assertTrue(acl.isAllowed("alice", "a.x", ADMIN));
             assertFalse(acl.isAllowed("alice", "a.x", READ), "ADMIN does not imply READ");
@@ -483,7 +464,6 @@ class AclServiceTest {
         }
     }
 
-    // Revoke
 
     @Nested
     class Revocation {
@@ -540,7 +520,7 @@ class AclServiceTest {
         void revokeClearsDenyToo() {
             acl.grant("/", "alice", Set.of(READ, WRITE));
             acl.deny("/a/", "alice", Set.of(WRITE));
-            assertFalse(acl.isAllowed("alice", "/a/x", WRITE)); // deny in effect
+            assertFalse(acl.isAllowed("alice", "/a/x", WRITE));
 
             acl.revoke("/a/", "alice");
 
@@ -549,7 +529,6 @@ class AclServiceTest {
         }
     }
 
-    // Grant / deny overwrite
 
     @Test
     void grantOverwritesPreviousPermissions() {
@@ -571,7 +550,6 @@ class AclServiceTest {
                 "re-denying with a narrower set releases the previously-denied ADMIN");
     }
 
-    // Null checks
 
     @Nested
     class NullChecks {

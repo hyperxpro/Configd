@@ -91,7 +91,6 @@ final class OidcTestSupport {
         return jwt.serialize();
     }
 
-    /** A mutable, retrieval-counting {@link JWKSetSource} for rotation and rate-limit tests. */
     static final class CountingJWKSetSource implements JWKSetSource<SecurityContext> {
         private volatile JWKSet current;
         private final AtomicInteger fetches = new AtomicInteger();

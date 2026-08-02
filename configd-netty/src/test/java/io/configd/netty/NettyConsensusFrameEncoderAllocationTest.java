@@ -205,7 +205,6 @@ class NettyConsensusFrameEncoderAllocationTest {
         })).get();
     }
 
-    /** Warm up (JIT + pool/recycler steady state), then measure the encoding thread's allocation. */
     private static long perOp(Body body) {
         body.run(WARMUP);
         long tid = Thread.currentThread().threadId();

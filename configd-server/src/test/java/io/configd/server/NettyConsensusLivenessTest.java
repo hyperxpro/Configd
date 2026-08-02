@@ -99,10 +99,10 @@ final class NettyConsensusLivenessTest {
     private static final long BASE_SEED = 0xC0FFEEL;
 
     private static final int TICK_PERIOD_MS = 10;
-    private static final int HEARTBEAT_MS = 50;     // 5 ticks
-    private static final int ELECTION_MIN_MS = 1000; // 100 ticks
-    private static final int ELECTION_MAX_MS = 2000; // 200 ticks
-    private static final int PROPOSE_PERIOD_MS = TICK_PERIOD_MS; // continuous load: ~one propose per tick
+    private static final int HEARTBEAT_MS = 50;
+    private static final int ELECTION_MIN_MS = 1000;
+    private static final int ELECTION_MAX_MS = 2000;
+    private static final int PROPOSE_PERIOD_MS = TICK_PERIOD_MS;
 
     private static final int POLL_MS = 25;
     private static final int STABLE_OBSERVATIONS = 40;   // 40 x 25ms = 1s of stable single-leadership
@@ -365,7 +365,7 @@ final class NettyConsensusLivenessTest {
         private final NodeId[] ids = new NodeId[NODES];
         private final RaftNode[] nodes = new RaftNode[NODES];
         private final NettyRaftTransport[] transports = new NettyRaftTransport[NODES];
-        private final RaftTransportAdapter[] adapters = new RaftTransportAdapter[NODES]; // base (drain) seam
+        private final RaftTransportAdapter[] adapters = new RaftTransportAdapter[NODES];
         private final HeartbeatCoalescer[] coalescers = new HeartbeatCoalescer[NODES];
         private final ScheduledExecutorService[] owners = new ScheduledExecutorService[NODES];
         private final ScheduledFuture<?>[] tickFutures = new ScheduledFuture<?>[NODES];
@@ -409,7 +409,7 @@ final class NettyConsensusLivenessTest {
                 coalescers[i] = new HeartbeatCoalescer();
                 CoalescingRaftTransport coalescing = new CoalescingRaftTransport(adapters[i], GROUP);
                 final int idx = i;
-                coalescing.bindCoalescer(() -> coalescers[idx]); // one group per node, so this is a constant resolver
+                coalescing.bindCoalescer(() -> coalescers[idx]);
 
                 // Generous election budget: heartbeat 50ms (5 ticks) is well under election 1000-2000ms
                 // (100-200 ticks), so the derived election-to-heartbeat tick ratio is 20 (above the

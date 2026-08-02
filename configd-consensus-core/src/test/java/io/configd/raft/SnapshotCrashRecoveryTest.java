@@ -54,10 +54,8 @@ class SnapshotCrashRecoveryTest {
     private static final NodeId NODE = NodeId.of(1);
     private static final int ELECTION_TICKS = 400;
     private static final String SNAPSHOT_KEY = "raft-log.snapshot";
-    /** WAL log name (RaftLog.WAL_NAME). */
     private static final String WAL_NAME = "raft-log";
 
-    /** A throwing invariant checker so the gap-detection assertion fails loudly in tests. */
     private static final RaftNode.InvariantChecker THROWING = (name, condition, message) -> {
         if (!condition) {
             throw new AssertionError("Invariant violated [" + name + "]: " + message);
@@ -270,7 +268,6 @@ class SnapshotCrashRecoveryTest {
         assertTrue(h.node().triggerSnapshot());
         assertTrue(h.log().snapshotIndex() > 0, "snapshot boundary advanced in-memory");
 
-        // Power cut: the lied blob is gone; the WAL truncation (synced) stays. Recovered = a gap.
         storage.crash();
         CrashStorage recovered = storage.recoveredView();
 
@@ -311,7 +308,6 @@ class SnapshotCrashRecoveryTest {
         Harness h = boot(storage);
         h.electLeader();
 
-        // Deterministic, seed-varied first batch (1..8 writes).
         int firstBatch = 1 + (seed % 8);
         Map<String, String> expected = new LinkedHashMap<>();
         for (int i = 0; i < firstBatch; i++) {
@@ -337,7 +333,6 @@ class SnapshotCrashRecoveryTest {
                 h.commitPut(k, val);
                 expected.put(k, val);
             }
-            // Make the post-snapshot WAL durable, then crash (point (c)).
             if (cp == CrashPoint.AFTER_TRUNCATE) {
                 storage.crash(); // drop nothing extra - the suffix was synced by append/commit
             }
@@ -384,19 +379,12 @@ class SnapshotCrashRecoveryTest {
     private boolean takeSnapshotCrashingAt(Harness h, CrashStorage storage, CrashPoint cp) {
         switch (cp) {
             case BEFORE_PERSIST ->
-                // Crash before the snapshot blob is written: blob not durable,
-                // WAL fully intact. Recovery must replay the whole log.
                     storage.crashBeforeKeyPut(SNAPSHOT_KEY);
             case AFTER_PERSIST_BEFORE_TRUNCATE -> {
-                // Crash after the blob is fsynced but before the WAL prefix
-                // delete lands: both the blob AND the old WAL are on disk.
                 storage.crashAfterKeyDurable(SNAPSHOT_KEY);
-                storage.crashBeforeWalDelete(WAL_NAME); // belt-and-suspenders
+                storage.crashBeforeWalDelete(WAL_NAME);
             }
             case AFTER_TRUNCATE -> {
-                // Let the whole compaction complete durably, then crash - the
-                // steady state where only the persisted snapshot remembers
-                // [1..S].
                 h.node.triggerSnapshot();
                 storage.crash();
                 return true;

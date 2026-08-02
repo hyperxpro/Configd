@@ -14,7 +14,6 @@ public sealed interface ConfigMutation {
 
     String key();
 
-    /** Put (upsert) a key-value pair. */
     record Put(String key, byte[] value) implements ConfigMutation {
 
         public Put {
@@ -26,7 +25,6 @@ public sealed interface ConfigMutation {
             value = value.clone();
         }
 
-        /** Returns defensive copy (caller-visible contract). */
         @Override
         public byte[] value() {
             return value.clone();
@@ -55,7 +53,6 @@ public sealed interface ConfigMutation {
         }
     }
 
-    /** Delete (tombstone) a key. */
     record Delete(String key) implements ConfigMutation {
 
         public Delete {

@@ -126,7 +126,6 @@ public final class HarnessMain {
             }
             Thread.sleep(1500);
 
-            // check
             List<Op> ops = recorder.ops();
             Path histFile = outDir.resolve("history-" + seed + "-n" + nodes + ".json");
             io.configd.linz.history.PorcupineHistoryWriter.write(ops, histFile);
@@ -154,7 +153,7 @@ public final class HarnessMain {
     private static void runClient(int clientId, List<Schedule.WorkOp> plan, Cluster cluster,
                                   HistoryRecorder recorder, long t0, int initialLeader, String authToken) {
         ConfigClient client = new ConfigClient(java.time.Duration.ofSeconds(3), authToken);
-        client.probeLeader(cluster.nodes()); // seed leader guess
+        client.probeLeader(cluster.nodes());
         for (Schedule.WorkOp op : plan) {
             sleepUntil(t0, op.offsetMs());
             String key = "k" + op.keyIndex();
@@ -195,7 +194,6 @@ public final class HarnessMain {
                                    ConfigClient probe, ScheduledExecutorService pool) {
         int targetId = f.nodeId();
         if (targetId < 0) {
-            // *_LEADER: resolve to current leader at apply time
             targetId = probe.probeLeader(cluster.nodes());
             if (targetId < 0) {
                 return;

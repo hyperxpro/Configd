@@ -426,7 +426,7 @@ class PartitionMatrixTest {
             // Distinct per-node skews: -2h, -37min, +0, +53min, +3h (wildly unsynchronized).
             long[] skews = {-7_200_000L, -2_220_000L, 0L, 3_180_000L, 10_800_000L};
             Cluster c = new Cluster(seed, skews);
-            int leader0 = bootstrap(c, seed, ctx); // elects + commits despite skew -> liveness under skew
+            int leader0 = bootstrap(c, seed, ctx);
             Map<Long, Long> baseline = c.committedPrefix(leader0);
 
             RandomGenerator r = RandomGeneratorFactory.of("L64X128MixRandom")
@@ -496,8 +496,6 @@ class PartitionMatrixTest {
                 }
                 if (maxTerm > lastTerm) { termBumps += (int) (maxTerm - lastTerm); lastTerm = maxTerm; }
             }
-            // A mild latency spike must not cause a leadership-flap storm. Generous bound: a healthy
-            // cluster under +40ms should re-stabilise, not churn a term every few ticks.
             assertTrue(termBumps <= 25,
                     ctx + ": leadership flapped excessively under a gray-failure latency spike (termBumps="
                             + termBumps + ") — should re-stabilise, not churn");

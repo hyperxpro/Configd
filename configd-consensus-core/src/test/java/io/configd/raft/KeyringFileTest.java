@@ -58,7 +58,7 @@ class KeyringFileTest {
         assertEquals(65536, KeyringFile.SLOT_STRIDE);
         assertEquals(8, KeyringFile.SLOT0_OFFSET);
         assertEquals(8 + 65536, KeyringFile.SLOT1_OFFSET);
-        assertEquals(8 + 2 * 65536, KeyringFile.FILE_SIZE); // 131080
+        assertEquals(8 + 2 * 65536, KeyringFile.FILE_SIZE);
         assertEquals(65536 - 4, KeyringFile.MAX_RECORD_LEN);
     }
 
@@ -87,7 +87,6 @@ class KeyringFileTest {
             f.bootstrap(mint(kek));            // slot0 = seq1 (stays valid)
             f.write(bump(kek, f.current()));   // slot1 = seq2 (live)
         }
-        // Perform the attack: corrupt the seq2 slot's record on disk, modelling a torn rotation write.
         Path file = dir.resolve("raft-keyring");
         byte[] image = Files.readAllBytes(file);
         image[KeyringFile.SLOT1_OFFSET + 20] ^= 0x40; // flip a byte inside slot1's sealed envelope

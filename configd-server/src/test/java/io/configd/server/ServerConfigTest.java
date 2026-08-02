@@ -335,9 +335,6 @@ class ServerConfigTest {
         assertEquals(a.hashCode(), b.hashCode());
     }
 
-    // Exercises the "id=host:port,..." parser through the public parse() entry point: valid
-    // single/multi entries, surrounding whitespace, the empty case, and each malformed-input
-    // rejection branch.
 
     @Nested
     class PeerAddressParsing {

@@ -114,7 +114,7 @@ public record NodeAnchorRecord(long nodeAnchorSeq, long topologyEpoch, int shard
         // TreeMap => deterministic ascending-gid iteration regardless of the caller's map type/order.
         TreeMap<Integer, Long> sorted = new TreeMap<>(perShardDurableIndex);
         MessageDigest sha = sha256();
-        ByteBuffer pair = ByteBuffer.allocate(Integer.BYTES + Long.BYTES); // reused per entry
+        ByteBuffer pair = ByteBuffer.allocate(Integer.BYTES + Long.BYTES);
         for (Map.Entry<Integer, Long> e : sorted.entrySet()) {
             pair.clear();
             pair.putInt(e.getKey());

@@ -154,8 +154,6 @@ public final class NettyHttpApiServer {
                               ReplayGuard replayGuard,
                               AdminApiHandler.LeadershipAdmin leadershipAdmin,
                               AuthenticatorChain chain) {
-        // This signature binds the wildcard address (null bindAddress binds all interfaces) for
-        // callers that don't specify one. ConfigdServer uses the bindAddress overload below.
         this(null, port, sslContext, healthService, prometheusExporter, configStore, writeService,
                 readService, authInterceptor, aclService, strongReadPolicy, leaderHintSupplier,
                 auditLog, replayGuard, leadershipAdmin, chain, null, null);
@@ -348,7 +346,7 @@ public final class NettyHttpApiServer {
             }
             return chain;
         } catch (SSLPeerUnverifiedException e) {
-            return List.of(); // the peer presented no client certificate
+            return List.of();
         }
     }
 
@@ -463,7 +461,7 @@ public final class NettyHttpApiServer {
                 ctx.channel().eventLoop().execute(() -> {
                     writeResponse(ctx, response, p.keepAlive());
                     if (p.keepAlive()) {
-                        dispatchNext(ctx); // process the next queued request, or go idle
+                        dispatchNext(ctx);
                     }
                 });
             });

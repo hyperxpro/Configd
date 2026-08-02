@@ -55,12 +55,6 @@ public final class WatchService {
     @FunctionalInterface
     public interface WatchListener {
 
-        /**
-         * Called when config mutations matching the watch's prefix filter
-         * are committed and ready for delivery.
-         *
-         * @param event the coalesced watch event
-         */
         void onEvent(WatchEvent event);
     }
 
@@ -99,11 +93,6 @@ public final class WatchService {
     private long nextWatchId;
     private final Map<Long, Watch> watches;
 
-    /**
-     * Creates a WatchService with the given clock for coalescing.
-     *
-     * @param clock time source for the coalescer
-     */
     public WatchService(Clock clock) {
         Objects.requireNonNull(clock, "clock must not be null");
         this.coalescer = new WatchCoalescer(clock);
@@ -111,11 +100,6 @@ public final class WatchService {
         this.watches = new HashMap<>();
     }
 
-    /**
-     * Creates a WatchService with a custom coalescer.
-     *
-     * @param coalescer the coalescer to use
-     */
     public WatchService(WatchCoalescer coalescer) {
         this.coalescer = Objects.requireNonNull(coalescer, "coalescer must not be null");
         this.nextWatchId = 1;

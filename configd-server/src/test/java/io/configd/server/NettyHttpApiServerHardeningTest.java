@@ -151,7 +151,6 @@ class NettyHttpApiServerHardeningTest {
             if (status != null) {
                 assertTrue(status.startsWith("HTTP/1.1 4"),
                         "oversize header must be a 4xx rejection, got: " + status);
-                // The server signalled close (Connection: close + CLOSE listener); the read drains to EOF.
                 BufferedReader r = new BufferedReader(new InputStreamReader(s.getInputStream(),
                         StandardCharsets.US_ASCII));
                 while (r.readLine() != null) { }
@@ -162,12 +161,12 @@ class NettyHttpApiServerHardeningTest {
 
     @Test
     void oversizeBodyIsRejectedWith413NotBuffered() throws Exception {
-        startServerWith(30_000, 60_000, 1024); // 1 KiB ceiling (shrunk via the system property)
+        startServerWith(30_000, 60_000, 1024);
         try (Socket s = new Socket()) {
             s.connect(new InetSocketAddress("127.0.0.1", port()), 2000);
             s.setSoTimeout(5000);
             OutputStream os = s.getOutputStream();
-            int bodyLen = 64 * 1024; // 64 KiB >> ceiling
+            int bodyLen = 64 * 1024;
             String head = "PUT /v1/config/app/feature HTTP/1.1\r\nHost: x\r\nContent-Length: "
                     + bodyLen + "\r\n\r\n";
             String status = null;
@@ -216,14 +215,14 @@ class NettyHttpApiServerHardeningTest {
 
     @Test
     void oversizeBodyIncrementsPayloadTooLargeRejectCounter() throws Exception {
-        startMeteredServerWith(30_000, 60_000, 1024); // 1 KiB body ceiling
+        startMeteredServerWith(30_000, 60_000, 1024);
         assertEquals(0L, rejectCount(ConfigdMetrics.HTTP_REJECT_REASON_PAYLOAD_TOO_LARGE),
                 "the payload_too_large reject counter must render at 0 before any reject");
         try (Socket s = new Socket()) {
             s.connect(new InetSocketAddress("127.0.0.1", port()), 2000);
             s.setSoTimeout(5000);
             OutputStream os = s.getOutputStream();
-            int bodyLen = 64 * 1024; // >> ceiling
+            int bodyLen = 64 * 1024;
             String head = "PUT /v1/config/app/feature HTTP/1.1\r\nHost: x\r\nContent-Length: "
                     + bodyLen + "\r\n\r\n";
             try {
@@ -242,7 +241,7 @@ class NettyHttpApiServerHardeningTest {
 
     @Test
     void slowlorisIncompleteRequestIsClosedAtDeadline() throws Exception {
-        startServerWith(400, 60_000, 1 << 20); // 400 ms request-completion deadline
+        startServerWith(400, 60_000, 1 << 20);
         try (Socket s = new Socket()) {
             s.connect(new InetSocketAddress("127.0.0.1", port()), 2000);
             s.setSoTimeout(5000); // >> the 400 ms deadline; the server must close first
@@ -268,7 +267,7 @@ class NettyHttpApiServerHardeningTest {
         // within the deadline. The HttpObjectAggregator holds the partial request (it never flips to
         // "processing"), so the arrival deadline must reap the connection. Bytes are dribbled with a
         // gap well under the deadline so several land, but the request is never terminated.
-        startServerWith(400, 60_000, 1 << 20); // 400 ms request-completion deadline
+        startServerWith(400, 60_000, 1 << 20);
         try (Socket s = new Socket()) {
             s.connect(new InetSocketAddress("127.0.0.1", port()), 2000);
             s.setSoTimeout(5000); // >> the 400 ms deadline; the server must close first
@@ -326,7 +325,7 @@ class NettyHttpApiServerHardeningTest {
                 hammer(http, base, 300);            // batch 1 (1200 req): warm the pool cache
                 Thread.sleep(250);
                 long mid = activeAllocations();
-                hammer(http, base, 300);            // batch 2 (1200 req): identical load
+                hammer(http, base, 300);
                 Thread.sleep(250);
                 long end = activeAllocations();
                 long growth = end - mid;
@@ -342,14 +341,13 @@ class NettyHttpApiServerHardeningTest {
 
     private static void hammer(HttpClient http, String base, int n) {
         for (int i = 0; i < n; i++) {
-            send(http, base + "/health/live");              // health 200 (text body)
-            send(http, base + "/health/ready");             // readiness
-            send(http, base + "/v1/config/app/feature");    // 404 miss (no store entry, no auth)
-            send(http, base + "/nope");                      // unmatched, 404
+            send(http, base + "/health/live");
+            send(http, base + "/health/ready");
+            send(http, base + "/v1/config/app/feature");
+            send(http, base + "/nope");
         }
     }
 
-    /** Sum of active (allocated-not-yet-released) pooled allocations across all arenas. */
     private static long activeAllocations() {
         PooledByteBufAllocatorMetric m = PooledByteBufAllocator.DEFAULT.metric();
         long n = 0;

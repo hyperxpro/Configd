@@ -58,7 +58,6 @@ final class CertFixtures {
         return ctx;
     }
 
-    /** The mTLS client (presents its cert, trusts the server certs). */
     ClientTls clientMutualTls() throws Exception {
         return ClientTls.mutualTls(clientKeystore, PASSWORD, clientTrust, PASSWORD);
     }

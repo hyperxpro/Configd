@@ -44,8 +44,6 @@ final class RaftTransportAdapterLoopbackTest {
         NodeId nodeA = NodeId.of(1);
         NodeId nodeB = NodeId.of(2);
 
-        // Node B: bind first so we learn its port, with an adapter whose inbound
-        // handler captures the decoded RaftMessage (the "marshal -> handle" end).
         CountDownLatch received = new CountDownLatch(1);
         AtomicReference<NodeId> fromRef = new AtomicReference<>();
         AtomicReference<RaftMessage> msgRef = new AtomicReference<>();
@@ -71,10 +69,9 @@ final class RaftTransportAdapterLoopbackTest {
         RaftTransportAdapter adapterA = new RaftTransportAdapter(transportA, GROUP);
         transportA.start();
 
-        // A RequestVote with distinctive fields so we can confirm a faithful decode.
         RequestVoteRequest sent = new RequestVoteRequest(
-                /* term */ 9L, /* candidateId */ nodeA,
-                /* lastLogIndex */ 42L, /* lastLogTerm */ 5L, /* preVote */ false);
+                 9L,  nodeA,
+                 42L,  5L,  false);
 
         adapterA.send(nodeB, sent);
 
@@ -129,8 +126,8 @@ final class RaftTransportAdapterLoopbackTest {
         // The record claims sender=999 (a spoof); the wire body carries no sender, so B must attribute it
         // to the authenticated origin nodeA.
         adapterA.send(nodeB, new io.configd.raft.WitnessMessage(
-                NodeId.of(999), /* selfAnchorSeq */ 77L, /* selfTerm */ 4L,
-                /* selfVotedFor */ 11, /* seenOfYouSeq */ 12L, /* query */ true));
+                NodeId.of(999),  77L,  4L,
+                 11,  12L,  true));
 
         assertTrue(received.await(10, TimeUnit.SECONDS), "witness frame must traverse the adapter path");
         assertEquals(nodeA, fromRef.get(), "sender is the transport-authenticated `from`, never the body 999");

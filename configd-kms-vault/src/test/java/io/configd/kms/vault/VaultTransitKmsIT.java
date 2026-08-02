@@ -119,9 +119,8 @@ final class VaultTransitKmsIT {
         KmsProvider.Provisioned prov = provider.generateRootKey();
         byte[] original = prov.rootKey().withMaterial(byte[]::clone);
 
-        provider.rotateKek(); // transit/keys/<key>/rotate -> new version
+        provider.rotateKek();
 
-        // The old vault:v1: carrier still decrypts (Vault selects the version from the prefix).
         RootKey afterRotate = provider("node-beta").unwrap(prov.wrapped());
         assertArrayEquals(original, afterRotate.withMaterial(byte[]::clone),
                 "old data still decrypts after a KEK rotation");

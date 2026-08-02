@@ -66,8 +66,6 @@ class KernelBoundaryUnitTest {
 
         @Test
         void equalsDistinguishesJointFromSimpleWithSameVoters() {
-            // joint flag participates in equals: a simple config and a joint config
-            // sharing the same `voters` set must not be equal.
             var simple = ClusterConfig.simple(Set.of(N1, N2));
             var joint = ClusterConfig.joint(Set.of(N1, N2), Set.of(N3));
             assertNotEquals(simple, joint);

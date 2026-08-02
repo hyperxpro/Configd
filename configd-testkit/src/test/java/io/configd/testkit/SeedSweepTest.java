@@ -76,14 +76,6 @@ class SeedSweepTest {
                         + " must elect; investigate if this fires.");
     }
 
-    /**
-     * Commit durability across leader failure. Safety invariants are checked every
-     * tick throughout. A seed that fails to elect, commit, or fail over records a
-     * liveness stall rather than silently returning; the durability assertion is
-     * reached only when the seed actually elected, committed, and failed over - and
-     * that real-assertion outcome is what {@link #sweepActivityIsNotVacuous()}
-     * accounts for.
-     */
     @ParameterizedTest
     @MethodSource("seeds")
     void commitSurvivesLeaderFailure(long seed) {
@@ -123,8 +115,6 @@ class SeedSweepTest {
         }
         activity.recordFailover();
 
-        // The committed value MUST be present on the new leader - the real
-        // assertion. Reached only by seeds that did all the work above.
         ReadResult result = cluster.store(newLeader).get("sweep-key");
         assertTrue(result.found(),
                 "Committed value lost after leader failure (seed=" + seed + ")");

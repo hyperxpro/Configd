@@ -70,7 +70,7 @@ public final class AuthLifecycle {
         }
         EdgeConnection conn = connection;
         if (conn == null || conn.state() != EdgeConnectionState.AUTHENTICATED) {
-            return; // nothing live to refresh
+            return;
         }
         CredentialSource.Provided provided = credentialSource.provide();
         conn.send(new EdgeFrame.RefreshAuth(provided.credential()), EdgeFrameCodec.EDGE_WIRE_VERSION_V4);

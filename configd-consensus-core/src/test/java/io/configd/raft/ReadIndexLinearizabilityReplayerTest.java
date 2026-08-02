@@ -38,7 +38,6 @@ class ReadIndexLinearizabilityReplayerTest {
         // Shadow ledger: id -> (readIndex, leadershipConfirmed) - what the
         // spec invariant should observe.
         Map<Long, ShadowEntry> shadow = new LinkedHashMap<>();
-        // Track every ID ever issued so we can audit step-down behaviour.
         Map<Long, Long> historicalReadIndex = new HashMap<>();
 
         for (Action action : actions) {
@@ -53,7 +52,6 @@ class ReadIndexLinearizabilityReplayerTest {
                     shadow.put(id, new ShadowEntry(commitIndex, false));
                     historicalReadIndex.put(id, commitIndex);
 
-                    // ReadIndexBoundedByMaxIndex
                     assertTrue(state.readIndex(id) <= commitIndex,
                             "spec: ReadIndexBoundedByMaxIndex violated at startRead");
                     assertTrue(state.readIndex(id) >= 0,
@@ -69,7 +67,6 @@ class ReadIndexLinearizabilityReplayerTest {
                 }
                 case Action.StepDown sd -> {
                     state.clear();
-                    // NoStaleLeaderServe: every pending read is dropped.
                     for (Map.Entry<Long, ShadowEntry> e : shadow.entrySet()) {
                         long id = e.getKey();
                         assertFalse(state.isReady(id, lastApplied),
@@ -82,7 +79,6 @@ class ReadIndexLinearizabilityReplayerTest {
                 }
             }
 
-            // Step-by-step ReadFreshness check.
             for (Map.Entry<Long, ShadowEntry> e : shadow.entrySet()) {
                 long id = e.getKey();
                 ShadowEntry sh = e.getValue();

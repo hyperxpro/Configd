@@ -19,8 +19,8 @@ BASE="${DRILL_BASE:-/tmp/configd-rr002-$$}"
 RAFT_BASE=9090            # raft ports 9091,9092,9093
 API_BASE=8080            # api  ports 8081,8082,8083
 PEERS_ADDR="1=127.0.0.1:9091,2=127.0.0.1:9092,3=127.0.0.1:9093"
-ELECT_BUDGET_S=20        # max wait for an election
-DROP_WINDOW_S="${DROP_WINDOW_S:-35}"   # length of the SYN black-hole window
+ELECT_BUDGET_S=20
+DROP_WINDOW_S="${DROP_WINDOW_S:-35}"
 OP_DEADLINE_S="${OP_DEADLINE_S:-2}"    # per-op latency bound (the contract)
 PIDS=()
 DROP_PORT=""             # the follower raft port we DROP (set later, for the trap)
@@ -55,11 +55,9 @@ sudo -n true 2>/dev/null || fail "passwordless sudo required for iptables"
 mkdir -p "$BASE"
 api() { echo "127.0.0.1:$((API_BASE + $1))"; }
 
-# Pre-flight: confirm no pre-existing DROP rule on any raft port (clean box).
 pre_drop=$(sudo iptables -S INPUT 2>/dev/null | grep -c -- "-j DROP")
 info "iptables DROP rules present before drill: $pre_drop (informational)"
 
-# launch 3 nodes
 echo "[setup] launching 3-node cluster under $BASE (jar: $JAR)"
 for k in 1 2 3; do
   peers=$(echo "1 2 3" | tr ' ' '\n' | grep -v "^$k$" | paste -sd,)
@@ -75,7 +73,6 @@ for k in 1 2 3; do
   PIDS+=("$!")
 done
 
-# wait for all 3 readiness endpoints to be 200
 ready=0
 for i in $(seq 1 $((ELECT_BUDGET_S * 2))); do
   ok=0
@@ -101,7 +98,6 @@ find_leader() {
 LEADER=$(find_leader) || fail "no leader elected"
 pass "leader elected: node $LEADER (api $(api "$LEADER"))"
 
-# pick a FOLLOWER to black-hole (its raft port)
 VICTIM=""
 for k in 1 2 3; do [ "$k" != "$LEADER" ] && { VICTIM="$k"; break; }; done
 DROP_PORT=$((RAFT_BASE + VICTIM))
@@ -114,7 +110,7 @@ info "victim follower: node $VICTIM (raft port $DROP_PORT); surviving follower: 
 # %{time_total}. A timeout or non-2xx is a FAIL. The round's key/value are passed
 # in explicitly (NOT via a shared counter — command substitution runs probes in a
 # subshell, so a counter incremented inside would not survive to the reader).
-probe_put() {        # $1=key $2=value
+probe_put() {
   local key="$1" val="$2" t code ms
   read -r code t < <(curl -s -o /dev/null -w "%{http_code} %{time_total}" \
         --max-time "$OP_DEADLINE_S" -X PUT -d "$val" \
@@ -149,13 +145,11 @@ probe_health() {
 SEQ=0
 nextkey() { SEQ=$((SEQ + 1)); }
 
-# baseline: one clean committing round BEFORE the fault
 echo "[baseline] one committing round before the black-hole"
 nextkey
 b=$(probe_put "drill/k$SEQ" "v$SEQ"); echo "    $b"
 case "$b" in ok*) pass "leader commits before fault" ;; *) fail "leader not committing even before fault: $b" ;; esac
 
-# arm the black-hole
 echo "[fault] DROP inbound SYNs to follower node $VICTIM raft port $DROP_PORT for ${DROP_WINDOW_S}s"
 sudo iptables -A INPUT -p tcp --dport "$DROP_PORT" -j DROP \
   || fail "could not add iptables DROP rule"
@@ -168,7 +162,6 @@ pass "DROP rule armed ($armed) on port $DROP_PORT"
 # the fault bite even if a connection was already cached, we DROP the port (new
 # SYNs after the existing socket eventually fails will black-hole).
 
-# measure throughout the window
 echo "[measure] probing leader every ~1s for ${DROP_WINDOW_S}s (per-op deadline ${OP_DEADLINE_S}s)"
 printf '    %-6s %-10s %-26s %-22s %-22s %-14s\n' "t(s)" "PUT" "put_detail" "get_detail" "lin_detail" "health"
 start=$(date +%s)

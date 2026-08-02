@@ -24,7 +24,6 @@ final class BalanceTestSupport {
     private BalanceTestSupport() {
     }
 
-    /** A clock the test moves by hand, so cooldown/instability timing is fully deterministic. */
     static final class MutableClock implements Clock {
         private long millis;
 
@@ -130,7 +129,6 @@ final class BalanceTestSupport {
         }
     }
 
-    /** A metrics sink that records call counts for assertions. */
     static final class RecordingMetrics implements LeaderBalanceMetrics {
         int transfersInitiated;
         int transfersRefused;

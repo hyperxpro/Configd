@@ -120,7 +120,7 @@ public final class VersionedConfigStore {
      */
     public ReadResult get(String key) {
         Objects.requireNonNull(key, "key must not be null");
-        ConfigSnapshot snap = currentSnapshot; // single volatile read
+        ConfigSnapshot snap = currentSnapshot;
         VersionedValue vv = snap.data().get(key);
         if (vv == null) {
             return ReadResult.NOT_FOUND;

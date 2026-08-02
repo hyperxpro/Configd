@@ -83,7 +83,6 @@ public final class DeltaApplier {
             return ApplyResult.UNSIGNED_REJECTED;
         }
 
-        // Signature verification (if verifier is configured)
         if (verifier != null) {
             if (signature == null) {
                 LOG.warning("Rejecting unsigned delta [" + delta.fromVersion()
@@ -126,7 +125,6 @@ public final class DeltaApplier {
 
         long currentVersion = client.currentVersion();
 
-        // Stale delta - already at or past this version
         if (delta.toVersion() <= currentVersion) {
             return ApplyResult.STALE_DELTA;
         }
