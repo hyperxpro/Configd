@@ -1063,6 +1063,9 @@ class ConsistencyPropertyTests {
             assertTrue(readB.version() >= cursor.version(),
                     "INV-M2: Edge B version " + readB.version()
                             + " must be >= cursor " + cursor.version());
+            assertEquals(valueFromA, str(readB.value()),
+                    "INV-M2: both edges are synced to the same version, so a failover from A to B "
+                            + "must serve the same value");
 
             long newSeq = cluster.proposeAndCommit(leader, "config.db", "db-v6", 100);
             assertTrue(newSeq > 0);

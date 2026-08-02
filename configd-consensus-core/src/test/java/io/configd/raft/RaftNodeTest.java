@@ -878,7 +878,6 @@ class RaftNodeTest {
             }
             // The 4th argument is the preVote flag; granting pre-votes here lets the real
             // election proceed.
-            long preVoteTerm = node1.currentTerm() + 1;
             node1.handleMessage(new RequestVoteResponse(node1.currentTerm(), true, n2, true));
             node1.handleMessage(new RequestVoteResponse(node1.currentTerm(), true, n3, true));
 
