@@ -50,6 +50,10 @@ one is invisible on a developer box and red on a cold CI cache:
 - `-Dmaven.test.skip=true` skips test *compilation*, so a module that publishes a test-jar never
   attaches one. Use `-DskipTests` anywhere a test-jar is consumed downstream, as `configd-testkit`
   consumes `configd-consensus-core`'s.
+- Anything built with `-o` must have had its dependencies resolved online first, and a module
+  outside the gate's own `$MODULES` has had nothing resolved at all. A plugin counts: Maven fetches
+  one only when a goal needs it, so a gate that never runs `clean` has never fetched the clean
+  plugin, however long it has been passing.
 
 A gate that breaks either rule still passes whenever some earlier build happened to leave the
 artifact in `~/.m2`. It fails on a cold one — which CI hits on the first run after any `pom.xml`
