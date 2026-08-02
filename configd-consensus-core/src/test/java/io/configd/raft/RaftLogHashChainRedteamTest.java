@@ -54,7 +54,7 @@ class RaftLogHashChainRedteamTest {
         Storage storage = Storage.file(tempDir);
         ChainedWal.Writer w = new ChainedWal.Writer(storage, env, GID);
         byte[] h1 = w.append(1, 1, "v1");     // genesis record; h1 = H(r1 payload)
-        w.append(2, 2, "v2-CURRENT");         // r2 (the record being rolled back)
+        w.append(2, 2, "v2-CURRENT");
         w.append(3, 3, "v3");                 // r3 binds prevHash = H(r2-CURRENT payload)
 
         // The adversary's stale index-2 frame: term 1, old command, but a VALID incoming link
@@ -132,7 +132,6 @@ class RaftLogHashChainRedteamTest {
                 "altering the encrypted prevHash must fail the GCM tag, got: " + ex.getMessage());
     }
 
-    /** Swapping two adjacent records (keeping their prevHashes) permutes indices => contiguity REFUSE. */
     @Test
     void adjacentRecordSwapRefusedByContiguity_hmac(@TempDir Path tempDir) throws Exception {
         IntegrityEnvelope env = hmacEnvelope();
@@ -145,7 +144,7 @@ class RaftLogHashChainRedteamTest {
         byte[] wal = Files.readAllBytes(walPath(tempDir));
         List<byte[]> frames = readFrames(wal);
         List<byte[]> swapped = new ArrayList<>(frames);
-        swapped.set(1, frames.get(2)); // indices become 1,3,2
+        swapped.set(1, frames.get(2));
         swapped.set(2, frames.get(1));
         Files.write(walPath(tempDir), reassemble(header(wal), swapped), StandardOpenOption.TRUNCATE_EXISTING);
 
@@ -169,8 +168,8 @@ class RaftLogHashChainRedteamTest {
         IntegrityEnvelope env = hmacEnvelope();
         Storage storage = Storage.file(tempDir);
         ChainedWal.Writer w = new ChainedWal.Writer(storage, env, GID);
-        byte[] h1 = w.append(1, 1, "v1");   // stable prefix
-        w.append(2, 3, "B2");               // current suffix at term 3
+        byte[] h1 = w.append(1, 1, "v1");
+        w.append(2, 3, "B2");
         w.append(3, 3, "B3");
 
         // A captured older suffix [A2@t2, A3@t2] that chains from the SAME r1 (a self-consistent
@@ -236,7 +235,7 @@ class RaftLogHashChainRedteamTest {
         for (int i = 1; i <= 5; i++) {
             w.append(new LogEntry(i, 1, ("v" + i).getBytes(StandardCharsets.UTF_8)));
         }
-        w.compact(2, 1); // discard [1,2]; survivors [3,4,5], r3's prevHash now refers to compacted r2
+        w.compact(2, 1);
 
         RaftLog log = new RaftLog(Storage.file(tempDir), env, GID);
         assertEquals(3, log.size());
@@ -244,7 +243,6 @@ class RaftLogHashChainRedteamTest {
         assertEquals("v5", new String(log.entryAt(5).command(), StandardCharsets.UTF_8));
     }
 
-    /** A conflict-truncation then re-append (a new term overwrites the tail) must recover cleanly. */
     @Test
     void conflictTruncateThenAppendRecoversCleanly_hmac(@TempDir Path tempDir) {
         IntegrityEnvelope env = hmacEnvelope();
@@ -253,7 +251,7 @@ class RaftLogHashChainRedteamTest {
         w.append(new LogEntry(1, 1, "v1".getBytes(StandardCharsets.UTF_8)));
         w.append(new LogEntry(2, 1, "v2".getBytes(StandardCharsets.UTF_8)));
         w.append(new LogEntry(3, 1, "v3".getBytes(StandardCharsets.UTF_8)));
-        w.truncateFrom(2); // drop [2,3]
+        w.truncateFrom(2);
         w.append(new LogEntry(2, 2, "v2b".getBytes(StandardCharsets.UTF_8)));
         w.append(new LogEntry(3, 2, "v3b".getBytes(StandardCharsets.UTF_8)));
 
@@ -349,7 +347,6 @@ class RaftLogHashChainRedteamTest {
         assertFalse(env.isKeyed() || env.isEncrypting(), "sanity: this is the keyless posture");
     }
 
-    // Posture builders + on-disk byte helpers (identical frame arithmetic to FileStorage).
 
     private static IntegrityEnvelope hmacEnvelope() {
         byte[] k = new byte[32];

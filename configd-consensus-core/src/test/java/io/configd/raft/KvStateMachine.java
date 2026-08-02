@@ -85,7 +85,6 @@ final class KvStateMachine implements StateMachine {
         }
     }
 
-    /** An immutable snapshot of the current applied key/value state. */
     Map<String, String> snapshotState() {
         return new LinkedHashMap<>(state);
     }

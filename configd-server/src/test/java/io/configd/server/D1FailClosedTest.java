@@ -14,7 +14,6 @@ class D1FailClosedTest {
     @TempDir
     Path tempDir;
 
-    // ---- direct enforcement (independent of the module-wide test opt-out) ----
 
     @Test
     void coLocatedKeyWithoutOptOutThrows() {
@@ -29,7 +28,7 @@ class D1FailClosedTest {
     @Test
     void nestedKeyInsideDataDirIsRefused() {
         Path dataDir = tempDir.resolve("data");
-        Path nested = dataDir.resolve("sub").resolve("key.bin"); // still inside dataDir
+        Path nested = dataDir.resolve("sub").resolve("key.bin");
         assertThrows(SecurityException.class,
                 () -> ConfigdServer.enforceSigningKeyNotColocated(nested, dataDir, false));
     }
@@ -50,7 +49,6 @@ class D1FailClosedTest {
                 () -> ConfigdServer.enforceSigningKeyNotColocated(separate, dataDir, false));
     }
 
-    // ---- end-to-end: startup is REFUSED with a co-located key (the section 2 deliverable) ----
 
     @Test
     void serverStartupRefusedWithCoLocatedKey() {
@@ -77,7 +75,7 @@ class D1FailClosedTest {
         String saved = System.getProperty(PROP);
         try {
             System.setProperty(PROP, "false"); // opt-out OFF, yet a separate key must still start
-            Path key = tempDir.resolve("secrets").resolve("signing-key.bin"); // outside the data dir
+            Path key = tempDir.resolve("secrets").resolve("signing-key.bin");
             ServerConfig config = ServerConfig.parse(new String[]{
                     "--node-id", "0", "--data-dir", tempDir.resolve("boot2").toString(),
                     "--peers", "1,2", "--api-port", "0", "--signing-key-file", key.toString()

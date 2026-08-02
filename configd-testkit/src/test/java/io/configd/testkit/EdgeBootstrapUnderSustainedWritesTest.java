@@ -74,7 +74,6 @@ class EdgeBootstrapUnderSustainedWritesTest {
         pumpAndTick(sim, seed); // T0: SUBSCRIBE -> SNAPSHOT_FIRST -> transfer emitted
         long s = sim.cpSim().store(cp).currentVersion(); // == the transfer's S
 
-        // DURING: writes committing while the transfer is in flight / unapplied.
         for (int t = 0; t < TRANSFER_WINDOW_TICKS; t++) {
             pumpAndTick(sim, seed);
         }
@@ -90,7 +89,6 @@ class EdgeBootstrapUnderSustainedWritesTest {
                         + "snapshot transfer; observed " + straddleWrites
                         + " (seed " + seed + ", S=" + s + ")");
 
-        // AFTER: more sustained writes past the cutover.
         for (int t = 0; t < 30; t++) {
             pumpAndTick(sim, seed);
         }
@@ -112,7 +110,6 @@ class EdgeBootstrapUnderSustainedWritesTest {
         sim.invariants().finalCheck(List.of(joiner), veteran.snapshot());
     }
 
-    // Scenario 2: faults on the other edges; the joiner's channel stays clean.
 
     @Test
     void joinUnderFaultsOnOtherEdgesBootstrapsExactlyAndEveryoneReconverges() {
@@ -131,7 +128,6 @@ class EdgeBootstrapUnderSustainedWritesTest {
             pumpAndTick(sim, seed);
         }
 
-        // Fault the OTHER edges' channels (deterministically), writes still flowing.
         sim.partitionEdge(0);
         sim.partitionEdge(1);
         for (int t = 0; t < 20; t++) {
@@ -162,12 +158,10 @@ class EdgeBootstrapUnderSustainedWritesTest {
         sim.healEdge(0);
         sim.healEdge(1);
 
-        // Everyone - the clean joiner AND the healed victims - must converge byte-equal.
         settleAndJudge(sim, driver);
         assertTrue(joiner.snapshotsApplied() >= 1);
     }
 
-    // Scenario 3: the joiner's own channel faulted - the transfer is lost mid-flight.
 
     @Test
     void transferLostMidFlightOnTheJoinersChannelSelfHealsToExactConvergence() {
@@ -216,7 +210,6 @@ class EdgeBootstrapUnderSustainedWritesTest {
         settleAndJudge(sim, driver);
     }
 
-    // Scenario 4: dup channel - every frame across the cutover is duplicated.
 
     @Test
     void duplicatedFramesAcrossTheCutoverNeverCauseDoubleApplicationDivergence() {
@@ -234,8 +227,6 @@ class EdgeBootstrapUnderSustainedWritesTest {
             pumpAndTick(sim, seed);
         }
 
-        // Every CP->edge frame from here on is duplicated - the snapshot transfer,
-        // NOTIFY batches, heartbeats - straddling the cutover in both directions.
         sim.setEdgeDupRateForTest(1.0);
         long dupsBefore = sim.edgeDupCount();
 
@@ -272,7 +263,6 @@ class EdgeBootstrapUnderSustainedWritesTest {
         assertTrue(joiner.snapshotsApplied() >= 1);
     }
 
-    // Helpers: deterministic, tick-driven, no sleeps.
 
     /**
      * One tick of sustained writes: propose one PUT (unique value per write - the
@@ -303,7 +293,7 @@ class EdgeBootstrapUnderSustainedWritesTest {
      */
     private void settleAndJudge(EdgeFanOutSim sim, C1StreamDriver driver) {
         for (int t = 0; t < TICKS; t++) {
-            sim.tick(); // exhaust any still-scheduled seed workload ops
+            sim.tick();
         }
         commitBlocking(sim, "c5/fence-a", "fence-a");
         commitBlocking(sim, "c5/fence-b", "fence-b");
@@ -320,7 +310,7 @@ class EdgeBootstrapUnderSustainedWritesTest {
             }
             sim.tick();
         }
-        sim.finalCheck(); // the byte-equality judge (throws with a precise diff)
+        sim.finalCheck();
     }
 
     private static boolean allEdgesAt(EdgeFanOutSim sim, long target) {

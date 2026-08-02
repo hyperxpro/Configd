@@ -61,8 +61,8 @@ public final class FanOutBuffer implements CommitNotificationSource {
     private final AtomicReferenceArray<CommitNotification> ring;
     private final int capacity;
     private final FanOutMetrics metrics;
-    private volatile long head; // next write position (monotonically increasing)
-    private volatile long tail; // oldest valid position
+    private volatile long head;
+    private volatile long tail;
 
     /**
      * The applied-mutation seq of the most-recently evicted notification, or
@@ -73,7 +73,6 @@ public final class FanOutBuffer implements CommitNotificationSource {
      */
     private final AtomicLong lastEvictedSeq = new AtomicLong(-1L);
 
-    /** Lifetime count of evicted notifications ({@code fanout_buffer_dropped_total}). */
     private final AtomicLong droppedTotal = new AtomicLong(0L);
 
     public FanOutBuffer(int maxEntries) {
@@ -179,7 +178,6 @@ public final class FanOutBuffer implements CommitNotificationSource {
         }
         long t2 = tail;
         if (t2 != t1) {
-            // Eviction happened during the copy - potential in-place overwrite.
             return Result.gap(oldestSeqInternal());
         }
         return Result.ok(out);

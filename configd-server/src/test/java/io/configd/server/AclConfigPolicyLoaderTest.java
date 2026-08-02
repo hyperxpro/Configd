@@ -39,7 +39,6 @@ class AclConfigPolicyLoaderTest {
         return List.of(new ConfigMutation.Put(key, new byte[0]));
     }
 
-    // happy path: boot seed / rebuild reflects the store
 
     @Test
     void rebuildLoadsPolicyFromStore() {
@@ -49,7 +48,7 @@ class AclConfigPolicyLoaderTest {
         put(store, "_acl/roles/reader", "allow READ app.");
         put(store, "_acl/bindings/alice", "reader");
 
-        loader(acl, store, reg).rebuild(); // the boot seed
+        loader(acl, store, reg).rebuild();
 
         assertTrue(acl.isAllowed("alice", "app.x", AclService.Permission.READ));
         assertFalse(acl.isAllowed("alice", "other.x", AclService.Permission.READ));
@@ -58,7 +57,6 @@ class AclConfigPolicyLoaderTest {
         assertEquals(0L, metric(reg, AclConfigPolicyLoader.NAME_POLICY_LOAD_FAILED));
     }
 
-    // the apply-thread gate
 
     @Test
     void onConfigChangeSkipsRebuildWhenNoAclKeyTouched() {
@@ -108,7 +106,6 @@ class AclConfigPolicyLoaderTest {
         assertTrue(acl.isAllowed("alice", "app.x", AclService.Permission.READ));
     }
 
-    // fail-closed-to-last-good
 
     @Test
     void malformedReloadKeepsLastGoodNeverDenyAllNeverAllowAll() {
@@ -118,10 +115,9 @@ class AclConfigPolicyLoaderTest {
         put(store, "_acl/roles/reader", "allow READ app.");
         put(store, "_acl/bindings/alice", "reader");
         AclConfigPolicyLoader l = loader(acl, store, reg);
-        l.rebuild(); // last-good: alice READ app.
+        l.rebuild();
         assertTrue(acl.isAllowed("alice", "app.x", AclService.Permission.READ));
 
-        // Now write a malformed _acl/ key and reload.
         put(store, "_acl/roles/bad", "allow NOPE app.");
         l.onConfigChange(put("_acl/roles/bad"), 99L);
 
@@ -141,7 +137,7 @@ class AclConfigPolicyLoaderTest {
         put(store, "_acl/roles/reader", "allow READ app.");
         put(store, "_acl/bindings/alice", "reader");
         AclConfigPolicyLoader l = loader(acl, store, reg);
-        l.rebuild(); // good: alice READ
+        l.rebuild();
         assertTrue(acl.isAllowed("alice", "app.x", AclService.Permission.READ));
 
         // A single persisted poison key (unrecognized _acl/ shape) makes every rebuild reject the whole
@@ -161,7 +157,6 @@ class AclConfigPolicyLoaderTest {
         assertTrue(acl.isAllowed("alice", "app.x", AclService.Permission.READ), "last-good preserved");
     }
 
-    // ACL format-version sentinel (fail-closed on a newer grammar)
 
     @Test
     void supportedFormatKeyLoadsNormally() {
@@ -187,7 +182,7 @@ class AclConfigPolicyLoaderTest {
         put(store, "_acl/roles/reader", "allow READ app.");
         put(store, "_acl/bindings/alice", "reader");
         AclConfigPolicyLoader l = loader(acl, store, reg);
-        l.rebuild(); // last-good: alice READ app.
+        l.rebuild();
         assertTrue(acl.isAllowed("alice", "app.x", AclService.Permission.READ));
 
         // A newer node wrote a newer grammar version. An old node must fail closed to last-good, not misparse.
@@ -200,7 +195,6 @@ class AclConfigPolicyLoaderTest {
         assertFalse(acl.isAllowed("bob", "app.x", AclService.Permission.READ), "not allow-all");
     }
 
-    // reserved-name validation (the "admin"/root carve neutralization)
 
     @Test
     void configDefiningReservedAdminRoleIsRejected() {
@@ -230,7 +224,7 @@ class AclConfigPolicyLoaderTest {
     @Test
     void rootIsUncarveableByAnyConfigRole() {
         AclService acl = new AclService();
-        acl.grant("", "root", java.util.EnumSet.allOf(AclService.Permission.class)); // static break-glass
+        acl.grant("", "root", java.util.EnumSet.allOf(AclService.Permission.class));
         VersionedConfigStore store = new VersionedConfigStore();
         MetricsRegistry reg = new MetricsRegistry();
         put(store, "_acl/roles/evil", "deny READ,WRITE,WATCH,ADMIN ");  // empty prefix, so it matches all

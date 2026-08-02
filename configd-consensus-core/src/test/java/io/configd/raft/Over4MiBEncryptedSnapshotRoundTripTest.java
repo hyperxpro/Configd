@@ -58,7 +58,6 @@ class Over4MiBEncryptedSnapshotRoundTripTest {
 
     /** The frozen single-frame ceiling the chunked transfer lifts (mirrors RaftNode.MAX_SNAPSHOT_CHUNK_BYTES). */
     private static final int FOUR_MIB = 4 * 1024 * 1024;
-    /** A payload strictly larger than the single-frame ceiling, so a multi-chunk transfer is REQUIRED. */
     private static final int OVER_FOUR_MIB = FOUR_MIB + 1_000_003; // ~5.01 MiB (a prime-ish tail, not chunk-aligned)
 
     /** Snapshot storage key -> FileStorage file name (RaftLog.SNAPSHOT_BLOB_KEY = "raft-log.snapshot"). */
@@ -68,7 +67,6 @@ class Over4MiBEncryptedSnapshotRoundTripTest {
     private static final int ALG_ID_OFFSET = 6;
     private static final int KEY_TERM_OFFSET = 8 + IntegrityEnvelope.SCOPE_ID_SIZE;
 
-    /** A deterministic blob whose first bytes are a recognizable plaintext sentinel. */
     private static byte[] blob(int size, String sentinel) {
         byte[] b = new byte[size];
         for (int i = 0; i < size; i++) {
@@ -79,7 +77,6 @@ class Over4MiBEncryptedSnapshotRoundTripTest {
         return b;
     }
 
-    /** A single-term encrypting (AES-256-GCM) envelope over a fresh random root at {@code term}. */
     private static SegmentKeyManager keyManagerAtTerm(int term) {
         byte[] material = new byte[32];
         for (int i = 0; i < material.length; i++) {
@@ -104,16 +101,14 @@ class Over4MiBEncryptedSnapshotRoundTripTest {
      *  (RaftLog.serializeSnapshot layout: {@code [idx:8][term:8][dataLen:4][data][cfgLen:4][cfg?]}). */
     private static byte[] snapshotDataOf(byte[] plain) {
         ByteBuffer buf = ByteBuffer.wrap(plain);
-        buf.getLong();               // lastIncludedIndex
-        buf.getLong();               // lastIncludedTerm
+        buf.getLong();
+        buf.getLong();
         int dataLen = buf.getInt();
         byte[] data = new byte[dataLen];
         buf.get(data);
         return data;
     }
 
-    /** Recomputes the envelope's CRC32C trailer so a tamper survives the corruption guard and only the
-     *  GCM tag can catch it (mirrors SnapshotIntegrityTest.recomputeEnvelopeCrc). */
     private static void recomputeEnvelopeCrc(byte[] raw) {
         CRC32C crc = new CRC32C();
         crc.update(raw, 0, raw.length - IntegrityEnvelope.CRC_SIZE);
@@ -225,7 +220,6 @@ class Over4MiBEncryptedSnapshotRoundTripTest {
         assertArrayEquals(payloadTerm1, snapshotDataOf(decrypted),
                 "the decrypted > 4 MiB snapshot must be byte-for-byte the original");
 
-        // A tampered ciphertext byte is refused even with the CRC repaired - only the GCM tag catches it.
         byte[] tampered = rawTerm1.clone();
         int ctByte = tampered.length / 2; // deep inside the ciphertext, past the GCM prefix
         tampered[ctByte] ^= 0x40;
@@ -249,8 +243,6 @@ class Over4MiBEncryptedSnapshotRoundTripTest {
         assertArrayEquals(payloadTerm2, snapshotDataOf(env.unwrap(RaftArtifactMagic.SNAP_MAGIC, 0, rawTerm2)),
                 "the term-2 > 4 MiB snapshot round-trips under the rotated manager");
 
-        // The rotated manager RETAINS root[1], so an untouched term-1 blob still decrypts — the
-        // non-destructive-rotation property, on a > 4 MiB snapshot.
         assertArrayEquals(payloadTerm1, snapshotDataOf(env.unwrap(RaftArtifactMagic.SNAP_MAGIC, 0, rawTerm1)),
                 "an old-term > 4 MiB snapshot still decrypts after the key term rotated (non-destructive)");
     }

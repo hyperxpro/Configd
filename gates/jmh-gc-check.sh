@@ -43,7 +43,6 @@ if pgrep -f "org.apache.maven" >/dev/null 2>&1; then
   exit 1
 fi
 
-# build the benchmarks uber-jar (unless explicitly reusing)
 if [ "${JMHGC_SKIP_BUILD:-0}" = "1" ] && [ -f "$JAR" ]; then
   echo "JMH-GC-CHECK: JMHGC_SKIP_BUILD=1 — REUSING existing $JAR (CI must not do this)"
 else
@@ -55,14 +54,12 @@ else
 fi
 [ -f "$JAR" ] || { echo "JMH-GC-CHECK: $JAR missing after build" >&2; exit 1; }
 
-# run the benchmark with the GC profiler
 RAW="$(mktemp /tmp/ct34-jmh-XXXXXX.txt)"
 echo "JMH-GC-CHECK: running LocalConfigStoreReadBenchmark (-prof gc, size=$SIZE)"
 java --enable-preview -jar "$JAR" "$ALL_LEGS_REGEX" \
     -p "size=$SIZE" -prof gc -f 1 -wi 3 -i 3 -w 1 -r 1 \
     >"$RAW" 2>&1 || { echo "JMH-GC-CHECK: JMH run FAILED"; tail -20 "$RAW"; exit 1; }
 
-# persist the artifact (stable path, provenance header)
 mkdir -p "$(dirname "$CAPTURE")"
 {
   echo "# CT-34 mechanical gc-profile run (gates/jmh-gc-check.sh)"

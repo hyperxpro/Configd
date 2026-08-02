@@ -33,7 +33,7 @@ class StrongReadPolicyTest {
         StrongReadPolicy policy = new StrongReadPolicy(Set.of("global/", "acl/"));
         assertTrue(policy.isStrongReadKey("global/region-map"));
         assertTrue(policy.isStrongReadKey("acl/tenant-7"));
-        assertFalse(policy.isStrongReadKey("secure/killswitch")); // not in this set
+        assertFalse(policy.isStrongReadKey("secure/killswitch"));
         assertFalse(policy.isStrongReadKey("app/feature"));
     }
 }

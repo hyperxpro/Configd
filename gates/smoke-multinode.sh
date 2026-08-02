@@ -19,7 +19,7 @@ BASE="${SMOKE_BASE:-/tmp/configd-smoke-$$}"
 RAFT_BASE=9090           # raft ports 9091,9092,9093
 API_BASE=8080            # api  ports 8081,8082,8083
 PEERS_ADDR="1=127.0.0.1:9091,2=127.0.0.1:9092,3=127.0.0.1:9093"
-ELECT_BUDGET_S=15        # max wait for an election
+ELECT_BUDGET_S=15
 PIDS=()
 
 fail() { echo "SMOKE FAIL: $*" >&2; cleanup; exit 1; }
@@ -44,7 +44,6 @@ rm -rf "$BASE"; mkdir -p "$BASE"
 
 api() { echo "127.0.0.1:$((API_BASE + $1))"; }
 
-# step 2: launch 3 nodes
 echo "[step 2] launching 3-node cluster under $BASE"
 for k in 1 2 3; do
   peers=$(echo "1 2 3" | tr ' ' '\n' | grep -v "^$k$" | paste -sd,)
@@ -150,7 +149,6 @@ done
 [ "$lin" = "smoke-value-1" ] || fail "linearizable GET on leader returned '$lin' after retries"
 pass "linearizable GET on leader == smoke-value-1"
 
-# step 6: kill leader, observe re-election, write again
 echo "[step 6] kill -9 leader (node $LEADER) and re-elect"
 kill -9 "${PIDS[$((LEADER - 1))]}" 2>/dev/null
 DEAD="$LEADER"
@@ -176,7 +174,6 @@ for _i in $(seq 1 30); do
   sleep 0.5
 done
 [ "$code" = "200" ] || fail "post-failover PUT returned $code after retries across leader churn"
-# poll the new leader for the value (commit + apply)
 got=""
 for i in $(seq 1 20); do
   got=$(curl -s --max-time 3 "http://$(api "$NEWLEADER")/v1/config/smoke/k2")

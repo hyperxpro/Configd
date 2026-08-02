@@ -39,7 +39,6 @@ public interface FanOutSessionMetrics {
 
     default void onFilterActive(boolean active) { }
 
-    /** No-op sink - the default for tests and any wiring that does not export metrics. */
     FanOutSessionMetrics NOOP = new FanOutSessionMetrics() {
         @Override public void onNotifyBatch(int n, int bytes) { }
         @Override public void onQueueDepth(int depth) { }

@@ -78,7 +78,6 @@ class KeyringCodecTest {
     void wrappedRoot_replayedIntoDifferentNode_failsAad() {
         SecretKey kek = kek((byte) 0x21);
         KeyringEntry e1 = KeyringCodec.wrapRoot(kek, NODE_A, 1, root((byte) 0x02), RNG);
-        // Unwrap under a DIFFERENT node id: AAD mismatch -> tag fails.
         assertThrows(IntegrityException.class,
                 () -> KeyringCodec.unwrapRoot(kek, NODE_B, KeyringCodec.KEYRING_FORMAT_VERSION, e1));
     }
@@ -142,7 +141,6 @@ class KeyringCodecTest {
         assertThrows(IntegrityException.class, () -> KeyringCodec.decodeBody(body));
     }
 
-    // The outer MAC covers the whole body, defeating strip/swap/add/truncate.
 
     @Test
     void outerMac_bodyTamper_failsClosed() {
@@ -164,7 +162,7 @@ class KeyringCodecTest {
         // The entryCount lives at body offset 14 (2+8+4); the body starts at envelope offset 16
         // (header 8 + scopeId 4 + keyTerm 4), so entryCount's low byte is at absolute offset 16+14+3 = 33.
         byte[] forged = sealed.clone();
-        forged[16 + 14 + 3] = 0x01; // claim only 1 entry (an entry-strip)
+        forged[16 + 14 + 3] = 0x01;
         assertThrows(IntegrityException.class, () -> KeyringCodec.openSealed(outer, forged),
                 "the outer MAC covers activeTerm + entryCount + every entry - a strip fails loud");
     }

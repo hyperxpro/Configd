@@ -35,7 +35,7 @@ public final class Sanitize {
             }
         }
         if (truncated) {
-            sb.append("…"); // a single, non-control ellipsis marks that content was dropped
+            sb.append("…");
         }
         return sb.toString();
     }

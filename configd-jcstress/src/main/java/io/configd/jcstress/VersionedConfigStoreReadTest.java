@@ -63,19 +63,19 @@ public final class VersionedConfigStoreReadTest {
 
         public ConsistentVersionRead() {
             store = new VersionedConfigStore();
-            store.put(KEY, encode(1L), 1L); // seed at version 1
+            store.put(KEY, encode(1L), 1L);
         }
 
         @Actor
         public void writer() {
-            store.put(KEY, encode(2L), 2L); // single writer advances to version 2
+            store.put(KEY, encode(2L), 2L);
         }
 
         @Actor
         public void reader(JJ_Result r) {
             ReadResult rr = store.get(KEY);
-            r.r1 = rr.version();          // stamped version
-            r.r2 = decode(rr.value());    // version recovered from the bytes
+            r.r1 = rr.version();
+            r.r2 = decode(rr.value());
         }
     }
 
@@ -103,7 +103,6 @@ public final class VersionedConfigStoreReadTest {
 
         @Actor
         public void reader(J_Result r) {
-            // Only 1 or 2 are published versions; any other proves torn array.
             long v = decode(store.get(KEY).value());
             r.r1 = (v == 1L || v == 2L) ? v : 99L; // 99 = forbidden
         }

@@ -55,7 +55,6 @@ class EdgeStalenessDistributionSimTest {
             }
         }
 
-        // Greppable mechanism summary for the report (no assertion on the values themselves).
         System.out.println("STALENESS-DIST-SUMMARY: samples=" + probe.globalCount()
                 + " p50=" + p50 + "ms p99=" + p99 + "ms max=" + max + "ms");
     }

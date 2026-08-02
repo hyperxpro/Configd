@@ -789,7 +789,6 @@ public final class EdgeClientCore {
         return readStore.get(key);
     }
 
-    /** The applied-mutation seq the edge has reached (its cursor). */
     public long cursor() {
         return cursor;
     }

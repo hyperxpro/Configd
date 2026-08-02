@@ -54,7 +54,7 @@ public final class HttpApiServer {
                          BiFunction<ConfigScope, String, NodeId> leaderHintSupplier) throws IOException {
         this(port, sslContext, healthService, prometheusExporter, configStore, writeService,
                 readService, authInterceptor, aclService, strongReadPolicy, leaderHintSupplier,
-                /* auditLog */ null, /* replayGuard */ null);
+                 null,  null);
     }
 
     
@@ -111,7 +111,6 @@ public final class HttpApiServer {
                          ReplayGuard replayGuard,
                          AdminApiHandler.LeadershipAdmin leadershipAdmin,
                          AuthenticatorChain chain) throws IOException {
-        // This signature binds the wildcard address (null bindAddress) for callers that don't specify one.
         this(null, port, sslContext, healthService, prometheusExporter, configStore, writeService,
                 readService, authInterceptor, aclService, strongReadPolicy, leaderHintSupplier,
                 auditLog, replayGuard, leadershipAdmin, chain);
@@ -269,7 +268,7 @@ public final class HttpApiServer {
                     }
                     return chain;
                 } catch (SSLPeerUnverifiedException e) {
-                    return List.of(); // the peer presented no client certificate
+                    return List.of();
                 }
             }
             return List.of();

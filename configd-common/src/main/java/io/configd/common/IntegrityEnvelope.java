@@ -427,7 +427,7 @@ public final class IntegrityEnvelope {
                 return singleKey;
             case HMAC_TERMED:
             case GCM:
-                return keys.macKey(keyTerm); // unknown term -> IntegrityException (fail closed)
+                return keys.macKey(keyTerm);
             case HMAC_KEYRING:
                 throw new IntegrityException("keyringMac reader cannot verify a non-keyring artifact"
                         + " (magic 0x" + Integer.toHexString(magic) + ")");
@@ -462,7 +462,7 @@ public final class IntegrityEnvelope {
         byte[] cipherText = new byte[cipherLen];
         buf.get(cipherText);
 
-        SecretKey dek = keys.resolveDek(keyTerm, segmentId); // unknown term -> fail closed
+        SecretKey dek = keys.resolveDek(keyTerm, segmentId);
         byte[] aad = Arrays.copyOfRange(enveloped, 0, ENC_PREFIX_SIZE);
         try {
             return gcmDecrypt(dek, nonce, aad, cipherText);

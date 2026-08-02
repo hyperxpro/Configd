@@ -127,7 +127,6 @@ start_samplers() {
 }
 stop_samplers() { for pid in "${SAMPLERS[@]:-}"; do kill "$pid" 2>/dev/null; done; SAMPLERS=(); }
 
-# Shard-aware open-loop driver (routes each key to its shard's leader).
 driver() { java $GCFLAGS -Xmx2g --enable-preview -cp "$BENCH" io.configd.bench.ShardAwareWriteDriver "$@" 2>&1 | grep -v "WARNING\|Unsafe\|sun.misc\|native-access"; }
 
 LADDER="$OUT/ladder.tsv"

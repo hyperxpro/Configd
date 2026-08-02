@@ -259,7 +259,7 @@ public final class EdgeSession implements AutoCloseable {
             // Do NOT reset the attempt budget on optimistic connect+auth success (the wire carries no AUTH-OK):
             // the budget resets only when a POSITIVE server frame (markHealthy) confirms the connection is up.
         } catch (ConfigdException reconnectFailure) {
-            handleTerminal(reconnectFailure); // recurse: reconnect again or give up
+            handleTerminal(reconnectFailure);
         }
     }
 

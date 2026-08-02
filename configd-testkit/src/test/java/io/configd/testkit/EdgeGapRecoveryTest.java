@@ -35,8 +35,6 @@ class EdgeGapRecoveryTest {
         int snapshotsBefore = victim.snapshotsApplied();
         sim.enableEdgeRecovery(0);
 
-        // Partition, then commit writes the victim misses (its session streams them into
-        // the void - the concurrent-writes requirement).
         sim.partitionEdge(0);
         for (int i = 1; i <= 3; i++) {
             commit(sim, victim.subscribedCpNode(), "gap/k" + i, "missed-" + i);
@@ -46,7 +44,6 @@ class EdgeGapRecoveryTest {
         sim.healEdge(0);
         commit(sim, victim.subscribedCpNode(), "gap/after", "post-heal");
 
-        // The REAL chain: GAP_DETECTED -> RECONNECT_RESUBSCRIBE(cursor) -> TAIL replay.
         long target = sim.cpSim().store(victim.subscribedCpNode()).currentVersion();
         tickUntil(sim, () -> victim.currentVersion() >= target,
                 "victim re-converged by replay");
@@ -112,7 +109,7 @@ class EdgeGapRecoveryTest {
         int converged = 0;
         final int seeds = 20;
         for (long seed = 9_000; seed < 9_000 + seeds; seed++) {
-            C1StreamDriver driver = new C1StreamDriver(); // sim-scaled config
+            C1StreamDriver driver = new C1StreamDriver();
             EdgeFanOutSim sim = new EdgeFanOutSim(seed, CP_NODES, 3, WORKLOAD_TICKS,
                     true, driver, AdversarialSchedule.defaultIntensity(),
                     EdgeInvariants.BOUND_MS);
@@ -161,7 +158,6 @@ class EdgeGapRecoveryTest {
         fail("write '" + key + "' did not commit/apply on cp node " + observedCpNode);
     }
 
-    /** Ticks the sim (bounded) until the condition holds - logical time, no sleeps. */
     private static void tickUntil(EdgeFanOutSim sim, java.util.function.BooleanSupplier cond,
                                   String what) {
         for (int t = 0; t < 3_000; t++) {

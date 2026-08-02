@@ -161,7 +161,6 @@ final class VaultTransitClient implements AutoCloseable {
                 return errs.toString();
             }
         } catch (RuntimeException ignored) {
-            // fall through to the raw body
         }
         return body.length() > 200 ? body.substring(0, 200) + "..." : body;
     }

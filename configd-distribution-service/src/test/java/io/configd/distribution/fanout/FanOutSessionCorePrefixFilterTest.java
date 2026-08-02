@@ -73,7 +73,6 @@ class FanOutSessionCorePrefixFilterTest {
                         List.of(new ConfigMutation.Put(key, val.getBytes(StandardCharsets.UTF_8)))));
     }
 
-    /** Total notifications the session delivered across all NOTIFY frames. */
     private int deliveredNotifications() {
         int n = 0;
         for (EdgeFrame.Notify f : sink.sentOfType(EdgeFrame.Notify.class)) {

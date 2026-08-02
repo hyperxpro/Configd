@@ -215,8 +215,6 @@ class ShardedFanOutTest {
         }
         assertEquals(null, failure.get(), "no owner thread threw");
 
-        // Each buffer has exactly its shard's commits, contiguous 1..M - no loss/dup/corruption under
-        // concurrent writes to the N distinct buffers.
         for (int gid = 0; gid < n; gid++) {
             List<CommitNotification> out = drain(fan.buffers().get(gid));
             assertEquals(writesPerShard, out.size(),
@@ -231,7 +229,7 @@ class ShardedFanOutTest {
     void sharedDroppedCounterAggregatesAcrossShards() {
         int n = 3;
         int smallCap = 4;
-        int writesPerShard = 10; // 10 - 4 = 6 evictions per shard
+        int writesPerShard = 10;
         List<ConfigdServer.RaftGroupRuntime> rts = runtimes(n);
         MetricsRegistry.Counter dropped = droppedCounter();
         ConfigdServer.ShardedFanOut fan =

@@ -75,16 +75,12 @@ class MonotonicReadAcrossEdgeRestartTest {
         assertThrows(AssertionError.class, () -> edge.get("k5", heldCursor),
                 "a held cursor ahead of the rebuilt store must refuse (INV-M1), not serve stale");
 
-        // RE-BOOTSTRAP in progress: a snapshot at version 3 (BELOW the held cursor 5) - a
-        // partial catch-up. Reads with cursor 5 must STILL refuse (store 3 < cursor 5).
         edge.deliver(new EdgeStream.Snapshot(snapshot(3, "k3", "v3"), 3));
         edge.tick();
         assertEquals(3, edge.cursor());
         assertThrows(AssertionError.class, () -> edge.get("k5", heldCursor),
                 "during bootstrap (store 3 < cursor 5) the read must still refuse");
 
-        // Bootstrap completes PAST the held cursor: a snapshot at version 6 (>= 5). Now the
-        // store has caught up past the cursor, so the read is served again (monotonic).
         edge.deliver(new EdgeStream.Snapshot(snapshot(6, "k5", "v5"), 6));
         edge.tick();
         assertEquals(6, edge.cursor());

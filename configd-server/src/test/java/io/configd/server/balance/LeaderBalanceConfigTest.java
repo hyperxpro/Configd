@@ -21,7 +21,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class LeaderBalanceConfigTest {
 
-    /** A minimal in-memory {@link ConfigSource} over a fixed key map. */
     private static ConfigSource source(Map<String, String> values) {
         return new ConfigSource() {
             @Override

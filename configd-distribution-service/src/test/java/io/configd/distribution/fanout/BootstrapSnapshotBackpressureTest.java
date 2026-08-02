@@ -168,7 +168,6 @@ class BootstrapSnapshotBackpressureTest {
         }
         sink.drain(Integer.MAX_VALUE); // flush the remainder onto the wire
 
-        // Exactness of the delivered transfer.
         List<EdgeFrame.SnapshotBegin> begins = sink.delivered(EdgeFrame.SnapshotBegin.class);
         List<EdgeFrame.SnapshotChunk> chunks = sink.delivered(EdgeFrame.SnapshotChunk.class);
         List<EdgeFrame.SnapshotEnd> ends = sink.delivered(EdgeFrame.SnapshotEnd.class);

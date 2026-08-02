@@ -100,7 +100,6 @@ class NodeAnchorRecordTest {
         byte[] audit = hash(0x40);
         byte[] digest = hash(0x50);
         NodeAnchorRecord r = new NodeAnchorRecord(1L, 1L, 1, 0L, audit, digest);
-        // Mutate the caller's arrays; the record must have cloned them.
         audit[0] ^= 0xFF;
         digest[0] ^= 0xFF;
         assertEquals(0x40, r.auditHeadHash()[0] & 0xFF, "auditHeadHash must be defensively cloned");
@@ -132,7 +131,6 @@ class NodeAnchorRecordTest {
         live.put(1, 200L);
         byte[] before = NodeAnchorRecord.computeShardAnchorDigest(live);
 
-        // Shard 1 wiped to FRESH => lastDurableIndex resets to 0 (a wipe signature the digest must detect).
         Map<Integer, Long> wiped = new TreeMap<>();
         wiped.put(0, 100L);
         wiped.put(1, 0L);
@@ -149,7 +147,7 @@ class NodeAnchorRecordTest {
         byte[] d0 = NodeAnchorRecord.computeShardAnchorDigest(t0);
 
         Map<Integer, Long> t1 = new TreeMap<>();
-        t1.put(0, 150L); // legitimate forward advance between periodic ticks
+        t1.put(0, 150L);
         byte[] d1 = NodeAnchorRecord.computeShardAnchorDigest(t1);
 
         assertFalse(java.util.Arrays.equals(d0, d1),

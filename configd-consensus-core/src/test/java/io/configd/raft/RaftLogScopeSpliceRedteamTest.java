@@ -27,8 +27,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RaftLogScopeSpliceRedteamTest {
 
-    private static final int VICTIM_GID = 0;   // the shard doing the recovery
-    private static final int FOREIGN_GID = 1;  // the shard the spliced record truly belongs to
+    private static final int VICTIM_GID = 0;
+    private static final int FOREIGN_GID = 1;
 
     /** The FileStorage log NAME (appendToLog / readLog append the {@code .wal} suffix themselves). */
     private static final String WAL_LOG = "raft-log";
@@ -104,7 +104,7 @@ class RaftLogScopeSpliceRedteamTest {
         // A foreign shard persists its term/vote into the shared anchor under scopeId=FOREIGN_GID;
         // currentTerm/votedFor live in the per-shard anchor.
         RaftLog foreign = new RaftLog(storage, env, FOREIGN_GID);
-        foreign.persistTermVote(3, 7); // writes the raft-anchor under scopeId=FOREIGN_GID
+        foreign.persistTermVote(3, 7);
         foreign.closeAnchor();
 
         // The victim shard reading the SAME storage refuses: both anchor slots carry
@@ -186,7 +186,6 @@ class RaftLogScopeSpliceRedteamTest {
                         + "'), got: " + ex.getMessage());
     }
 
-    // Attack 5 - envelope version / downgrade and the CRC-before-scope ordering.
 
     /** A v2-layout envelope (formatVersion rolled 3 -> 2), CRC repaired, fed to a v3 reader => REFUSE. */
     @Test
@@ -217,8 +216,6 @@ class RaftLogScopeSpliceRedteamTest {
         Storage storage = Storage.file(tempDir);
         storage.appendToLog(WAL_LOG, env.wrap(RaftArtifactMagic.WALE_MAGIC, VICTIM_GID, entry(1, 1, "a")));
 
-        // Flip the scopeId but leave the envelope's internal CRC STALE; repair only the frame CRC so
-        // FileStorage.readLog hands the frame to the envelope reader.
         byte[] wal = Files.readAllBytes(tempDir.resolve(WAL_FILE));
         List<byte[]> frames = readFrames(wal);
         frames.set(0, forgeScopeInFrame(frames.get(0), FOREIGN_GID, /*repairEnvelopeCrc=*/false));
@@ -231,16 +228,13 @@ class RaftLogScopeSpliceRedteamTest {
                         + ex.getMessage());
     }
 
-    // Posture builders.
 
-    /** Keyed HMAC-SHA-256 envelope with a fixed test key. */
     private static IntegrityEnvelope hmacEnvelope() {
         byte[] k = new byte[32];
         Arrays.fill(k, (byte) 0x5a);
         return new IntegrityEnvelope(new SecretKeySpec(k, "HmacSHA256"));
     }
 
-    /** Encrypting AES-256-GCM envelope over a FIXED root (one instance writes AND re-derives on read). */
     private static IntegrityEnvelope gcmEnvelope() {
         byte[] rootBytes = new byte[32];
         Arrays.fill(rootBytes, (byte) 0x6b);
@@ -248,7 +242,6 @@ class RaftLogScopeSpliceRedteamTest {
         return IntegrityEnvelope.encrypting(new SegmentKeyManager(root));
     }
 
-    // On-disk byte helpers (identical frame arithmetic to FileStorage).
 
     private static byte[] entry(long index, long term, String command) {
         byte[] c = command.getBytes(StandardCharsets.UTF_8);
@@ -299,32 +292,25 @@ class RaftLogScopeSpliceRedteamTest {
         return b.array();
     }
 
-    /** Extracts the envelope (frame {@code data}) from a full frame. */
     private static byte[] envelopeOf(byte[] frame) {
         int len = ByteBuffer.wrap(frame, 0, 4).getInt();
         return Arrays.copyOfRange(frame, 4, 4 + len);
     }
 
-    /**
-     * Re-stamps the scopeId inside a full frame's envelope, optionally repairing the envelope's own
-     * CRC32C trailer, then re-frames (recomputing the outer FileStorage frame CRC over the new bytes).
-     */
     private static byte[] forgeScopeInFrame(byte[] frame, int newScope, boolean repairEnvelopeCrc) {
         byte[] env = envelopeOf(frame);
-        ByteBuffer.wrap(env).putInt(IntegrityEnvelope.HEADER_SIZE, newScope); // scopeId sits right after the header
+        ByteBuffer.wrap(env).putInt(IntegrityEnvelope.HEADER_SIZE, newScope);
         if (repairEnvelopeCrc) {
             repairEnvelopeCrc(env);
         }
         return frameOf(env);
     }
 
-    /** Re-stamps the scopeId inside a bare envelope (a .dat blob) and repairs the envelope's CRC32C. */
     private static void forgeScopeInEnvelope(byte[] env, int newScope) {
         ByteBuffer.wrap(env).putInt(IntegrityEnvelope.HEADER_SIZE, newScope);
         repairEnvelopeCrc(env);
     }
 
-    /** Rolls the envelope formatVersion (short at offset 4), repairs the envelope CRC, re-frames. */
     private static byte[] rollVersionInFrame(byte[] frame, short newVersion) {
         byte[] env = envelopeOf(frame);
         ByteBuffer.wrap(env).putShort(4, newVersion); // formatVersion follows the 4-byte magic
@@ -332,7 +318,6 @@ class RaftLogScopeSpliceRedteamTest {
         return frameOf(env);
     }
 
-    /** Recomputes the envelope's trailing CRC32C over everything before it (attacker-trivial). */
     private static void repairEnvelopeCrc(byte[] env) {
         CRC32C crc = new CRC32C();
         crc.update(env, 0, env.length - IntegrityEnvelope.CRC_SIZE);

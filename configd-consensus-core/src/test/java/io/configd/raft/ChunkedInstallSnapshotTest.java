@@ -58,7 +58,6 @@ class ChunkedInstallSnapshotTest {
                 Arrays.copyOfRange(full, offset, end), done, done ? config : null);
     }
 
-    // Receiver-side reassembly, driven with hand-built chunks for full control.
 
     @Nested
     class ReassemblyTests {
@@ -632,7 +631,6 @@ class ChunkedInstallSnapshotTest {
         }
     }
 
-    // The <=1-chunk path must be byte-identical to a pre-chunking single-blob transfer.
 
     @Nested
     class SingleChunkByteIdentityTests {

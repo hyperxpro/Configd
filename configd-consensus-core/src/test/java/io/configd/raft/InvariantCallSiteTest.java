@@ -72,7 +72,7 @@ class InvariantCallSiteTest {
     @Test
     void becomeLeaderInvokesElectionSafetyAndLeaderCompleteness() {
         ObservingChecker checker = new ObservingChecker();
-        singleNodeLeader(checker); // election runs becomeLeader()
+        singleNodeLeader(checker);
         assertTrue(checker.observed("election_safety"),
                 "becomeLeader must invoke the election_safety check");
         assertTrue(checker.observed("leader_completeness"),
@@ -94,7 +94,6 @@ class InvariantCallSiteTest {
                 "applyCommitted must invoke the state_machine_safety check on each apply");
     }
 
-    // handleAppendEntries: log_matching (follower side)
 
     @Test
     void followerAppendInvokesLogMatching() {
@@ -124,13 +123,10 @@ class InvariantCallSiteTest {
                 "proposeConfigChange must invoke reconfig_safety");
     }
 
-    // tickHeartbeat: inflight_window_progress (per peer)
 
     @Test
     void leaderHeartbeatInvokesInflightWindowProgress() {
         ObservingChecker checker = new ObservingChecker();
-        // A 3-node cluster with the observing checker wired into the leader; route to
-        // leadership, then step past a heartbeat interval so tickHeartbeat fires.
         RoutingCluster cluster = new RoutingCluster(3, Map.of(N1, checker));
         cluster.electFirst();
         checker.clear();

@@ -16,7 +16,7 @@ import java.util.Set;
 public final class ClusterConfig {
 
     private final Set<NodeId> voters;
-    private final Set<NodeId> newVoters; // null for simple config
+    private final Set<NodeId> newVoters;
     private final boolean joint;
 
     private final Map<NodeId, Set<NodeId>> peersCache = new HashMap<>();
@@ -67,7 +67,6 @@ public final class ClusterConfig {
         return Collections.unmodifiableSet(all);
     }
 
-    /** Joint config requires majority from BOTH sets; simple requires one majority. */
     public boolean isQuorum(Set<NodeId> respondents) {
         if (!joint) {
             return countIntersection(respondents, voters) >= majorityOf(voters.size());
@@ -85,7 +84,6 @@ public final class ClusterConfig {
         return joint && newVoters.contains(node);
     }
 
-    /** All voters except self; result cached. */
     public Set<NodeId> peersOf(NodeId self) {
         return peersCache.computeIfAbsent(self, id -> {
             var peers = new java.util.HashSet<>(allVoters());

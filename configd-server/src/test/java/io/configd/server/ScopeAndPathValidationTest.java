@@ -101,7 +101,7 @@ class ScopeAndPathValidationTest {
                 "key_with-mixed.chars",
                 "service:port",            // colon (not a seg-char under a strict grammar)
                 "team@payments",           // at (not a seg-char under a strict grammar)
-                "naïve-café",   // multi-byte UTF-8
+                "naïve-café",
                 "/leading-slash",
                 boundary);
         for (String key : valid) {
@@ -151,7 +151,6 @@ class ScopeAndPathValidationTest {
         assertEquals(200, h.handle(req("DELETE", "k", "scope=REGIONAL", new byte[0])).status());
         assertEquals(ConfigScope.REGIONAL, rec.writeScope.get());
 
-        // GET carries scope to the scope-aware reader (read-your-writes: same (scope,key) as the write).
         assertEquals(200, h.handle(req("GET", "k", "scope=LOCAL", new byte[0])).status());
         assertEquals(ConfigScope.LOCAL, rec.readScope.get());
         assertEquals(200, h.handle(req("GET", "k", null, new byte[0])).status());
@@ -192,7 +191,7 @@ class ScopeAndPathValidationTest {
             @Override public Map<String, ReadResult> getPrefix(String prefix) { return Map.of(); }
             @Override public long currentVersion() { return 0; }
         };
-        ConfigReadService readService = new ConfigReadService(reader, (scope, key) -> false); // never leader
+        ConfigReadService readService = new ConfigReadService(reader, (scope, key) -> false);
         AdminApiHandler h = new AdminApiHandler(
                 new HealthService(), /* exporter */ null, new VersionedConfigStore(), /* write */ null,
                 readService, /* auth */ null, /* acl */ null, StrongReadPolicy.defaultPolicy(),
@@ -210,7 +209,6 @@ class ScopeAndPathValidationTest {
         assertEquals(String.valueOf(ConfigScope.GLOBAL.ordinal()), global.headers().get("X-Leader-Hint"),
                 "absent scope ⇒ GLOBAL hint");
 
-        // The strong-read fail-closed path is scope-aware too: X-Fail-Closed + scoped hint.
         AdminApiHandler.AdminResponse strong =
                 h.handle(req("GET", "secure/killswitch", "scope=LOCAL", new byte[0]));
         assertEquals(503, strong.status());

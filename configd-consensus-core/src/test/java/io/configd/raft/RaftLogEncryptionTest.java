@@ -60,7 +60,6 @@ class RaftLogEncryptionTest {
         return IntegrityEnvelope.encrypting(fixedKeyring());
     }
 
-    /** A term-versioned HMAC (algId=1) envelope over the SAME fixed root - the pre-encryption phase. */
     private static IntegrityEnvelope hmacEnvelope() {
         return IntegrityEnvelope.hmac(fixedKeyring());
     }
@@ -121,8 +120,6 @@ class RaftLogEncryptionTest {
         node.propose(KvStateMachine.put("b", SECRET));
         Map<String, String> before = sm.snapshotState();
 
-        // RESTART: a fresh RaftLog + envelope re-derives the same root from the same key, so it
-        // decrypts the WAL written by the prior instance and replays it into a fresh state machine.
         RaftLog log2 = new RaftLog(storage, encryptingEnvelope());
         KvStateMachine sm2 = new KvStateMachine();
         bootLeader(storage, encryptingEnvelope(), log2, sm2);
@@ -157,7 +154,6 @@ class RaftLogEncryptionTest {
         RaftNode node = bootLeader(storage, encryptingEnvelope(), log, sm);
         node.propose(KvStateMachine.put("k", "v"));
 
-        // A keyless (or keyed-only) reader must refuse the algId=2 records rather than mis-parse them.
         assertThrows(IntegrityException.class,
                 () -> new RaftLog(storage, IntegrityEnvelope.keyless()));
     }
@@ -182,7 +178,6 @@ class RaftLogEncryptionTest {
                 "phase-2 recovery must read the pre-encryption algId=1 records");
         n2.propose(KvStateMachine.put("c", SECRET));
 
-        // The on-disk WAL is genuinely mixed: it carries BOTH algId=1 and algId=2 frames.
         assertEquals(Set.of((byte) IntegrityEnvelope.ALG_HMAC_SHA256, (byte) IntegrityEnvelope.ALG_AES256_GCM),
                 algIdsInWal(Files.readAllBytes(tempDir.resolve("raft-log.wal"))),
                 "the WAL must contain both an HMAC record and an encrypted record");
@@ -199,7 +194,7 @@ class RaftLogEncryptionTest {
     private static Set<Byte> algIdsInWal(byte[] wal) {
         Set<Byte> algIds = new HashSet<>();
         ByteBuffer buf = ByteBuffer.wrap(wal);
-        buf.position(WalContainer.HEADER_SIZE); // frames begin after the container header
+        buf.position(WalContainer.HEADER_SIZE);
         while (buf.remaining() >= 8) {
             int len = buf.getInt();
             if (len < IntegrityEnvelope.HEADER_SIZE || buf.remaining() < len + 4) {

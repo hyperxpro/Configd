@@ -40,10 +40,6 @@ public final class AuthInterceptor {
         this.validator = Objects.requireNonNull(validator, "validator must not be null");
     }
 
-    /**
-     * @param token the bearer token (may be null or blank)
-     * @return the authentication result
-     */
     public AuthResult authenticate(String token) {
         if (token == null || token.isBlank()) {
             return new AuthResult.Denied("missing auth token");

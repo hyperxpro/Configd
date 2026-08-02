@@ -102,7 +102,6 @@ abstract class AbstractAdminApiServerContract {
                       ReplayGuard replayGuard) {
     }
 
-    /** Starts the transport under test from {@code spec} on an ephemeral port (0). */
     abstract ServerHandle startServer(ServerSpec spec) throws Exception;
 
     private ServerHandle server;
@@ -466,7 +465,6 @@ abstract class AbstractAdminApiServerContract {
         HttpResponse<String> first = client.send(original, HttpResponse.BodyHandlers.ofString());
         assertEquals(200, first.statusCode(), "the original valid PUT must commit: " + first.body());
 
-        // Resend the SAME request object (identical headers + body) to simulate a captured replay.
         HttpResponse<String> replay = client.send(original, HttpResponse.BodyHandlers.ofString());
         assertEquals(409, replay.statusCode(),
                 "a verbatim capture-and-replay must be rejected (409 Conflict): " + replay.body());
@@ -784,8 +782,6 @@ abstract class AbstractAdminApiServerContract {
     @Test
     void unsupportedMethodOnConfigEndpointIs405() throws Exception {
         int port = start(authSpec());
-        // PATCH is not GET/PUT/DELETE, so it falls through the config() switch's default -> 405,
-        // even for a valid writer.
         HttpResponse<String> patch = send(port, "PATCH", "/v1/config/app/feature", "good-writer", "x");
         assertEquals(405, patch.statusCode(), "an unsupported method on /v1/config/{key} must be 405");
     }
@@ -843,7 +839,6 @@ abstract class AbstractAdminApiServerContract {
                 try {
                     Files.deleteIfExists(p);
                 } catch (IOException ignored) {
-                    // best-effort cleanup of a temp fixture
                 }
             });
         }
@@ -860,7 +855,6 @@ abstract class AbstractAdminApiServerContract {
  null, null, StrongReadPolicy.defaultPolicy(),
                 (scope, key) -> NodeId.of(1), null, null));
 
-        // A dedicated HttpClient that trusts the server cert. /health/live is public (no auth fixture).
         try (HttpClient tlsClient = HttpClient.newBuilder()
                 .sslContext(clientCtx).connectTimeout(Duration.ofSeconds(5)).build()) {
             HttpResponse<String> resp = tlsClient.send(HttpRequest.newBuilder()
@@ -872,7 +866,6 @@ abstract class AbstractAdminApiServerContract {
         }
     }
 
-    /** A server-side SSLContext keyed by {@code keyStore} (server identity; no client-auth trust needed). */
     private static SSLContext serverSslContext(Path keyStore) throws Exception {
         KeyStore ks = loadStore(keyStore);
         KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
@@ -882,7 +875,6 @@ abstract class AbstractAdminApiServerContract {
         return ctx;
     }
 
-    /** A client SSLContext that trusts {@code trustStore} and presents no client cert. */
     private static SSLContext trustingClientContext(Path trustStore) throws Exception {
         KeyStore ts = loadStore(trustStore);
         TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());

@@ -59,7 +59,7 @@ class DriverLeadershipAdminOwnerThreadTest {
         OwnerExecutorPool pool = new OwnerExecutorPool(1);
         try {
             MetricsRegistry registry = new MetricsRegistry();
-            RaftNode node = buildNode(registry, RaftConfig.of(NodeId.of(1), Set.of())); // self-elects
+            RaftNode node = buildNode(registry, RaftConfig.of(NodeId.of(1), Set.of()));
             // Bind the owner + self-elect as the first tasks on the group's owner executor, so the
             // bind/elect path runs on-owner and the guard is active for the assertions below.
             pool.ownerExecutor(GROUP).submit(() -> {
@@ -127,7 +127,7 @@ class DriverLeadershipAdminOwnerThreadTest {
     void transferDuringOwnerShutdownIsARetryableTimeoutNotA500() throws Exception {
         OwnerExecutorPool pool = new OwnerExecutorPool(1);
         MetricsRegistry registry = new MetricsRegistry();
-        RaftNode node = buildNode(registry, RaftConfig.of(NodeId.of(1), Set.of())); // self-elects to LEADER
+        RaftNode node = buildNode(registry, RaftConfig.of(NodeId.of(1), Set.of()));
         pool.ownerExecutor(GROUP).submit(() -> {
             node.bindOwnerThread();
             for (int i = 0; i < 400; i++) node.tick();

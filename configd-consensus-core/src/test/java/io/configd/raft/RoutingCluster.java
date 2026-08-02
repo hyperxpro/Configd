@@ -34,10 +34,6 @@ final class RoutingCluster {
         this(n, Map.of());
     }
 
-    /**
-     * @param n        cluster size
-     * @param checkers per-node {@link RaftNode.InvariantChecker} (absent => NOOP)
-     */
     RoutingCluster(int n, Map<NodeId, RaftNode.InvariantChecker> checkers) {
         for (int i = 1; i <= n; i++) {
             ids.add(NodeId.of(i));
@@ -110,7 +106,7 @@ final class RoutingCluster {
             leader.tick();
         }
         for (int r = 0; r < 60; r++) {
-            deliverRound(); // PreVote -> RequestVote -> leader -> no-op -> commit
+            deliverRound();
         }
         if (leader.role() != RaftRole.LEADER) {
             throw new IllegalStateException("electFirst: node did not become leader (role="

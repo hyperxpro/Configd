@@ -81,7 +81,6 @@ class ShardedRoutingTest {
         ConfigWriteService.RaftProposer proposer =
                 ConfigdServer.raftProposer(fx.driver, fx.shardMap, TIMEOUT_MS, metrics());
 
-        // Use keys that demonstrably spread across shards; commit each via the production proposer.
         List<String> keys = List.of("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf");
         boolean sawMultipleShards = false;
         int firstShard = fx.shardMap.shardFor(SCOPE, keys.get(0));
@@ -119,13 +118,11 @@ class ShardedRoutingTest {
             assertInstanceOf(ConfigWriteService.ProposeCommitResult.Committed.class,
                     proposer.propose(SCOPE, List.of(key), put(key, "val-" + key)));
         }
-        // The reader resolves the same shard the writer used -> every committed key is visible.
         for (String key : keys) {
             io.configd.store.ReadResult rr = reader.get(key);
             assertTrue(rr.found(), "sharded reader must find committed key '" + key + "'");
             assertEquals("val-" + key, new String(rr.value(), StandardCharsets.UTF_8));
         }
-        // Scatter-gather: a prefix whose keys hash to different shards is merged across all shards.
         Map<String, io.configd.store.ReadResult> prefix = reader.getPrefix("cfg/");
         for (String key : keys) {
             assertTrue(prefix.containsKey(key),
@@ -162,7 +159,6 @@ class ShardedRoutingTest {
         assertTrue(rejected.reason().contains("cross-shard"),
                 "rejection must carry a clear cross-shard reason: " + rejected.reason());
 
-        // And a co-located multi-key write (both keys on one shard) is not rejected by the guard.
         String[] coLocated = twoKeysOnSameShard(fx.shardMap);
         var ok = proposer.propose(SCOPE, List.of(coLocated[0], coLocated[1]), put(coLocated[0], "y"));
         assertFalse(ok instanceof ConfigWriteService.ProposeCommitResult.CrossShardRejected,
@@ -264,14 +260,11 @@ class ShardedRoutingTest {
         ConfigReadService.ConfigReader reader =
                 ConfigdServer.shardedConfigReader(fx.shardMap, fx.runtimesByGid, fx.runtimes, ConfigScope.GLOBAL);
 
-        // A key whose REGIONAL shard differs from its GLOBAL shard (scope folds into the hash, so the
-        // wiring is non-vacuous: scope genuinely selects a different shard at N>1).
         String key = keyWithDifferentShardPerScope(fx.shardMap, ConfigScope.GLOBAL, ConfigScope.REGIONAL);
         int regionalShard = fx.shardMap.shardFor(ConfigScope.REGIONAL, key);
         int globalShard = fx.shardMap.shardFor(ConfigScope.GLOBAL, key);
         assertNotEquals(globalShard, regionalShard, "vacuity: the test key must route differently per scope");
 
-        // Write under REGIONAL -> lands in REGIONAL's shard.
         assertInstanceOf(ConfigWriteService.WriteResult.Committed.class,
                 writeService.put(key, "regional-value".getBytes(StandardCharsets.UTF_8), ConfigScope.REGIONAL));
 
@@ -301,7 +294,6 @@ class ShardedRoutingTest {
                            List<ConfigdServer.RaftGroupRuntime> runtimes,
                            Map<Integer, ConfigdServer.RaftGroupRuntime> runtimesByGid) {}
 
-    /** Builds N single-node groups via the real buildRaftGroup, owner-binds + self-elects each. */
     private Fixture bringUp(int n, Path dataDir) throws Exception {
         pool = new OwnerExecutorPool(n);
         MultiRaftDriver driver = new MultiRaftDriver(NODE, Clock.system());

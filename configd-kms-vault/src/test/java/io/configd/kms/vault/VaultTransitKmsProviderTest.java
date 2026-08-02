@@ -83,10 +83,10 @@ class VaultTransitKmsProviderTest {
             byte[] original = prov.rootKey().withMaterial(byte[]::clone);
 
             provider.rotateKek();
-            RootKey live = provider.unwrap(prov.wrapped()); // old carrier still decrypts post-rotate
+            RootKey live = provider.unwrap(prov.wrapped());
             assertArrayEquals(original, live.withMaterial(byte[]::clone));
 
-            WrappedKey resealed = provider.wrap(live);       // re-seal under the new version
+            WrappedKey resealed = provider.wrap(live);
             assertFalse(java.util.Arrays.equals(prov.wrapped().ciphertext(), resealed.ciphertext()),
                     "a re-seal yields a fresh carrier");
             assertArrayEquals(original, provider.unwrap(resealed).withMaterial(byte[]::clone),

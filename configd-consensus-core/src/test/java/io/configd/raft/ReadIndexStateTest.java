@@ -65,7 +65,6 @@ class ReadIndexStateTest {
         }
     }
 
-    // Readiness tests
 
     @Nested
     class ReadinessTests {
@@ -73,37 +72,34 @@ class ReadIndexStateTest {
         @Test
         void readNotReadyBeforeLeadershipConfirmation() {
             long readId = state.startRead(5);
-            // Even if lastApplied >= readIndex, not ready without leadership confirmation
             assertFalse(state.isReady(readId, 10));
         }
 
         @Test
         void readNotReadyWhenLeadershipConfirmedButNotApplied() {
             long readId = state.startRead(10);
-            state.confirmLeadership(readId, 3, 2); // quorum met
-            // lastApplied (5) < readIndex (10) - not ready
+            state.confirmLeadership(readId, 3, 2);
             assertFalse(state.isReady(readId, 5));
         }
 
         @Test
         void readReadyWhenLeadershipConfirmedAndApplied() {
             long readId = state.startRead(5);
-            state.confirmLeadership(readId, 3, 2); // quorum met
-            // lastApplied (5) >= readIndex (5) - ready
+            state.confirmLeadership(readId, 3, 2);
             assertTrue(state.isReady(readId, 5));
         }
 
         @Test
         void readReadyWhenLastAppliedExceedsReadIndex() {
             long readId = state.startRead(5);
-            state.confirmLeadership(readId, 2, 2); // exactly quorum
+            state.confirmLeadership(readId, 2, 2);
             assertTrue(state.isReady(readId, 100));
         }
 
         @Test
         void readNotReadyIfQuorumNotMet() {
             long readId = state.startRead(5);
-            state.confirmLeadership(readId, 1, 2); // below quorum
+            state.confirmLeadership(readId, 1, 2);
             assertFalse(state.isReady(readId, 100));
         }
 
@@ -121,7 +117,6 @@ class ReadIndexStateTest {
         }
     }
 
-    // confirmAll tests
 
     @Nested
     class ConfirmAllTests {
@@ -132,12 +127,11 @@ class ReadIndexStateTest {
             long id1 = state.startRead(5);
             long id2 = state.startRead(7);
 
-            state.confirmAll(3, 2); // quorum = 2, ack = 3
+            state.confirmAll(3, 2);
 
-            // All reads should be confirmed; readiness depends on lastApplied
             assertTrue(state.isReady(id0, 3));
             assertTrue(state.isReady(id1, 5));
-            assertFalse(state.isReady(id2, 5)); // lastApplied 5 < readIndex 7
+            assertFalse(state.isReady(id2, 5));
             assertTrue(state.isReady(id2, 7));
         }
 
@@ -145,7 +139,7 @@ class ReadIndexStateTest {
         void confirmAllDoesNothingBelowQuorum() {
             long readId = state.startRead(3);
 
-            state.confirmAll(1, 2); // below quorum
+            state.confirmAll(1, 2);
 
             assertFalse(state.isReady(readId, 100));
         }
@@ -153,9 +147,8 @@ class ReadIndexStateTest {
         @Test
         void confirmAllDoesNotReConfirmAlreadyConfirmed() {
             long readId = state.startRead(3);
-            state.confirmLeadership(readId, 3, 2); // already confirmed
+            state.confirmLeadership(readId, 3, 2);
 
-            // Should not break anything
             state.confirmAll(3, 2);
 
             assertTrue(state.isReady(readId, 3));
@@ -163,13 +156,11 @@ class ReadIndexStateTest {
 
         @Test
         void confirmAllOnEmptyStateIsNoOp() {
-            // Should not throw
             state.confirmAll(3, 2);
             assertEquals(0, state.pendingCount());
         }
     }
 
-    // ReadIndex value tests
 
     @Nested
     class ReadIndexValueTests {
@@ -189,13 +180,11 @@ class ReadIndexStateTest {
         void readWithZeroCommitIndex() {
             long readId = state.startRead(0);
             assertEquals(0, state.readIndex(readId));
-            // With leadership confirmed, should be ready since lastApplied 0 >= readIndex 0
             state.confirmLeadership(readId, 2, 2);
             assertTrue(state.isReady(readId, 0));
         }
     }
 
-    // Multiple concurrent reads
 
     @Nested
     class ConcurrentReadTests {
@@ -206,10 +195,8 @@ class ReadIndexStateTest {
             long id1 = state.startRead(10);
             long id2 = state.startRead(15);
 
-            // Confirm all via heartbeat
             state.confirmAll(3, 2);
 
-            // Check each at different applied levels
             assertTrue(state.isReady(id0, 5));
             assertFalse(state.isReady(id1, 5));
             assertFalse(state.isReady(id2, 5));
@@ -229,8 +216,8 @@ class ReadIndexStateTest {
             state.complete(id0);
 
             assertEquals(1, state.pendingCount());
-            assertFalse(state.isReady(id0, 100)); // completed
-            assertTrue(state.isReady(id1, 10));    // still active
+            assertFalse(state.isReady(id0, 100));
+            assertTrue(state.isReady(id1, 10));
         }
     }
 }

@@ -10,11 +10,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 
-/**
- * Self-test: proves {@link FaultInjectingStorage} injects each operational
- * fault exactly as configured, and otherwise delegates transparently. A fault
- * injector that doesn't actually inject is worse than none.
- */
 class FaultInjectingStorageTest {
 
     @Test
@@ -22,7 +17,6 @@ class FaultInjectingStorageTest {
         FaultInjectingStorage s = new FaultInjectingStorage(Storage.inMemory()).failNextWrites(2);
         assertThrows(UncheckedIOException.class, () -> s.appendToLog("wal", new byte[]{1}));
         assertThrows(UncheckedIOException.class, () -> s.put("k", new byte[]{2}));
-        // Third write succeeds (countdown exhausted) and is durable.
         s.put("k", new byte[]{3});
         assertArrayEquals(new byte[]{3}, s.get("k"));
         assertEquals(2, s.writeFaultsFired());
@@ -41,7 +35,7 @@ class FaultInjectingStorageTest {
     void failNextSyncsThrows() {
         FaultInjectingStorage s = new FaultInjectingStorage(Storage.inMemory()).failNextSyncs(1);
         assertThrows(UncheckedIOException.class, s::sync);
-        s.sync(); // second sync ok
+        s.sync();
         assertEquals(1, s.syncFaultsFired());
     }
 
@@ -55,7 +49,6 @@ class FaultInjectingStorageTest {
         assertEquals(2, read.size(), "short read must drop the last frame");
         assertArrayEquals(new byte[]{1}, read.get(0));
         assertArrayEquals(new byte[]{2}, read.get(1));
-        // A different log is unaffected.
         s.appendToLog("other", new byte[]{9});
         assertEquals(1, s.readLog("other").size());
     }

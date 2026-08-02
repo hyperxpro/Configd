@@ -23,10 +23,6 @@ public final class BuggifyRuntime {
         enabledPoints.clear();
     }
 
-    /**
-     * Check if a buggify point should fire.
-     * Returns false immediately in production mode (zero overhead).
-     */
     public static boolean shouldFire(String pointId, double probability) {
         if (!simulationMode) return false;
         

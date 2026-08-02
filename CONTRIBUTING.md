@@ -35,6 +35,50 @@ Targeted invocations during development:
 ./mvnw test -pl configd-testkit -Dtest='*Simulation*'  # sim suite only
 ```
 
+## Comments
+
+A comment earns its place by carrying something the code cannot: a non-obvious invariant or ordering
+requirement, why looks-wrong-but-deliberate code breaks if you "fix" it, a real gotcha with the bug or
+platform named, why a constant has that value, or a public API contract a caller cannot infer.
+Restatement, narration, and section banners are deleted rather than rewritten.
+
+Two rules constrain that, and both were learned by getting them wrong:
+
+**Does the identifier resolve?** A coded reference survives if it points at something present.
+`W2-3`, `AU4-4` and `D3-5` resolve to `docs/rfc/driver-protocol/*.md`; `INV-SI-2` names an invariant
+in `spec/SnapshotInstallSpec.tla`; `INV-ANCHOR-LOWER` names one in
+`docs/architecture/frozen-format-v1.md`. Those citations are what makes conformance coverage
+auditable, so they stay. Build and process tags that resolve to nothing are decoration and get
+stripped. The same test settles intra-file cases: the `(a)`..`(d)` labels in `EdgeInvariants` are
+referenced by markers inside `checkAll()` and on the method blocks that implement them, so they
+resolve and they stay.
+
+**A comment can be a build fixture.** `gates/gate-5.sh` greps `RaftConfig.java` for `default 1024`;
+`gates/gate-phase1.sh` greps `ShardMap.java` for `Opaque, stable shard IDs`. Deleting either as
+ceremony turns the gate red, and nothing in the Java file reveals the dependency. Before deleting a
+comment that states a specific constant, default, or named invariant, check whether a gate, script, or
+workflow greps for it:
+
+```sh
+grep -rn "<the phrase>" gates/ .github/ ops/
+```
+
+If you add such a dependency, say so in the comment itself, the way `RaftConfig.java` does.
+
+### Bulk comment sweeps
+
+Deleting comments across many files is a mechanical edit, so it needs mechanical proof: compare the
+two revisions as **token sequences with comments dropped**, not as bytes. Byte comparison needs
+whitespace normalisation first, and that normalisation can hide a lost token. Check XML and YAML
+parse separately — byte-identity does not imply well-formedness, since a comment containing `--` is
+invalid XML — and treat `#` inside a heredoc as data, not a comment.
+
+That standard exists because a sweep tool here did delete code. Its block grouping merged an inline
+trailing comment with the whole-line comment that followed it, so removing the pair took the code line
+between them; it destroyed `HASH_LEN` and two `RootKey` fields before token comparison caught it. The
+damage was a tool defect, not bad judgment by whoever selected the comments — the selections were
+correct and the applier mis-executed them. Suspect the applier first.
+
 ## ADR process
 
 Any decision that changes a wire/on-disk/persisted format, a consensus or replication invariant, a

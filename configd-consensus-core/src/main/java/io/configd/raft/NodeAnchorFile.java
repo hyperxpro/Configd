@@ -19,7 +19,6 @@ import static io.configd.raft.RaftArtifactMagic.NODE_ANCHOR_MAGIC;
  */
 public final class NodeAnchorFile implements Closeable {
 
-    /** The node-anchor file name, in {@code dataDir}. */
     public static final String NODE_ANCHOR_FILE_NAME = "node-anchor";
 
     private final AnchorIO io;
@@ -45,7 +44,6 @@ public final class NodeAnchorFile implements Closeable {
         }
     }
 
-    /** Opens the production node-anchor: a real {@code node-anchor} file in {@code dataDir}. */
     public static NodeAnchorFile openInDirectory(Path dataDir, IntegrityEnvelope integrity) {
         return new NodeAnchorFile(new FileAnchorIO(dataDir, NODE_ANCHOR_FILE_NAME), integrity);
     }
@@ -126,7 +124,6 @@ public final class NodeAnchorFile implements Closeable {
         this.liveSlot = targetSlot;
     }
 
-    /** Arms the next {@code n} node-anchor data-syncs to throw (fail-closed cell; mirrors AnchorFile). */
     void armSyncFailure(int n) {
         this.armedSyncFailures = n;
     }
@@ -140,9 +137,7 @@ public final class NodeAnchorFile implements Closeable {
         io.close();
     }
 
-    // --- internals (mirror AnchorFile's dual-slot codec, node payload) ---
 
-    /** Reads both slots at open, taking the higher valid {@code nodeAnchorSeq}; a bad header REFUSEs. */
     private void parseExisting() {
         byte[] image = io.readImage();
         if (image == null || image.length < AnchorFile.CONTAINER_HEADER_SIZE) {
@@ -165,10 +160,9 @@ public final class NodeAnchorFile implements Closeable {
         }
     }
 
-    /** Parses one slot to a {@link NodeAnchorRecord}, or null if torn / tampered / zeroed. */
     private NodeAnchorRecord parseSlot(byte[] image, int slotOffset) {
         if (image.length < slotOffset + AnchorFile.SLOT_STRIDE) {
-            return null; // truncated file - this slot is not fully present
+            return null;
         }
         ByteBuffer buf = ByteBuffer.wrap(image, slotOffset, AnchorFile.SLOT_STRIDE);
         int recordLen = buf.getInt();

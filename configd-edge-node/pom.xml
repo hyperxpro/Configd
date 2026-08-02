@@ -15,7 +15,6 @@
     <dependencies>
         <dependency><groupId>io.configd</groupId><artifactId>configd-common</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-transport</artifactId><version>${project.version}</version></dependency>
-        <!-- Netty 4.2 platform: transport selector + full HTTP-transport dep closure. -->
         <dependency><groupId>io.configd</groupId><artifactId>configd-netty</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-config-store</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-edge-cache</artifactId><version>${project.version}</version></dependency>
@@ -87,7 +86,6 @@
     </build>
 
     <profiles>
-        <!-- Explicit targetClasses (not globs): EdgeNodeConfig, EdgeReadHandler, EdgeHttpServer, EdgeNodeMetrics (65). -->
         <profile>
             <id>mutation</id>
             <build>

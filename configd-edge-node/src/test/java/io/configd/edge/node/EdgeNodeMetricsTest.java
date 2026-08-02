@@ -174,7 +174,7 @@ class EdgeNodeMetricsTest {
     @Test
     void disconnectedTransitionFiresTheRebootstrapSeamOnce() {
         AtomicInteger hookRuns = new AtomicInteger();
-        apply(1, "a", "1"); // CURRENT
+        apply(1, "a", "1");
         metrics.syncFromCore(core, hookRuns::incrementAndGet);
         assertEquals(0, metrics.rebootstrapTriggeredCount());
 

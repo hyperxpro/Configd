@@ -99,8 +99,6 @@ class WalRecordIntegrityTest {
         byte[] tornFrame = new byte[]{0, 0, 0, 64, 1, 2, 3}; // claims len=64, only 3 follow
         Files.write(wal, tornFrame, StandardOpenOption.APPEND);
 
-        // Restart over the torn tail with the SAME keyed codec: tolerated, prior
-        // entries recovered, no integrity refusal (the tail is torn, not tampered).
         RaftLog log2 = new RaftLog(storage, env);
         KvStateMachine sm2 = new KvStateMachine();
         bootLeader(storage, env, log2, sm2);
@@ -122,7 +120,7 @@ class WalRecordIntegrityTest {
      */
     private static void tamperWalRecomputingFrameCrc(byte[] wal, byte from, byte to) {
         ByteBuffer buf = ByteBuffer.wrap(wal);
-        buf.position(WalContainer.HEADER_SIZE); // frames begin after the container header
+        buf.position(WalContainer.HEADER_SIZE);
         while (buf.remaining() >= 8) {
             int len = buf.getInt();
             if (len < 0 || buf.remaining() < len + 4) {

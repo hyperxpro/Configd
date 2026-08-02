@@ -87,7 +87,6 @@ class MessageRecordCodecTest {
 
         @Test
         void nullDataDefaultsToEmptyAndNullLeaderThrows() {
-            // compact ctor: null data -> empty; null leaderId -> NPE.
             InstallSnapshotRequest r = new InstallSnapshotRequest(1, L1, 0, 0, 0, null, true);
             assertEquals(0, r.data().length);
             assertThrows(NullPointerException.class,
@@ -179,7 +178,6 @@ class MessageRecordCodecTest {
             assertEquals(3, noop.index());
             assertEquals(5, noop.term());
             assertEquals(0, noop.command().length);
-            // Validation: index must be >= 1, term >= 0; null command -> empty.
             assertThrows(IllegalArgumentException.class, () -> new LogEntry(0, 1, new byte[0]));
             assertThrows(IllegalArgumentException.class, () -> new LogEntry(1, -1, new byte[0]));
             assertEquals(0, new LogEntry(1, 1, null).command().length);

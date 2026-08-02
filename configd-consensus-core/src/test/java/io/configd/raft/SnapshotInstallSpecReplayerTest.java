@@ -135,7 +135,6 @@ class SnapshotInstallSpecReplayerTest {
         }
     }
 
-    // State machine (mirrors the TLA spec)
 
     private void applyIfEnabled(World w, Action a) {
         switch (a) {

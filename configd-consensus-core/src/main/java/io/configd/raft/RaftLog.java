@@ -46,20 +46,10 @@ public final class RaftLog {
      */
     private long snapshotIndex;
 
-    /**
-     * The term of the last entry included in the most recent snapshot.
-     */
     private long snapshotTerm;
 
-    /**
-     * The highest log index known to be committed. Committed entries
-     * are safe to apply to the state machine.
-     */
     private long commitIndex;
 
-    /**
-     * The highest log index that has been applied to the state machine.
-     */
     private long lastApplied;
 
     /**
@@ -304,11 +294,7 @@ public final class RaftLog {
         }
     }
 
-    // Query methods
 
-    /**
-     * Returns the index of the last log entry, or snapshotIndex if log is empty.
-     */
     public long lastIndex() {
         if (entries.isEmpty()) {
             return snapshotIndex;
@@ -316,9 +302,6 @@ public final class RaftLog {
         return entries.getLast().index();
     }
 
-    /**
-     * Returns the term of the last log entry, or snapshotTerm if log is empty.
-     */
     public long lastTerm() {
         if (entries.isEmpty()) {
             return snapshotTerm;
@@ -344,9 +327,6 @@ public final class RaftLog {
         return entries.get(offset).term();
     }
 
-    /**
-     * Returns the entry at the given index, or null if not in log.
-     */
     public LogEntry entryAt(long index) {
         if (index <= snapshotIndex || index > lastIndex()) {
             return null;
@@ -354,10 +334,6 @@ public final class RaftLog {
         return entries.get(toOffset(index));
     }
 
-    /**
-     * Returns a sublist of entries from startIndex to endIndex (inclusive).
-     * Indices out of range are clamped.
-     */
     public List<LogEntry> entriesFrom(long startIndex, long endIndex) {
         if (startIndex > endIndex || startIndex > lastIndex() || endIndex <= snapshotIndex) {
             return Collections.emptyList();
@@ -370,17 +346,10 @@ public final class RaftLog {
         return Collections.unmodifiableList(entries.subList(fromOffset, toOffset));
     }
 
-    /**
-     * Returns entries from startIndex to the end of the log.
-     */
     public List<LogEntry> entriesFrom(long startIndex) {
         return entriesFrom(startIndex, lastIndex());
     }
 
-    /**
-     * Returns entries suitable for an AppendEntries batch, respecting
-     * maximum batch size and byte limits.
-     */
     public List<LogEntry> entriesBatch(long startIndex, int maxSize, int maxBytes) {
         if (startIndex > lastIndex() || startIndex <= snapshotIndex) {
             return Collections.emptyList();
@@ -510,7 +479,6 @@ public final class RaftLog {
         return entries.size();
     }
 
-    // Mutation methods
 
     /**
      * Appends a new entry to the end of the log.
@@ -615,7 +583,6 @@ public final class RaftLog {
      * @return true if the prevLogIndex/prevLogTerm matched (or prevLogIndex == 0)
      */
     public boolean appendEntries(long prevLogIndex, long prevLogTerm, List<LogEntry> newEntries) {
-        // Check that the log contains the entry at prevLogIndex with the correct term.
         if (prevLogIndex > 0) {
             long existingTerm = termAt(prevLogIndex);
             if (existingTerm == -1 || existingTerm != prevLogTerm) {
@@ -632,12 +599,10 @@ public final class RaftLog {
         for (LogEntry newEntry : newEntries) {
             long idx = newEntry.index();
             if (idx <= snapshotIndex) {
-                // Entry is already in snapshot, skip
                 continue;
             }
             long existingTerm = termAt(idx);
             if (existingTerm == -1) {
-                // Entry beyond current log - append
                 appendNoSync(newEntry);
                 appended = true;
             } else if (existingTerm != newEntry.term()) {
@@ -649,7 +614,7 @@ public final class RaftLog {
             // else: entry already in log with same term - skip (idempotent)
         }
         if (appended) {
-            syncWal(); // single durable barrier for the batch, before the ACK is sent
+            syncWal();
         }
         return true;
     }
@@ -713,9 +678,6 @@ public final class RaftLog {
         }
     }
 
-    /**
-     * Advances the lastApplied index.
-     */
     public void setLastApplied(long index) {
         if (index > lastApplied) {
             this.lastApplied = index;
@@ -735,7 +697,7 @@ public final class RaftLog {
 
     public void compact(long index, long term) {
         if (index <= snapshotIndex) {
-            return; // Already compacted past this point
+            return;
         }
         if (index > lastIndex()) {
             // Snapshot includes entries we don't have - clear everything
@@ -745,7 +707,6 @@ public final class RaftLog {
             }
         } else {
             int offset = toOffset(index);
-            // Remove entries [0..offset] inclusive
             entries.subList(0, offset + 1).clear();
             if (chained) {
                 // Drop the compacted PREFIX's prevHashes, keeping the survivors' original prevHashes
@@ -885,7 +846,7 @@ public final class RaftLog {
                             + expectedSnap + " above the anchor's " + a.snapshotIndex()
                             + " but no matching authenticated snapshot blob is present (phantom compaction)");
                 }
-                this.snapshotIndex = expectedSnap;   // WAL+blob authoritative; the anchor snapshot lagged
+                this.snapshotIndex = expectedSnap;
                 this.snapshotTerm = blob.lastIncludedTerm();
             }
         }
@@ -945,7 +906,6 @@ public final class RaftLog {
         }
     }
 
-    // WAL persistence helpers
 
     /**
      * Builds the WAL record's inner payload (the bytes handed to the integrity envelope). Its shape is

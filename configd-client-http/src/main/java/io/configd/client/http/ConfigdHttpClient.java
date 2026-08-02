@@ -254,7 +254,7 @@ public final class ConfigdHttpClient implements AutoCloseable {
                     .connectTimeout(connectTimeout);
             if (tls != null) {
                 hb.sslContext(tls.sslContext());
-                hb.sslParameters(tls.httpsParameters()); // TLSv1.3 + HTTPS endpoint identification
+                hb.sslParameters(tls.httpsParameters());
             }
             boolean ownsExecutor = executor == null;
             ExecutorService exec = ownsExecutor
@@ -270,7 +270,6 @@ public final class ConfigdHttpClient implements AutoCloseable {
         }
     }
 
-    /** A convenience accessor for a single-endpoint client (the common N=1 / single-entry case). */
     public static ConfigdHttpClient open(URI endpoint, CredentialSource credentialSource, ClientTls tls) {
         return builder().endpoints(NodeEndpoints.of(endpoint)).credentialSource(credentialSource).tls(tls).build();
     }

@@ -363,10 +363,6 @@ public final class ConfigdMetrics {
         return Collections.unmodifiableMap(map);
     }
 
-    /**
-     * Latency schedule for write-commit / apply paths (covers le="0.150"
-     * referenced by the WriteCommitFastBurn / SlowBurn alerts).
-     */
 
     /**
      * The histogram schedule(s) the edge process must publish so its served

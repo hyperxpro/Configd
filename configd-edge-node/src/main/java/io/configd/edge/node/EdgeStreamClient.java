@@ -383,7 +383,6 @@ public final class EdgeStreamClient implements AutoCloseable {
         /** @return a fresh credential + its new absolute expiry (ms), or {@code null} if renewal failed this tick. */
         Refreshed refresh();
 
-        /** A refreshed credential and its new absolute expiry (ms since epoch). */
         record Refreshed(Credential credential, long expiresAtMillis) { }
     }
 
@@ -486,7 +485,6 @@ public final class EdgeStreamClient implements AutoCloseable {
             try {
                 c.close();
             } catch (Exception ignored) {
-                // best-effort
             }
         }
     }

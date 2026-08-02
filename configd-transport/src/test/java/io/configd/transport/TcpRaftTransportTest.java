@@ -80,7 +80,6 @@ class TcpRaftTransportTest {
                         try {
                             Files.deleteIfExists(p);
                         } catch (IOException ignored) {
-                            // best-effort cleanup of a temp fixture
                         }
                     });
         }

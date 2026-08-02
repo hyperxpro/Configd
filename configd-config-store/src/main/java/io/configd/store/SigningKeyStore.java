@@ -133,9 +133,6 @@ public final class SigningKeyStore {
         return buf.array();
     }
 
-    /**
-     * Best-effort POSIX 0600; non-POSIX UnsupportedOperationException ignored.
-     */
     private static void restrictToOwner(Path path) throws IOException {
         try {
             Files.setPosixFilePermissions(path, PosixFilePermissions.fromString("rw-------"));

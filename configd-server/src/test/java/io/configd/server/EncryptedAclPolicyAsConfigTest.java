@@ -208,7 +208,6 @@ class EncryptedAclPolicyAsConfigTest {
         return null;
     }
 
-    /** Naive byte-array search (files are tiny in a test); returns the first index of {@code needle} or -1. */
     private static int indexOf(byte[] haystack, byte[] needle) {
         if (needle.length == 0 || haystack.length < needle.length) {
             return -1;

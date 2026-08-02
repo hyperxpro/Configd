@@ -40,7 +40,6 @@ import java.util.Objects;
 public final class RaftWireProtocol {
 
     private RaftWireProtocol() {
-        // utility class
     }
 
     public static final int SENDER_ID_SIZE = 4;

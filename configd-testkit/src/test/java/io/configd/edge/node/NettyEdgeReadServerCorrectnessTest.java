@@ -70,7 +70,6 @@ class NettyEdgeReadServerCorrectnessTest {
                 new PrometheusExporter(reg1), m1);
         jdk.start();
 
-        // Netty server (best-Netty form), independent core but identical data.
         EdgeNodeMetrics m2 = new EdgeNodeMetrics(new MetricsRegistry());
         NettyEdgeReadServer netty =
                 new NettyEdgeReadServer(0, newCore(), StrongReadKeyClass.DEFAULT, m2);

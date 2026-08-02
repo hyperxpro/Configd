@@ -384,7 +384,7 @@ class ReconfigurationTest {
 
             assertTrue(leader.proposeConfigChange(Set.of(n1, n2, n3, n4)));
             assertTrue(leader.clusterConfig().isJoint());
-            cluster.deliverAllMessages(20); // commit C_old,new, append+commit C_new
+            cluster.deliverAllMessages(20);
 
             assertFalse(leader.clusterConfig().isJoint(),
                     "joint->final transition must complete to a simple config");
@@ -395,9 +395,6 @@ class ReconfigurationTest {
             Set<NodeId> survivors = Set.of(n2, n3, n4);
             RaftNode newLeader = cluster.electAmong(n2, survivors, 6);
 
-            // A new leader emerged among the survivors and STILL carries the
-            // committed 4-voter config (preserved across the election via the
-            // replicated log / recomputeConfigFromLog).
             assertNotNull(newLeader, "a new leader must be elected among the survivors");
             assertTrue(cluster.atMostOneLeaderPerTerm(),
                     "single-leader-per-term must hold (an isolated stale leader at the old term is allowed)");
@@ -434,7 +431,6 @@ class ReconfigurationTest {
             RaftNode leader = cluster.nodes.get(n1);
             cluster.addNode(n4, Set.of(n1, n2, n3));
 
-            // A committed user entry BEFORE the reconfig - must survive it.
             assertEquals(ProposalResult.ACCEPTED, leader.propose("pre-reconfig".getBytes()).result());
             cluster.deliverAllMessages(20);
             long preReconfigCommit = leader.log().commitIndex();
@@ -452,8 +448,6 @@ class ReconfigurationTest {
                     "transition must reach the simple (final) config");
             assertEquals(Set.of(n1, n2, n3, n4), leader.clusterConfig().voters());
 
-            // Both config entries (joint + final) are in the committed log: a
-            // user write after the reconfig commits under the new 4-voter quorum.
             assertEquals(ProposalResult.ACCEPTED, leader.propose("post-reconfig".getBytes()).result());
             cluster.deliverAllMessages(20);
             assertTrue(leader.log().commitIndex() > preReconfigCommit,
@@ -484,12 +478,9 @@ class ReconfigurationTest {
             cluster.deliverAllMessages(20);
             long committedBefore = leader.log().commitIndex();
 
-            // Enter joint. Capture the joint entry's index so delivery can stop
-            // exactly when C_old,new commits, isolating the leader while a survivor
-            // is still in the joint phase.
             assertTrue(leader.proposeConfigChange(Set.of(n1, n2, n3, n4)));
             assertTrue(leader.clusterConfig().isJoint());
-            long jointIndex = leader.log().lastIndex(); // the C_old,new entry
+            long jointIndex = leader.log().lastIndex();
 
             // Deliver round-by-round only until the joint entry is COMMITTED on the
             // leader (so a new leader will inherit it), but STOP before C_new
@@ -504,10 +495,6 @@ class ReconfigurationTest {
             }
             assertTrue(jointCommitted, "C_old,new must commit so the new leader inherits it");
 
-            // At the isolation point, the survivor to be elected is still in the
-            // joint phase (its in-memory config has not yet adopted C_new): this is
-            // what makes the election happen during the joint phase. The old leader
-            // has already moved to C_new in-memory, so isJoint() would not hold there.
             assertTrue(cluster.nodes.get(n2).clusterConfig().isJoint(),
                     "RR-018: the survivor n2 must still be MID-JOINT before the isolation — "
                             + "this is the 'leader election DURING the joint phase' the test name claims");
@@ -561,7 +548,6 @@ class ReconfigurationTest {
             cluster.addNode(n4, Set.of(n1, n2, n3));
             cluster.addNode(n5, Set.of(n1, n2, n3));
 
-            // A committed user write before the reconfig - must never be lost.
             assertEquals(ProposalResult.ACCEPTED, leader.propose("durable".getBytes()).result());
             cluster.deliverAllMessages(20);
             long committedBefore = leader.log().commitIndex();
@@ -576,8 +562,8 @@ class ReconfigurationTest {
             // recomputeConfigFromLog) but DROP the responses, so the leader never
             // reaches dual majority, never commits the joint entry, and never
             // appends C_new / steps down. Everyone we test is genuinely mid-joint.
-            cluster.deliverMessages();   // n1's AppendEntries(C_old,new) reach 2,3 (and the unreachable 4,5)
-            cluster.dropAllMessages();   // discard responses -> no commit on n1
+            cluster.deliverMessages();
+            cluster.dropAllMessages();
             assertTrue(cluster.nodes.get(n2).clusterConfig().isJoint(),
                     "n2 must be mid-joint (C_old,new in its log)");
             assertTrue(cluster.nodes.get(n3).clusterConfig().isJoint(),
@@ -621,8 +607,6 @@ class ReconfigurationTest {
                     "with a DUAL majority (old {1,2,3} + new voter 4) the PreVote must succeed "
                             + "and start a real election — confirming the gate is the C_new majority");
 
-            // Safety, not just liveness: the committed prefix is intact throughout -
-            // the cluster correctly refused to make progress without a dual majority.
             for (NodeId id : Set.of(n1, n2, n3)) {
                 assertTrue(cluster.nodes.get(id).log().commitIndex() >= committedBefore - 1,
                         id + " must retain its committed prefix (no loss during the stalled joint phase)");
@@ -676,10 +660,6 @@ class ReconfigurationTest {
 
         @Test
         void preJointRestartRecoversOldConfigAndChangeCanBeReproposed() {
-            // Kill-matrix reconfig cell "kill -9 pre-joint (C_old,new not yet in
-            // the log)". A node crashed before any config entry reached its log
-            // must recover the OLD simple config (recompute's fallback), and the
-            // change must remain re-proposable afterwards.
             TestCluster cluster = new TestCluster(3);
             NodeId n1 = NodeId.of(1), n2 = NodeId.of(2), n3 = NodeId.of(3), n4 = NodeId.of(4);
             cluster.electLeader(n1);
@@ -687,7 +667,6 @@ class ReconfigurationTest {
             assertEquals(ProposalResult.ACCEPTED, leader.propose("pre".getBytes()).result());
             cluster.deliverAllMessages(20);
 
-            // n2 has only the no-op + user entry durable - NO config entry.
             RaftNode n2After = cluster.restartNode(n2);
             assertFalse(n2After.clusterConfig().isJoint(),
                     "a node with no durable config entry must recover a SIMPLE config");
@@ -701,9 +680,6 @@ class ReconfigurationTest {
 
         @Test
         void recomputeConfigFromLogRestoresMembershipAcrossRestart() {
-            // After a completed reconfiguration, restart a node and assert its
-            // constructor's recomputeConfigFromLog() rebuilds the 4-voter config
-            // from the recovered WAL - NOT the static 3-node initial config.
             TestCluster cluster = new TestCluster(3);
             NodeId n1 = NodeId.of(1), n2 = NodeId.of(2), n3 = NodeId.of(3), n4 = NodeId.of(4);
             cluster.electLeader(n1);
@@ -715,14 +691,9 @@ class ReconfigurationTest {
             assertFalse(leader.clusterConfig().isJoint());
             assertEquals(Set.of(n1, n2, n3, n4), leader.clusterConfig().voters());
 
-            // n2's log now contains both committed config entries. Sanity: its
-            // in-memory config is already the 4-voter config from replication.
             RaftNode n2Before = cluster.nodes.get(n2);
             assertEquals(Set.of(n1, n2, n3, n4), n2Before.clusterConfig().voters());
 
-            // Restart n2 over its retained storage. The fresh node's STATIC
-            // RaftConfig still lists only the original {1,3} peers, so the only
-            // way it can know about n4 is recomputeConfigFromLog over the WAL.
             RaftNode n2After = cluster.restartNode(n2);
             assertFalse(n2After.clusterConfig().isJoint(),
                     "recovered config must be the simple final config");

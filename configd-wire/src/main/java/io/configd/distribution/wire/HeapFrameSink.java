@@ -95,7 +95,6 @@ public final class HeapFrameSink implements FrameSink {
         crc.update(buf, start, length);
     }
 
-    /** Returns an exact-size copy of the written bytes {@code [0, writerIndex)}. */
     public byte[] toByteArray() {
         return Arrays.copyOf(buf, writerIndex);
     }

@@ -107,7 +107,6 @@ class SimulatedClockTest {
             SimulatedClock clock = new SimulatedClock(1000L);
             clock.advanceNanos(1_000_000);
             assertEquals(1001L, clock.currentTimeMillis());
-            // nanoOffset should be 0 after rollover
             assertEquals(1001L * 1_000_000L, clock.nanoTime());
         }
 
@@ -174,7 +173,6 @@ class SimulatedClockTest {
 
             clock.setTimeMs(2000L);
             assertEquals(2000L, clock.currentTimeMillis());
-            // nanoOffset is reset, so nanoTime = ms * 1_000_000
             assertEquals(2000L * 1_000_000L, clock.nanoTime());
         }
 

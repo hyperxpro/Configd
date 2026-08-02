@@ -24,7 +24,7 @@ class ReadIndexStepDownClearTest {
     }
 
     private static RaftNode singleNodeLeader() {
-        RaftConfig config = RaftConfig.of(NodeId.of(1), Set.of()); // single-node: reads confirm immediately
+        RaftConfig config = RaftConfig.of(NodeId.of(1), Set.of());
         RaftNode node = new RaftNode(config, new RaftLog(), new NoopTransport(), new NoopStateMachine(),
                 new java.util.Random(1));
         for (int i = 0; i < 400 && node.role() != RaftRole.LEADER; i++) {
@@ -52,7 +52,6 @@ class ReadIndexStepDownClearTest {
         node.handleMessage(new AppendEntriesRequest(higherTerm, NodeId.of(2), 0, 0, List.of(), 0));
         assertEquals(RaftRole.FOLLOWER, node.role(), "a higher-term AppendEntries steps the leader down");
 
-        // RE-ACQUIRE leadership at a still-higher term.
         for (int i = 0; i < 400 && node.role() != RaftRole.LEADER; i++) {
             node.tick();
         }
@@ -70,7 +69,6 @@ class ReadIndexStepDownClearTest {
                         + "step-down and must NOT be served after re-election — leaving it (the "
                         + "removed readIndexState.clear()) serves a cross-term stale read");
 
-        // A FRESH read on the new leadership is of course serveable (liveness).
         long freshRead = node.readIndex();
         assertTrue(node.isReadReady(freshRead), "a fresh read on the re-acquired leadership is ready");
     }

@@ -56,7 +56,6 @@ class WalWireCompatStubTest {
     void v0WalSegmentReplaysUnderCurrentCode() throws IOException {
         byte[] fixture = readFixture();
         if (fixture == null) {
-            // Honest failure: stub mode.
             fail("v0 WAL fixture missing at " + FIXTURE_RESOURCE
                     + " — generate one from the previous release before enabling.");
         }

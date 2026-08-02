@@ -67,14 +67,11 @@ class RaftAnchorRecoveryTest {
         RaftLog recovered = new RaftLog(storage.recoveredView(), keyed(), 0);
         assertEquals(4, recovered.lastIndex(), "W>A must accept-forward and adopt the durable WAL head");
 
-        // The anchor was rewritten forward, so a further reopen is a clean W==A.
         assertEquals(4, recovered.anchor().current().lastDurableIndex());
     }
 
     @Test
     void walBelowAnchorHeadRefuses(@TempDir Path dir) throws Exception {
-        // A committed-and-acked durable floor (anchor lastDurableIndex = 3) with a WAL that lost its
-        // last record (W = 2 < A = 3): the attack the anchor exists to catch -> REFUSE.
         Storage storage = Storage.file(dir);
         RaftLog log = new RaftLog(storage, keyed(), 0);
         log.append(entry(1, 1, "a"));
@@ -91,7 +88,6 @@ class RaftAnchorRecoveryTest {
                 "a WAL below the anchor's committed durable floor must REFUSE, got: " + ex.getMessage());
     }
 
-    /** Drops the final complete frame from the {@code raft-log.wal} file (a lost-tail simulation). */
     private static void dropLastWalFrame(Path dir) throws Exception {
         Path wal = dir.resolve("raft-log.wal");
         byte[] bytes = Files.readAllBytes(wal);
@@ -151,7 +147,6 @@ class RaftAnchorRecoveryTest {
         log.append(entry(2, 1, "b"));
         log.closeAnchor();
 
-        // An adversary deletes the anchor but leaves the WAL: a non-empty shard MUST carry its anchor.
         Files.delete(dir.resolve(FileAnchorIO.ANCHOR_FILE_NAME));
 
         IntegrityException ex = assertThrows(IntegrityException.class,

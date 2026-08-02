@@ -67,7 +67,7 @@ class EdgeIntegratedNightlySweepTest {
                     convergedGivenQuiet++;
                 }
             } else if (quietWindow && quietWindowMissSeeds.size() < MAX_LISTED_SEEDS) {
-                quietWindowMissSeeds.add(seed); // the meaningful edge-liveness finding
+                quietWindowMissSeeds.add(seed);
             }
         }
 

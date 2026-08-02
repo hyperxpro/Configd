@@ -48,6 +48,5 @@ final class RaftArtifactMagic {
     static final int TOPO_MAGIC = 0x5254_4F50;
 
     private RaftArtifactMagic() {
-        // constants holder
     }
 }

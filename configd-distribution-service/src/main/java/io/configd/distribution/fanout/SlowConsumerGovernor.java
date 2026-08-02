@@ -310,7 +310,6 @@ public final class SlowConsumerGovernor {
     }
 
 
-    /** The identity's current state (HEALTHY if untracked). */
     public synchronized ConsumerState state(String identity) {
         ConsumerRecord c = consumers.get(identity);
         return (c == null) ? ConsumerState.HEALTHY : c.state;

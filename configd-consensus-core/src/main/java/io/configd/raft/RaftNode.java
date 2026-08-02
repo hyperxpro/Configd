@@ -111,8 +111,8 @@ public final class RaftNode {
     private boolean preVoteInProgress;
 
     // Leader state, reinitialized after each election.
-    private Map<NodeId, Long> nextIndex;   // per peer: next log index to send
-    private Map<NodeId, Long> matchIndex;  // per peer: highest log index known replicated
+    private Map<NodeId, Long> nextIndex;
+    private Map<NodeId, Long> matchIndex;
     private Map<NodeId, Integer> inflightCount;  // per peer: in-flight AppendEntries RPCs
 
     /** Tracks which peers have responded since the last check-quorum interval. */
@@ -120,7 +120,6 @@ public final class RaftNode {
 
     private NodeId transferTarget;
 
-    /** The most recent snapshot available for transfer to lagging followers. */
     private SnapshotState latestSnapshot;
 
     /**
@@ -148,7 +147,6 @@ public final class RaftNode {
      */
     private int snapshotChunkBytes = DEFAULT_SNAPSHOT_CHUNK_BYTES;
 
-    /** Default {@link #snapshotChunkBytes} (1 MiB). */
     static final int DEFAULT_SNAPSHOT_CHUNK_BYTES = 1024 * 1024;
 
     /**
@@ -174,7 +172,6 @@ public final class RaftNode {
     private long maxReassembledSnapshotBytes = clampReassemblyCap(Long.getLong(
             "configd.raft.maxReassembledSnapshotBytes", DEFAULT_MAX_REASSEMBLED_SNAPSHOT_BYTES));
 
-    /** Default {@link #maxReassembledSnapshotBytes} (512 MiB). */
     static final long DEFAULT_MAX_REASSEMBLED_SNAPSHOT_BYTES = 512L * 1024 * 1024;
 
     /**
@@ -206,7 +203,6 @@ public final class RaftNode {
     private volatile long snapshotChunkSendRejected;
     private volatile long snapshotReassemblyRefused;
 
-    /** Tracks pending linearizable read requests. */
     private final ReadIndexState readIndexState;
 
     /**
@@ -239,7 +235,6 @@ public final class RaftNode {
      */
     private final Map<Long, Long> appliedSeqByIndex = new HashMap<>();
 
-    /** Hard cap on {@link #appliedSeqByIndex} retained without a pending registrant. */
     private static final int MAX_RETAINED_APPLIED_SEQ = 4096;
 
     /**
@@ -383,14 +378,12 @@ public final class RaftNode {
         };
     }
 
-    /** Thrown by the default {@link DurabilityFailureHandler} to abort a cycle whose fsync failed. */
     public static final class DurabilityPanicException extends RuntimeException {
         DurabilityPanicException(String seam, Throwable cause) {
             super("durability fsync failed at seam '" + seam + "' - panicking (no durable advance)", cause);
         }
     }
 
-    /** Pluggable fail-closed handler; the production server installs an exiting one. */
     private DurabilityFailureHandler durabilityFailureHandler = DurabilityFailureHandler.DEFAULT;
 
     /**
@@ -417,7 +410,6 @@ public final class RaftNode {
         };
     }
 
-    /** Thrown by the default {@link AnchorRollbackHandler} to refuse a boot whose anchor was rolled back. */
     public static final class AnchorRollbackException extends RuntimeException {
         private final int gid;
         private final long bootAnchorSeq;
@@ -442,7 +434,6 @@ public final class RaftNode {
         this.anchorRollbackHandler = Objects.requireNonNull(handler, "handler");
     }
 
-    // Peer-quorum anchor witness. See docs/architecture/anchor-witness-peer-quorum.md.
 
     /**
      * Arms the peer-quorum anchor witness for this group (production peer wiring / real-cluster tests).
@@ -481,7 +472,6 @@ public final class RaftNode {
         this.votingCleared = clusterConfig.peersOf(config.nodeId()).isEmpty();
     }
 
-    /** True iff the anchor witness is armed for this group. */
     public boolean isWitnessArmed() {
         return witnessArmed;
     }
@@ -563,7 +553,6 @@ public final class RaftNode {
         return (witnessArmed && !votingCleared) ? bootAnchorSeq : log.anchorSeq();
     }
 
-    /** Sends one witness frame per peer, each carrying our advertised anchorSeq and what we've seen of that peer. */
     private void broadcastWitness(Set<NodeId> peers, boolean query) {
         long myAnchorSeq = advertisedAnchorSeq();
         int myVote = (votedFor == null) ? AnchorRecord.VOTED_FOR_NULL : votedFor.id();
@@ -680,7 +669,6 @@ public final class RaftNode {
         return peerCount / 2 + 1;
     }
 
-    /** Count of WAL/anchor fsync failures that tripped the fail-closed policy (metric source). */
     private long durabilityFsyncFailures;
 
     // Owner-thread tripwire. Inert until an owner is explicitly bound via bindOwnerThread();
@@ -774,7 +762,6 @@ public final class RaftNode {
         this.matchIndex = new HashMap<>();
         this.readIndexState = new ReadIndexState();
 
-        // Initialize cluster config from static RaftConfig as default
         var allVoters = new java.util.HashSet<>(config.peers());
         allVoters.add(config.nodeId());
         this.clusterConfig = ClusterConfig.simple(allVoters);
@@ -830,9 +817,6 @@ public final class RaftNode {
         this.monitorView = buildMetrics();
     }
 
-    /**
-     * Creates a new RaftNode with durable storage, no invariant checking.
-     */
     public RaftNode(RaftConfig config, RaftLog log, RaftTransport transport,
                     StateMachine stateMachine, RandomGenerator random, Storage storage) {
         this(config, log, transport, stateMachine, random, storage, null);
@@ -850,7 +834,6 @@ public final class RaftNode {
         this(config, log, transport, stateMachine, random, Storage.inMemory(), null);
     }
 
-    // Owner-thread contract
 
     /**
      * Binds the calling thread as this group's single owner. Must be invoked as the first task
@@ -887,7 +870,7 @@ public final class RaftNode {
      * {@link #adoptOwnerThread()}.
      */
     public void beginHandoff() {
-        assertOwnerThread();          // only the current owner may begin the handoff
+        assertOwnerThread();
         this.ownerThread = HANDOFF;   // owned by nobody until adopt (volatile publish)
     }
 
@@ -941,7 +924,7 @@ public final class RaftNode {
     private void assertOwnerThread() {
         Thread owner = ownerThread;
         if (owner == null) {
-            return; // inert until explicitly bound
+            return;
         }
         Thread cur = Thread.currentThread();
         if (owner != cur) {
@@ -952,7 +935,6 @@ public final class RaftNode {
         }
     }
 
-    // Public API
 
     /**
      * Advances the internal timer by one tick. Called at a regular interval
@@ -1051,7 +1033,6 @@ public final class RaftNode {
         if (transferTarget != null) {
             return ProposeOutcome.rejected(ProposalResult.TRANSFER_IN_PROGRESS);
         }
-        // Backpressure: reject if too many uncommitted entries
         long uncommitted = log.lastIndex() - log.commitIndex();
         if (uncommitted >= config.maxPendingProposals()) {
             return ProposeOutcome.rejected(ProposalResult.OVERLOADED);
@@ -1083,17 +1064,16 @@ public final class RaftNode {
             return false;
         }
         if (config.nodeId().equals(target)) {
-            return false; // Cannot transfer to self
+            return false;
         }
         if (!clusterConfig.isVoter(target)) {
-            return false; // Target not in cluster
+            return false;
         }
         if (configChangePending) {
             return false; // Unsafe during reconfig - could split-brain
         }
         this.transferTarget = target;
         this.transferTicksElapsed = 0; // start the section-3.10 abort clock for this transfer
-        // Send entries to catch up the target, then check if already caught up
         sendAppendEntries(target);
         maybeSendTimeoutNow();
         return true;
@@ -1113,7 +1093,7 @@ public final class RaftNode {
         assertOwnerThread();
         long appliedIndex = log.lastApplied();
         if (appliedIndex <= log.snapshotIndex()) {
-            return false; // Nothing new to snapshot
+            return false;
         }
         long appliedTerm = log.termAt(appliedIndex);
         if (appliedTerm == -1) {
@@ -1193,7 +1173,6 @@ public final class RaftNode {
                 return deserializeConfigChange(entry.command());
             }
         }
-        // No config entry found in log after snapshot - fall back
         if (latestSnapshot != null && latestSnapshot.clusterConfigData() != null
                 && isConfigChangeEntry(latestSnapshot.clusterConfigData())) {
             return deserializeConfigChange(latestSnapshot.clusterConfigData());
@@ -1319,11 +1298,6 @@ public final class RaftNode {
         }
     }
 
-    /**
-     * Marks a read as completed, releasing its tracking state.
-     *
-     * @param readId the read ID to complete
-     */
     public void completeRead(long readId) {
         assertOwnerThread();
         readIndexState.complete(readId);
@@ -1378,7 +1352,7 @@ public final class RaftNode {
     void assertReadServeInvariants(long readId) {
         long servedIdx = readIndexState.readIndex(readId);
         if (servedIdx < 0) {
-            return; // unknown read id - nothing to assert
+            return;
         }
         long recordedTerm = readIndexState.termOf(readId);
 
@@ -1428,7 +1402,6 @@ public final class RaftNode {
         }
     }
 
-    // Commit-outcome callbacks
 
     /**
      * Registers a one-shot callback fired exactly once with the
@@ -1492,9 +1465,8 @@ public final class RaftNode {
      */
     private CommitOutcome decideCommitOutcome(long index, long term) {
         if (log.lastApplied() < index) {
-            return null; // not yet applied - outcome still open
+            return null;
         }
-        // Applied. Recover the term that actually occupies this index.
         if (index <= log.snapshotIndex()) {
             // Index folded into a snapshot. If we recorded the applied seq while
             // applying it (the proposing leader's normal path), trust that record;
@@ -1600,7 +1572,6 @@ public final class RaftNode {
      */
     private volatile long lastRecordedSeq = -1;
 
-    // Reconfiguration - Joint Consensus (Raft section 6)
 
     /**
      * Proposes a membership change using the joint consensus protocol (Raft section 6).
@@ -1631,13 +1602,13 @@ public final class RaftNode {
             return false;
         }
         if (configChangePending) {
-            return false; // Only one config change at a time
+            return false;
         }
         if (!noopCommittedInCurrentTerm) {
             return false; // Must commit no-op first (Ongaro, raft-dev 2015)
         }
         if (newVoters.equals(clusterConfig.voters())) {
-            return false; // No change needed
+            return false;
         }
 
         // INV-8: SingleServerInvariant - only one config change in-flight at a time
@@ -1645,15 +1616,14 @@ public final class RaftNode {
                 !configChangePending,
                 "Multiple concurrent config changes detected");
 
-        // INV-7: NoOpBeforeReconfig - at this point, no-op must be committed
+        // INV-9: NoOpBeforeReconfig - at this point, no-op must be committed
         invariantChecker.check("no_op_before_reconfig",
                 noopCommittedInCurrentTerm,
                 "Reached config change path without no-op committed");
 
-        // Create joint config C_old,new
         ClusterConfig jointConfig = ClusterConfig.joint(clusterConfig.voters(), newVoters);
 
-        // INV-6: ReconfigSafety - joint config must require quorums from both sets
+        // INV-7: ReconfigSafety - joint config must require quorums from both sets
         invariantChecker.check("reconfig_safety",
                 jointConfig.isJoint(),
                 "Config change must use joint consensus");
@@ -1661,8 +1631,6 @@ public final class RaftNode {
         clusterConfig = jointConfig;
         configChangePending = true;
 
-        // Append config change entry to log with a config change marker
-        // Using a special prefix byte to distinguish config entries from normal commands
         byte[] configEntry = serializeConfigChange(jointConfig);
         long newIndex = log.lastIndex() + 1;
         LogEntry entry = new LogEntry(newIndex, currentTerm, configEntry);
@@ -1672,7 +1640,6 @@ public final class RaftNode {
         durablyOrPanic("leader-append", () -> log.append(entry));
         durableIndex = log.lastIndex();    // synced + anchored - the leader may count it (gating)
 
-        // Initialize tracking for any new peers added by this config change
         for (NodeId peer : clusterConfig.peersOf(config.nodeId())) {
             nextIndex.putIfAbsent(peer, log.lastIndex() + 1);
             matchIndex.putIfAbsent(peer, 0L);
@@ -1684,9 +1651,6 @@ public final class RaftNode {
         return true;
     }
 
-    /**
-     * Returns the current cluster configuration.
-     */
     public ClusterConfig clusterConfig() {
         // ClusterConfig carries a lazy peersCache (HashMap) populated on first peersOf(), so an
         // off-owner read races that cache regardless of field visibility. Monitors read the published
@@ -1709,7 +1673,7 @@ public final class RaftNode {
             size += 4 + config.newVoters().size() * 4;
         }
         var buf = java.nio.ByteBuffer.allocate(size);
-        buf.put(CONFIG_CHANGE_MAGIC); // Config change marker
+        buf.put(CONFIG_CHANGE_MAGIC);
         buf.put(config.isJoint() ? (byte) 1 : (byte) 0);
         buf.putInt(config.voters().size());
         for (NodeId v : config.voters()) {
@@ -1727,9 +1691,6 @@ public final class RaftNode {
         return result;
     }
 
-    /**
-     * Checks if a log entry is a config change entry (starts with "RCFG" magic).
-     */
     static boolean isConfigChangeEntry(byte[] command) {
         return command != null && command.length >= 4
                 && command[0] == CONFIG_CHANGE_MAGIC[0]
@@ -1804,12 +1765,10 @@ public final class RaftNode {
      *                           or null if no snapshot config is available
      */
     private void recomputeConfigFromLog(byte[] snapshotConfigData) {
-        // Scan from the end of the log backwards to find the latest config entry
         for (long i = log.lastIndex(); i > log.snapshotIndex(); i--) {
             LogEntry entry = log.entryAt(i);
             if (entry != null && isConfigChangeEntry(entry.command())) {
                 clusterConfig = deserializeConfigChange(entry.command());
-                // Update configChangePending based on whether this entry is committed
                 configChangePending = (i > log.commitIndex());
                 return;
             }
@@ -1924,7 +1883,6 @@ public final class RaftNode {
         return monitorView;
     }
 
-    // Getters for state inspection (tests and monitoring).
 
     public RaftRole role() { return role; }
     public NodeId leaderId() { return leaderId; }
@@ -1939,7 +1897,6 @@ public final class RaftNode {
     public RaftLog log() { assertOwnerThread(); return log; }
     public NodeId transferTarget() { assertOwnerThread(); return transferTarget; }
 
-    // Timer logic
 
     private void tickElection() {
         electionTicksElapsed++;
@@ -2086,13 +2043,11 @@ public final class RaftNode {
             return;
         }
 
-        // Step down if we see a higher term
         if (resp.term() > currentTerm) {
             becomeFollower(resp.term());
             return;
         }
 
-        // Ignore stale responses from prior terms
         if (resp.term() != currentTerm) {
             return;
         }
@@ -2165,9 +2120,6 @@ public final class RaftNode {
         if (req.term() < currentTerm) {
             wouldGrantPreVote = false;
         } else {
-            // A follower with a known leader that hasn't timed out should reject
-            // PreVote regardless of term. This is the core mechanism that prevents
-            // partitioned nodes from disrupting the cluster.
             boolean hasRecentLeader = role == RaftRole.FOLLOWER
                     && leaderId != null
                     && electionTicksElapsed < electionTimeoutTicks;
@@ -2180,7 +2132,6 @@ public final class RaftNode {
     }
 
     private void handleRequestVoteResponse(RequestVoteResponse resp) {
-        // Step down if we see a higher term
         if (resp.term() > currentTerm) {
             becomeFollower(resp.term());
             return;
@@ -2191,7 +2142,6 @@ public final class RaftNode {
             return;
         }
 
-        // Only relevant if we're a candidate
         if (role != RaftRole.CANDIDATE) {
             return;
         }
@@ -2224,11 +2174,10 @@ public final class RaftNode {
         }
     }
 
-    // TimeoutNow handling (leadership transfer)
 
     private void handleTimeoutNow(TimeoutNowRequest req) {
         if (req.term() < currentTerm) {
-            return; // Stale
+            return;
         }
         if (req.term() > currentTerm) {
             becomeFollower(req.term());
@@ -2237,11 +2186,7 @@ public final class RaftNode {
         startElection();
     }
 
-    // State transitions
 
-    /**
-     * Transitions to FOLLOWER state. Clears leader-specific state.
-     */
     private void becomeFollower(long newTerm) {
         if (newTerm > currentTerm) {
             // Advancing the term clears the vote; persist term + cleared vote to the anchor BEFORE
@@ -2314,7 +2259,7 @@ public final class RaftNode {
 
         preVoteInProgress = true;
         preVotesReceived = new HashSet<>();
-        preVotesReceived.add(config.nodeId()); // Vote for self in PreVote
+        preVotesReceived.add(config.nodeId());
 
         // Send PreVote with term+1 (what we would use if we start an election)
         RequestVoteRequest preVoteReq = new RequestVoteRequest(
@@ -2332,10 +2277,6 @@ public final class RaftNode {
         resetElectionTimeout();
     }
 
-    /**
-     * Transitions to CANDIDATE and starts a real election.
-     * Increments term, votes for self, sends RequestVote RPCs.
-     */
     private void startElection() {
         // Non-voters must not start elections (TLA+ spec: n in VotingMembers(config[n]))
         if (!clusterConfig.isVoter(config.nodeId())) {
@@ -2355,7 +2296,7 @@ public final class RaftNode {
         role = RaftRole.CANDIDATE;
         leaderId = null;
         votesReceived = new HashSet<>();
-        votesReceived.add(config.nodeId()); // vote for self
+        votesReceived.add(config.nodeId());
         preVoteInProgress = false;
 
         resetElectionTimeout();
@@ -2363,7 +2304,6 @@ public final class RaftNode {
 
         Set<NodeId> peers = clusterConfig.peersOf(config.nodeId());
 
-        // Single-node: win immediately
         if (peers.isEmpty()) {
             becomeLeader();
             return;
@@ -2406,7 +2346,6 @@ public final class RaftNode {
         heartbeatTicksElapsed = 0;
         noopCommittedInCurrentTerm = false;
 
-        // Initialize leader volatile state
         nextIndex = new HashMap<>();
         matchIndex = new HashMap<>();
         inflightCount = new HashMap<>();
@@ -2436,11 +2375,7 @@ public final class RaftNode {
         maybeAdvanceCommitIndex();
     }
 
-    // Log replication helpers
 
-    /**
-     * Sends AppendEntries RPCs to all peers in the current cluster config.
-     */
     private void broadcastAppendEntries() {
         for (NodeId peer : clusterConfig.peersOf(config.nodeId())) {
             sendAppendEntries(peer);
@@ -2463,7 +2398,6 @@ public final class RaftNode {
         long prevIndex = ni - 1;
         long prevTerm = log.termAt(prevIndex);
         if (prevTerm == -1) {
-            // prevIndex is before our snapshot - send snapshot instead
             sendInstallSnapshot(peer);
             return;
         }
@@ -2498,7 +2432,6 @@ public final class RaftNode {
 
     private void sendInstallSnapshot(NodeId peer) {
         if (latestSnapshot == null) {
-            // No snapshot available yet - take one now
             triggerSnapshot();
         }
         if (latestSnapshot == null) {
@@ -2708,7 +2641,6 @@ public final class RaftNode {
             // to be committed to complete the reconfiguration.
 
             if (role == RaftRole.LEADER) {
-                // Leader transitions to C_new and appends the C_new entry
                 ClusterConfig newConfig = clusterConfig.transitionToNew();
                 clusterConfig = newConfig;
 
@@ -2721,25 +2653,20 @@ public final class RaftNode {
                 broadcastAppendEntries();
                 maybeAdvanceCommitIndex();
 
-                // If this node is no longer a voter in the new config, step down
                 if (!clusterConfig.isVoter(config.nodeId())) {
                     becomeFollower(currentTerm);
                 }
             }
-            // Followers: clusterConfig stays as joint. recomputeConfigFromLog()
-            // will set C_new when the C_new entry arrives via AppendEntries.
         } else {
             // Simple config committed - this completes a C_new transition
             configChangePending = false;
 
-            // If this node is no longer a voter, step down
             if (!clusterConfig.isVoter(config.nodeId())) {
                 becomeFollower(currentTerm);
             }
         }
     }
 
-    // InstallSnapshot handling
 
     /**
      * Handles an InstallSnapshot RPC from the leader (Raft section 7).
@@ -2761,7 +2688,6 @@ public final class RaftNode {
             return;
         }
 
-        // If we see a higher term, step down
         if (req.term() > currentTerm) {
             becomeFollower(req.term());
         } else if (role == RaftRole.CANDIDATE) {
@@ -2877,7 +2803,6 @@ public final class RaftNode {
         // older/equal case), i.e. this is the spec's installing branch.
         checkSnapshotInstallTwins(req.lastIncludedIndex(), req.lastIncludedTerm());
 
-        // Restore the state machine from the snapshot
         stateMachine.restoreSnapshot(full);
 
         // A follower installing a snapshot has the same restart-loss exposure as a leader taking
@@ -2893,10 +2818,8 @@ public final class RaftNode {
         // (WAL-ahead snapshot accept-forward). It must NOT panic.
         log.persistSnapshot(installed);
         latestSnapshot = installed;
-        // Compact the log up to the snapshot point
         log.compact(req.lastIncludedIndex(), req.lastIncludedTerm());
 
-        // Update applied state to match the snapshot
         if (req.lastIncludedIndex() > log.commitIndex()) {
             log.setCommitIndex(req.lastIncludedIndex());
         }
@@ -2997,13 +2920,11 @@ public final class RaftNode {
             return;
         }
 
-        // Step down if we see a higher term
         if (resp.term() > currentTerm) {
             becomeFollower(resp.term());
             return;
         }
 
-        // Ignore stale responses
         if (resp.term() != currentTerm) {
             return;
         }
@@ -3075,7 +2996,7 @@ public final class RaftNode {
         long targetMatchIndex = matchIndex.getOrDefault(transferTarget, 0L);
         if (targetMatchIndex >= log.lastIndex()) {
             transport.send(transferTarget, new TimeoutNowRequest(currentTerm, config.nodeId()));
-            transferTarget = null; // Transfer initiated, clear target
+            transferTarget = null;
             transferTicksElapsed = 0; // transfer completed - stop the abort clock
         }
     }

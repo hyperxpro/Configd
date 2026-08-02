@@ -49,7 +49,6 @@ final class FakeVaultTransit implements AutoCloseable {
                 send(ex, 200, "{\"auth\":{\"client_token\":\"" + token + "\",\"lease_duration\":600}}");
                 return;
             }
-            // all transit calls require the token
             if (!token.equals(ex.getRequestHeaders().getFirst("X-Vault-Token"))) {
                 send(ex, 403, "{\"errors\":[\"permission denied\"]}");
                 return;
@@ -96,7 +95,6 @@ final class FakeVaultTransit implements AutoCloseable {
         }
     }
 
-    /** The last path segment (the transit key name), for endpoint matching. */
     private static String keyOf(String path) {
         int slash = path.lastIndexOf('/');
         return path.substring(slash + 1);

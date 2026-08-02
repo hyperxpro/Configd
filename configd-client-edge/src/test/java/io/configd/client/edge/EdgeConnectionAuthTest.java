@@ -34,8 +34,8 @@ class EdgeConnectionAuthTest {
     @Test
     void tokenAuthSendsSinglePreAuthFrameAndReachesAuthenticated() throws Exception {
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            conn.readFrame();                                   // the AUTH
-            conn.send(new EdgeFrame.Heartbeat(0L, 1L));         // a positive liveness confirmation
+            conn.readFrame();
+            conn.send(new EdgeFrame.Heartbeat(0L, 1L));
             conn.parkUntilClosed();
         })) {
             ConfigdClientConfig config = tokenConfig(server.port(), tokens("golden-token"));
@@ -79,7 +79,7 @@ class EdgeConnectionAuthTest {
         // reconnect-with-backoff — a fresh connection per attempt, never a hot-loop of AUTH on one socket. A
         // server that rejects every attempt exhausts the budget and the client gives up terminally.
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            conn.readFrame();                                   // the AUTH
+            conn.readFrame();
             conn.send(new EdgeFrame.ErrorClose(ErrorCode.AUTH_FAIL, "bad token"));
             // then close (try-with-resources on Conn closes the socket)
         })) {
@@ -95,7 +95,6 @@ class EdgeConnectionAuthTest {
 
                 ExecutionException terminal = assertThrows(ExecutionException.class,
                         () -> client.terminalFuture().get(10, TimeUnit.SECONDS));
-                // After the bounded attempts the client gives up: an Unavailable wrapping the AUTH_FAIL cause.
                 UnavailableException gaveUp = assertInstanceOf(UnavailableException.class, terminal.getCause());
                 assertInstanceOf(AuthFailedException.class, gaveUp.getCause());
 
@@ -176,7 +175,7 @@ class EdgeConnectionAuthTest {
     @Test
     void refreshAuthNowRenewsWithFreshCredential() throws Exception {
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            conn.readFrame();                                   // the AUTH
+            conn.readFrame();
             conn.send(new EdgeFrame.Heartbeat(0L, 1L));
             conn.parkUntilClosed();                             // will also read the REFRESH_AUTH
         })) {
@@ -190,7 +189,7 @@ class EdgeConnectionAuthTest {
 
                 EdgeFrame refresh = server.received().stream()
                         .filter(f -> f instanceof EdgeFrame.RefreshAuth).findFirst().orElseThrow();
-                assertEquals("refresh-2", bearer(refresh)); // a fresh credential, same identity
+                assertEquals("refresh-2", bearer(refresh));
             }
         }
     }
@@ -225,7 +224,7 @@ class EdgeConnectionAuthTest {
     @Test
     void credentialExpiredTriggersReconnectWithFreshCredential() throws Exception {
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
-            conn.readFrame(); // the AUTH on this connection
+            conn.readFrame();
             if (conn.index == 1) {
                 conn.send(new EdgeFrame.ErrorClose(ErrorCode.CREDENTIAL_EXPIRED, "session aged out"));
                 // close -> the client must reconnect with a fresh credential

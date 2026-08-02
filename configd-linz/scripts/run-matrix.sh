@@ -124,7 +124,6 @@ echo "[matrix] adv-seeds=$ADV_SEEDS seq-seeds=$SEQ_SEEDS adv-dur=${ADV_DUR}ms ke
 seed_base() { case "$1" in base) echo 8000;; encrypt) echo 12000;; auth) echo 16000;; skew) echo 20000;; *) echo 24000;; esac; }
 
 for n in $NODES; do
-  # ADVERSARIAL cells across the requested postures
   for posture in $POSTURES; do
     base=$(seed_base "$posture")
     s=0

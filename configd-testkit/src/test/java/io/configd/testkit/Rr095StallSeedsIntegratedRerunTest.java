@@ -40,7 +40,7 @@ class Rr095StallSeedsIntegratedRerunTest {
                     /* edgeFaults */ true, new C1StreamDriver(),
                     AdversarialSchedule.defaultIntensity(), EdgeInvariants.BOUND_MS);
             for (int e = 0; e < EDGES; e++) {
-                sim.enableEdgeRecovery(e); // the production directive loop, live
+                sim.enableEdgeRecovery(e);
             }
             sim.run(); // throws SafetyViolation (with the seed) on ANY breach - none expected
 

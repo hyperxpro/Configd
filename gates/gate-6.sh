@@ -21,7 +21,6 @@ LOGDIR="${GATE6_LOG_DIR:-$(mktemp -d /tmp/gate6-XXXXXX)}"
 mkdir -p "$LOGDIR"
 PROM_VER="2.53.2"
 
-# Modules whose source/tests gate-6 exercises.
 MODULES="configd-wire,configd-observability,configd-config-store,configd-transport,configd-distribution-service,configd-server,configd-edge-node"
 
 echo "=== GATE-6 (Session 6: operability & deployment readiness) — logs in $LOGDIR ==="
@@ -45,7 +44,6 @@ if pgrep -f "[s]urefirebooter" >/dev/null 2>&1; then
   exit 1
 fi
 
-# (a) cumulative: gate-5 (chains 4→3→2→1)
 if [ "${GATE6_SKIP_GATE5:-0}" = "1" ]; then
   echo "GATE-6 gate5: SKIPPED by GATE6_SKIP_GATE5=1 (LOUD: gates 1..5 NOT verified this run; CI supplies them via the gate-5 job)"
 else

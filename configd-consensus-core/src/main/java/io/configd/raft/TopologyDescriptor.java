@@ -56,7 +56,6 @@ public final class TopologyDescriptor {
         this.topologyEpoch = topologyEpoch;
     }
 
-    /** The deploy-time shard count {@code N}. */
     public int shardCount() {
         return shardCount;
     }
@@ -119,7 +118,6 @@ public final class TopologyDescriptor {
         if (reserved != 0) {
             throw new IllegalStateException("topology descriptor reserved field must be zero, got " + reserved);
         }
-        // Epoch 0 is the reserved "pre-epoch / unset" sentinel - never a legitimate deployed value.
         if (topologyEpoch == EPOCH_UNSET) {
             throw new IllegalStateException("topology epoch 0 is reserved-illegal (pre-epoch); the"
                     + " descriptor is corrupt or from an incompatible build");

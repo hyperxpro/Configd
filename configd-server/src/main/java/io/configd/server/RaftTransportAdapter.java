@@ -22,7 +22,7 @@ public final class RaftTransportAdapter implements RaftTransport {
     private static final Logger LOG = Logger.getLogger(RaftTransportAdapter.class.getName());
 
     
-    private static final long LOG_THROTTLE_INTERVAL_NANOS = 1_000_000_000L; // 1/sec
+    private static final long LOG_THROTTLE_INTERVAL_NANOS = 1_000_000_000L;
 
     private final io.configd.transport.RaftTransport transport;
     private final int groupId;

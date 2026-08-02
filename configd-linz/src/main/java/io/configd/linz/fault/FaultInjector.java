@@ -83,12 +83,11 @@ public final class FaultInjector implements AutoCloseable {
                 "-m", "statistic", "--mode", "random", "--probability", prob, "-j", "DROP");
     }
 
-    // iptables plumbing.
 
     private synchronized void insert(List<String> spec) throws IOException, InterruptedException {
         Rule r = new Rule(spec);
         if (active.contains(r)) {
-            return; // already inserted
+            return;
         }
         // Insert at the top of the chain so it fires before any `-i lo -j ACCEPT`.
         List<String> cmd = new ArrayList<>(List.of("sudo", "-n", "iptables", "-I", spec.get(0), "1"));
@@ -100,7 +99,7 @@ public final class FaultInjector implements AutoCloseable {
     private synchronized void remove(List<String> spec) throws IOException, InterruptedException {
         Rule r = new Rule(spec);
         if (!active.remove(r)) {
-            return; // not active; nothing to do
+            return;
         }
         List<String> cmd = new ArrayList<>(List.of("sudo", "-n", "iptables", "-D", spec.get(0)));
         cmd.addAll(spec.subList(1, spec.size()));

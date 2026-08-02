@@ -273,8 +273,8 @@ final class HostilePeerInjectionE2ETest {
         void injectHostileBattery(int follower) {
             // 1) oversized length prefix: senderId + a frame-length field far past MAX_FRAME_SIZE.
             byte[] oversized = new byte[]{
-                    0, 0, 0, (byte) HOSTILE_SENDER,          // senderId
-                    (byte) 0x7F, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, // frame length = 0x7FFFFFFF
+                    0, 0, 0, (byte) HOSTILE_SENDER,
+                    (byte) 0x7F, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF,
                     0, 0, 0, 0                                // a little filler (never read, rejected first)
             };
             sendRaw(follower, oversized);
@@ -314,7 +314,7 @@ final class HostilePeerInjectionE2ETest {
             try (Socket s = new Socket()) {
                 s.connect(new InetSocketAddress("127.0.0.1", ports[follower]), 2_000);
                 OutputStream out = s.getOutputStream();
-                out.write(new byte[]{0, 0, 0, (byte) HOSTILE_SENDER, 0, 0}); // senderId + 2 of 4 length bytes
+                out.write(new byte[]{0, 0, 0, (byte) HOSTILE_SENDER, 0, 0});
                 out.flush();
                 // abrupt close mid-frame; the decoder must never emit a half-frame.
             } catch (java.io.IOException ignored) {

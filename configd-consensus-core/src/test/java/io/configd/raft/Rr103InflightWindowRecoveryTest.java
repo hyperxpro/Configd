@@ -61,7 +61,7 @@ class Rr103InflightWindowRecoveryTest {
         assertEquals(10, n1.inflightCountForTest(N3),
                 "precondition: leader's in-flight window toward N3 is pinned at the cap");
 
-        cluster.step(400); // commit via N1+N2; N3 misses everything
+        cluster.step(400);
 
         long leaderHead = n1.log().commitIndex();
         long termBeforeHeal = n1.currentTerm();
@@ -71,8 +71,6 @@ class Rr103InflightWindowRecoveryTest {
                 "non-vacuity: N3 fell behind while partitioned (commit "
                         + n3.log().commitIndex() + " < " + leaderHead + ")");
 
-        // Heal, then measure the recovery bound: recoveryTicks stays -1 if the healed follower never
-        // catches up.
         cluster.heal(N3);
         int recoveryTicks = -1;
         for (int t = 1; t <= 2000; t++) {

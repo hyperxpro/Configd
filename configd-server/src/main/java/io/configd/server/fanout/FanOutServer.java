@@ -380,7 +380,7 @@ public final class FanOutServer implements FanOutEndpoint {
             }
             return chain.isEmpty() ? null : chain;
         } catch (Exception e) {
-            return null; // no verifiable client certificate
+            return null;
         }
     }
 
@@ -431,7 +431,6 @@ public final class FanOutServer implements FanOutEndpoint {
             try {
                 c.close();
             } catch (Exception ignored) {
-                // best-effort
             }
         }
     }
@@ -536,7 +535,7 @@ public final class FanOutServer implements FanOutEndpoint {
                 while (alive.get() && running.get()) {
                     EdgeFrame frame = readFrame(in, deadlineNanos);
                     if (frame == null) {
-                        return; // EOF
+                        return;
                     }
                     // Token-auth gate: a certificate-less token connection admits ONLY an AUTH frame
                     // until it authenticates (which starts the session lazily). Once authenticated, its
@@ -717,7 +716,7 @@ public final class FanOutServer implements FanOutEndpoint {
                 try {
                     length = in.readInt();
                 } catch (EOFException eof) {
-                    return null; // clean stream end
+                    return null;
                 }
                 header4[0] = (byte) (length >>> 24);
                 header4[1] = (byte) (length >>> 16);
@@ -846,7 +845,7 @@ public final class FanOutServer implements FanOutEndpoint {
         
         private void teardown(ErrorCode code, String message, String metricReason) {
             if (!alive.compareAndSet(true, false)) {
-                return; // already torn down
+                return;
             }
             cancelExpiry();
             FanOutConnectionDriver d = driver;

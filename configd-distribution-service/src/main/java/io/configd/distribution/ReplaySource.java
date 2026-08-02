@@ -36,9 +36,6 @@ public interface ReplaySource {
 
     Replay replayFromSnapshot();
 
-    /**
-     * @param snapshot the cumulative committed state (immutable, shareable)
-     */
     record Replay(ConfigSnapshot snapshot, long seq) {
         public Replay {
             if (snapshot == null) {

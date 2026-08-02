@@ -124,7 +124,7 @@ class RaftLogWalTest {
         assertEquals(3, log1.snapshotIndex());
         assertEquals(2, log1.snapshotTerm());
         assertEquals(5, log1.lastIndex());
-        assertEquals(2, log1.size()); // entries 4 and 5 remain
+        assertEquals(2, log1.size());
 
         RaftLog log2 = new RaftLog(storage);
 
@@ -134,8 +134,7 @@ class RaftLogWalTest {
         assertEquals(5, log2.lastIndex());
         assertEquals(2, log2.size());
 
-        // entries are accessible with correct offset arithmetic
-        assertNull(log2.entryAt(3)); // compacted
+        assertNull(log2.entryAt(3));
         LogEntry e4 = log2.entryAt(4);
         assertNotNull(e4);
         assertEquals(4, e4.index());
@@ -147,10 +146,9 @@ class RaftLogWalTest {
         assertEquals(5, e5.index());
         assertEquals(3, e5.term());
 
-        // termAt should work for snapshot boundary and live entries
-        assertEquals(2, log2.termAt(3)); // snapshotTerm
-        assertEquals(2, log2.termAt(4)); // live entry
-        assertEquals(3, log2.termAt(5)); // live entry
+        assertEquals(2, log2.termAt(3));
+        assertEquals(2, log2.termAt(4));
+        assertEquals(3, log2.termAt(5));
         assertEquals(-1, log2.termAt(2)); // before snapshot - not available
     }
 
@@ -196,7 +194,7 @@ class RaftLogWalTest {
         assertEquals(4, log1.snapshotIndex());
         assertEquals(2, log1.snapshotTerm());
         assertEquals(5, log1.lastIndex());
-        assertEquals(1, log1.size()); // only entry 5 remains
+        assertEquals(1, log1.size());
 
         RaftLog log2 = new RaftLog(storage);
 
@@ -204,8 +202,8 @@ class RaftLogWalTest {
         assertEquals(2, log2.snapshotTerm());
         assertEquals(5, log2.lastIndex());
         assertEquals(1, log2.size());
-        assertEquals(2, log2.termAt(4)); // snapshotTerm
-        assertEquals(3, log2.termAt(5)); // live entry
+        assertEquals(2, log2.termAt(4));
+        assertEquals(3, log2.termAt(5));
     }
 
     @Test
@@ -218,9 +216,8 @@ class RaftLogWalTest {
         log1.compact(2, 2);
 
         assertEquals(2, log1.snapshotIndex());
-        assertEquals(0, log1.size()); // all entries compacted
+        assertEquals(0, log1.size());
 
-        // restart from an empty WAL - metadata still carries snapshotIndex/snapshotTerm
         RaftLog log2 = new RaftLog(storage);
 
         // snapshotIndex and snapshotTerm recovered from metadata even with empty WAL
@@ -251,10 +248,9 @@ class RaftLogWalTest {
         assertEquals(2, log2.snapshotIndex());
         assertEquals(5, log2.lastIndex());
 
-        // truncate from index 4, simulating conflict resolution
         log2.truncateFrom(4);
         assertEquals(3, log2.lastIndex());
-        assertEquals(1, log2.size()); // only entry 3 remains
+        assertEquals(1, log2.size());
 
         log2.append(new LogEntry(4, 3, "d2".getBytes(StandardCharsets.UTF_8)));
         assertEquals(4, log2.lastIndex());
@@ -263,7 +259,7 @@ class RaftLogWalTest {
         assertEquals(2, log3.snapshotIndex());
         assertEquals(4, log3.lastIndex());
         assertEquals(2, log3.entryAt(3).term());
-        assertEquals(3, log3.entryAt(4).term()); // new term from replacement
+        assertEquals(3, log3.entryAt(4).term());
         assertArrayEquals("d2".getBytes(StandardCharsets.UTF_8), log3.entryAt(4).command());
     }
 
@@ -295,7 +291,6 @@ class RaftLogWalTest {
         assertEquals(5, log1.lastIndex());
         assertEquals(5, log1.size());
 
-        // entries 3, 4, 5 are removed
         log1.truncateFrom(3);
         assertEquals(2, log1.lastIndex());
         assertEquals(2, log1.size());
@@ -305,8 +300,6 @@ class RaftLogWalTest {
         assertNull(log1.entryAt(4), "Entry 4 should be gone after truncation");
         assertNull(log1.entryAt(5), "Entry 5 should be gone after truncation");
 
-        // Restart: the truncated state must recover correctly - this is what the
-        // directory fsync after rewriteWal() guarantees.
         RaftLog log2 = new RaftLog(storage);
 
         assertEquals(2, log2.lastIndex(),

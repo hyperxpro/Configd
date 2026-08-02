@@ -108,7 +108,7 @@ class FanOutBufferRaceTest {
                             lastSeen = Math.max(lastSeen, cursor);
                         }
                         if (done && cursor >= totalWrites) {
-                            return; // caught up after writer finished
+                            return;
                         }
                         if (done && buf.latestSeq() == cursor) {
                             return; // caught up to whatever the buffer retains
@@ -173,8 +173,6 @@ class FanOutBufferRaceTest {
             try {
                 start.await();
                 for (long s = 1; s <= totalWrites; s++) {
-                    // Bounded handoff: never get more than `lead` ahead of the
-                    // reader, so the reader's window is never overwritten.
                     while (s - observed.get() > lead) {
                         Thread.onSpinWait();
                     }
@@ -196,8 +194,6 @@ class FanOutBufferRaceTest {
                     boolean done = writeDone.await(0, TimeUnit.MILLISECONDS);
                     CommitNotificationSource.Result res = buf.readSince(cursor);
                     if (res.isGap()) {
-                        // Transient eviction window; since we're paced, our cursor's
-                        // data is still retained, so retry and the next read is contiguous.
                         Thread.onSpinWait();
                         continue;
                     }

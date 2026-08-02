@@ -41,7 +41,6 @@ final class KeyringCodec {
     private static final int WRAP_NONCE_LEN_LOCAL = 12;
 
     private KeyringCodec() {
-        // codec + pure-function holder
     }
 
     /**
@@ -163,7 +162,6 @@ final class KeyringCodec {
         return new Keyring(fmt, seq, activeTerm, entries);
     }
 
-    // ---- outer envelope (whole-body integrity under K_keyringMac) ---------------------------
 
     /** Seals the whole body in the outer HMAC envelope (algId=1) under {@code K_keyringMac}. */
     static byte[] seal(IntegrityEnvelope outerMac, Keyring k) {
@@ -175,7 +173,6 @@ final class KeyringCodec {
         return decodeBody(outerMac.unwrap(KEYRING_MAGIC, IntegrityEnvelope.NODE_SCOPE, enveloped));
     }
 
-    // ---- per-root wrap / unwrap (local GCM, AAD-bound) --------------------------------------
 
     private static byte[] entryAad(int keyringFormatVersion, int term, byte wrapAlgId, byte[] nodeKeyId) {
         ByteBuffer aad = ByteBuffer.allocate(4 + 2 + 4 + 1 + nodeKeyId.length + ROOT_LABEL.length);
@@ -255,7 +252,6 @@ final class KeyringCodec {
     }
 
 
-    /** First boot: a keyring with one random {@code root[1]}, {@code activeTerm=1}, {@code keyringSeq=1}. */
     static Keyring bootstrap(SecretKey kek, byte[] nodeKeyId, byte[] root1, java.security.SecureRandom rng) {
         return new Keyring(KEYRING_FORMAT_VERSION, 1L, 1,
                 List.of(wrapRoot(kek, nodeKeyId, 1, root1, rng)));

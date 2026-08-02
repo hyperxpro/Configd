@@ -31,7 +31,6 @@ class ReconfigPathUnitTest {
         @Override public void restoreSnapshot(byte[] snapshot) { }
     }
 
-    // A target-aware cluster for the lifecycle test.
     static final class RoutingCluster {
         final Map<NodeId, RaftNode> nodes = new HashMap<>();
         final Map<NodeId, RoutingTransport> transports = new HashMap<>();
@@ -93,7 +92,6 @@ class ReconfigPathUnitTest {
         }
     }
 
-    // Static codec helpers: isConfigChangeEntry / deserializeConfigChange
 
     @Nested
     class Codec {
@@ -101,14 +99,12 @@ class ReconfigPathUnitTest {
         @Test
         void recognizesRcfgMagicAndRejectsOthers() {
             byte[] notConfig = new byte[]{1, 2, 3, 4, 5};
-            byte[] tooShort = new byte[]{0x52, 0x43, 0x46}; // 3 bytes, len < 4
+            byte[] tooShort = new byte[]{0x52, 0x43, 0x46};
             assertFalse(RaftNode.isConfigChangeEntry(notConfig));
             assertFalse(RaftNode.isConfigChangeEntry(tooShort));
             assertFalse(RaftNode.isConfigChangeEntry(null));
-            // The exactly-4-byte RCFG magic is the minimal valid prefix.
             byte[] exactMagic = new byte[]{0x52, 0x43, 0x46, 0x47};
             assertTrue(RaftNode.isConfigChangeEntry(exactMagic));
-            // One wrong magic byte must NOT match.
             byte[] wrongMagic = new byte[]{0x52, 0x43, 0x46, 0x48};
             assertFalse(RaftNode.isConfigChangeEntry(wrongMagic));
         }
@@ -127,15 +123,14 @@ class ReconfigPathUnitTest {
             // magic + isJoint(0) + oldCount = 1000 (> 255) must throw: the voter
             // count is validated against a sane upper bound.
             java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocate(9);
-            buf.put(new byte[]{0x52, 0x43, 0x46, 0x47}); // RCFG
-            buf.put((byte) 0); // not joint
-            buf.putInt(1000); // absurd voter count
+            buf.put(new byte[]{0x52, 0x43, 0x46, 0x47});
+            buf.put((byte) 0);
+            buf.putInt(1000);
             assertThrows(IllegalArgumentException.class,
                     () -> RaftNode.deserializeConfigChange(buf.array()));
         }
     }
 
-    // proposeConfigChange: preconditions (single elected leader)
 
     @Nested
     class ProposePreconditions {
@@ -145,7 +140,6 @@ class ReconfigPathUnitTest {
             RaftConfig config = RaftConfig.of(N1, Set.of(N2, N3));
             RaftNode follower = new RaftNode(config, new RaftLog(), new CapturingTransport(),
                     new CountingStateMachine(), new java.util.Random(1));
-            // A non-leader must reject a reconfiguration proposal.
             assertFalse(follower.proposeConfigChange(Set.of(N1, N2)));
         }
 
@@ -162,8 +156,6 @@ class ReconfigPathUnitTest {
         }
     }
 
-    // Full lifecycle (target-routing 3-node cluster): joint materializes and
-    // the change reaches the final simple config, pending clears.
 
     @Nested
     class Lifecycle {
@@ -176,7 +168,7 @@ class ReconfigPathUnitTest {
             assertEquals(RaftRole.LEADER, leader.role());
             cluster.addNode(N4, Set.of(N1, N2, N3));
 
-            cluster.deliverAll(20); // commit the in-term no-op
+            cluster.deliverAll(20);
             assertTrue(leader.log().commitIndex() >= 1, "no-op must commit");
 
             assertTrue(leader.proposeConfigChange(Set.of(N1, N2, N3, N4)));
@@ -186,8 +178,6 @@ class ReconfigPathUnitTest {
             assertEquals(Set.of(N1, N2, N3, N4), leader.clusterConfig().newVoters());
 
             cluster.deliverAll(40);
-            // The joint config commits, the leader appends and commits C_new, and the
-            // final config is the simple 4-voter set with pending cleared.
             assertFalse(leader.clusterConfig().isJoint(), "must reach final simple config");
             assertEquals(Set.of(N1, N2, N3, N4), leader.clusterConfig().voters());
             // A subsequent distinct change is accepted -> configChangePending cleared.
@@ -196,21 +186,16 @@ class ReconfigPathUnitTest {
 
         @Test
         void leaderRemovingItselfStepsDownWhenFinalConfigCommits() {
-            // A leader that reconfigures the cluster to EXCLUDE itself must step down
-            // once the final (self-excluding) config commits.
             RoutingCluster cluster = new RoutingCluster(3);
             cluster.electLeader(N1);
             RaftNode leader = cluster.nodes.get(N1);
             assertEquals(RaftRole.LEADER, leader.role());
-            cluster.deliverAll(20); // commit no-op
+            cluster.deliverAll(20);
             assertTrue(leader.log().commitIndex() >= 1);
 
-            // Reconfigure {1,2,3} -> {2,3}: node 1 (the leader) removes itself.
             assertTrue(leader.proposeConfigChange(Set.of(N2, N3)));
             assertTrue(leader.clusterConfig().isJoint());
             cluster.deliverAll(60);
-            // Once the self-excluding C_new commits, the former leader is no longer a
-            // voter and must have stepped down to FOLLOWER.
             assertFalse(leader.clusterConfig().isVoter(N1),
                     "the removed node must no longer be a voter in the final config");
             assertEquals(RaftRole.FOLLOWER, leader.role(),

@@ -100,7 +100,6 @@ class NodeAnchorRedteamTest {
         return d;
     }
 
-    /** Builds a real per-shard log: appends entries 1..head over a real raft-anchor + WAL, then releases it. */
     private static void buildShard(Path shardDir, int gid, IntegrityEnvelope env, long head) {
         RaftLog log = new RaftLog(Storage.file(shardDir), env, gid);
         for (long i = 1; i <= head; i++) {
@@ -109,7 +108,6 @@ class NodeAnchorRedteamTest {
         releaseLog(log);
     }
 
-    /** Reopen a real shard (recovering {@code from}) and append forward to {@code to}, then release. */
     private static void advanceShard(Path shardDir, int gid, IntegrityEnvelope env, long from, long to) {
         RaftLog log = new RaftLog(Storage.file(shardDir), env, gid);
         assertEquals(from, log.lastDurableIndex(), "advanceShard precondition: recovered head");
@@ -501,7 +499,7 @@ class NodeAnchorRedteamTest {
         }
         Map<Integer, Long> boot = map(10);
         mint(dataDir, env, EPOCH, 1, boot, Set.of(), audit);
-        audit.record("bob", "DELETE", "k9", "committed");    // un-anchored tail
+        audit.record("bob", "DELETE", "k9", "committed");
         audit.record("bob", "PUT", "k10", "committed");
 
         NodeAnchorFile na = NodeAnchorService.enforceNodeAnchor(dataDir, env, EPOCH, 1, boot, Set.of(), audit);
@@ -546,7 +544,7 @@ class NodeAnchorRedteamTest {
         IntegrityEnvelope env = keyed();
         Map<Integer, Long> a = map(5);
         Map<Integer, Long> b = map(6);
-        mint(dir, env, EPOCH, 1, a, Set.of(), null);   // slot0 seq1
+        mint(dir, env, EPOCH, 1, a, Set.of(), null);
         mint(dir, env, EPOCH, 1, b, Set.of(), null);   // accept-forward => slot1 seq2 (live)
 
         byte[] bytes = Files.readAllBytes(naFile(dir));
@@ -642,7 +640,7 @@ class NodeAnchorRedteamTest {
         Map<Integer, Long> boot0 = new HashMap<>();
         bootInputs(dataDir, 2, env, boot0, new HashSet<>());
         mint(dataDir, env, EPOCH, 2, boot0, new HashSet<>(Set.of(0, 1)), null);
-        byte[] firstMintImage = Files.readAllBytes(naFile(dataDir)); // attacker captures the all-zeros anchor
+        byte[] firstMintImage = Files.readAllBytes(naFile(dataDir));
 
         advanceShard(shardDir(dataDir, 0), 0, env, 0, 5);
         advanceShard(shardDir(dataDir, 1), 1, env, 0, 6);

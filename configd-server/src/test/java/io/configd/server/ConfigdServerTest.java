@@ -85,7 +85,6 @@ class ConfigdServerTest {
                         try {
                             Files.deleteIfExists(p);
                         } catch (IOException ignored) {
-                            // best-effort cleanup of a temp fixture
                         }
                     });
         }
@@ -142,12 +141,9 @@ class ConfigdServerTest {
         ServerConfig config = minimalConfig(dataDir);
         ConfigdServer server = ConfigdServer.start(config);
 
-        // The directory being present confirms Storage.file(dataDir) was invoked during startup.
         assertTrue(Files.isDirectory(dataDir),
             "Data directory should be created by FileStorage");
 
-        // Write directly through a FileStorage instance on the same directory to prove it is
-        // writable and that .dat files appear as expected.
         var storage = io.configd.common.Storage.file(dataDir);
         storage.put("test-key", new byte[]{1, 2, 3});
 
@@ -167,10 +163,9 @@ class ConfigdServerTest {
 
         ServerConfig config = minimalConfig(dataDir);
         ConfigdServer server1 = ConfigdServer.start(config);
-        Thread.sleep(200); // let ticks run
+        Thread.sleep(200);
         server1.shutdown();
 
-        // Restart with the same data directory must not throw.
         ConfigdServer server2 = ConfigdServer.start(config);
         assertNotNull(server2);
         assertNotNull(server2.driver());
@@ -252,7 +247,6 @@ class ConfigdServerTest {
         byte[] command = CommandCodec.encodePut("test.key", new byte[]{42});
         server.stateMachine().apply(1, 1, command);
 
-        // Force flush (tick would normally do this, but we flush directly)
         server.watchService().flushAndDispatch();
 
         assertEquals(1, notifyCount.get(),
@@ -338,7 +332,6 @@ class ConfigdServerTest {
                         "the fixed-rate tick task must run before injection");
                 int beforeInjection = tickCount.get();
 
-                // Arm a fresh latch to await a tick after the injection.
                 tickLatch.set(new java.util.concurrent.CountDownLatch(1));
 
                 // Inject through routeMessage. A stale-term (0) AppendEntries to a leader triggers a
@@ -368,7 +361,6 @@ class ConfigdServerTest {
     void linearizableReadReturnsNullWhenNotLeader() throws Exception {
         Path dataDir = tempDir.resolve("linearizable-read-test");
 
-        // Build the same components the server builds, but without HTTP.
         Storage storage = Storage.file(dataDir);
         VersionedConfigStore configStore = new VersionedConfigStore();
         ConfigStateMachine stateMachine = new ConfigStateMachine(configStore);
@@ -394,8 +386,6 @@ class ConfigdServerTest {
             raftNode.tick();
         }
 
-        // Wire a ConfigReadService with a confirmer that uses readIndex(), matching the production
-        // server wiring (checks readIndex() + isReadReady()).
         ConfigReadService.ConfigReader reader = new ConfigReadService.ConfigReader() {
             @Override public ReadResult get(String key) { return configStore.get(key); }
             @Override public ReadResult get(String key, long minVersion) { return configStore.get(key, minVersion); }
@@ -469,8 +459,6 @@ class ConfigdServerTest {
     // cleanup dispatch) - no poll-loop allocation per iteration.
     @Test
     void linearizableReadAllocatesAtMostOneFuturePerRead(@TempDir Path tmp) throws Exception {
-        // RaftNode + direct ConfigReadService wiring that mirrors the production server's
-        // single-future, completion-driven dispatch.
         Storage storage = Storage.file(tmp);
         var clock = io.configd.common.Clock.system();
         java.security.KeyPairGenerator kpg = java.security.KeyPairGenerator.getInstance("Ed25519");
@@ -583,7 +571,6 @@ class ConfigdServerTest {
                 new java.util.concurrent.CountDownLatch(1);
 
         try {
-            // Simulate a blocking 500ms TLS reload on the tls executor.
             tls.execute(() -> {
                 slowReloadStarted.countDown();
                 try { Thread.sleep(500); } catch (InterruptedException ignored) {
@@ -632,7 +619,6 @@ class ConfigdServerTest {
                 "changeit".toCharArray());
         io.configd.transport.TlsManager tlsManager = new io.configd.transport.TlsManager(tlsConfig);
 
-        // Bind to an ephemeral port; the test only reads the getter.
         io.configd.transport.TcpRaftTransport transport = new io.configd.transport.TcpRaftTransport(
                 NodeId.of(0),
                 new java.net.InetSocketAddress("127.0.0.1", 0),
@@ -698,7 +684,6 @@ class ConfigdServerTest {
     // The effective write rate limit must match the documented envelope: 10k/s base rate, 10k burst.
     @Test
     void find0054_writeRateLimiterAtDocumentedEnvelope() {
-        // Reproduce the production wiring exactly.
         io.configd.common.Clock clock = io.configd.common.Clock.system();
         io.configd.api.RateLimiter limiter = new io.configd.api.RateLimiter(clock, 10_000, 10_000);
 
@@ -736,7 +721,6 @@ class ConfigdServerTest {
                 StrongReadPolicy.defaultPolicy(), (scope, key) -> null);
         api.start();
         try {
-            // Fetch the server's actual port via reflection (HttpServer field).
             java.lang.reflect.Field f = HttpApiServer.class.getDeclaredField("server");
             f.setAccessible(true);
             com.sun.net.httpserver.HttpServer s = (com.sun.net.httpserver.HttpServer) f.get(api);
@@ -781,7 +765,6 @@ class ConfigdServerTest {
         // When run from configd-server module dir, user.dir is that module;
         // parent() gives the multi-module root.
         if (!Files.exists(pom)) {
-            // fall back to repo root heuristic
             pom = Path.of(System.getProperty("user.dir")).resolve("pom.xml");
         }
         assertTrue(Files.exists(pom), "root pom.xml must exist at: " + pom);

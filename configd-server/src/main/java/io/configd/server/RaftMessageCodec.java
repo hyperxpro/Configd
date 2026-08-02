@@ -237,7 +237,6 @@ public final class RaftMessageCodec {
             }
         }
         if (buf.hasRemaining()) {
-            // Strict: a well-formed coalesced heartbeat is exactly count + n records, no padding.
             throw new IllegalArgumentException(
                     "CoalescedHeartbeat has " + buf.remaining() + " trailing bytes after " + n + " groups");
         }

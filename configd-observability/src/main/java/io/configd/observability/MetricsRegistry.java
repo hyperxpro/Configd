@@ -35,7 +35,6 @@ import java.util.stream.Collectors;
  */
 public final class MetricsRegistry {
 
-    /** Default ring buffer capacity for histograms. */
     private static final int DEFAULT_HISTOGRAM_CAPACITY = 4096;
 
     private final ConcurrentHashMap<String, DefaultCounter> counters = new ConcurrentHashMap<>();

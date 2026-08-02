@@ -260,8 +260,6 @@ class AnchorWitnessRedteamTest {
         return new RequestVoteRequest(term, candidate, 0, 0, false);
     }
 
-    // Headline: a real disk rollback is refused; the victim never double-votes, and cannot be
-    // coaxed back into voting by adopting higher terms (it stays latched forever).
 
     @Test
     void headline_realRollbackRefused_andAdoptForwardCannotUnlatch(@TempDir Path base) {
@@ -417,7 +415,7 @@ class AnchorWitnessRedteamTest {
     @Test
     void strictMode_singleNonWitnessReplyRace_closed(@TempDir Path base) {
         Cluster c = new Cluster(base);
-        Node v = c.add(V, Set.of(X, P), true);   // STRICT
+        Node v = c.add(V, Set.of(X, P), true);
         Node x = c.add(X, Set.of(V, P), true);
         c.add(P, Set.of(V, X), true);
         c.settle(8);
@@ -495,7 +493,7 @@ class AnchorWitnessRedteamTest {
         c.deliverAll();
 
         c.kill(v);
-        c.reboot(v);             // reboot from the SAME latest bytes - no rollback
+        c.reboot(v);
         c.settle(6);
         assertNull(v.rollback, "a clean reboot from the latest anchor is never a rollback");
         assertTrue(v.raft.votingClearedForTest());

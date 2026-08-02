@@ -40,7 +40,6 @@ class RaftNodeApiUnitTest {
                 new CountingStateMachine(), new java.util.Random(1));
     }
 
-    // propose: input validation + outcome guards
 
     @Test
     void rejectsNullOrEmptyCommand() {
@@ -52,19 +51,16 @@ class RaftNodeApiUnitTest {
     @Test
     void rejectsOversizedCommand() {
         RaftNode node = singleNodeLeader();
-        // Just over the 1 MiB wire-encodable limit: exactly MAX is allowed, MAX+1 rejected.
         byte[] tooBig = new byte[1 * 1024 * 1024 + 1];
         assertThrows(IllegalArgumentException.class, () -> node.propose(tooBig));
-        // Exactly at the limit is accepted (the boundary's lower side).
         byte[] atLimit = new byte[1 * 1024 * 1024];
-        atLimit[0] = 7; // non-empty, not RCFG magic
+        atLimit[0] = 7;
         assertEquals(ProposalResult.ACCEPTED, node.propose(atLimit).result());
     }
 
     @Test
     void rejectsConfigChangeMagicFromClient() {
         RaftNode node = singleNodeLeader();
-        // A client command must not begin with the RCFG magic.
         byte[] rcfg = new byte[]{0x52, 0x43, 0x46, 0x47, 1, 2, 3};
         assertThrows(IllegalArgumentException.class, () -> node.propose(rcfg));
     }
@@ -72,7 +68,6 @@ class RaftNodeApiUnitTest {
     @Test
     void nonLeaderProposeReturnsNotLeader() {
         RaftNode node = follower();
-        // A follower must report NOT_LEADER.
         assertEquals(ProposalResult.NOT_LEADER, node.propose(new byte[]{1}).result());
     }
 
@@ -82,32 +77,26 @@ class RaftNodeApiUnitTest {
         long before = node.log().commitIndex();
         ProposeOutcome outcome = node.propose(new byte[]{1, 2, 3});
         assertEquals(ProposalResult.ACCEPTED, outcome.result());
-        // The new entry's index is lastIndex+1, and on the single-node path it
-        // commits inline.
         assertTrue(node.log().commitIndex() > before);
         assertEquals(node.log().lastIndex(), node.log().commitIndex());
     }
 
-    // transferLeadership: preconditions
 
     @Test
     void transferRejectedWhenNotLeader() {
         RaftNode node = follower();
-        // A non-leader must refuse a transfer request.
         assertFalse(node.transferLeadership(N2));
     }
 
     @Test
     void transferToSelfRejected() {
         RaftNode node = singleNodeLeader();
-        // Transferring to self must be rejected.
         assertFalse(node.transferLeadership(N1));
     }
 
     @Test
     void transferToNonVoterRejected() {
-        RaftNode node = singleNodeLeader(); // voters = {1}
-        // N2 is not a voter in this single-node config.
+        RaftNode node = singleNodeLeader();
         assertFalse(node.transferLeadership(N2));
     }
 }

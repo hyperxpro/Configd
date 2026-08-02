@@ -36,7 +36,7 @@ final class StorageAnchorIO implements AnchorIO {
     @Override
     public void createPreallocated(byte[] image) {
         this.mirror = image.clone();
-        storage.put(ANCHOR_KEY, mirror.clone()); // self-durable: header + both slots laid down
+        storage.put(ANCHOR_KEY, mirror.clone());
     }
 
     @Override

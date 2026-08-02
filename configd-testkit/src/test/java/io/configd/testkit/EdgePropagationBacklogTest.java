@@ -41,8 +41,6 @@ class EdgePropagationBacklogTest {
                         ? " (+truncated)" : "")
                         + ", maxLateness=" + activity.perEdgeMaxLatenessMs());
 
-        // The edges must actually have received deltas (non-vacuity: a delivering
-        // plane delivers something).
         assertTrue(activity.deliveredCount() > 0,
                 "edges must have observed at least one notification (delivered="
                         + activity.deliveredCount() + ")");

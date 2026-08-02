@@ -43,8 +43,6 @@ class EdgeReBootstrapOnDisconnectTest {
         assertEquals(0, victim.disconnectedRebootstraps());
         sim.enableEdgeRecovery(0);
 
-        // Cut the victim off and commit writes it cannot see, so there is real catch-up
-        // work for the recovery to do (concurrent writes).
         sim.partitionEdge(0);
         for (int i = 1; i <= 3; i++) {
             commit(sim, victim.subscribedCpNode(), "ct06/k" + i, "v" + i);

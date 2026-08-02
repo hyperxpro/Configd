@@ -62,21 +62,17 @@ class StorageEnospcConsensusReactionTest {
         // Disk full: any further append now exceeds the cumulative-byte limit and throws ENOSPC.
         storage.enospcAfterBytes(storage.bytesAppended());
 
-        // (1) SURFACED - the disk-full append propagates, never swallowed into a mute zombie.
         UncheckedIOException ex = assertThrows(UncheckedIOException.class,
                 () -> node.propose("over-the-limit".getBytes()),
                 "ENOSPC on the WAL append must surface, not be silently swallowed");
         String msg = ex.getMessage() + (ex.getCause() == null ? "" : " / " + ex.getCause().getMessage());
         assertTrue(msg.contains("ENOSPC"), "the surfaced error must name ENOSPC: " + msg);
 
-        // (2) NO SILENT ADVANCE - the failed entry never entered the log (durable-first append),
-        // so a later commit/replication can never pick up an entry that was never durable.
         assertEquals(lastIndexBefore, log.lastIndex(),
                 "an ENOSPC append must NOT advance the log (durable-first: storage before in-memory)");
         assertEquals(committedBefore, log.commitIndex(),
                 "the failed entry must not be committed (no lost-but-acked write)");
 
-        // (3) DEFINED DEGRADATION, NOT A WEDGE - once space returns the node appends again.
         storage.enospcAfterBytes(-1); // disarm (space reclaimed)
         assertEquals(ProposalResult.ACCEPTED, node.propose("after-recovery".getBytes()).result(),
                 "the node must recover and accept writes after ENOSPC clears");

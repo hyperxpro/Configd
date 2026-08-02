@@ -28,13 +28,6 @@ class EdgeStalenessFrontierSimTest {
     private static final int CP_NODES = 3;
     private static final int EDGES = 2;
 
-    /**
-     * Idle-but-connected: a connected edge stays CURRENT indefinitely on heartbeats alone.
-     * Runs a short workload to catch the edges up, then ticks IDLE (no new ops - the workload
-     * schedule is exhausted) for &gt;35s of sim time. The C1StreamDriver emits HEARTBEAT frames
-     * every {@code heartbeatMs} (250ms); each carries {@code latestSeq == cursor}, advancing
-     * the frontier, so the edge never leaves CURRENT.
-     */
     private static final int WORKLOAD_TICKS = 1_500;
 
     @Test
@@ -64,10 +57,6 @@ class EdgeStalenessFrontierSimTest {
         assertTrue(sim.currentTime() - start >= 35_000);
     }
 
-    /**
-     * Partitioned: an edge cut off from BOTH deltas and heartbeats walks CURRENT -> STALE ->
-     * DEGRADED -> DISCONNECTED as sim time elapses past the 500ms / 5s / 30s thresholds.
-     */
     @Test
     void partitionedEdgeWalksStaleDegradedDisconnected() {
         EdgeFanOutSim sim = new EdgeFanOutSim(11L, CP_NODES, EDGES, WORKLOAD_TICKS,
@@ -94,7 +83,6 @@ class EdgeStalenessFrontierSimTest {
         assertEquals(StalenessTracker.State.DISCONNECTED, sawDisconnected,
                 "a partitioned edge must reach DISCONNECTED past the 30s threshold");
 
-        // Non-vacuity: a NON-partitioned sibling stayed CURRENT throughout (heartbeats flowed).
         EdgeActor sibling = sim.edges().get(1);
         assertNotEquals(StalenessTracker.State.DISCONNECTED, sibling.staleness(),
                 "the connected sibling must NOT be DISCONNECTED (heartbeats kept it fresh)");

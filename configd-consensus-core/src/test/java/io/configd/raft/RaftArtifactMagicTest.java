@@ -17,7 +17,6 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
  */
 class RaftArtifactMagicTest {
 
-    /** The full registry keyed by name, so a collision reports which pair clashed. */
     private static Map<String, Integer> registry() {
         Map<String, Integer> m = new LinkedHashMap<>();
         m.put("STATE_MAGIC", RaftArtifactMagic.STATE_MAGIC);
@@ -49,7 +48,6 @@ class RaftArtifactMagicTest {
                         entries.get(i).getKey() + " and " + entries.get(j).getKey() + " collide");
             }
         }
-        // Sanity: distinct values means the set size equals the entry count.
         assertEquals(reg.size(), reg.values().stream().distinct().count(),
                 "registry contains a duplicate magic value");
     }

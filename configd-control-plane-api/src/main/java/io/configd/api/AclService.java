@@ -674,8 +674,9 @@ public final class AclService {
      */
     private void accumulateOwnGrants(String principal, String key,
                                      EnumSet<Permission> allow, EnumSet<Permission> deny) {
-        // prefix <= key; walking back with lowerKey visits every stored prefix <= key in descending
-        // order, and key.startsWith(candidate) selects the ones that are ancestors of the key.
+        // floorKey(key) is the greatest prefix <= key; walking back with lowerKey visits every stored
+        // prefix <= key in descending order, and key.startsWith(candidate) selects the ones that are
+        // ancestors of the key.
         String candidate = acls.floorKey(key);
         while (candidate != null) {
             if (key.startsWith(candidate)) {

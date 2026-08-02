@@ -182,15 +182,12 @@ class LocalConfigStoreTest {
             tracker.recordUpdate(1, 1000);
             assertEquals(StalenessTracker.State.CURRENT, tracker.currentState());
 
-            // Advance 600ms -> STALE
             nanoTime.addAndGet(600_000_000L);
             assertEquals(StalenessTracker.State.STALE, tracker.currentState());
 
-            // Advance to 6s total -> DEGRADED
             nanoTime.addAndGet(5_400_000_000L);
             assertEquals(StalenessTracker.State.DEGRADED, tracker.currentState());
 
-            // Advance to 31s total -> DISCONNECTED
             nanoTime.addAndGet(25_000_000_000L);
             assertEquals(StalenessTracker.State.DISCONNECTED, tracker.currentState());
 

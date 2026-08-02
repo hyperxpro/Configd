@@ -81,7 +81,6 @@ final class OidcIssuerConfig {
                         int readTimeoutMs, int sizeLimitBytes) {
     }
 
-    /** Parses the configuration block for one issuer {@code name}. */
     static OidcIssuerConfig parse(ConfigSource cfg, String name) {
         String prefix = "configd.auth.oidc.issuer." + name + ".";
         String issuerUri = requireHttpsUrl("uri", cfg.getRequiredString(prefix + "uri")).toString();
@@ -136,7 +135,6 @@ final class OidcIssuerConfig {
                 requireTypeAtJwt, roleMapper, jwks);
     }
 
-    /** Builds the live per-issuer validator: resolves the JWKS URL (discovery if needed) and wires nimbus. */
     OidcIssuerValidator buildValidator() {
         URL resolvedJwksUri = jwksUri;
         if (resolvedJwksUri == null) {
@@ -218,7 +216,6 @@ final class OidcIssuerConfig {
         return value;
     }
 
-    /** Parses {@code value} as a URL and asserts the {@code https} scheme (RFC 8414/9068). */
     static URL requireHttpsUrl(String what, String value) {
         URI uri;
         try {

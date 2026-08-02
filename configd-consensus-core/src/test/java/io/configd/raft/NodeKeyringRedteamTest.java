@@ -68,8 +68,6 @@ class NodeKeyringRedteamTest {
                 | ((enveloped[14] & 0xFF) << 8) | (enveloped[15] & 0xFF);
     }
 
-    // Multi-term signing-key rewrap: three independent random roots, then a signing-key rotation.
-    // rewrapUnderNewKek must rewrap every entry; all three terms must still decrypt under the new key.
 
     @Test
     void multiTermRewrap_everyTermStillDecryptsUnderNewSigningKey() {
@@ -99,8 +97,6 @@ class NodeKeyringRedteamTest {
             // Signing-key rotation: rewrap ALL THREE roots under skB (roots unchanged), before swap.
             k.rewrapForNewSigningKey(mac(skB), kek(skB), nodeId("nodeA"));
         }
-        // Reboot under the NEW signing key B: the rewrapped slot wins, roots are unchanged, so every
-        // term's data still decrypts. Proves the whole rewrap loop, not just a single entry.
         try (NodeKeyring k2 = NodeKeyring.loadOrCreateOverIO(
                 new CrashModelAnchorIO(disk), mac(skB), kek(skB), nodeId("nodeA"), new SecureRandom())) {
             assertEquals(3, k2.termCount(), "all three terms survive the signing-key rewrap");
@@ -131,10 +127,9 @@ class NodeKeyringRedteamTest {
                 new CrashModelAnchorIO(disk), mac(sk), kek(sk), nodeId("nodeA"), new SecureRandom())) {
             r1 = encOver(k).wrap(WAL_MAGIC, SCOPE, p1);
             assertEquals(1, keyTermOf(r1));
-            // Snapshot the durable term-1-only keyring image: the attacker's rollback target.
             rollbackTarget = disk.image.clone();
 
-            k.rotateTerm(REF);                       // -> term 2 durably added
+            k.rotateTerm(REF);
             r2 = encOver(k).wrap(WAL_MAGIC, SCOPE, p2);
             assertEquals(2, keyTermOf(r2));
         }
@@ -148,9 +143,7 @@ class NodeKeyringRedteamTest {
             assertEquals(1, k2.activeTerm(), "rollback reverts to the older valid keyring (R-a residual)");
             assertEquals(1, k2.termCount(), "the term-2 entry is gone after the rollback");
             IntegrityEnvelope env = encOver(k2);
-            // Term-1 data still decrypts (term 1 retained) ...
             assertArrayEquals(p1, env.unwrap(WAL_MAGIC, SCOPE, r1));
-            // ... but term-2 data FAILS CLOSED: no silent decrypt under an old/wrong root.
             IntegrityException ex = assertThrows(IntegrityException.class,
                     () -> env.unwrap(WAL_MAGIC, SCOPE, r2),
                     "term-2 ciphertext must never decrypt after the term-2 root was rolled away");
@@ -158,10 +151,6 @@ class NodeKeyringRedteamTest {
         }
     }
 
-    // Cross-node root replay at the facade. The outer K_keyringMac is derived from the signing key
-    // only (not the node id), so the same signing key opens the file under a different node id - the
-    // outer MAC does not stop this. The per-entry wrap AAD (which binds nodeKeyId) does: unsealing
-    // under nodeB refuses. Defense in depth beneath the outer MAC.
 
     @Test
     void sameSigningKey_differentNode_outerMacPassesButRootUnsealRefuses() {
@@ -175,7 +164,6 @@ class NodeKeyringRedteamTest {
         // succeeds because the outer MAC (K_keyringMac) does not depend on the node id ...
         try (NodeKeyring kB = NodeKeyring.loadOrCreateOverIO(
                 new CrashModelAnchorIO(disk), mac(sk), kek(sk), nodeId("nodeB"), new SecureRandom())) {
-            // ... but the root cannot be unsealed under the wrong node's AAD.
             IntegrityException ex = assertThrows(IntegrityException.class, () -> kB.unsealRootKeys(REF),
                     "a root wrapped for nodeA must not unseal under nodeB (per-entry AAD node binding)");
             assertTrue(ex.getMessage().contains("term/node") || ex.getMessage().contains("tag failure"),

@@ -89,7 +89,6 @@ class NodeAnchorBootTest {
 
         NodeAnchorFile reopened = NodeAnchorService.enforceNodeAnchor(
                 dir, env, EPOCH, 2, boot, Set.of(), null);
-        // Digest matches => clean, no re-anchor: the seq stays 1.
         assertEquals(1L, reopened.current().nodeAnchorSeq(), "a clean boot must not churn the node-anchor");
         reopened.close();
     }
@@ -168,9 +167,9 @@ class NodeAnchorBootTest {
         // accept-forward and PROCEED, never REFUSE - a boot cross-check must never brick a healthy node
         // for having simply made progress.
         IntegrityEnvelope env = keyed();
-        mint(dir, env, EPOCH, 1, durable(1, 100), null); // last tick anchored head = 100
+        mint(dir, env, EPOCH, 1, durable(1, 100), null);
 
-        Map<Integer, Long> advanced = durable(1, 137);    // advanced past the tick, then crashed
+        Map<Integer, Long> advanced = durable(1, 137);
         NodeAnchorFile reopened = NodeAnchorService.enforceNodeAnchor(
                 dir, env, EPOCH, 1, advanced, Set.of(), null);
         assertEquals(2L, reopened.current().nodeAnchorSeq(),
@@ -197,7 +196,6 @@ class NodeAnchorBootTest {
         assertTrue(ex.getMessage().contains("both slots invalid"), ex.getMessage());
     }
 
-    // audit head
 
     private static AuditLog newAuditLog(Storage storage) {
         byte[] auditKey = new byte[32];
@@ -254,7 +252,6 @@ class NodeAnchorBootTest {
         assertTrue(ex.getMessage().contains("audit-head"), ex.getMessage());
     }
 
-    // periodic refresh
 
     @Test
     void periodicRefreshAdvancesTheAnchorOnTheCadence(@TempDir Path dir) {

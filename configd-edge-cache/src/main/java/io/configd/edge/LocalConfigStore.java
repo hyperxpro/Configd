@@ -77,9 +77,6 @@ public final class LocalConfigStore {
         this.invariantMonitor = invariantMonitor;
     }
 
-    /**
-     * Creates a store initialized with the given snapshot, using the system clock.
-     */
     public LocalConfigStore(ConfigSnapshot initialSnapshot) {
         this(initialSnapshot, Clock.system());
     }
@@ -93,16 +90,13 @@ public final class LocalConfigStore {
         this(ConfigSnapshot.EMPTY, clock);
     }
 
-    /**
-     * Creates an empty store at version 0, using the system clock.
-     */
     public LocalConfigStore() {
         this(ConfigSnapshot.EMPTY, Clock.system());
     }
 
     public ReadResult get(String key) {
         Objects.requireNonNull(key, "key must not be null");
-        ConfigSnapshot snap = currentSnapshot; // single volatile read
+        ConfigSnapshot snap = currentSnapshot;
         VersionedValue vv = snap.data().get(key);
         if (vv == null) {
             return ReadResult.NOT_FOUND;

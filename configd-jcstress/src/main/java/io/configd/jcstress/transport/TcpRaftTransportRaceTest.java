@@ -108,7 +108,7 @@ public final class TcpRaftTransportRaceTest {
                 // Genuinely empty queue -> no connect needed; but if one is still
                 // pending that is harmless (it will run and find nothing). Either is
                 // legal; 0 keeps the outcome distinct from the frames-remain case.
-                r.r1 = (pending <= 1) ? 0 : 9; // >1 pending is a double-schedule even when empty
+                r.r1 = (pending <= 1) ? 0 : 9;
             } else {
                 // Exactly one pending (or in-flight) is correct; 0 = lost reschedule,
                 // >1 = double schedule. Both forbidden.
@@ -163,7 +163,6 @@ public final class TcpRaftTransportRaceTest {
 
         @Actor
         public void connector() {
-            // Publishes socket/out in source order then starts exactly one writer.
             p.connectAndStartWriterSuccess();
         }
 
@@ -230,7 +229,6 @@ public final class TcpRaftTransportRaceTest {
 
         @Actor
         public void sender() {
-            // Full queue -> drop-oldest path: poll() + offer(), incrementing dropped.
             p.enqueueOrDrop(new byte[]{2});
         }
 

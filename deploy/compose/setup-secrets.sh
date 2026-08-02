@@ -58,7 +58,6 @@ echo "[secrets] trust stores (empty-password PKCS12, built directly from PEMs)"
 # CP trusts: every edge cert (fan-out clients) + its own server cert (Raft peer mTLS).
 java "$HERE/SecretsTool.java" truststore "$SECRETS/server-ts.p12" \
     "server=$SECRETS/server.pem" "${EDGE_TRUST_ARGS[@]}"
-# Edges trust: the server cert only.
 java "$HERE/SecretsTool.java" truststore "$SECRETS/edge-ts.p12" "server=$SECRETS/server.pem"
 
 echo "[secrets] shared Ed25519 signing key + exported verify key (production classes)"

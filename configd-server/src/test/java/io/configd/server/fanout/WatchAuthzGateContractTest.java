@@ -74,7 +74,6 @@ class WatchAuthzGateContractTest {
 
     @Test
     void coversTargetIsInvariantToRuleMergeOrder() {
-        // An ancestor ALLOW carries READ over app.; an interior DENY carves app.secret.; an unrelated grant.
         List<PolicyRule> rules = List.of(
                 allow("app.", Permission.READ, Permission.WATCH),
                 deny("app.secret.", Permission.READ),
@@ -84,7 +83,6 @@ class WatchAuthzGateContractTest {
         assertOrderInvariant(rules, false, r -> AclService.coversTarget(r, "app.", Permission.READ));
         // WATCH over app. IS covered (no WATCH deny anywhere under app.).
         assertOrderInvariant(rules, true, r -> AclService.coversTarget(r, "app.", Permission.WATCH));
-        // A narrower target with no interior deny under it is covered for READ.
         assertOrderInvariant(rules, true, r -> AclService.coversTarget(r, "app.public.", Permission.READ));
     }
 

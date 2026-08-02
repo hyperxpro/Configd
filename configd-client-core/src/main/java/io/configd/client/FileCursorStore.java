@@ -77,7 +77,7 @@ public final class FileCursorStore implements CursorStore {
             crc.update(data, 0, crcOffset);
             int stored = ByteBuffer.wrap(data, crcOffset, 4).getInt();
             if (stored != (int) crc.getValue()) {
-                return Optional.empty(); // corruption — re-hydrate from scratch
+                return Optional.empty();
             }
             ByteBuffer buf = ByteBuffer.wrap(data, 0, crcOffset);
             long epoch = buf.getLong();
@@ -93,7 +93,6 @@ public final class FileCursorStore implements CursorStore {
             }
             return Optional.of(new WatchCursor(epoch, components));
         } catch (IOException | RuntimeException e) {
-            // Any read/parse failure treats as absent — re-hydrate rather than trust corrupt cursor.
             return Optional.empty();
         }
     }

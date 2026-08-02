@@ -58,8 +58,8 @@ public final class HamtMapStructuralSharingTest {
 
         @Actor
         public void reader(I_Result r) {
-            HamtMap<String, Integer> m = map;         // volatile read
-            Integer v = m.get(SHARED);                // must be present in every version
+            HamtMap<String, Integer> m = map;
+            Integer v = m.get(SHARED);
             r.r1 = (v == null) ? 0 : v;
         }
     }
@@ -86,7 +86,7 @@ public final class HamtMapStructuralSharingTest {
 
         @Actor
         public void reader(II_Result r) {
-            HamtMap<String, Integer> m = map;          // single volatile read
+            HamtMap<String, Integer> m = map;
             Integer s = m.get(SHARED);
             Integer f = m.get(FRESH);
             r.r1 = (s == null) ? -1 : s;               // -1 surfaces as forbidden

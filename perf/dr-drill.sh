@@ -52,7 +52,7 @@ launch_node() {
     > "$BASE/n$k.log" 2>&1 &
   PID[$k]=$!
 }
-wait_ready() { # wait_ready <node-id> <timeout_s>
+wait_ready() {
   local k="$1" to="${2:-60}" i
   for i in $(seq 1 $((to*2))); do
     [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 "http://$(api $k)/health/ready" 2>/dev/null)" = "200" ] && return 0
@@ -81,7 +81,7 @@ find_leader() {
   return 1
 }
 # max commit_index across the node's exported raft metrics (group 0 / any shard).
-commit_index() { # commit_index <node-id>
+commit_index() {
   curl -s --max-time 3 "http://$(api $1)/metrics" 2>/dev/null \
     | grep -E 'commit_index' | grep -vE 'pending' | awk '{print $NF}' | sort -nr | head -1 | sed 's/\..*//'
 }
@@ -152,11 +152,9 @@ done
 [ -n "$T_REC" ] || fail "writes never resumed after leader kill (no failover)"
 GAP_MS=$(( (T_REC - T_KILL) / 1000000 ))
 log "failover: new write-leader = node $NEWL; write-availability GAP = ${GAP_MS} ms"
-# stability: elections over a 12s settle window should be small + then flat
 sleep 12
 ELEC1=$(elections_total)
 log "elections_total: before_kill=$ELEC0 after_settle=$ELEC1 (delta=$((ELEC1-ELEC0)) — bounded election, not a storm)"
-# no committed-write loss: every seeded key intact
 read I M MM < <(verify_keys "$NEWL"); log "seeded read-back via node $NEWL: intact=$I missing=$M mismatch=$MM"
 if [ "$M" -eq 0 ] && [ "$MM" -eq 0 ]; then log "DRILL A VERDICT: NO committed-write loss (all $I seeded keys survived leader loss)"; else log "DRILL A VERDICT: ***DATA LOSS*** missing=$M mismatch=$MM"; fi
 wait "$LOADPID" 2>/dev/null
@@ -168,7 +166,6 @@ launch_node "$L"; wait_ready "$L" 60 && log "node $L rejoined" || log "WARN node
 log ""
 log "===== DRILL B: NODE RECOVERY via WAL replay (kill+restart, same data dir) ====="
 L=$(find_leader) || fail "no leader for drill B"
-# pick a follower != leader
 FOLL=""; for k in 1 2 3; do [ "$k" != "$L" ] && [ -n "${PID[$k]:-}" ] && { FOLL=$k; break; }; done
 log "leader=$L follower-to-recover=$FOLL"
 CI_LEAD=$(commit_index "$L"); log "leader commit_index = $CI_LEAD"
@@ -177,7 +174,6 @@ log "killed follower $FOLL; restarting from its OWN data dir (WAL/snapshot repla
 T0=$(now_ns); launch_node "$FOLL"
 wait_ready "$FOLL" 90 || fail "follower $FOLL did not become ready"
 T_READY=$(now_ns); READY_MS=$(( (T_READY-T0)/1000000 ))
-# converge: follower commit_index >= leader commit_index at kill time
 CONV_MS=""; for _t in $(seq 1 600); do ci=$(commit_index "$FOLL"); [ -n "$ci" ] && [ "${ci:-0}" -ge "${CI_LEAD:-0}" ] 2>/dev/null && { CONV_MS=$(( ($(now_ns)-T0)/1000000 )); break; }; sleep 0.1; done
 log "WAL-replay recovery: ready_in=${READY_MS}ms converged_in=${CONV_MS:-TIMEOUT}ms (follower ci>=leader ci=$CI_LEAD)"
 read I M MM < <(verify_keys "$FOLL"); log "DRILL B read-back via recovered node $FOLL: intact=$I missing=$M mismatch=$MM"

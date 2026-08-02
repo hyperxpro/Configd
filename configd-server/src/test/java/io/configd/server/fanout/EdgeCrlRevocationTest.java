@@ -75,8 +75,8 @@ class EdgeCrlRevocationTest {
 
     private static Path dir;
     private static Path serverKs;
-    private static Path clientKs;    // CA-signed client cert (the revoked one)
-    private static Path trustStore;  // trusts {CA, server}
+    private static Path clientKs;
+    private static Path trustStore;
     private static Path revokedCrl;
     private static Path emptyCrl;
 
@@ -96,7 +96,6 @@ class EdgeCrlRevocationTest {
         Path clientCsr = dir.resolve("client.csr");
         Path clientPem = dir.resolve("client.pem");
 
-        // Self-signed server; a CA that issues the client cert.
         keytool("-genkeypair", "-alias", "server", "-dname", "CN=localhost,O=configd-test",
                 "-ext", "san=dns:localhost,ip:127.0.0.1", "-keyalg", "EC", "-groupname", "secp256r1",
                 "-sigalg", "SHA256withECDSA", "-validity", "3", "-storetype", "PKCS12",
@@ -147,7 +146,6 @@ class EdgeCrlRevocationTest {
                 try {
                     Files.deleteIfExists(p);
                 } catch (Exception ignored) {
-                    // best-effort
                 }
             });
         }
@@ -160,7 +158,6 @@ class EdgeCrlRevocationTest {
         }
     }
 
-    // strict + a cert on the CRL -> rejected (both transports)
 
     private void strictRevokedCertRejected(boolean netty) throws Exception {
         EdgeCertGate gate = new EdgeCertGate(

@@ -36,7 +36,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class OwnerThreadSimIntegrationTest {
 
-    /** A throwing in-node checker - the sim discipline: any breach (including the owner tripwire) fails. */
     private static RaftNode.InvariantChecker throwingChecker(AtomicInteger fireCount) {
         return (name, condition, message) -> {
             if (!condition) {
@@ -60,8 +59,6 @@ class OwnerThreadSimIntegrationTest {
         long version = cluster.proposeAndCommit(leader, "k", "v", 5_000);
         assertTrue(version > 0, "expected a committed proposal (non-vacuous consensus work)");
 
-        // The owner-thread tripwire (and every in-node invariant) was asserted after every tick and
-        // at every guarded entry point, and never fired - the legitimate single-thread access is clean.
         assertTrue(fires.get() == 0, "owner-thread tripwire (or an in-node invariant) fired on the correct path");
     }
 
@@ -71,7 +68,6 @@ class OwnerThreadSimIntegrationTest {
         ConsistencyPropertyTests.ClusterHarness cluster =
                 new ConsistencyPropertyTests.ClusterHarness(20260621L, 3, throwingChecker(fires));
 
-        // First tick binds the owners to this drive thread (and elects, so the node is live).
         int leader = cluster.electLeader(5_000);
         assertTrue(leader >= 0, "precondition: a leader was elected (owners now bound to the drive thread)");
 

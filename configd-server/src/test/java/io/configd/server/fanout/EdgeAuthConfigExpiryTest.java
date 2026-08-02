@@ -55,7 +55,7 @@ final class EdgeAuthConfigExpiryTest {
     @Test
     void authorityExpiryClosesAtExpPlusLeeway() {
         long now = 1_000_000_000_000L;
-        long tokenExp = now + 900_000L; // 15 minutes out
+        long tokenExp = now + 900_000L;
         assertEquals(tokenExp + LEEWAY_MS,
                 config().tokenCloseDeadlineMillis(authenticated(tokenExp), now));
     }

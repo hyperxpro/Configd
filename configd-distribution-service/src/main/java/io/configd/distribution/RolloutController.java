@@ -103,9 +103,6 @@ public final class RolloutController {
         return status(rolloutId);
     }
 
-    /**
-     * @return the updated status, or null if the rollout doesn't exist
-     */
     public RolloutStatus advance(String rolloutId) {
         RolloutTracker tracker = rollouts.get(rolloutId);
         if (tracker == null) return null;
@@ -144,9 +141,6 @@ public final class RolloutController {
         return status(rolloutId);
     }
 
-    /**
-     * The change should be reverted.
-     */
     public RolloutStatus rollback(String rolloutId) {
         RolloutTracker tracker = rollouts.get(rolloutId);
         if (tracker != null) {

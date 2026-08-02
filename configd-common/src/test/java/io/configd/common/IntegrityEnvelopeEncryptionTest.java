@@ -196,7 +196,6 @@ class IntegrityEnvelopeEncryptionTest {
         byte[] wrapped = IntegrityEnvelope.encrypting(keys()).wrap(MAGIC, SCOPE, payload());
         // A keyed-but-not-encrypting reader cannot decrypt algId=2 and must refuse loudly.
         assertThrows(IntegrityException.class, () -> new IntegrityEnvelope(hmacKey()).unwrap(MAGIC, SCOPE, wrapped));
-        // A keyless reader must refuse it too.
         assertThrows(IntegrityException.class, () -> IntegrityEnvelope.keyless().unwrap(MAGIC, SCOPE, wrapped));
     }
 
@@ -211,7 +210,6 @@ class IntegrityEnvelopeEncryptionTest {
         // The encrypting envelope over the same keyring reads them via macKey(keyTerm), the migration path.
         IntegrityEnvelope enc = IntegrityEnvelope.encrypting(km);
         assertArrayEquals(payload(), enc.unwrap(MAGIC, SCOPE, preEncryption));
-        // New writes, however, are encrypted (algId=2).
         assertEquals(IntegrityEnvelope.ALG_AES256_GCM, enc.wrap(MAGIC, SCOPE, payload())[6]);
     }
 

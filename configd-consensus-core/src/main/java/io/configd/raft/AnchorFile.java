@@ -103,7 +103,7 @@ final class AnchorFile implements Closeable {
 
     void writeDurableHead(long index, long term) {
         if (current.lastDurableIndex() == index && current.lastDurableTerm() == term) {
-            return; // head unchanged - already anchored, nothing to advance
+            return;
         }
         write(current.withDurable(index, term));
     }
@@ -179,7 +179,7 @@ final class AnchorFile implements Closeable {
 
     private AnchorRecord parseSlot(byte[] image, int slotOffset) {
         if (image.length < slotOffset + SLOT_STRIDE) {
-            return null; // truncated file - this slot is not fully present
+            return null;
         }
         ByteBuffer buf = ByteBuffer.wrap(image, slotOffset, SLOT_STRIDE);
         int recordLen = buf.getInt();

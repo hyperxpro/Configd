@@ -181,7 +181,7 @@ class NodeKeyringTest {
         try (NodeKeyring k = NodeKeyring.loadOrCreateOverIO(
                 new CrashModelAnchorIO(disk), mac(sk), kek(sk), nodeId("nodeA"), new SecureRandom())) {
             SegmentKeyManager km = SegmentKeyManager.overTerms(k.unsealRootKeys(REF), k.activeTerm());
-            IntegrityEnvelope env = IntegrityEnvelope.hmac(km); // encryption OFF, auth ON
+            IntegrityEnvelope env = IntegrityEnvelope.hmac(km);
             oldRecord = env.wrap(WAL_MAGIC, SCOPE, oldPlain);
             assertEquals(1, keyTermOf(oldRecord), "term-1 HMAC record");
             assertEquals(IntegrityEnvelope.ALG_HMAC_SHA256, oldRecord[6]);
@@ -193,7 +193,6 @@ class NodeKeyringTest {
             newRecord = env.wrap(WAL_MAGIC, SCOPE, newPlain);
             assertEquals(2, keyTermOf(newRecord), "new HMAC writes stamp the new term");
 
-            // BOTH verify: the term-1 record under K_integrity[1] (retained), the term-2 under [2].
             assertArrayEquals(oldPlain, env.unwrap(WAL_MAGIC, SCOPE, oldRecord),
                     "an HMAC segment written under the old term still verifies after rotation");
             assertArrayEquals(newPlain, env.unwrap(WAL_MAGIC, SCOPE, newRecord));
@@ -223,8 +222,6 @@ class NodeKeyringTest {
             assertThrows(RuntimeException.class,
                     () -> k.rewrapForNewSigningKey(mac(skB), kek(skB), nodeId("nodeA")));
         }
-        // The signing-key file was NOT swapped (crash was before the swap), so A is still active:
-        // boot under A finds the intact old slot; all roots + data survive.
         try (NodeKeyring k2 = NodeKeyring.loadOrCreateOverIO(
                 new CrashModelAnchorIO(disk), mac(skA), kek(skA), nodeId("nodeA"), new SecureRandom())) {
             assertArrayEquals(plain, envOf(k2).unwrap(WAL_MAGIC, SCOPE, onDisk),
@@ -246,9 +243,6 @@ class NodeKeyringTest {
             // Rewrap-before-swap succeeds (no crash), then the operator swaps signing-key.bin A -> B.
             k.rewrapForNewSigningKey(mac(skB), kek(skB), nodeId("nodeA"));
         }
-        // Reboot under the NEW signing key B: the new slot wins, roots are UNCHANGED, so the record
-        // encrypted under A's keyring still decrypts. This is the data-destroying signing-key rotation
-        // made impossible by construction.
         try (NodeKeyring k2 = NodeKeyring.loadOrCreateOverIO(
                 new CrashModelAnchorIO(disk), mac(skB), kek(skB), nodeId("nodeA"), new SecureRandom())) {
             assertArrayEquals(plain, envOf(k2).unwrap(WAL_MAGIC, SCOPE, onDisk),
@@ -267,7 +261,7 @@ class NodeKeyringTest {
     void keyringUnderAPriorSigningKey_refuses_notSilentReMint() {
         CrashModelAnchorIO.Disk disk = new CrashModelAnchorIO.Disk();
         byte[] skA = signingKey((byte) 0x71);
-        byte[] skB = signingKey((byte) 0x72); // a DIFFERENT signing key, no rewrap performed
+        byte[] skB = signingKey((byte) 0x72);
         try (NodeKeyring k = NodeKeyring.loadOrCreateOverIO(
                 new CrashModelAnchorIO(disk), mac(skA), kek(skA), nodeId("nodeA"), new SecureRandom())) {
             assertEquals(1, k.activeTerm());

@@ -167,7 +167,6 @@ abstract class AbstractRaftTransportContract {
         transports.clear();
     }
 
-    // Construction helpers - the single point that parametrizes over transports.
 
     /** Calls {@link #newEndpoint} and tracks the result for {@link #tearDown} cleanup. */
     private RaftTransportEndpoint createEndpoint(NodeId self, InetSocketAddress bind,
@@ -184,7 +183,6 @@ abstract class AbstractRaftTransportContract {
         return createEndpoint(self, bindAddress, peers, null, handler);
     }
 
-    // Functional tests (folded from TcpRaftTransportTest).
 
     @Test
     void sendMessageBetweenTwoNodes() throws Exception {
@@ -310,7 +308,6 @@ abstract class AbstractRaftTransportContract {
         transportB.close();
         transports.remove(transportB);
 
-        // Small delay to let the close propagate.
         Thread.sleep(200);
 
         RaftTransportEndpoint transportB2 = createTransport(
@@ -573,7 +570,6 @@ abstract class AbstractRaftTransportContract {
                         + "hostname; a message should NOT have reached peer B.");
     }
 
-    // mTLS negative / attack tests (folded from RaftTransportMtlsAttackTest).
 
     @Test
     @Timeout(120)
@@ -640,7 +636,6 @@ abstract class AbstractRaftTransportContract {
         assertEquals(0, inboundCount.get(), "no frame may be delivered over a downgraded connection");
     }
 
-    // Mutual-auth negatives.
 
     @Test
     @Timeout(120)
@@ -678,14 +673,13 @@ abstract class AbstractRaftTransportContract {
                 "no frame may be delivered without a client certificate");
     }
 
-    // Slowloris / admission cap (folded from TcpRaftTransportSlowlorisTest).
 
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void slowDripPeerIsDroppedWithinTheReadIdleDeadline() throws Exception {
         String savedTimeout = System.getProperty("configd.raft.inboundReadTimeoutMs");
         try {
-            System.setProperty("configd.raft.inboundReadTimeoutMs", "500"); // short deadline for the test
+            System.setProperty("configd.raft.inboundReadTimeoutMs", "500");
             int port = freePort();
             startTransport(port);
 
@@ -746,7 +740,6 @@ abstract class AbstractRaftTransportContract {
         }
     }
 
-    // Blackhole tests: send must NEVER park the caller (folded from TcpRaftTransportBlackholeTest).
 
     /**
      * A non-routable destination on 10.255.255.0/24. SYNs sent here are dropped (no RST), so
@@ -858,7 +851,6 @@ abstract class AbstractRaftTransportContract {
         assertTrue(finished);
     }
 
-    // Transport starters (route construction through newEndpoint).
 
     private int startMtlsServer(Path keyStore, AtomicInteger inboundCount) throws Exception {
         TlsConfig serverTls = new TlsConfig(
@@ -902,11 +894,7 @@ abstract class AbstractRaftTransportContract {
         }
     }
 
-    // Attack helpers (verbatim from RaftTransportMtlsAttackTest).
 
-    /**
-     * Builds an {@link SSLSocket} from {@code clientCtx} and runs {@link #attemptHandshakeAndSend}.
-     */
     private boolean attemptHandshakeAndSend(SSLContext clientCtx, int port) throws Exception {
         SSLSocket sock = (SSLSocket) clientCtx.getSocketFactory().createSocket();
         return attemptHandshakeAndSend(sock, port);
@@ -956,7 +944,6 @@ abstract class AbstractRaftTransportContract {
         }
     }
 
-    /** Spin-waits up to {@code millis} asserting the inbound handler stays at zero. */
     private static void assertNoInboundWithin(AtomicInteger inboundCount, long millis)
             throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
@@ -992,7 +979,6 @@ abstract class AbstractRaftTransportContract {
         return sb.toString();
     }
 
-    // SSLContext + keystore loading.
 
     private static SSLContext clientContext(Path clientKs, Path trustStore) throws Exception {
         KeyManagerFactory kmf = null;
@@ -1019,7 +1005,6 @@ abstract class AbstractRaftTransportContract {
         return ks;
     }
 
-    // Keytool fixture builders.
 
     private static void genKeyPair(Path keyStore, String alias, String dname, String... validity)
             throws Exception {

@@ -67,11 +67,6 @@ class SimulationDeterminismTest {
                         + " timeout RNG) must be derived from the master seed.");
     }
 
-    /**
-     * A second seed, to confirm the property holds generally (and that the
-     * two seeds genuinely diverge from each other - i.e. the digest is not a
-     * constant that would pass vacuously).
-     */
     @Test
     void distinctSeedsAreReplayableAndDiffer() {
         String a1 = runScenarioDigest(2L);

@@ -227,17 +227,12 @@ public final class AdminApiHandler {
         if (path != null && path.startsWith("/v1/config/")) {
             return config(req, path);
         }
-        // The leadership-transfer control endpoint is only routed when the seam is wired; a null seam
-        // leaves the admin-groups namespace unrouted (falls through to 404 below).
         if (leadershipAdmin != null && path != null && path.startsWith(ADMIN_GROUPS_PREFIX)) {
             return transferLeadership(req, path);
         }
-        // The Raft cluster admin endpoints (status + add-server) are only routed when the seam is wired.
         if (raftClusterAdmin != null && path != null && path.startsWith(ADMIN_RAFT_PREFIX)) {
             return raftAdmin(req, path);
         }
-        // The keyring term-rotation trigger is only routed when a rotator is wired (the at-rest keyring
-        // posture); a null rotator leaves it unrouted (falls through to 404).
         if (keyringRotator != null && KEYRING_ROTATE_PATH.equals(path)) {
             return keyringRotate(req);
         }

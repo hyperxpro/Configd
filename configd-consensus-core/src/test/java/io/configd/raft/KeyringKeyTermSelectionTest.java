@@ -46,7 +46,6 @@ class KeyringKeyTermSelectionTest {
         return new SecretKeySpec(Hkdf.deriveKey(sk, salt, info.getBytes(StandardCharsets.UTF_8), 32), alg);
     }
 
-    /** A two-term keyring (mint + one rotation) and an encrypting envelope over both terms, active=2. */
     private static IntegrityEnvelope twoTermEnv(CrashModelAnchorIO.Disk disk) {
         SecretKey mac = key("configd/keyring-mac/v1", (byte) 0x33, "HmacSHA256");
         SecretKey kek = key("configd/keyring-wrap/v1", (byte) 0x33, "AES");
@@ -63,8 +62,6 @@ class KeyringKeyTermSelectionTest {
         byte[] rec = env.wrap(WAL_MAGIC, SCOPE, "term-2 secret".getBytes(StandardCharsets.UTF_8));
         assertEquals(2, keyTermOf(rec), "written under the active term 2");
 
-        // Roll the authenticated keyTerm 2 -> 1 (a PRESENT term) and repair the CRC so the corruption
-        // check passes. The GCM tag (AAD binds keyTerm) then catches the roll.
         byte[] forged = rec.clone();
         setKeyTerm(forged, 1);
         repairCrc(forged);
@@ -78,7 +75,7 @@ class KeyringKeyTermSelectionTest {
         byte[] rec = env.wrap(WAL_MAGIC, SCOPE, "term-2 secret".getBytes(StandardCharsets.UTF_8));
 
         byte[] forged = rec.clone();
-        setKeyTerm(forged, 99); // a term the keyring does not retain
+        setKeyTerm(forged, 99);
         repairCrc(forged);
         assertThrows(IntegrityException.class, () -> env.unwrap(WAL_MAGIC, SCOPE, forged),
                 "a keyTerm with no root in the keyring fails closed (resolveDek)");
@@ -92,9 +89,7 @@ class KeyringKeyTermSelectionTest {
         assertArrayEquals(plain, env.unwrap(WAL_MAGIC, SCOPE, rec), "a genuine record still decrypts");
     }
 
-    // HMAC-posture variants (encryption off, auth on).
 
-    /** A two-term keyring HMAC envelope, activeTerm 2. */
     private static IntegrityEnvelope twoTermHmacEnv(CrashModelAnchorIO.Disk disk) {
         SecretKey mac = key("configd/keyring-mac/v1", (byte) 0x44, "HmacSHA256");
         SecretKey kek = key("configd/keyring-wrap/v1", (byte) 0x44, "AES");
@@ -109,8 +104,6 @@ class KeyringKeyTermSelectionTest {
         byte[] rec = env.wrap(WAL_MAGIC, SCOPE, "term-2 hmac secret".getBytes(StandardCharsets.UTF_8));
         assertEquals(2, keyTermOf(rec));
         assertEquals(IntegrityEnvelope.ALG_HMAC_SHA256, rec[6]);
-        // Roll keyTerm 2 -> 1 and repair the CRC: the reader now selects K_integrity[1] and MACs over a
-        // keyTerm=1 input, but the stored MAC was under K_integrity[2] over keyTerm=2 -> mismatch.
         byte[] forged = rec.clone();
         setKeyTerm(forged, 1);
         repairCrc(forged);

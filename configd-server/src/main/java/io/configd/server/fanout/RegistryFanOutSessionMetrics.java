@@ -13,8 +13,8 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
 
     private final MetricsRegistry.Counter heartbeats;
     private final MetricsRegistry.Counter slowConsumerWarnings;
-    private final MetricsRegistry.Counter notifyBatches;        // count of NOTIFY frames
-    private final MetricsRegistry.Histogram notifyBatchSize;    // notifications per batch
+    private final MetricsRegistry.Counter notifyBatches;
+    private final MetricsRegistry.Histogram notifyBatchSize;
     private final MetricsRegistry.Counter snapshotTransfers;
     private final Map<String, MetricsRegistry.Counter> demotionsByReason;
     private final Map<String, MetricsRegistry.Counter> closedByReason;
@@ -133,7 +133,6 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
         registry.gauge("edge.fanout.connected_subscribers", connectedSubscribers::get);
         registry.gauge("edge.fanout.subscribe.horizon_distance", subscribeHorizonDistance::get);
 
-        // Per-state consumer tallies (per-suffix encoded).
         registry.gauge("edge.fanout.consumer_state.healthy", consumersHealthy::get);
         registry.gauge("edge.fanout.consumer_state.slow", consumersSlow::get);
         registry.gauge("edge.fanout.consumer_state.catchup", consumersCatchup::get);

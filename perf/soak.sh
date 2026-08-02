@@ -190,7 +190,6 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   [ "$remaining" -lt "$win" ] && win=$remaining
   [ "$win" -lt 5 ] && break
 
-  # One driver window (open-loop, CO-corrected, follows leader hints).
   drv_out="$BASE/drv-$sample_idx.txt"
   java $GCFLAGS $HEAP --enable-preview -cp "$BENCH" io.configd.bench.OpenLoopWriteDriver \
     atrate "$NODEMAP" "$RATE" "$win" "$CONCURRENCY" "$VALUE_BYTES" \
@@ -203,7 +202,6 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   committed=$(echo "$res" | grep -oE 'committed_200=[0-9]+' | cut -d= -f2); committed=${committed:-0}
   rejected=$(echo "$res" | grep -oE 'rejected_backpressure=[0-9]+' | cut -d= -f2); rejected=${rejected:-0}
 
-  # Resource snapshot (summed over the 3 node PIDs; per-node for n1..n3).
   rss_t=0; fd_t=0; thr_t=0; heap_t=0; cyc_t=0
   cum_t="0.000"
   declare -a rss_n=(0 0 0); declare -a fd_n=(0 0 0)

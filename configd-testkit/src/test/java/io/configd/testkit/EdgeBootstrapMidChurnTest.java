@@ -54,7 +54,6 @@ class EdgeBootstrapMidChurnTest {
         assertEquals(0, joiner.snapshotsApplied(),
                 "HARD non-vacuity: the kill lands MID-TRANSFER (nothing applied yet)");
 
-        // KILL the leader; the surviving majority re-elects; writes continue.
         isolateFromCpPeers(sim, oldLeader);
         int newLeader = awaitNewLeader(sim, oldLeader);
         for (int t = 0; t < 40; t++) {
@@ -88,11 +87,10 @@ class EdgeBootstrapMidChurnTest {
             pumpAt(sim, oldLeader);
         }
 
-        // The joiner's snapshot SOURCE is the leader itself - killed mid-transfer.
         int joinIdx = sim.joinEdge(oldLeader);
         EdgeActor joiner = sim.edges().get(joinIdx);
         sim.enableEdgeRecovery(joinIdx);
-        pumpAt(sim, oldLeader); // T0: transfer in flight
+        pumpAt(sim, oldLeader);
         assertEquals(0, joiner.snapshotsApplied(),
                 "HARD non-vacuity: the kill lands MID-TRANSFER");
         isolateFromCpPeers(sim, oldLeader);
@@ -115,7 +113,6 @@ class EdgeBootstrapMidChurnTest {
             sim.tick();
         }
         assertTrue(joiner.snapshotsApplied() >= 1, "bootstrap was a snapshot transfer");
-        // Per-source byte-equality, judged by the SAME equivalence machinery.
         sim.invariants().finalCheck(List.of(joiner),
                 sim.cpSim().store(oldLeader).snapshot());
         // Full-cluster convergence for the deposed source's subscriber is NOT asserted:
@@ -146,10 +143,8 @@ class EdgeBootstrapMidChurnTest {
         int joinIdx = sim.joinEdge(source);
         EdgeActor joiner = sim.edges().get(joinIdx);
         sim.enableEdgeRecovery(joinIdx);
-        pumpAt(sim, oldLeader); // T0: transfer in flight
+        pumpAt(sim, oldLeader);
 
-        // The full chaos: the leader dies AND the joiner's channel dies before the
-        // transfer can deliver - the in-flight bootstrap is wholly lost in the churn.
         isolateFromCpPeers(sim, oldLeader);
         sim.partitionEdge(joinIdx);
         int newLeader = awaitNewLeader(sim, oldLeader);
@@ -169,7 +164,6 @@ class EdgeBootstrapMidChurnTest {
                 "the joiner was bootstrapped by the self-healing re-sent transfer");
     }
 
-    /** A CP node that is neither the (old) leader nor the excluded node. */
     private static int pickFollower(EdgeFanOutSim sim, int leader, int exclude) {
         for (int n = 0; n < CP_NODES; n++) {
             if (n != leader && n != exclude
@@ -214,7 +208,6 @@ class EdgeBootstrapMidChurnTest {
         return -1;
     }
 
-    /** Full-roster judge: all edges must reach the leader's state. */
     private void settleAndJudge(EdgeFanOutSim sim, C1StreamDriver driver,
                                 List<Integer> mustHoldNodes) {
         settleAndJudgeEdges(sim, driver, mustHoldNodes, sim.edges());

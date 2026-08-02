@@ -206,9 +206,9 @@ class RaftMessageCodecTest {
     @Test
     void installSnapshotResponseDefaultsOffsetWhenAbsentOnWire() {
         ByteBuffer legacy = ByteBuffer.allocate(1 + 4 + 8);
-        legacy.put((byte) 1);            // success
+        legacy.put((byte) 1);
         legacy.putInt(NodeId.of(3).id());
-        legacy.putLong(42L);             // lastIncludedIndex
+        legacy.putLong(42L);
         FrameCodec.Frame frame = new FrameCodec.Frame(
                 MessageType.INSTALL_SNAPSHOT_RESPONSE, GROUP_ID, 8L, legacy.array());
         var result = (InstallSnapshotResponse) RaftMessageCodec.decode(frame);
@@ -244,7 +244,6 @@ class RaftMessageCodecTest {
     @Nested
     class CodecStrictness {
 
-        /** Rebuilds a frame with {@code n} zero padding bytes appended to a valid payload. */
         private FrameCodec.Frame withTrailing(FrameCodec.Frame good, int n) {
             byte[] padded = Arrays.copyOf(good.payload(), good.payload().length + n);
             return new FrameCodec.Frame(good.messageType(), good.groupId(), good.term(), padded);
@@ -256,7 +255,7 @@ class RaftMessageCodecTest {
             var entries = List.of(new LogEntry(11L, 5L, new byte[]{1, 2, 3}));
             var req = new AppendEntriesRequest(5L, NodeId.of(2), 10L, 4L, entries, 9L);
             FrameCodec.Frame good = RaftMessageCodec.encode(req, GROUP_ID);
-            assertDoesNotThrow(() -> RaftMessageCodec.decode(good)); // control: valid frame unaffected
+            assertDoesNotThrow(() -> RaftMessageCodec.decode(good));
 
             FrameCodec.Frame bad = withTrailing(good, 1);
             var ex = assertThrows(IllegalArgumentException.class, () -> RaftMessageCodec.decode(bad));
@@ -276,7 +275,7 @@ class RaftMessageCodecTest {
             byte[] config = {9, 8, 7};
             var req = new InstallSnapshotRequest(8L, NodeId.of(1), 100L, 7L, 0, data, true, config);
             FrameCodec.Frame good = RaftMessageCodec.encode(req, GROUP_ID);
-            assertDoesNotThrow(() -> RaftMessageCodec.decode(good)); // control
+            assertDoesNotThrow(() -> RaftMessageCodec.decode(good));
 
             FrameCodec.Frame bad = withTrailing(good, 2);
             var ex = assertThrows(IllegalArgumentException.class, () -> RaftMessageCodec.decode(bad));
@@ -295,11 +294,11 @@ class RaftMessageCodecTest {
         void installSnapshotRejectsNegativeOffset() {
             ByteBuffer p = ByteBuffer.allocate(4 + 8 + 8 + 4 + 1 + 4);
             p.putInt(NodeId.of(1).id());
-            p.putLong(100L); // lastIncludedIndex
-            p.putLong(7L);   // lastIncludedTerm
+            p.putLong(100L);
+            p.putLong(7L);
             p.putInt(-1);    // offset (negative - illegal)
-            p.put((byte) 1); // done
-            p.putInt(0);     // dataLen
+            p.put((byte) 1);
+            p.putInt(0);
             FrameCodec.Frame bad = new FrameCodec.Frame(
                     MessageType.INSTALL_SNAPSHOT, GROUP_ID, 8L, p.array());
             var ex = assertThrows(IllegalArgumentException.class, () -> RaftMessageCodec.decode(bad));
@@ -322,7 +321,7 @@ class RaftMessageCodecTest {
         void appendEntriesResponseRejectsTrailingBytes() {
             var resp = new AppendEntriesResponse(5L, true, 12L, NodeId.of(3));
             FrameCodec.Frame good = RaftMessageCodec.encode(resp, GROUP_ID);
-            assertDoesNotThrow(() -> RaftMessageCodec.decode(good)); // control
+            assertDoesNotThrow(() -> RaftMessageCodec.decode(good));
             var ex = assertThrows(IllegalArgumentException.class,
                     () -> RaftMessageCodec.decode(withTrailing(good, 1)));
             assertTrue(ex.getMessage().contains("trailing"), ex.getMessage());
@@ -332,7 +331,7 @@ class RaftMessageCodecTest {
         void requestVoteRejectsTrailingBytes() {
             var req = new RequestVoteRequest(5L, NodeId.of(2), 10L, 4L, false);
             FrameCodec.Frame good = RaftMessageCodec.encode(req, GROUP_ID);
-            assertDoesNotThrow(() -> RaftMessageCodec.decode(good)); // control
+            assertDoesNotThrow(() -> RaftMessageCodec.decode(good));
             var ex = assertThrows(IllegalArgumentException.class,
                     () -> RaftMessageCodec.decode(withTrailing(good, 1)));
             assertTrue(ex.getMessage().contains("trailing"), ex.getMessage());
@@ -342,7 +341,7 @@ class RaftMessageCodecTest {
         void preVoteRejectsTrailingBytes() {
             var req = new RequestVoteRequest(5L, NodeId.of(2), 10L, 4L, true);
             FrameCodec.Frame good = RaftMessageCodec.encode(req, GROUP_ID);
-            assertDoesNotThrow(() -> RaftMessageCodec.decode(good)); // control
+            assertDoesNotThrow(() -> RaftMessageCodec.decode(good));
             assertThrows(IllegalArgumentException.class,
                     () -> RaftMessageCodec.decode(withTrailing(good, 2)));
         }
@@ -351,7 +350,7 @@ class RaftMessageCodecTest {
         void requestVoteResponseRejectsTrailingBytes() {
             var resp = new RequestVoteResponse(5L, true, NodeId.of(3), false);
             FrameCodec.Frame good = RaftMessageCodec.encode(resp, GROUP_ID);
-            assertDoesNotThrow(() -> RaftMessageCodec.decode(good)); // control
+            assertDoesNotThrow(() -> RaftMessageCodec.decode(good));
             var ex = assertThrows(IllegalArgumentException.class,
                     () -> RaftMessageCodec.decode(withTrailing(good, 1)));
             assertTrue(ex.getMessage().contains("trailing"), ex.getMessage());
@@ -361,7 +360,7 @@ class RaftMessageCodecTest {
         void timeoutNowRejectsTrailingBytes() {
             var req = new TimeoutNowRequest(5L, NodeId.of(2));
             FrameCodec.Frame good = RaftMessageCodec.encode(req, GROUP_ID);
-            assertDoesNotThrow(() -> RaftMessageCodec.decode(good)); // control
+            assertDoesNotThrow(() -> RaftMessageCodec.decode(good));
             var ex = assertThrows(IllegalArgumentException.class,
                     () -> RaftMessageCodec.decode(withTrailing(good, 1)));
             assertTrue(ex.getMessage().contains("trailing"), ex.getMessage());
@@ -373,7 +372,7 @@ class RaftMessageCodecTest {
             // decodes (control), but a byte PAST the present optional field is rejected.
             var resp = new InstallSnapshotResponse(8L, true, NodeId.of(3), 42L, 7);
             FrameCodec.Frame good = RaftMessageCodec.encode(resp, GROUP_ID);
-            var ok = (InstallSnapshotResponse) RaftMessageCodec.decode(good); // control: offset preserved
+            var ok = (InstallSnapshotResponse) RaftMessageCodec.decode(good);
             assertEquals(7, ok.nextExpectedOffset());
             var ex = assertThrows(IllegalArgumentException.class,
                     () -> RaftMessageCodec.decode(withTrailing(good, 1)));
@@ -385,7 +384,7 @@ class RaftMessageCodecTest {
             var from = NodeId.of(2);
             var msg = new io.configd.raft.WitnessMessage(from, 11L, 9L, 3, 4L, true);
             FrameCodec.Frame good = RaftMessageCodec.encode(msg, GROUP_ID);
-            assertDoesNotThrow(() -> RaftMessageCodec.decodeWitness(good, from)); // control: exact body
+            assertDoesNotThrow(() -> RaftMessageCodec.decodeWitness(good, from));
             var ex = assertThrows(IllegalArgumentException.class,
                     () -> RaftMessageCodec.decodeWitness(withTrailing(good, 1), from));
             assertTrue(ex.getMessage().contains("trailing"), ex.getMessage());

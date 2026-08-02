@@ -11,16 +11,13 @@ public final class ReplayGuard {
     /** Default acceptance window in milliseconds (±5 minutes). */
     public static final long DEFAULT_WINDOW_MS = 300_000L;
 
-    /** Default hard cap on retained nonces. */
     public static final int DEFAULT_MAX_NONCES = 1_000_000;
 
     /** Header carrying the client's request timestamp (epoch ms). */
     public static final String TIMESTAMP_HEADER = "X-Configd-Timestamp";
 
-    /** Header carrying the client's per-request unique nonce. */
     public static final String NONCE_HEADER = "X-Configd-Nonce";
 
-    /** The outcome of a replay check. */
     public enum Decision {
         /** Timestamp in-window and nonce unseen: accept (the nonce is now recorded). */
         ACCEPTED,

@@ -32,7 +32,6 @@ final class WatchRegistry {
     /** Live watches, in creation order (deterministic multiplex fan-out / snapshot ownership). */
     private final Map<Long, WatchEntry> live = new LinkedHashMap<>();
 
-    /** Every {@code watch_id} ever registered on this connection (never reused). */
     private final Set<Long> everUsed = new HashSet<>();
 
     boolean isUsed(long watchId) {

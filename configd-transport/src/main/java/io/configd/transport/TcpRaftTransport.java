@@ -265,7 +265,6 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
         }
     }
 
-    /** " (N similar suppressed since last log)" when {@code n > 0}, else "". */
     private static String suppressedSuffix(long n) {
         return n > 0 ? " (" + n + " similar suppressed since last log)" : "";
     }
@@ -338,10 +337,6 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
         this.messageHandler = handler;
     }
 
-    /**
-     * Gracefully shuts down the transport: closes the server socket,
-     * all outbound connections, and the executors.
-     */
     @Override
     public void close() {
         if (!running.compareAndSet(true, false)) {
@@ -368,7 +363,6 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
         executor.shutdownNow();
     }
 
-    /** Inbound connections refused because the accepted live-set hit {@link #maxInboundConnections}. Monotonic. */
     @Override
     public long inboundConnectionsRefused() {
         return inboundConnectionsRefused.get();
@@ -389,7 +383,6 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
             try {
                 s.close();
             } catch (IOException ignored) {
-                // nothing to do
             }
         }
     }
@@ -493,7 +486,6 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
             }
             DataInputStream in = new DataInputStream(socket.getInputStream());
             while (running.get()) {
-                // Read sender NodeId
                 int senderId = in.readInt();
                 NodeId from = NodeId.of(senderId);
 
@@ -514,7 +506,6 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                     return;
                 }
 
-                // Read frame length (first 4 bytes of FrameCodec frame)
                 int frameLength = in.readInt();
                 // Shared bounds-before-allocation check: identical to the Netty decoder's predicate,
                 // so a lying length prefix is rejected the same way by both transports.
@@ -525,12 +516,10 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
 
                 // Read the complete frame (length was already consumed, reconstruct)
                 byte[] frameBytes = new byte[frameLength];
-                // Put the length back at the start
                 frameBytes[0] = (byte) (frameLength >>> 24);
                 frameBytes[1] = (byte) (frameLength >>> 16);
                 frameBytes[2] = (byte) (frameLength >>> 8);
                 frameBytes[3] = (byte) frameLength;
-                // Read remaining bytes
                 in.readFully(frameBytes, 4, frameLength - 4);
 
                 // Decode FIRST. Decode-side throws (CRC, version, type)
@@ -582,7 +571,6 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                         logInboundFailureThrottled(suppressed -> "Inbound handler error from peer " + peer
                                 + " for frame " + type + ": " + detail + suppressedSuffix(suppressed));
                     }
-                    // Continue reading; the framing layer is intact.
                 }
             }
         } catch (EOFException e) {
@@ -754,7 +742,6 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
             try {
                 closeable.close();
             } catch (Exception e) {
-                // ignore
             }
         }
     }
@@ -885,7 +872,6 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                         teardown(s);
                     }
                 });
-                // Writer drains the queue onto this stream.
                 executor.submit(() -> writerLoop(s, o));
 
                 synchronized (connectionManager) {

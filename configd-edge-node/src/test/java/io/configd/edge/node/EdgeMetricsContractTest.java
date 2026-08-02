@@ -239,7 +239,7 @@ class EdgeMetricsContractTest {
     @Test
     void fanOutSeriesAreAllPresentOnFirstScrape() {
         MetricsRegistry registry = new MetricsRegistry();
-        new RegistryFanOutSessionMetrics(registry); // constructor registers everything eagerly
+        new RegistryFanOutSessionMetrics(registry);
         assertAllSeriesPresent(new PrometheusExporter(registry).export(), FAN_OUT_SERIES);
     }
 

@@ -96,7 +96,6 @@ class FanOutSessionCoreBoundaryTest {
                             + io.configd.distribution.wire.EdgeFrameCodec.TRAILER_SIZE,
                     "each NOTIFY frame must respect the byte cap");
         }
-        // The whole chain still delivered, contiguous.
         long expect = 1;
         for (EdgeFrame.Notify n : notifies) {
             for (CommitNotification cn : n.notifications()) {

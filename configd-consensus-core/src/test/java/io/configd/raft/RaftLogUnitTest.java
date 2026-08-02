@@ -28,8 +28,6 @@ class RaftLogUnitTest {
         @Test
         void zeroIndexReturnsSentinelTermZero() {
             RaftLog log = logWith(5, 5);
-            // index 0 must return the term-0 sentinel; without that guard it would
-            // fall through to the range check and return -1.
             assertEquals(0, log.termAt(0));
         }
 
@@ -43,22 +41,16 @@ class RaftLogUnitTest {
 
         @Test
         void belowSnapshotOrAboveLastReturnsMinusOne() {
-            // snapshotIndex=2 (terms at 1,2 compacted), entries 3,4 remain.
             RaftLog log = logWith(2, 2, 6, 6);
             log.compact(2, 2);
-            // index < snapshotIndex -> -1; index > lastIndex -> -1.
-            // A boundary flip here would let lastIndex()+1 read past the end.
             assertEquals(-1, log.termAt(1));
             assertEquals(-1, log.termAt(5));
-            // The snapshot boundary itself returns snapshotTerm, not -1.
             assertEquals(2, log.termAt(2));
         }
 
         @Test
         void exactLastIndexIsInRange() {
             RaftLog log = logWith(9, 9, 9);
-            // Pins the upper boundary of termAt's range check: lastIndex() is valid,
-            // lastIndex()+1 is not.
             assertEquals(9, log.termAt(3));
             assertEquals(-1, log.termAt(4));
         }
@@ -70,23 +62,20 @@ class RaftLogUnitTest {
             // of the sentinel 0. With snapshotIndex==0 that bug would be invisible, so
             // this case (snapshotIndex=2) is the one that matters.
             RaftLog log = logWith(7, 7, 7, 7);
-            log.compact(2, 7); // snapshotIndex=2
+            log.compact(2, 7);
             assertEquals(0, log.termAt(0), "index 0 must always be the term-0 sentinel");
         }
 
         @Test
         void belowSnapshotIsMinusOneAtBoundary() {
-            // snapshotIndex-1 is below the snapshot -> -1, snapshotIndex itself is
-            // the boundary term.
             RaftLog log = logWith(3, 3, 3, 3, 3);
-            log.compact(3, 3); // snapshotIndex=3
+            log.compact(3, 3);
             assertEquals(-1, log.termAt(2));
             assertEquals(3, log.termAt(3));
             assertEquals(3, log.termAt(4));
         }
     }
 
-    // lastTerm: empty vs non-empty
 
     @Nested
     class LastTerm {
@@ -94,9 +83,8 @@ class RaftLogUnitTest {
         @Test
         void emptyLogReturnsSnapshotTermNotZero() {
             RaftLog log = logWith(4, 4);
-            log.compact(2, 4); // fully compacts; entries empty, snapshotTerm=4
+            log.compact(2, 4);
             assertEquals(0, log.size());
-            // An empty log must report the snapshot term (4), not a hard-coded 0.
             assertEquals(4, log.lastTerm());
         }
 
@@ -107,14 +95,13 @@ class RaftLogUnitTest {
         }
     }
 
-    // entriesFrom: range guard, clamps, offset arithmetic
 
     @Nested
     class EntriesFrom {
 
         @Test
         void returnsInclusiveRange() {
-            RaftLog log = logWith(1, 1, 1, 1, 1); // indices 1..5
+            RaftLog log = logWith(1, 1, 1, 1, 1);
             List<LogEntry> got = log.entriesFrom(2, 4);
             assertEquals(3, got.size());
             assertEquals(2, got.getFirst().index());
@@ -124,36 +111,28 @@ class RaftLogUnitTest {
         @Test
         void startGreaterThanEndReturnsEmpty() {
             RaftLog log = logWith(1, 1, 1);
-            // Without the startIndex > endIndex guard, the sublist arithmetic would
-            // silently produce an empty-or-invalid range.
             assertTrue(log.entriesFrom(3, 2).isEmpty());
         }
 
         @Test
         void startBeyondLastReturnsEmpty() {
-            RaftLog log = logWith(1, 1, 1); // lastIndex=3
-            // A start past the end must yield empty, not throw or read garbage.
+            RaftLog log = logWith(1, 1, 1);
             assertTrue(log.entriesFrom(4, 9).isEmpty());
-            // Exactly at lastIndex is a single-element non-empty range (boundary).
             assertEquals(1, log.entriesFrom(3, 9).size());
         }
 
         @Test
         void endAtOrBelowSnapshotReturnsEmpty() {
             RaftLog log = logWith(1, 1, 1, 1);
-            log.compact(2, 1); // snapshotIndex=2
-            // A query wholly inside the snapshot must return empty.
+            log.compact(2, 1);
             assertTrue(log.entriesFrom(1, 2).isEmpty());
-            // endIndex == snapshotIndex+1 is the first live boundary -> non-empty.
             assertEquals(1, log.entriesFrom(1, 3).size());
         }
 
         @Test
         void startClampsUpToSnapshotPlusOne() {
             RaftLog log = logWith(1, 1, 1, 1, 1);
-            log.compact(2, 1); // snapshotIndex=2; live entries 3,4,5
-            // effectiveStart = max(startIndex, snapshotIndex+1): asking from 1 must
-            // clamp to 3 and not include compacted entries.
+            log.compact(2, 1);
             List<LogEntry> got = log.entriesFrom(1, 5);
             assertEquals(3, got.size());
             assertEquals(3, got.getFirst().index());
@@ -162,8 +141,7 @@ class RaftLogUnitTest {
 
         @Test
         void endClampsDownToLastIndex() {
-            RaftLog log = logWith(1, 1, 1); // lastIndex=3
-            // effectiveEnd = min(endIndex, lastIndex()): asking to 100 must clamp to 3.
+            RaftLog log = logWith(1, 1, 1);
             List<LogEntry> got = log.entriesFrom(1, 100);
             assertEquals(3, got.size());
             assertEquals(3, got.getLast().index());
@@ -179,7 +157,6 @@ class RaftLogUnitTest {
         }
     }
 
-    // entriesBatch: count/byte limits, snapshot/last guards
 
     @Nested
     class EntriesBatch {
@@ -187,18 +164,15 @@ class RaftLogUnitTest {
         @Test
         void startBeyondLastOrInSnapshotReturnsEmpty() {
             RaftLog log = logWith(1, 1, 1);
-            // start past the end must return empty.
             assertTrue(log.entriesBatch(4, 10, 1 << 20).isEmpty());
             log.compact(2, 1);
-            // start at or below the snapshot must also return empty.
             assertTrue(log.entriesBatch(2, 10, 1 << 20).isEmpty());
             assertEquals(1, log.entriesBatch(3, 10, 1 << 20).size());
         }
 
         @Test
         void respectsMaxSizeCount() {
-            RaftLog log = logWith(1, 1, 1, 1, 1); // 5 entries
-            // maxSize=2 from index 1 -> exactly entries 1,2.
+            RaftLog log = logWith(1, 1, 1, 1, 1);
             List<LogEntry> got = log.entriesBatch(1, 2, 1 << 20);
             assertEquals(2, got.size());
             assertEquals(1, got.getFirst().index());
@@ -221,31 +195,25 @@ class RaftLogUnitTest {
             RaftLog log = logWith(1, 1, 1);
             List<LogEntry> got = log.entriesBatch(1, 10, 3);
             assertEquals(1, got.size());
-            // maxBytes=4 fits two entries exactly.
             assertEquals(2, log.entriesBatch(1, 10, 4).size());
         }
     }
 
-    // append: sequential-index guard
 
     @Nested
     class Append {
 
         @Test
         void rejectsNonSequentialIndex() {
-            RaftLog log = logWith(1, 1); // lastIndex=2, next expected=3
-            // A gap or duplicate index must throw.
+            RaftLog log = logWith(1, 1);
             assertThrows(IllegalArgumentException.class, () -> log.append(entry(4, 1)));
             assertThrows(IllegalArgumentException.class, () -> log.append(entry(2, 1)));
-            // The correct next index is accepted.
             assertDoesNotThrow(() -> log.append(entry(3, 1)));
         }
 
         @Test
         void appendAllAppliesEverySequentialEntry() {
             RaftLog log = new RaftLog();
-            // Without the inner append call, nothing would be stored and size would
-            // stay 0.
             log.appendAll(List.of(entry(1, 1), entry(2, 1), entry(3, 2)));
             assertEquals(3, log.size());
             assertEquals(3, log.lastIndex());
@@ -253,15 +221,13 @@ class RaftLogUnitTest {
         }
     }
 
-    // appendEntries: log-matching, conflict truncation, idempotency
 
     @Nested
     class AppendEntriesMatching {
 
         @Test
         void rejectsWhenPrevLogTermMismatch() {
-            RaftLog log = logWith(1, 1, 2); // index3 term2
-            // prevLogIndex=3 but prevLogTerm=9 (mismatch) -> false, no append.
+            RaftLog log = logWith(1, 1, 2);
             boolean ok = log.appendEntries(3, 9, List.of(entry(4, 3)));
             assertFalse(ok);
             assertEquals(3, log.lastIndex(), "no entry should be appended on mismatch");
@@ -270,16 +236,13 @@ class RaftLogUnitTest {
         @Test
         void prevLogIndexZeroAlwaysMatches() {
             RaftLog log = new RaftLog();
-            // prevLogIndex==0 bypasses the term check (boundary `prevLogIndex > 0`).
             assertTrue(log.appendEntries(0, 0, List.of(entry(1, 1))));
             assertEquals(1, log.lastIndex());
         }
 
         @Test
         void conflictingEntryTruncatesAndReplaces() {
-            RaftLog log = logWith(1, 1, 1, 1); // four entries all term 1
-            // Replace from index 3 with a term-2 entry: index3 conflicts (term 1 vs
-            // 2) -> truncate [3..4], append new index3 term2.
+            RaftLog log = logWith(1, 1, 1, 1);
             boolean ok = log.appendEntries(2, 1, List.of(entry(3, 2)));
             assertTrue(ok);
             assertEquals(3, log.lastIndex());
@@ -289,8 +252,6 @@ class RaftLogUnitTest {
         @Test
         void duplicateMatchingEntryIsIdempotent() {
             RaftLog log = logWith(1, 1, 1);
-            // Re-sending index 2 term 1 (already present, same term) must not append
-            // or truncate - size unchanged.
             boolean ok = log.appendEntries(1, 1, List.of(entry(2, 1)));
             assertTrue(ok);
             assertEquals(3, log.lastIndex());
@@ -300,7 +261,7 @@ class RaftLogUnitTest {
         @Test
         void entryAtOrBelowSnapshotIsSkipped() {
             RaftLog log = logWith(1, 1, 1, 1);
-            log.compact(2, 1); // snapshotIndex=2
+            log.compact(2, 1);
             // newEntry index 2 is <= snapshotIndex -> skipped. The append still
             // succeeds and does not corrupt the live tail.
             boolean ok = log.appendEntries(2, 1, List.of(entry(2, 9), entry(3, 1)));
@@ -310,7 +271,6 @@ class RaftLogUnitTest {
         }
     }
 
-    // truncateFrom: guards and effect
 
     @Nested
     class TruncateFrom {
@@ -318,16 +278,14 @@ class RaftLogUnitTest {
         @Test
         void throwsWhenTruncatingAtOrBelowSnapshot() {
             RaftLog log = logWith(1, 1, 1, 1);
-            log.compact(2, 1); // snapshotIndex=2
-            // Truncating into the snapshot must throw, not silently corrupt offsets.
+            log.compact(2, 1);
             assertThrows(IllegalArgumentException.class, () -> log.truncateFrom(2));
             assertThrows(IllegalArgumentException.class, () -> log.truncateFrom(1));
         }
 
         @Test
         void noOpWhenFromIndexBeyondLast() {
-            RaftLog log = logWith(1, 1, 1); // lastIndex=3
-            // Nothing to truncate beyond lastIndex -> log unchanged.
+            RaftLog log = logWith(1, 1, 1);
             log.truncateFrom(4);
             assertEquals(3, log.lastIndex());
             assertEquals(3, log.size());
@@ -335,9 +293,8 @@ class RaftLogUnitTest {
 
         @Test
         void truncatesInclusiveFromIndex() {
-            RaftLog log = logWith(1, 1, 1, 1, 1); // 5 entries
+            RaftLog log = logWith(1, 1, 1, 1, 1);
             log.truncateFrom(3);
-            // entries 3,4,5 removed; 1,2 remain.
             assertEquals(2, log.lastIndex());
             assertEquals(2, log.size());
             assertNull(log.entryAt(3));
@@ -345,9 +302,7 @@ class RaftLogUnitTest {
 
         @Test
         void truncatingExactlyAtLastIndexRemovesOnlyThatEntry() {
-            // fromIndex == lastIndex must truncate (remove that one entry);
-            // fromIndex == lastIndex+1 is a no-op.
-            RaftLog log = logWith(1, 1, 1); // lastIndex=3
+            RaftLog log = logWith(1, 1, 1);
             log.truncateFrom(3);
             assertEquals(2, log.lastIndex());
             assertEquals(2, log.size());
@@ -357,17 +312,15 @@ class RaftLogUnitTest {
         }
     }
 
-    // setCommitIndex / setLastApplied: monotonic, clamped
 
     @Nested
     class CommitAndApply {
 
         @Test
         void commitIndexAdvancesButClampsToLastIndex() {
-            RaftLog log = logWith(1, 1, 1); // lastIndex=3
+            RaftLog log = logWith(1, 1, 1);
             log.setCommitIndex(2);
             assertEquals(2, log.commitIndex());
-            // Clamp: asking to commit beyond lastIndex pins at lastIndex.
             log.setCommitIndex(99);
             assertEquals(3, log.commitIndex());
         }
@@ -376,7 +329,6 @@ class RaftLogUnitTest {
         void commitIndexNeverGoesBackward() {
             RaftLog log = logWith(1, 1, 1);
             log.setCommitIndex(3);
-            // A lower (or equal) value must be ignored.
             log.setCommitIndex(1);
             assertEquals(3, log.commitIndex());
         }
@@ -385,10 +337,9 @@ class RaftLogUnitTest {
         void lastAppliedNeverGoesBackward() {
             RaftLog log = logWith(1, 1, 1);
             log.setLastApplied(3);
-            // A lower value must be ignored.
             log.setLastApplied(1);
             assertEquals(3, log.lastApplied());
-            log.setLastApplied(3); // equal -> no change (boundary)
+            log.setLastApplied(3);
             assertEquals(3, log.lastApplied());
         }
 
@@ -399,21 +350,18 @@ class RaftLogUnitTest {
             // because if the log is then truncated below commitIndex, a re-set at the
             // same (now stale-high) commitIndex value must still be a no-op - it must
             // not re-clamp commitIndex down to the new (smaller) lastIndex.
-            RaftLog log = logWith(1, 1, 1, 1, 1); // lastIndex=5
+            RaftLog log = logWith(1, 1, 1, 1, 1);
             log.setCommitIndex(5);
             assertEquals(5, log.commitIndex());
-            log.truncateFrom(4); // lastIndex now 3, commitIndex stays 5 (no clamp on truncate)
+            log.truncateFrom(4);
             assertEquals(3, log.lastIndex());
             assertEquals(5, log.commitIndex(), "truncate does not move commitIndex");
-            // Re-set at the same (stale) value must be a no-op: commitIndex stays 5,
-            // it must not be pulled down to the smaller lastIndex.
             log.setCommitIndex(5);
             assertEquals(5, log.commitIndex(),
                     "equal-value setCommitIndex must be a no-op (the `>` guard, not `>=`)");
         }
     }
 
-    // compact: boundary guards, entry removal
 
     @Nested
     class Compact {
@@ -421,9 +369,8 @@ class RaftLogUnitTest {
         @Test
         void noOpWhenIndexAtOrBelowSnapshot() {
             RaftLog log = logWith(1, 1, 1, 1);
-            log.compact(2, 1); // snapshotIndex=2
+            log.compact(2, 1);
             int sizeBefore = log.size();
-            // Re-compacting at or below the snapshot must be a no-op.
             log.compact(2, 1);
             log.compact(1, 1);
             assertEquals(2, log.snapshotIndex());
@@ -432,9 +379,8 @@ class RaftLogUnitTest {
 
         @Test
         void partialCompactionRemovesPrefixInclusive() {
-            RaftLog log = logWith(1, 1, 1, 1, 1); // 5 entries
+            RaftLog log = logWith(1, 1, 1, 1, 1);
             log.compact(3, 1);
-            // entries 1..3 removed, 4..5 remain, snapshotIndex=3.
             assertEquals(3, log.snapshotIndex());
             assertEquals(2, log.size());
             assertEquals(5, log.lastIndex());
@@ -445,7 +391,6 @@ class RaftLogUnitTest {
         @Test
         void fullCompactionBeyondLastClearsEverything() {
             RaftLog log = logWith(1, 1, 1);
-            // index 5 > lastIndex 3 -> clear everything.
             log.compact(5, 2);
             assertEquals(0, log.size());
             assertEquals(5, log.snapshotIndex());
@@ -460,8 +405,8 @@ class RaftLogUnitTest {
             // a strict `>`: if it were `>=`, index==3 would wrongly take the
             // clear-everything branch instead - same final size here, but the
             // boundary just below last must use the partial path and retain the tail.
-            RaftLog log = logWith(1, 1, 1, 1); // lastIndex=4
-            log.compact(3, 1); // partial: removes 1..3, keeps 4
+            RaftLog log = logWith(1, 1, 1, 1);
+            log.compact(3, 1);
             assertEquals(1, log.size());
             assertEquals(4, log.lastIndex());
             assertEquals(3, log.snapshotIndex());
@@ -469,14 +414,13 @@ class RaftLogUnitTest {
 
         @Test
         void compactAtSnapshotBoundaryIsNoOpButJustAboveCompacts() {
-            // index == snapshotIndex is a no-op; index == snapshotIndex+1 compacts.
             RaftLog log = logWith(1, 1, 1, 1, 1);
-            log.compact(2, 1); // snapshotIndex=2
+            log.compact(2, 1);
             int before = log.size();
-            log.compact(2, 1); // == snapshotIndex -> no-op
+            log.compact(2, 1);
             assertEquals(before, log.size());
             assertEquals(2, log.snapshotIndex());
-            log.compact(3, 1); // snapshotIndex+1 -> compacts one more
+            log.compact(3, 1);
             assertEquals(3, log.snapshotIndex());
             assertEquals(before - 1, log.size());
         }
@@ -489,8 +433,7 @@ class RaftLogUnitTest {
 
         @Test
         void higherTermWinsRegardlessOfIndex() {
-            RaftLog log = logWith(2, 2, 2); // lastTerm=2, lastIndex=3
-            // candidate term 3 > our term 2 -> up-to-date even with a shorter log.
+            RaftLog log = logWith(2, 2, 2);
             assertTrue(log.isAtLeastAsUpToDate(3, 1));
         }
 
@@ -502,8 +445,7 @@ class RaftLogUnitTest {
 
         @Test
         void equalTermComparesIndexAtBoundary() {
-            RaftLog log = logWith(5, 5, 5); // lastTerm=5, lastIndex=3
-            // Equal index is up-to-date, one less is not.
+            RaftLog log = logWith(5, 5, 5);
             assertTrue(log.isAtLeastAsUpToDate(5, 3));
             assertFalse(log.isAtLeastAsUpToDate(5, 2));
             assertTrue(log.isAtLeastAsUpToDate(5, 4));
@@ -511,19 +453,12 @@ class RaftLogUnitTest {
 
         @Test
         void termComparisonIsStrictlyGreaterAtBoundary() {
-            // A candidate whose last term is EQUAL to ours does not win on term alone
-            // - it falls through to the index comparison. The term check must stay a
-            // strict `>`: at equal term with a shorter index the candidate must lose;
-            // treating equal-term as term-superior would wrongly accept it.
-            RaftLog log = logWith(4, 4, 4); // lastTerm=4, lastIndex=3
-            // equal term (4), shorter index (1): must be rejected (false).
+            RaftLog log = logWith(4, 4, 4);
             assertFalse(log.isAtLeastAsUpToDate(4, 1));
-            // strictly higher term always wins regardless of index.
             assertTrue(log.isAtLeastAsUpToDate(5, 1));
         }
     }
 
-    // Recovery constructor: WAL + snapshot-meta cross-validation
 
     @Nested
     class Recovery {
@@ -536,7 +471,6 @@ class RaftLogUnitTest {
             log.append(entry(2, 1));
             log.append(entry(3, 2));
 
-            // Reopen over the same storage: entries must be recovered from the WAL.
             RaftLog recovered = new RaftLog(storage);
             assertEquals(3, recovered.lastIndex());
             assertEquals(2, recovered.lastTerm());
@@ -550,17 +484,14 @@ class RaftLogUnitTest {
             for (int i = 1; i <= 5; i++) {
                 log.append(entry(i, 1));
             }
-            log.compact(2, 1); // WAL now starts at index 3
+            log.compact(2, 1);
 
             RaftLog recovered = new RaftLog(storage);
-            // snapshotIndex must equal (firstWalEntry.index - 1) = 2, and entries
-            // below that are gone.
             assertEquals(2, recovered.snapshotIndex());
             assertEquals(5, recovered.lastIndex());
             // index 2 is the snapshot boundary: termAt returns snapshotTerm (1),
             // recovered from the persisted snapshot-meta written by compact().
             assertEquals(1, recovered.termAt(2));
-            // index 1 is below the snapshot -> gone (-1).
             assertEquals(-1, recovered.termAt(1));
         }
 
@@ -596,7 +527,7 @@ class RaftLogUnitTest {
             Storage storage = Storage.inMemory();
             RaftLog log = new RaftLog(storage);
             for (int i = 1; i <= 4; i++) log.append(entry(i, 1));
-            log.compact(2, 1); // snapshotIndex=2, no blob persisted
+            log.compact(2, 1);
 
             // Write a deliberately-torn blob under the snapshot key: a header
             // claiming a 100-byte data field that is not present. readSnapshotBlob's
@@ -610,7 +541,6 @@ class RaftLogUnitTest {
 
             RaftLog recovered = new RaftLog(storage);
             assertNull(recovered.recoveredSnapshot(), "a torn snapshot blob must be ignored");
-            // The WAL remains authoritative: snapshotIndex from meta is intact.
             assertEquals(2, recovered.snapshotIndex());
         }
 
@@ -619,7 +549,7 @@ class RaftLogUnitTest {
             Storage storage = Storage.inMemory();
             RaftLog log = new RaftLog(storage);
             for (int i = 1; i <= 4; i++) log.append(entry(i, 1));
-            log.compact(2, 1); // snapshotIndex=2
+            log.compact(2, 1);
 
             // A blob whose lastIncludedIndex (3) is ahead of the recovered
             // snapshotIndex (2) must be ignored - the WAL is authoritative.
@@ -644,7 +574,7 @@ class RaftLogUnitTest {
             Storage storage = Storage.inMemory();
             RaftLog log = new RaftLog(storage);
             for (int i = 1; i <= 4; i++) log.append(entry(i, 1));
-            log.compact(2, 1); // snapshotIndex=2, meta written
+            log.compact(2, 1);
             storage.put("raft-log.snapshot", blob);
             return new RaftLog(storage).recoveredSnapshot();
         }
@@ -669,7 +599,6 @@ class RaftLogUnitTest {
 
         @Test
         void blobWithDataLenExceedingRemainingIsRejected() {
-            // dataLen claims more bytes than are actually present in the blob.
             java.nio.ByteBuffer torn = java.nio.ByteBuffer.allocate(8 + 8 + 4 + 2);
             torn.putLong(2);
             torn.putLong(1);
@@ -690,7 +619,6 @@ class RaftLogUnitTest {
 
         @Test
         void blobWithCfgLenExceedingRemainingIsRejected() {
-            // cfgLen >= 0 but claims more cfg bytes than are actually present.
             java.nio.ByteBuffer torn = java.nio.ByteBuffer.allocate(8 + 8 + 4 + 1 + 4 + 1);
             torn.putLong(2);
             torn.putLong(1);
@@ -703,8 +631,6 @@ class RaftLogUnitTest {
 
         @Test
         void blobWithExactCfgIsAccepted() {
-            // A blob whose cfgLen exactly matches the remaining bytes is valid and
-            // carries the cfg.
             java.nio.ByteBuffer ok = java.nio.ByteBuffer.allocate(8 + 8 + 4 + 1 + 4 + 2);
             ok.putLong(2);
             ok.putLong(1);
@@ -728,13 +654,11 @@ class RaftLogUnitTest {
             Storage storage = Storage.inMemory();
             RaftLog log = new RaftLog(storage);
             for (int i = 1; i <= 5; i++) log.append(entry(i, 1));
-            log.compact(2, 1); // WAL now starts at index 3; meta written
+            log.compact(2, 1);
 
-            // Erase the snapshot-meta so recovery must use the legacy inference path.
             storage.put("raft-log.snapshot-meta", new byte[0]);
 
             RaftLog recovered = new RaftLog(storage);
-            // snapshotIndex must be inferred as firstIndex - 1 = 2.
             assertEquals(2, recovered.snapshotIndex());
             assertEquals(5, recovered.lastIndex());
         }

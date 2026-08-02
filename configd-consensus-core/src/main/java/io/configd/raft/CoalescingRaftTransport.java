@@ -47,7 +47,7 @@ public final class CoalescingRaftTransport implements RaftTransport {
         if (message instanceof AppendEntriesRequest ae && ae.entries().isEmpty()) {
             Supplier<HeartbeatCoalescer> resolver = this.coalescerResolver;
             if (resolver != null) {
-                HeartbeatCoalescer hc = resolver.get(); // CURRENT owner (rehoming-aware)
+                HeartbeatCoalescer hc = resolver.get();
                 if (hc != null && hc.recordIfCollecting(target, groupId, ae)) {
                     return;
                 }

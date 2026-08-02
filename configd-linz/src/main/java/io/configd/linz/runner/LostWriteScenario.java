@@ -124,7 +124,6 @@ public final class LostWriteScenario {
         return last;
     }
 
-    /** Waits until a single node's local applied state for {@code key} equals {@code value}. */
     private static boolean awaitApplied(ConfigClient client, ClusterNode node, String key,
             String value, long budgetMs) throws InterruptedException {
         long deadline = System.nanoTime() + budgetMs * 1_000_000L;

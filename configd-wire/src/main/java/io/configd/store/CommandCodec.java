@@ -47,7 +47,6 @@ public final class CommandCodec {
     private CommandCodec() {
     }
 
-    /** Encode PUT command. */
     public static byte[] encodePut(String key, byte[] value) {
         Objects.requireNonNull(key, "key must not be null");
         Objects.requireNonNull(value, "value must not be null");
@@ -63,7 +62,6 @@ public final class CommandCodec {
         return buf.array();
     }
 
-    /** Encode DELETE command. */
     public static byte[] encodeDelete(String key) {
         Objects.requireNonNull(key, "key must not be null");
 
@@ -165,19 +163,10 @@ public final class CommandCodec {
         return decoded;
     }
 
-    /**
-     * A decoded Raft log command. Sealed to the four permitted variants.
-     */
     public sealed interface DecodedCommand
             permits DecodedCommand.Put, DecodedCommand.Delete,
                     DecodedCommand.Batch, DecodedCommand.Noop {
 
-        /**
-         * A decoded PUT command.
-         *
-         * @param key   config key
-         * @param value raw config bytes
-         */
         record Put(String key, byte[] value) implements DecodedCommand {
             public Put {
                 Objects.requireNonNull(key, "key must not be null");
@@ -185,22 +174,12 @@ public final class CommandCodec {
             }
         }
 
-        /**
-         * A decoded DELETE command.
-         *
-         * @param key config key to remove
-         */
         record Delete(String key) implements DecodedCommand {
             public Delete {
                 Objects.requireNonNull(key, "key must not be null");
             }
         }
 
-        /**
-         * A decoded BATCH command containing multiple mutations.
-         *
-         * @param mutations ordered list of mutations
-         */
         record Batch(List<ConfigMutation> mutations) implements DecodedCommand {
             public Batch {
                 Objects.requireNonNull(mutations, "mutations must not be null");

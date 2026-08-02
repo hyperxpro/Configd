@@ -109,7 +109,6 @@ class NodeAnchorFileTest {
         na.write(na.current().withAuditAndDigest(1L, hash(9), hash(9)));     // seq 2 -> slot 1 (live)
         na.close();
 
-        // Corrupt slot 1 (the live, higher-seq slot). Recovery must fall back to slot 0 (seq 1).
         corruptByte(dir, AnchorFile.SLOT1_OFFSET + AnchorFile.RECORD_LEN_PREFIX + 20);
 
         NodeAnchorFile reopened = NodeAnchorFile.openInDirectory(dir, keyed());
@@ -166,8 +165,6 @@ class NodeAnchorFileTest {
 
     @Test
     void armedSyncFailureAbortsBeforeTheDurableBarrier(@TempDir Path dir) {
-        // Fail-closed: a throwing node-anchor sync must abort BEFORE advancing the in-memory record, so
-        // a refresh whose fsync fails leaves the previous durable record intact (retried next tick).
         NodeAnchorFile na = NodeAnchorFile.openInDirectory(dir, keyed());
         na.bootstrap(mint(1L, 1, hash(0)));
         long seqBefore = na.current().nodeAnchorSeq();

@@ -74,7 +74,6 @@ class RaftMessageCodecFuzzTest {
 
     private static final NodeId FROM = NodeId.of(0x7F7F7F7F);
 
-    /** Every raft MessageType that has a decode path (the frame types this codec owns). */
     private static final MessageType[] RAFT_TYPES = {
             MessageType.APPEND_ENTRIES,
             MessageType.APPEND_ENTRIES_RESPONSE,
@@ -182,10 +181,10 @@ class RaftMessageCodecFuzzTest {
     void tinyAppendEntriesWithHugeEntryCountRejectedPreAllocation() {
         for (int count : new int[]{Integer.MAX_VALUE, 2_000_000_000, 100_000_000}) {
             ByteBuffer p = ByteBuffer.allocate(32);
-            p.putInt(1);          // leaderId
-            p.putLong(0L);        // prevLogIndex
-            p.putLong(0L);        // prevLogTerm
-            p.putLong(0L);        // leaderCommit
+            p.putInt(1);
+            p.putLong(0L);
+            p.putLong(0L);
+            p.putLong(0L);
             p.putInt(count);      // numEntries (hostile)
             FrameCodec.Frame frame = new FrameCodec.Frame(MessageType.APPEND_ENTRIES, 0, 0L, p.array());
             assertTimeoutPreemptively(DECODE_BUDGET, () -> assertThrows(IllegalArgumentException.class,
@@ -218,11 +217,11 @@ class RaftMessageCodecFuzzTest {
     void tinyInstallSnapshotWithHugeDataLenRejectedPreAllocation() {
         for (int dataLen : new int[]{Integer.MAX_VALUE, 1 << 30, 100_000_000}) {
             ByteBuffer p = ByteBuffer.allocate(29);
-            p.putInt(1);          // leaderId
-            p.putLong(1L);        // lastIncludedIndex
-            p.putLong(1L);        // lastIncludedTerm
-            p.putInt(0);          // offset
-            p.put((byte) 1);      // done
+            p.putInt(1);
+            p.putLong(1L);
+            p.putLong(1L);
+            p.putInt(0);
+            p.put((byte) 1);
             p.putInt(dataLen);    // dataLen (hostile)
             FrameCodec.Frame frame = new FrameCodec.Frame(MessageType.INSTALL_SNAPSHOT, 0, 0L, p.array());
             assertTimeoutPreemptively(DECODE_BUDGET, () -> assertThrows(IllegalArgumentException.class,
@@ -239,7 +238,7 @@ class RaftMessageCodecFuzzTest {
         p.putLong(1L);
         p.putInt(-1);         // offset < 0
         p.put((byte) 0);
-        p.putInt(0);          // dataLen
+        p.putInt(0);
         FrameCodec.Frame frame = new FrameCodec.Frame(MessageType.INSTALL_SNAPSHOT, 0, 0L, p.array());
         assertThrows(IllegalArgumentException.class, () -> RaftMessageCodec.decode(frame));
     }
@@ -247,12 +246,12 @@ class RaftMessageCodecFuzzTest {
     @Property(tries = 1, seed = "2002")
     void corpusAppendEntriesTrailingBytes() {
         ByteBuffer p = ByteBuffer.allocate(33);
-        p.putInt(1);          // leaderId
-        p.putLong(0L);        // prevLogIndex
-        p.putLong(0L);        // prevLogTerm
-        p.putLong(0L);        // leaderCommit
-        p.putInt(0);          // numEntries = 0 (heartbeat)
-        p.put((byte) 0xAB);   // one trailing byte
+        p.putInt(1);
+        p.putLong(0L);
+        p.putLong(0L);
+        p.putLong(0L);
+        p.putInt(0);
+        p.put((byte) 0xAB);
         FrameCodec.Frame frame = new FrameCodec.Frame(MessageType.APPEND_ENTRIES, 0, 5L, p.array());
         assertThrows(IllegalArgumentException.class, () -> RaftMessageCodec.decode(frame));
     }
@@ -264,12 +263,12 @@ class RaftMessageCodecFuzzTest {
         ByteBuffer p = ByteBuffer.allocate(4 + 2 * record);
         p.putInt(2);
         for (int i = 0; i < 2; i++) {
-            p.putInt(7);      // SAME groupId both records -> duplicate
-            p.putLong(1L);    // term
-            p.putInt(1);      // leaderId
-            p.putLong(0L);    // prevLogIndex
-            p.putLong(0L);    // prevLogTerm
-            p.putLong(0L);    // leaderCommit
+            p.putInt(7);
+            p.putLong(1L);
+            p.putInt(1);
+            p.putLong(0L);
+            p.putLong(0L);
+            p.putLong(0L);
         }
         FrameCodec.Frame frame =
                 new FrameCodec.Frame(MessageType.RAFT_COALESCED_HEARTBEAT, 0, 0L, p.array());
@@ -313,7 +312,6 @@ class RaftMessageCodecFuzzTest {
         });
     }
 
-    /** Dispatches to the decode surface that owns {@code type} (mirrors the production inbound demux). */
     private static Object decodeByType(FrameCodec.Frame frame) {
         return switch (frame.messageType()) {
             case RAFT_COALESCED_HEARTBEAT -> RaftMessageCodec.decodeCoalescedHeartbeat(frame);

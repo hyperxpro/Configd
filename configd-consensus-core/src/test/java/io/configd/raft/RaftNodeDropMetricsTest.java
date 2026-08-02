@@ -46,7 +46,6 @@ class RaftNodeDropMetricsTest {
         };
         RaftNode leader = forceLeader(rejectingAppends);
 
-        // Heartbeats replicate the leader's term no-op; every AppendEntries send is codec-rejected.
         for (int i = 0; i < 60; i++) {
             leader.tick();
         }
@@ -68,8 +67,6 @@ class RaftNodeDropMetricsTest {
         RaftNode leader = cluster.nodes.get(N1);
         InstallSnapshotTest.TestTransport leaderTransport = cluster.transports.get(N1);
 
-        // Every InstallSnapshot chunk the leader sends to the lagging N3 is codec-rejected, standing in for
-        // the production wire codec refusing an over-cap chunk - the exact catch the tally lives in.
         List<NodeId> installAttempts = new ArrayList<>();
         leaderTransport.interceptSend((target, message) -> {
             if (message instanceof InstallSnapshotRequest && target.equals(N3)) {

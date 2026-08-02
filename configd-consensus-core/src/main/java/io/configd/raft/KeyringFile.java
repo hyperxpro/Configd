@@ -20,7 +20,6 @@ import static io.configd.raft.RaftArtifactMagic.KEYRING_MAGIC;
  */
 final class KeyringFile implements Closeable {
 
-    /** The keyring file name, in {@code dataDir}. */
     static final String KEYRING_FILE_NAME = "raft-keyring";
 
     /** Slot stride FROZEN at 64 KiB (bounds retained terms; overflow REFUSES loudly). */
@@ -54,7 +53,6 @@ final class KeyringFile implements Closeable {
         }
     }
 
-    /** Opens the production keyring: a real {@code raft-keyring} file in {@code dataDir}. */
     static KeyringFile openInDirectory(Path dataDir, IntegrityEnvelope integrity) {
         return new KeyringFile(new FileAnchorIO(dataDir, KEYRING_FILE_NAME), integrity);
     }
@@ -167,7 +165,6 @@ final class KeyringFile implements Closeable {
         io.close();
     }
 
-    // --- internals (mirror AnchorFile's dual-slot codec, keyring body) ---
 
     private void parseExisting() {
         byte[] image = io.readImage();
@@ -191,10 +188,9 @@ final class KeyringFile implements Closeable {
         }
     }
 
-    /** Parses one slot to a {@link Keyring}, or null if torn / tampered / zeroed / MAC-fails. */
     private Keyring parseSlot(byte[] image, int slotOffset) {
         if (image.length < slotOffset + SLOT_STRIDE) {
-            return null; // truncated file - this slot is not fully present
+            return null;
         }
         ByteBuffer buf = ByteBuffer.wrap(image, slotOffset, SLOT_STRIDE);
         int recordLen = buf.getInt();

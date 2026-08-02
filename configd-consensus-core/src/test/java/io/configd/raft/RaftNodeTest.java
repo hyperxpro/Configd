@@ -148,7 +148,6 @@ class RaftNodeTest {
             deliverAllMessages(5);
         }
 
-        /** Returns the leader node, or null if no leader. */
         RaftNode findLeader() {
             return nodes.values().stream()
                     .filter(n -> n.role() == RaftRole.LEADER)
@@ -199,9 +198,8 @@ class RaftNodeTest {
             }
             assertEquals(ProposalResult.ACCEPTED, node.propose(new byte[]{1, 2, 3}).result());
 
-            // In a single-node cluster, entries commit immediately.
             assertEquals(2, log.commitIndex()); // no-op + command
-            assertEquals(2, sm.applied.size()); // no-op + command both applied
+            assertEquals(2, sm.applied.size());
         }
     }
 
@@ -243,11 +241,8 @@ class RaftNodeTest {
             RaftNode leader = cluster.nodes.get(NodeId.of(1));
             assertEquals(ProposalResult.ACCEPTED, leader.propose(new byte[]{42}).result());
 
-            // Delivering AppendEntries and the followers' responses lets the leader advance
-            // commitIndex once a majority has acked.
             cluster.deliverAllMessages(10);
 
-            // Followers only learn the new commitIndex on the next heartbeat.
             cluster.tickLeaderHeartbeatAndDeliver();
 
             for (var entry : cluster.logs.entrySet()) {
@@ -278,7 +273,6 @@ class RaftNodeTest {
             RaftNode leader1 = cluster.nodes.get(NodeId.of(1));
             long term1 = leader1.currentTerm();
 
-            // Propose a command but deliver it only to node 2, not node 3 (partial replication).
             leader1.propose(new byte[]{1});
             TestTransport t1 = cluster.transports.get(NodeId.of(1));
 
@@ -300,8 +294,6 @@ class RaftNodeTest {
             assertNotNull(leader2);
             assertTrue(leader2.currentTerm() > term1);
 
-            // Node 2's no-op is from its own current term; once that no-op commits, it also
-            // commits the earlier term-1 entry (Raft 5.4.2).
             cluster.deliverAllMessages(10);
 
             assertTrue(leader2.log().commitIndex() > 0);
@@ -400,7 +392,6 @@ class RaftNodeTest {
             TestCluster cluster = new TestCluster(3);
             cluster.electLeader(NodeId.of(1));
 
-            // A follower with a recent leader must reject a PreVote (leader-lease-style protection).
             NodeId node3 = NodeId.of(3);
             RequestVoteRequest preVoteReq = new RequestVoteRequest(
                     cluster.nodes.get(node3).currentTerm() + 1,
@@ -488,7 +479,6 @@ class RaftNodeTest {
 
             assertTrue(leader.transferLeadership(NodeId.of(2)));
 
-            // Delivers the TimeoutNow message and the election it triggers.
             cluster.deliverAllMessages(10);
 
             RaftNode newLeader = cluster.nodes.get(NodeId.of(2));
@@ -593,8 +583,6 @@ class RaftNodeTest {
             assertEquals(RaftRole.LEADER, leader.role());
             cluster.deliverAllMessages(10);
 
-            // Node 4 is a legal transfer target (a configured voter, not self), so transferTarget is
-            // set, but maybeSendTimeoutNow never fires because node 4 never catches up.
             assertTrue(leader.transferLeadership(NodeId.of(4)), "the transfer to the partitioned voter is initiated");
             assertNotNull(leader.transferTarget(), "the transfer is in progress (target never catches up)");
             assertEquals(ProposalResult.TRANSFER_IN_PROGRESS, leader.propose(new byte[]{1}).result(),
@@ -637,7 +625,7 @@ class RaftNodeTest {
 
             log2.append(new LogEntry(1, 1, new byte[]{1}));
             log2.append(new LogEntry(2, 1, new byte[]{2}));
-            log2.append(new LogEntry(3, 2, new byte[]{3})); // divergent: term 2
+            log2.append(new LogEntry(3, 2, new byte[]{3}));
 
             // prevLogIndex=2, prevLogTerm=1 matches the leader's view of node2's log; the incoming
             // entry at index 3 carries term 3, diverging from node2's existing term-2 entry there.
@@ -702,7 +690,6 @@ class RaftNodeTest {
             leader.propose(new byte[]{10});
             leader.propose(new byte[]{20});
 
-            // A rejection makes the leader retry with a decremented nextIndex until logs match.
             cluster.deliverAllMessages(20);
 
             assertTrue(cluster.logs.get(NodeId.of(3)).commitIndex() > 0);
@@ -794,8 +781,6 @@ class RaftNodeTest {
 
         @Test
         void splitVoteResolvesViaRandomizedTimeout() {
-            // If nodes 1 and 2 both start elections at the same time in a 3-node cluster, they can
-            // split the vote; randomized election timeouts should eventually resolve it.
             TestCluster cluster = new TestCluster(3);
 
             cluster.triggerElectionTimeout(NodeId.of(1));
@@ -864,7 +849,6 @@ class RaftNodeTest {
             assertEquals(5, node1.currentTerm());
             transport1.clear();
 
-            // term 3 is stale relative to node1's term 5 (set above).
             AppendEntriesRequest staleReq = new AppendEntriesRequest(
                     3, n2, 0, 0, List.of(), 0);
             node1.handleMessage(staleReq);
@@ -968,13 +952,13 @@ class RaftNodeTest {
             log.compact(2, 1);
             assertEquals(2, log.snapshotIndex());
             assertEquals(1, log.snapshotTerm());
-            assertEquals(1, log.size()); // only entry 3 remains
+            assertEquals(1, log.size());
             assertEquals(3, log.lastIndex());
             assertEquals(2, log.lastTerm());
 
             assertNotNull(log.entryAt(3));
-            assertNull(log.entryAt(1)); // compacted
-            assertNull(log.entryAt(2)); // compacted
+            assertNull(log.entryAt(1));
+            assertNull(log.entryAt(2));
 
             // termAt(2) resolves via the snapshot's recorded term even though index 2 is compacted.
             assertEquals(1, log.termAt(2));
@@ -987,8 +971,6 @@ class RaftNodeTest {
             log.append(new LogEntry(2, 1, new byte[]{2}));
             log.append(new LogEntry(3, 1, new byte[]{3}));
 
-            // prevLogIndex=1, prevLogTerm=1 matches; the incoming entries at index 2 and 3
-            // carry term 2, diverging from the existing term-1 entries there.
             boolean ok = log.appendEntries(1, 1, List.of(
                     new LogEntry(2, 2, new byte[]{20}),
                     new LogEntry(3, 2, new byte[]{30})
@@ -1007,7 +989,7 @@ class RaftNodeTest {
                     new LogEntry(2, 5, new byte[]{20})
             ));
             assertFalse(ok);
-            assertEquals(1, log.lastIndex()); // unchanged
+            assertEquals(1, log.lastIndex());
         }
 
         @Test
@@ -1032,11 +1014,9 @@ class RaftNodeTest {
             log.append(new LogEntry(1, 1, new byte[0]));
             log.append(new LogEntry(2, 3, new byte[0]));
 
-            // Higher term wins
             assertTrue(log.isAtLeastAsUpToDate(4, 1));
             assertFalse(log.isAtLeastAsUpToDate(2, 10));
 
-            // Same term: higher or equal index wins
             assertTrue(log.isAtLeastAsUpToDate(3, 2));
             assertTrue(log.isAtLeastAsUpToDate(3, 3));
             assertFalse(log.isAtLeastAsUpToDate(3, 1));
@@ -1071,13 +1051,10 @@ class RaftNodeTest {
 
         @Test
         void quorumSizeCalculation() {
-            // 1 node: quorum = 1
             assertEquals(1, RaftConfig.of(NodeId.of(1), Set.of()).quorumSize());
 
-            // 3 nodes: quorum = 2
             assertEquals(2, RaftConfig.of(NodeId.of(1), Set.of(NodeId.of(2), NodeId.of(3))).quorumSize());
 
-            // 5 nodes: quorum = 3
             assertEquals(3, RaftConfig.of(NodeId.of(1),
                     Set.of(NodeId.of(2), NodeId.of(3), NodeId.of(4), NodeId.of(5))).quorumSize());
         }
@@ -1107,7 +1084,6 @@ class RaftNodeTest {
 
         @Test
         void derivedTickCountsConvertMsByTickPeriod() {
-            // Production tick period is 10ms.
             RaftConfig prod = RaftConfig.of(NodeId.of(1), Set.of(), 10);
             assertEquals(15, prod.electionTimeoutMinTicks(), "150ms / 10ms == 15 ticks");
             assertEquals(30, prod.electionTimeoutMaxTicks(), "300ms / 10ms == 30 ticks");
@@ -1140,9 +1116,6 @@ class RaftNodeTest {
 
         @Test
         void nodeElectionTargetUsesDerivedTickBounds() {
-            // At the production 10ms tick period the randomized election target
-            // must land in [15, 30] ticks, NOT [150, 300] (the pre-fix bug), and
-            // the heartbeat fires every 5 ticks.
             RaftConfig config = RaftConfig.of(NodeId.of(1), Set.of(NodeId.of(2), NodeId.of(3)), 10);
             RandomGenerator rng = RandomGenerator.of("L64X128MixRandom");
             RaftNode node = new RaftNode(config, new RaftLog(), new TestTransport(),
@@ -1166,7 +1139,6 @@ class RaftNodeTest {
                             new RaftConfig(NodeId.of(1), Set.of(), 150, 300, 50, 64, 256 * 1024, 1024, 10, 90),
                     "tickPeriod that drops election:heartbeat below the safety ratio must be rejected");
 
-            // Zero / negative tick period is rejected.
             assertThrows(IllegalArgumentException.class, () ->
                     new RaftConfig(NodeId.of(1), Set.of(), 150, 300, 50, 64, 256 * 1024, 1024, 10, 0));
         }
@@ -1252,8 +1224,6 @@ class RaftNodeTest {
 
         @Test
         void proposalAcceptedAfterCommitReducesBackpressure() {
-            // In a single-node cluster proposals always commit immediately, so backpressure
-            // should never trigger with reasonable limits.
             RaftConfig config = new RaftConfig(
                     NodeId.of(1), Set.of(), 150, 300, 50, 64, 256 * 1024, 1024, 10, 1);
             RaftLog log = new RaftLog();

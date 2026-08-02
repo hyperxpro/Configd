@@ -56,7 +56,7 @@ final class OidcModuleWiringTest {
     @Test
     void httpIssuerUriIsRefused() {
         Map<String, String> cfg = validConfig();
-        cfg.put(P + "uri", "http://idp.example/realms/configd"); // not https
+        cfg.put(P + "uri", "http://idp.example/realms/configd");
         assertThrows(ConfigException.class, () -> OidcIssuerConfig.parse(new MapConfigSource(cfg), "kc"));
     }
 

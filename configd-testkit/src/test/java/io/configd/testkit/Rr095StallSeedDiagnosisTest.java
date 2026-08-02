@@ -69,9 +69,6 @@ class Rr095StallSeedDiagnosisTest {
                             + " mechanism from no-leader-elected) — if it now elects, the causal"
                             + " link must be recorded, not silently absorbed");
 
-            // (2) The stall is explained by a never-healed network - NOT a recoverable stuck
-            //     state. This is the load-bearing diagnosis: a healed network with no leader
-            //     would be a genuine liveness defect requiring its own investigation.
             assertTrue(networkUnhealedAtEnd,
                     "seed " + seed + " stalls with a HEALED network (dropRate=" + endDropRate
                             + ", partitions=" + endPartitions + ") — that would be a real"

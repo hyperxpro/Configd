@@ -86,7 +86,7 @@ public final class PeerModel {
                 framesDropped.incrementAndGet();
             }
         }
-        if (out == null) {                         // volatile read
+        if (out == null) {
             scheduleConnect();
         }
     }
@@ -96,15 +96,15 @@ public final class PeerModel {
             return;
         }
         if (!connectInFlight.compareAndSet(false, true)) {
-            return; // already in flight/scheduled
+            return;
         }
         // Source then calls connectExecutor.schedule(this::connectAndStartWriter).
         scheduledConnects.incrementAndGet();
-        pendingConnects.incrementAndGet(); // a connect is now pending until the connector runs it
+        pendingConnects.incrementAndGet();
     }
 
     public void connectAndStartWriterSuccess() {
-        pendingConnects.decrementAndGet(); // the connector picked up the scheduled connect
+        pendingConnects.decrementAndGet();
         boolean connected = false;
         try {
             if (closed.get() || !running.get()) {
@@ -127,7 +127,7 @@ public final class PeerModel {
     }
 
     public void connectAndStartWriterFailure() {
-        pendingConnects.decrementAndGet(); // the connector picked up the scheduled connect
+        pendingConnects.decrementAndGet();
         boolean connected = false;
         try {
             if (closed.get() || !running.get()) {
@@ -143,7 +143,7 @@ public final class PeerModel {
 
     private void startWriter(StreamRef o) {
         if (o == null) {
-            writerSawNullStream.set(true); // a publish/visibility bug would land here
+            writerSawNullStream.set(true);
             return;
         }
         writersStarted.incrementAndGet();

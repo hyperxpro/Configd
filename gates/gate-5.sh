@@ -46,7 +46,6 @@ else
   echo "GATE-5 gate4: OK (gates 1+2+3+4 green)"
 fi
 
-# build the benchmarks uber-jar (unless reusing)
 if [ "${GATE5_SKIP_BUILD:-0}" = "1" ] && [ -f "$JAR" ]; then
   echo "GATE-5 build: REUSING existing $JAR (GATE5_SKIP_BUILD=1; CI must not do this)"
 else
@@ -56,13 +55,11 @@ else
 fi
 [ -f "$JAR" ] || fail build "$JAR missing after build"
 
-# (b) read-path zero allocation (reuse the mechanical gc gate)
 echo "GATE-5 alloc: read-path 0 B/op (gates/jmh-gc-check.sh: getMiss + getIntoHit < 1 B/op)..."
 GATE5_SKIP_BUILD=1 JMHGC_SKIP_BUILD=1 bash "$ROOT/gates/jmh-gc-check.sh" \
   || fail alloc "read-path steady-state allocation regressed (>= 1 B/op on a gated leg)"
 echo "GATE-5 alloc: OK (zero steady-state allocation on the in-process read path)"
 
-# (c) read-path latency regression thresholds (SampleTime / HdrHistogram)
 echo "GATE-5 read-tail: JMH SampleTime p99/p999 regression bounds (size=100000)..."
 RT="$LOGDIR/read-tail.txt"
 java $JVMOPTS -jar "$JAR" 'LocalConfigStoreReadBenchmark\.getHitWithCursor$' \
@@ -78,7 +75,6 @@ awk -v v="$P99_NS"  'BEGIN{exit !(v+0 < 20000)}'  || fail read-tail "read p99 = 
 awk -v v="$P999_NS" 'BEGIN{exit !(v+0 < 500000)}' || fail read-tail "read p999 = ${P999_NS} ns >= 500000 ns bound — read-path tail regression"
 echo "GATE-5 read-tail: OK (p99=${P99_NS} ns < 20us, p999=${P999_NS} ns < 500us)"
 
-# (d) throughput smoke: consensus mechanism floor (in-memory)
 echo "GATE-5 throughput: RaftCommitBenchmark in-memory floor (>= 50k commits/s)..."
 TP="$LOGDIR/throughput.txt"
 java $JVMOPTS -jar "$JAR" 'RaftCommitBenchmark\.proposeAndCommit$' \
@@ -89,7 +85,6 @@ TLINE="$(grep -E 'RaftCommitBenchmark\.proposeAndCommit ' "$TP" | grep -E 'thrpt
 [ -n "$TLINE" ] || { tail -20 "$TP"; fail throughput "no proposeAndCommit thrpt summary line (non-vacuity)"; }
 SCORE="$(echo "$TLINE" | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9.]+$/){v=$i; break}} END{print v}')"
 UNIT="$(echo "$TLINE"  | awk '{print $NF}')"
-# Convert to ops/s: ops/us -> *1e6, ops/ms -> *1e3, ops/s -> *1
 case "$UNIT" in
   ops/us|ops/μs) OPS=$(awk -v s="$SCORE" 'BEGIN{print s*1000000}') ;;
   ops/ms)        OPS=$(awk -v s="$SCORE" 'BEGIN{print s*1000}') ;;
@@ -100,19 +95,16 @@ awk -v v="$OPS" 'BEGIN{exit !(v+0 >= 50000)}' \
   || fail throughput "consensus throughput floor: ${OPS} ops/s < 50000 (mechanism broken?)  line: $TLINE"
 echo "GATE-5 throughput: OK (${OPS} ops/s >= 50k floor; measured ~815k — mechanism sustains the floor)"
 
-# (e) backpressure bound: maxPendingProposals=1024
 echo "GATE-5 backpressure: §11 as-built write bound (maxPendingProposals default == 1024)..."
 RC="$ROOT/configd-consensus-core/src/main/java/io/configd/raft/RaftConfig.java"
 grep -qE 'maxPendingProposals.*default 1024|default 1024' "$RC" \
   || fail backpressure "RaftConfig no longer documents the maxPendingProposals=1024 bound (the §11 as-built write threshold, RR-110). If the bound changed intentionally, update Workstream D + this gate."
 echo "GATE-5 backpressure: OK (the §11 bounded-proposal-queue threshold = 1024 is intact)"
 
-# (f) coordinated-omission self-check
 echo "GATE-5 co-check: coordinated-omission discipline on the harnesses..."
 # The read-tail step (c) measured via -bm sample (SampleTime), NOT AverageTime — assert the run did so.
 grep -qE 'Mode|sample' "$RT" || fail co-check "read-tail did not run in SampleTime mode (CO/averaging violation)"
 grep -qE ':p0\.99 ' "$RT"   || fail co-check "read-tail produced no percentile distribution (averages are refused for tails)"
-# The CO-correct load/contention harnesses must be present.
 [ -f "$ROOT/configd-testkit/src/main/java/io/configd/bench/ReadUnderWriteContentionBenchmark.java" ] \
   || fail co-check "ReadUnderWriteContentionBenchmark (reader-vs-writer harness) missing"
 echo "GATE-5 co-check: OK (tails via SampleTime; CO-correct harnesses present)"

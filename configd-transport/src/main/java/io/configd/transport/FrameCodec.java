@@ -97,7 +97,6 @@ public final class FrameCodec {
     public static final int MAX_FRAME_SIZE = 16 * 1024 * 1024;
 
     private FrameCodec() {
-        // utility class
     }
 
     /**

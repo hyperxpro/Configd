@@ -60,7 +60,7 @@ class DriverRaftClusterAdminAddServerTest {
         OwnerExecutorPool pool = new OwnerExecutorPool(1);
         try {
             MetricsRegistry registry = new MetricsRegistry();
-            RaftNode node = buildNode(registry, RaftConfig.of(NodeId.of(1), Set.of())); // self-elects
+            RaftNode node = buildNode(registry, RaftConfig.of(NodeId.of(1), Set.of()));
             pool.ownerExecutor(GROUP).submit(() -> {
                 node.bindOwnerThread();
                 for (int i = 0; i < 400; i++) node.tick(); // elect + commit the leader no-op
@@ -88,7 +88,6 @@ class DriverRaftClusterAdminAddServerTest {
         }
     }
 
-    /** Adding a node that is already the sole voter is a clear precondition Failure (mapped to 409). */
     @Test
     @Timeout(30)
     void addServerForAnExistingVoterIsAClearFailure() throws Exception {
@@ -107,7 +106,7 @@ class DriverRaftClusterAdminAddServerTest {
             driver.addGroup(GROUP, node);
             DriverRaftClusterAdmin admin = new DriverRaftClusterAdmin(driver, 5_000L);
 
-            AdminService.AdminResult result = admin.addServer(GROUP, NodeId.of(1)); // node 1 is already a voter
+            AdminService.AdminResult result = admin.addServer(GROUP, NodeId.of(1));
             AdminService.AdminResult.Failure failure = assertInstanceOf(AdminService.AdminResult.Failure.class,
                     result, "adding an existing voter must be a precondition Failure");
             assertTrue(failure.reason().contains("already a voter"),

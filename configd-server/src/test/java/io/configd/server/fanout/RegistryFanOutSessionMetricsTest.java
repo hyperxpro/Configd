@@ -22,9 +22,9 @@ class RegistryFanOutSessionMetricsTest {
         assertTrue(out.contains("edge_fanout_slow_consumer_warnings_total"), out);
         assertTrue(out.contains("edge_fanout_notify_batches_total"), out);
         assertTrue(out.contains("edge_fanout_snapshot_transfers_total"), out);
-        assertTrue(out.contains("edge_fanout_notify_batch_size"), out); // histogram _count
-        assertTrue(out.contains("edge_fanout_queue_depth"), out);       // gauge
-        assertTrue(out.contains("edge_fanout_connected_subscribers"), out); // gauge
+        assertTrue(out.contains("edge_fanout_notify_batch_size"), out);
+        assertTrue(out.contains("edge_fanout_queue_depth"), out);
+        assertTrue(out.contains("edge_fanout_connected_subscribers"), out);
         // Per-reason demotion counters (label encoded as a name suffix, registry has no labels).
         assertTrue(out.contains("edge_fanout_demotions_" + DemotionEvent.REASON_ACK_LAG + "_total"), out);
         assertTrue(out.contains("edge_fanout_demotions_" + DemotionEvent.REASON_QUEUE_OVERFLOW + "_total"), out);

@@ -267,7 +267,6 @@ public sealed interface EdgeFrame
             bytes = bytes.clone();
         }
 
-        /** Returns a defensive copy of the chunk bytes. */
         @Override
         public byte[] bytes() {
             return bytes.clone();
@@ -489,7 +488,6 @@ public sealed interface EdgeFrame
             path = path.clone();
         }
 
-        /** Returns a defensive copy of the path bytes. */
         @Override
         public byte[] path() {
             return path.clone();
@@ -729,7 +727,6 @@ public sealed interface EdgeFrame
             bytes = bytes.clone();
         }
 
-        /** Returns a defensive copy of the chunk bytes. */
         @Override
         public byte[] bytes() {
             return bytes.clone();
@@ -838,7 +835,7 @@ public sealed interface EdgeFrame
                 if (value != null) {
                     throw new IllegalArgumentException("DELETE change must carry no value (val_len == -1)");
                 }
-            } else { // PUT
+            } else {
                 if (value == null) {
                     throw new IllegalArgumentException(
                             "PUT change must carry a value (use an empty array for an empty value)");
@@ -855,7 +852,6 @@ public sealed interface EdgeFrame
             return new WatchChange(key, CHANGE_KIND_DELETE, null);
         }
 
-        /** Returns defensive copy, or null for DELETE. */
         @Override
         public byte[] value() {
             return value == null ? null : value.clone();

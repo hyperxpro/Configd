@@ -51,7 +51,6 @@ class HeartbeatDrainFramingTest {
 
         assertEquals(MessageType.RAFT_COALESCED_HEARTBEAT, frame.messageType(),
                 "a multi-group drain (N>1) must collapse into one coalesced frame");
-        // And it round-trips to all three groups.
         Map<Integer, AppendEntriesRequest> decoded = RaftMessageCodec.decodeCoalescedHeartbeat(frame);
         assertEquals(many.keySet(), decoded.keySet());
     }

@@ -82,7 +82,6 @@ class ConfigdHttpClientTest {
         }
     }
 
-    // status reactions
 
     @Test
     void badRequest400IsTerminal() throws Exception {
@@ -132,13 +131,12 @@ class ConfigdHttpClientTest {
         }
     }
 
-    // leader following
 
     @Test
     void hintless503RetriesSameEndpointThenSucceeds() throws Exception {
         // The election loop that is required even at N=1: a hintless 503 is retried within the bounded budget.
         try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
-            s.enqueue(Response.text(503, "Not Leader")); // no X-Leader-Hint (leader unknown)
+            s.enqueue(Response.text(503, "Not Leader"));
             s.enqueue(Response.committed(9));
             WriteOutcome w = c.blocking().put("k", "v".getBytes(), WriteOptions.defaults());
             assertEquals(9L, w.seq());
@@ -183,7 +181,6 @@ class ConfigdHttpClientTest {
         }
     }
 
-    // indeterminate write
 
     @Test
     void indeterminate504RetriesToDefinite() throws Exception {
@@ -208,7 +205,6 @@ class ConfigdHttpClientTest {
         }
     }
 
-    // strong-read fail-close
 
     @Test
     void strongReadFailClosedNeverServesStale() throws Exception {
@@ -222,7 +218,6 @@ class ConfigdHttpClientTest {
         }
     }
 
-    // replay guard
 
     @Test
     void replayGuard409RetriesWithAFreshNonce() throws Exception {
@@ -242,7 +237,6 @@ class ConfigdHttpClientTest {
         }
     }
 
-    // query composition
 
     @Test
     void linearizableEmitsExactLiteralAndScopeIsExact() throws Exception {
@@ -259,7 +253,6 @@ class ConfigdHttpClientTest {
         }
     }
 
-    // branch on code, not body
 
     @Test
     void errorBodyThatLooksLikeJsonIsNotParsedAsSuccess() throws Exception {
@@ -270,7 +263,6 @@ class ConfigdHttpClientTest {
         }
     }
 
-    // transfer-leadership (the admin route)
 
     @Test
     void transferLeadershipInitiated() throws Exception {

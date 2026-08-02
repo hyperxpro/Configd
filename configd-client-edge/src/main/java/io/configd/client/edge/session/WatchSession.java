@@ -60,7 +60,6 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
     private final java.util.concurrent.CompletableFuture<Void> watchTerminal = new java.util.concurrent.CompletableFuture<>();
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
-    // Reactive delivery (single subscriber) + a blocking queue for the facade.
     private final AtomicReference<Flow.Subscriber<? super WatchEvent>> subscriber = new AtomicReference<>();
     private final Object deliverLock = new Object();
     private final ArrayDeque<WatchEvent> buffer = new ArrayDeque<>();
@@ -383,7 +382,6 @@ public final class WatchSession implements InboundFrameHandler, Flow.Publisher<W
             ConfigDelta delta = notification.delta();
             verifier.verify(delta); // ChainVerificationException → failConnection (fail-closed)
             verifier.recordApplied(delta);
-            // Filter the verified chain to the watch target locally; emit matching changes.
             List<ConfigChange> matching = new ArrayList<>();
             for (ConfigMutation m : delta.mutations()) {
                 if (!target.matches(m.key())) {

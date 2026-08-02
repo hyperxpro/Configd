@@ -157,7 +157,7 @@ class EdgeCertExpiryTest {
 
 
     private void unenforcedCertSurvivesPastNotAfter(boolean netty) throws Exception {
-        int port = startMtlsServer(netty, EdgeCertGate.OFF); // default posture
+        int port = startMtlsServer(netty, EdgeCertGate.OFF);
         try (EdgeProtocolClient edge = connectMtls(port)) {
             edge.subscribeFullStore("edge-cert", 0L);
             readUntil(edge, EdgeFrame.SubscribeOk.class);

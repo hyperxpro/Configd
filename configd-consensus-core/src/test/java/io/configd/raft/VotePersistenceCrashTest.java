@@ -92,18 +92,12 @@ class VotePersistenceCrashTest {
         RecordingTransport t1 = new RecordingTransport();
         RaftNode node = boot(storage, t1);
 
-        // SELF (follower @ term 0) receives a RequestVote from candidate A at term
-        // 5. term 5 > 0 so it advances the term and, with an at-least-as-up-to-date
-        // log, GRANTS - persisting (term=5, votedFor=A) via the production
-        // durableState.vote(A) call on the grant path.
         node.handleMessage(voteFrom(CAND_A, 5));
         RequestVoteResponse granted = t1.lastVoteResponse();
         assertTrue(granted.voteGranted(), "the first vote (for A) must be granted");
         assertEquals(5, granted.term(), "the grant is at the advanced term 5");
         assertEquals(CAND_A, node.votedFor(), "in-memory votedFor must be A after granting");
 
-        // Power loss. The vote was persisted by a self-durable put, so it is in the
-        // durable image; recover a FRESH node over exactly the durable bytes.
         storage.crash();
         RecordingTransport t2 = new RecordingTransport();
         RaftNode recovered = boot(storage.recoveredView(), t2);
@@ -114,8 +108,6 @@ class VotePersistenceCrashTest {
                 "RR-085 #2: votedFor must survive the restart — a deleted durableState.vote(candidate) "
                         + "call leaves this null and enables a post-crash double-vote");
 
-        // Now a DIFFERENT candidate B requests a vote in the SAME term 5. Election
-        // Safety: the recovered node already voted for A this term and MUST REJECT.
         recovered.handleMessage(voteFrom(CAND_B, 5));
         RequestVoteResponse second = t2.lastVoteResponse();
         assertNotNull(second);

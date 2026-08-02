@@ -30,7 +30,6 @@ public final class ErrorClassifier {
         }
 
         ConfigdException ex = exceptionFor(code, msg);
-        // ERROR_CLOSE is connection-scope; WATCH_CANCELED is per-watch (siblings survive).
         return carrier == Carrier.WATCH_CANCELED ? new Reaction.PerWatch(ex) : new Reaction.Fatal(ex);
     }
 

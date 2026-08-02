@@ -114,12 +114,12 @@ class LeaderBalanceLoopTest {
             loop.runOnce();
             assertEquals(1, cluster.transfersApplied);
 
-            clock.set(30_000L); // still inside cooldown
+            clock.set(30_000L);
             loop.runOnce();
             assertEquals(1, cluster.transfersApplied, "cooldown must suppress the mid-cooldown cadence");
             assertTrue(metrics.skipped(LeaderBalancePlanner.REASON_COOLDOWN) >= 1);
 
-            clock.set(60_000L); // cooldown elapsed
+            clock.set(60_000L);
             loop.runOnce();
             assertEquals(2, cluster.transfersApplied, "a transfer resumes once cooldown elapses");
         }
@@ -148,14 +148,13 @@ class LeaderBalanceLoopTest {
             loop.runOnce(); // seed terms on a balanced cluster - no action
             assertEquals(0, cluster.transfersApplied);
 
-            // Node 0 wins every group in an election storm (bumps terms), then terms keep churning.
             for (int g = 0; g < 8; g++) {
                 cluster.leaderOf.put(g, NodeId.of(0));
                 cluster.bumpTerm(g);
             }
             for (long t = 1_000L; t <= 5_000L; t += 2_000L) {
                 clock.set(t);
-                cluster.bumpTerm(0); // ongoing churn within the window
+                cluster.bumpTerm(0);
                 loop.runOnce();
             }
             assertEquals(0, cluster.transfersApplied, "no transfer may happen during an election storm");
@@ -196,7 +195,6 @@ class LeaderBalanceLoopTest {
 
     @Test
     void dryRun_emitsWouldTransfer_butMovesNothing() {
-        // Observe-only: the would-be move is recorded, but no transfer is attempted.
         FakeCluster cluster = new FakeCluster(4);
         cluster.placeAllOn(8, NodeId.of(0));
         MutableClock clock = new MutableClock();

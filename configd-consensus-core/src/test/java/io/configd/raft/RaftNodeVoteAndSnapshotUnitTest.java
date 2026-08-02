@@ -47,7 +47,6 @@ class RaftNodeVoteAndSnapshotUnitTest {
         return new RequestVoteRequest(term, cand, lastIdx, lastTerm, false);
     }
 
-    // handleRequestVote: grant/deny decision
 
     @Nested
     class VoteDecision {
@@ -56,8 +55,6 @@ class RaftNodeVoteAndSnapshotUnitTest {
         void grantsVoteToUpToDateCandidateInNewTerm() {
             RecordingTransport t = new RecordingTransport();
             RaftNode node = follower(t);
-            // A fresh follower (term 0, empty log) receiving a vote request at term 1 from an
-            // up-to-date candidate must grant the vote and persist it.
             node.handleMessage(vote(1, N2, 0, 0));
             List<RequestVoteResponse> resps = t.voteResponses();
             assertEquals(1, resps.size());
@@ -69,9 +66,8 @@ class RaftNodeVoteAndSnapshotUnitTest {
         void rejectsStaleTermCandidate() {
             RecordingTransport t = new RecordingTransport();
             RaftNode node = follower(t);
-            node.handleMessage(new RequestVoteResponse(5, false, N2, false)); // term -> 5
+            node.handleMessage(new RequestVoteResponse(5, false, N2, false));
             t.clear();
-            // A stale-term (3) request (req.term() < currentTerm) must be rejected.
             node.handleMessage(vote(3, N2, 0, 0));
             List<RequestVoteResponse> resps = t.voteResponses();
             assertEquals(1, resps.size());
@@ -83,11 +79,9 @@ class RaftNodeVoteAndSnapshotUnitTest {
         void rejectsSecondCandidateAfterAlreadyVotingInTerm() {
             RecordingTransport t = new RecordingTransport();
             RaftNode node = follower(t);
-            node.handleMessage(vote(1, N2, 0, 0)); // grant N2
+            node.handleMessage(vote(1, N2, 0, 0));
             assertEquals(N2, node.votedFor());
             t.clear();
-            // A different candidate in the same term must be rejected: canVote requires
-            // votedFor == null || votedFor.equals(candidate).
             node.handleMessage(vote(1, N3, 0, 0));
             List<RequestVoteResponse> resps = t.voteResponses();
             assertEquals(1, resps.size());
@@ -98,13 +92,12 @@ class RaftNodeVoteAndSnapshotUnitTest {
         void rejectsCandidateWithStaleLog() {
             RecordingTransport t = new RecordingTransport();
             RaftNode node = follower(t);
-            // Give the follower a log: an AppendEntries with two entries at term 2.
             node.handleMessage(new AppendEntriesRequest(2, N2, 0, 0,
                     List.of(new LogEntry(1, 2, new byte[]{1}), new LogEntry(2, 2, new byte[]{2})), 0));
             t.clear();
             // A candidate at a higher term but with a shorter/older log must be denied by the
             // up-to-date check (Raft section 5.4.1).
-            node.handleMessage(vote(3, N3, 1, 1)); // lastLogTerm 1 < our 2
+            node.handleMessage(vote(3, N3, 1, 1));
             List<RequestVoteResponse> resps = t.voteResponses();
             assertEquals(1, resps.size());
             assertFalse(resps.getFirst().voteGranted(), "stale-log candidate must be denied");
@@ -112,8 +105,6 @@ class RaftNodeVoteAndSnapshotUnitTest {
 
         @Test
         void higherTermVoteRequestStepsDownLeader() {
-            // A leader receiving a RequestVote at a higher term (req.term() > currentTerm)
-            // steps down before deciding.
             RaftConfig config = RaftConfig.of(N1, Set.of());
             RecordingTransport t = new RecordingTransport();
             RaftNode leader = new RaftNode(config, new RaftLog(), t, new CountingStateMachine(),
@@ -121,15 +112,12 @@ class RaftNodeVoteAndSnapshotUnitTest {
             for (int i = 0; i < 301; i++) leader.tick();
             assertEquals(RaftRole.LEADER, leader.role());
             long term = leader.currentTerm();
-            // A single-node leader is still a voter of {N1}; a higher-term vote request
-            // makes it adopt the new term and step down.
             leader.handleMessage(vote(term + 5, N1, 99, 99));
             assertEquals(term + 5, leader.currentTerm());
             assertEquals(RaftRole.FOLLOWER, leader.role());
         }
     }
 
-    // triggerSnapshot: boundary guards
 
     @Nested
     class SnapshotTrigger {
@@ -148,8 +136,6 @@ class RaftNodeVoteAndSnapshotUnitTest {
         void noSnapshotWhenNothingNewBeyondSnapshotPoint() {
             Storage storage = Storage.inMemory();
             RaftNode node = durableSingleNodeLeader(storage);
-            // Taking a snapshot up to lastApplied, then immediately trying again with no new
-            // applies, must return false (appliedIndex <= snapshotIndex).
             assertTrue(node.triggerSnapshot(), "first snapshot with applied entries must succeed");
             long snapIdx = node.log().snapshotIndex();
             assertTrue(snapIdx > 0);
@@ -166,12 +152,10 @@ class RaftNodeVoteAndSnapshotUnitTest {
             long applied = node.log().lastApplied();
             assertTrue(applied >= 3, "no-op + 2 commands applied on single-node path");
             assertTrue(node.triggerSnapshot());
-            // snapshotIndex must move up to lastApplied.
             assertEquals(applied, node.log().snapshotIndex());
         }
     }
 
-    // deserializeConfigChange: joint-side voter-count bound
 
     @Nested
     class JointCodecBound {
@@ -181,19 +165,17 @@ class RaftNodeVoteAndSnapshotUnitTest {
             // magic + isJoint(1) + oldCount(1) + oldId + newCount(1000 > 255) must throw:
             // an absurd newCount (> 255) is rejected.
             java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocate(4 + 1 + 4 + 4 + 4);
-            buf.put(new byte[]{0x52, 0x43, 0x46, 0x47}); // RCFG
-            buf.put((byte) 1); // joint
-            buf.putInt(1);     // oldCount
-            buf.putInt(1);     // old voter id = 1
-            buf.putInt(1000);  // absurd newCount
+            buf.put(new byte[]{0x52, 0x43, 0x46, 0x47});
+            buf.put((byte) 1);
+            buf.putInt(1);
+            buf.putInt(1);
+            buf.putInt(1000);
             assertThrows(IllegalArgumentException.class,
                     () -> RaftNode.deserializeConfigChange(buf.array()));
         }
 
         @Test
         void roundTripsJointConfigThroughDeserialize() {
-            // A well-formed joint config must deserialize back to a joint ClusterConfig
-            // with the correct old/new voter sets. Exercises the joint branch fully.
             java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocate(4 + 1 + 4 + 4 + 4 + 8);
             buf.put(new byte[]{0x52, 0x43, 0x46, 0x47});
             buf.put((byte) 1); // joint

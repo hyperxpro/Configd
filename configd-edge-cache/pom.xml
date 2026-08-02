@@ -37,7 +37,6 @@
     </dependencies>
 
     <profiles>
-        <!-- Explicit targetClasses (65): EdgeClientCore, StalenessTracker, EdgeConfigClient, PrefixStorageFilter, StrongReadKeyClass, DeltaApplier, PoisonPillPolicy. -->
         <profile>
             <id>mutation</id>
             <build>

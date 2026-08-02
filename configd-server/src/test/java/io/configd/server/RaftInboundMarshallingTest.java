@@ -68,7 +68,7 @@ class RaftInboundMarshallingTest {
     private static RaftNode buildLeader(RaftTransport transport, StateMachine sm,
                                         ScheduledExecutorService raftExecutor) throws Exception {
         NodeId id = NodeId.of(1);
-        RaftConfig config = RaftConfig.of(id, Set.of()); // single-node cluster
+        RaftConfig config = RaftConfig.of(id, Set.of());
         RaftNode node = new RaftNode(config, new RaftLog(), transport, sm, new java.util.Random(42));
         raftExecutor.submit(() -> {
             for (int i = 0; i < 400; i++) {
@@ -143,7 +143,7 @@ class RaftInboundMarshallingTest {
                 await(go);
                 try {
                     for (int i = 0; i < 3_000; i++) {
-                        proposer.propose(null, java.util.List.of("w" + i), cmd("w" + i)); // off-executor write
+                        proposer.propose(null, java.util.List.of("w" + i), cmd("w" + i));
                     }
                 } catch (Throwable t) {
                     floodError.compareAndSet(null, t);
@@ -275,7 +275,6 @@ class RaftInboundMarshallingTest {
         public void send(NodeId target, RaftMessage message) {
             sentinel.enter();
             try {
-                // node-access touchpoint
             } finally {
                 sentinel.exit();
             }
@@ -293,7 +292,6 @@ class RaftInboundMarshallingTest {
         public long apply(long index, long term, byte[] command) {
             sentinel.enter();
             try {
-                // node-access touchpoint
                 return StateMachine.NON_MUTATING;
             } finally {
                 sentinel.exit();

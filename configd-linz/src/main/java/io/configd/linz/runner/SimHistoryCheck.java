@@ -79,7 +79,6 @@ public final class SimHistoryCheck {
             return null;
         }
         int v = i + needle.length();
-        // skip spaces
         while (v < line.length() && line.charAt(v) == ' ') {
             v++;
         }
@@ -87,9 +86,9 @@ public final class SimHistoryCheck {
             return null;
         }
         if (line.charAt(v) != '"') {
-            return null; // not a string field
+            return null;
         }
-        v++; // past opening quote
+        v++;
         StringBuilder sb = new StringBuilder();
         while (v < line.length()) {
             char c = line.charAt(v);
@@ -99,7 +98,7 @@ public final class SimHistoryCheck {
                     case 'n' -> '\n';
                     case 'r' -> '\r';
                     case 't' -> '\t';
-                    default -> n; // \" \\ etc.
+                    default -> n;
                 });
                 v += 2;
                 continue;

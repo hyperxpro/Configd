@@ -92,7 +92,6 @@ final class NodeAnchorService {
             }
         }
 
-        // 3. Shard-liveness digest. See the class javadoc for the reasoning.
         if (MessageDigest.isEqual(digestNow, na.shardAnchorDigest())) {
             // Clean: the per-shard liveness fingerprint is unchanged - no shard lost its durable head.
             return nodeAnchor;

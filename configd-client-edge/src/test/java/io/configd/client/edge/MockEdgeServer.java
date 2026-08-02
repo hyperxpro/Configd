@@ -89,7 +89,6 @@ final class MockEdgeServer implements AutoCloseable {
         try {
             serverSocket.close();
         } catch (IOException ignored) {
-            // best-effort
         }
         acceptThread.interrupt();
     }
@@ -100,7 +99,7 @@ final class MockEdgeServer implements AutoCloseable {
             try {
                 socket = serverSocket.accept();
             } catch (IOException e) {
-                return; // server closed
+                return;
             }
             int index = connectionCount.incrementAndGet();
             Thread t = new Thread(() -> serve(socket, index), "mock-edge-conn-" + index);
@@ -117,7 +116,6 @@ final class MockEdgeServer implements AutoCloseable {
         }
     }
 
-    /** The per-connection API a {@link Handler} scripts against. */
     final class Conn implements AutoCloseable {
         private final Socket socket;
         private final DataInputStream in;
@@ -162,7 +160,6 @@ final class MockEdgeServer implements AutoCloseable {
         /** Drains client frames until the client closes — keeps the connection open while sending nothing. */
         void parkUntilClosed() throws IOException {
             while (readFrame() != null) {
-                // keep reading (and recording) until EOF; the server sends nothing back
             }
         }
 
@@ -171,7 +168,6 @@ final class MockEdgeServer implements AutoCloseable {
             try {
                 socket.close();
             } catch (IOException ignored) {
-                // best-effort
             }
         }
     }

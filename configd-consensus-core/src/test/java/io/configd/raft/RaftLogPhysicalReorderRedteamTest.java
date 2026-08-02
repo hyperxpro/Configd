@@ -147,10 +147,6 @@ class RaftLogPhysicalReorderRedteamTest {
                 "substituting a different-index authentic frame must be refused, got: " + ex.getMessage());
     }
 
-    /**
-     * A mid-log term regression built from authentic records, physically arranged on disk with
-     * contiguous indices but a term that goes DOWN => REFUSE via term monotonicity.
-     */
     @Test
     void physicalTermRegressionRefused(@TempDir Path tempDir) throws Exception {
         IntegrityEnvelope env = hmacEnvelope();
@@ -179,7 +175,6 @@ class RaftLogPhysicalReorderRedteamTest {
         assertInteriorSpliceRefused(tempDir, hmacEnvelope());
     }
 
-    /** The same interior stale-content splice under the encrypting (AES-256-GCM) posture. */
     @Test
     void interiorStaleContentSpliceRefused_gcm(@TempDir Path tempDir) throws Exception {
         assertInteriorSpliceRefused(tempDir, gcmEnvelope());
@@ -223,7 +218,7 @@ class RaftLogPhysicalReorderRedteamTest {
         IntegrityEnvelope env = hmacEnvelope();
         Storage storage = Storage.file(tempDir);
         ChainedWal.Writer w = new ChainedWal.Writer(storage, env, GID);
-        byte[] hashOfIndex1 = w.append(1, 1, "v1"); // = SHA-256 of index 1's record
+        byte[] hashOfIndex1 = w.append(1, 1, "v1");
         w.append(2, 2, "v2-CURRENT");
         w.append(3, 3, "v3");
 
@@ -281,7 +276,6 @@ class RaftLogPhysicalReorderRedteamTest {
     // False-positive boundaries: legitimate shapes MUST still recover cleanly (the checks refuse
     // tampering, not health). A false REFUSE here would be a liveness bug.
 
-    /** Legitimate compaction: a WAL that starts at index 5 with a matching snapshot boundary of 4. */
     @Test
     void legitimateCompactionRecoversCleanly(@TempDir Path tempDir) throws Exception {
         IntegrityEnvelope env = hmacEnvelope();
@@ -298,7 +292,6 @@ class RaftLogPhysicalReorderRedteamTest {
         assertEquals(4, log.snapshotIndex());
     }
 
-    /** Equal terms across the whole log (non-strict monotonic) must be allowed. */
     @Test
     void equalTermRunRecoversCleanly(@TempDir Path tempDir) throws Exception {
         IntegrityEnvelope env = hmacEnvelope();
@@ -372,7 +365,6 @@ class RaftLogPhysicalReorderRedteamTest {
         return Arrays.copyOfRange(wal, 0, WalContainer.HEADER_SIZE);
     }
 
-    /** Splits a .wal file into its complete {@code [len][data][crc32c]} frames (skipping the container header). */
     private static List<byte[]> readFrames(byte[] wal) {
         List<byte[]> out = new ArrayList<>();
         int pos = WalContainer.HEADER_SIZE;
@@ -388,7 +380,6 @@ class RaftLogPhysicalReorderRedteamTest {
         return out;
     }
 
-    /** Concatenates the preserved header and the (possibly reordered) frame list back into a .wal image. */
     private static byte[] reassemble(byte[] hdr, List<byte[]> frames) {
         int total = hdr.length + frames.stream().mapToInt(f -> f.length).sum();
         ByteBuffer b = ByteBuffer.allocate(total);
@@ -399,7 +390,6 @@ class RaftLogPhysicalReorderRedteamTest {
         return b.array();
     }
 
-    /** Frames raw envelope bytes as FileStorage would: {@code [len:4][data][crc32c:4]} (CRC32C over data). */
     private static byte[] frameOf(byte[] data) {
         CRC32C crc = new CRC32C();
         crc.update(data);
@@ -421,7 +411,6 @@ class RaftLogPhysicalReorderRedteamTest {
         repairEnvelopeCrc(env);
     }
 
-    /** Recomputes the envelope's trailing CRC32C over everything before it (attacker-trivial). */
     private static void repairEnvelopeCrc(byte[] env) {
         CRC32C crc = new CRC32C();
         crc.update(env, 0, env.length - IntegrityEnvelope.CRC_SIZE);

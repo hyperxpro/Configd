@@ -99,9 +99,6 @@ class FanOutFilterDivergenceTest {
             buffer.publish(put(i, "svc/k" + i));
         }
         s.onSubscribe(new EdgeFrame.Subscribe(false, List.of("svc/"), 1L, -1L, "edge-1", true));
-        // decideMode sees the readSince(1) GAP and chooses SNAPSHOT_FIRST (re-bootstrap),
-        // exactly as it would on the classic path - filtering does not mask a genuine
-        // fall-behind.
         assertEquals(EdgeFrame.Mode.SNAPSHOT_FIRST,
                 sink.sentOfType(EdgeFrame.SubscribeOk.class).get(0).mode());
     }

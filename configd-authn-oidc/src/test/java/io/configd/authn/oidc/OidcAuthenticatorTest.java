@@ -188,7 +188,7 @@ final class OidcAuthenticatorTest {
     void missingTypIsRejectedWhenStrictButAcceptedWhenRelaxed() throws Exception {
         RSAKey rsa = OidcTestSupport.rsaKey("kA");
         ECKey ec = OidcTestSupport.ecKey("eA");
-        String token = OidcTestSupport.signRs256(rsa, OidcTestSupport.claims("svc-1").build(), null); // no typ
+        String token = OidcTestSupport.signRs256(rsa, OidcTestSupport.claims("svc-1").build(), null);
 
         assertDenied(resolve(authenticatorFor(immutable(rsa, ec), true, noRoles()), token),
                 DenyReason.INVALID_CREDENTIAL);
