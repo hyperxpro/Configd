@@ -47,7 +47,11 @@ if [ "${JMHGC_SKIP_BUILD:-0}" = "1" ] && [ -f "$JAR" ]; then
   echo "JMH-GC-CHECK: JMHGC_SKIP_BUILD=1 — REUSING existing $JAR (CI must not do this)"
 else
   echo "JMH-GC-CHECK: packaging benchmarks.jar (testkit + upstream, tests skipped)"
-  if ! $MVN -q -pl configd-testkit -am package -Dmaven.test.skip=true >/dev/null; then
+  # skipTests, not maven.test.skip: skipping test COMPILATION leaves
+  # configd-consensus-core's test-jar unattached, and configd-testkit depends on it.
+  BUILDLOG="$(mktemp /tmp/jmhgc-build-XXXXXX.txt)"
+  if ! $MVN -q -pl configd-testkit -am package -DskipTests >"$BUILDLOG" 2>&1; then
+    tail -30 "$BUILDLOG" >&2
     echo "JMH-GC-CHECK: benchmarks.jar build FAILED" >&2
     exit 1
   fi

@@ -50,8 +50,12 @@ if [ "${GATE5_SKIP_BUILD:-0}" = "1" ] && [ -f "$JAR" ]; then
   echo "GATE-5 build: REUSING existing $JAR (GATE5_SKIP_BUILD=1; CI must not do this)"
 else
   echo "GATE-5 build: packaging benchmarks.jar..."
-  $MVN -q -pl configd-testkit -am package -Dmaven.test.skip=true >/dev/null 2>&1 \
-    || fail build "benchmarks.jar build failed"
+  # skipTests, not maven.test.skip: configd-testkit depends on configd-consensus-core's
+  # test-jar, and skipping test COMPILATION means that jar is never attached, so the
+  # reactor cannot supply it. It resolved anyway only while some earlier full build had
+  # left one in the local repository; on a cold one the packaging fails outright.
+  $MVN -q -pl configd-testkit -am package -DskipTests >"$LOGDIR/build.txt" 2>&1 \
+    || { tail -30 "$LOGDIR/build.txt"; fail build "benchmarks.jar build failed"; }
 fi
 [ -f "$JAR" ] || fail build "$JAR missing after build"
 
