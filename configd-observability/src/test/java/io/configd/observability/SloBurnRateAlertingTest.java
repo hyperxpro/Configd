@@ -114,14 +114,19 @@ class SloBurnRateAlertingTest {
 
     @Test
     void theActiveGaugeTracksAlertsClearing() {
-        tracker.defineSlo("recovers", 0.99, Duration.ofMillis(50));
+        // The window is an hour and nothing is evicted during the test: recovery here is dilution by
+        // later successes, not the failures ageing out. A short window would make the second
+        // evaluation depend on how long the first one took, which is not a property worth asserting.
+        tracker.defineSlo("recovers", 0.99, Duration.ofHours(1));
         for (int i = 0; i < 20; i++) {
             tracker.recordFailure("recovers");
         }
         alerting.runOnce();
         assertEquals(1, metric(ConfigdMetrics.NAME_SLO_BURN_ALERTS_ACTIVE));
 
-        for (int i = 0; i < 500; i++) {
+        // 3000 successes against 20 failures is 99.34% compliance, clear of the 99% target whether or
+        // not the failures are still in the window.
+        for (int i = 0; i < 3_000; i++) {
             tracker.recordSuccess("recovers");
         }
         alerting.runOnce();
