@@ -80,7 +80,7 @@ public final class NettyEdgeReadServer {
     public void start() throws InterruptedException {
         IoHandlerFactory ioFactory = epoll ? EpollIoHandler.newFactory() : NioIoHandler.newFactory();
         boss = new MultiThreadIoEventLoopGroup(1, ioFactory);
-        worker = new MultiThreadIoEventLoopGroup(2, ioFactory); // pinned to the 2-vCPU box
+        worker = new MultiThreadIoEventLoopGroup(2, ioFactory);
         Class<? extends ServerChannel> channelType =
                 epoll ? EpollServerSocketChannel.class : NioServerSocketChannel.class;
 

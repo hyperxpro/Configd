@@ -38,7 +38,6 @@ public class SubscriptionMatchBenchmark {
             }
         }
 
-        // Half hits, half misses (exercises both paths uniformly).
         lookupKeys = new String[1024];
         for (int i = 0; i < lookupKeys.length; i++) {
             if ((i & 1) == 0) {

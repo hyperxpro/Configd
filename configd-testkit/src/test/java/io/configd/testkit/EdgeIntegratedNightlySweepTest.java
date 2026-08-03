@@ -14,7 +14,6 @@ class EdgeIntegratedNightlySweepTest {
     private static final int EDGES = 3;
     private static final int TICKS = 1_200;
 
-    /** Cap on seeds listed per category (keeps the summary greppable at 10k scale). */
     private static final int MAX_LISTED_SEEDS = 100;
 
     @Test

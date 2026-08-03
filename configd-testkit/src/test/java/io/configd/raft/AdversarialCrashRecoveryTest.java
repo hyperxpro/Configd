@@ -55,7 +55,6 @@ class AdversarialCrashRecoveryTest {
                         + exercised + "/" + batch);
     }
 
-    /** Returns true if the seed reached the crash+restart+verify path. */
     private boolean runOneSeed(long seed) {
         RandomGenerator rng = RandomGeneratorFactory.of("L64X128MixRandom").create(seed);
 

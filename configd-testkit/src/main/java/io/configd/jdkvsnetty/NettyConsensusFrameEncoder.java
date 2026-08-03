@@ -44,7 +44,7 @@ final class NettyConsensusFrameEncoder extends MessageToByteEncoder<FrameMsg> {
      */
     @Override
     protected ByteBuf allocateBuffer(ChannelHandlerContext ctx, FrameMsg m, boolean preferDirect) {
-        int size = 4 + FrameCodec.frameSize(m.payload().length); // [senderId] + frame
+        int size = 4 + FrameCodec.frameSize(m.payload().length);
         return preferDirect ? ctx.alloc().ioBuffer(size) : ctx.alloc().heapBuffer(size);
     }
 

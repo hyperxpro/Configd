@@ -27,21 +27,12 @@ final class HistoryRecorder {
 
     private final List<Entry> entries = new ArrayList<>();
 
-    /**
-     * Records a write (PUT/DELETE) as a single invoke->info entry. Per ack
-     * semantics a leader-accepted write is {@code :info} (may or may not commit); a
-     * rejected one is {@code :fail}.
-     */
     void recordWriteInvokeAndInfo(long ts, int clientId, String opType, String key,
             String token, boolean accepted) {
         entries.add(new Entry(clientId, opType, key, token, null, ts, ts,
                 accepted ? "info" : "fail", "n/a"));
     }
 
-    /**
-     * Records a linearizable read. A found value is {@code :ok} carrying the
-     * observed token; a not-found is {@code :ok} of _|_ (still a real-time fact).
-     */
     void recordRead(long ts, int clientId, String key, String observedTokenOrNull) {
         entries.add(new Entry(clientId, "READ", key, null,
                 observedTokenOrNull, ts, ts, "ok", "linearizable"));

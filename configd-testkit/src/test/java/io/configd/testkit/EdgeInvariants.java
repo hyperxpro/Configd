@@ -93,7 +93,7 @@ final class EdgeInvariants {
 
     void recordPublication(long seq, int cpNode, long publishedAtMs, List<Integer> subscribedEdgeIds) {
         if (subscribedEdgeIds.isEmpty()) {
-            return; // nobody to deliver to - no liveness obligation
+            return;
         }
         Outstanding o = new Outstanding(seq, cpNode, publishedAtMs);
         o.owingEdgeIds.addAll(subscribedEdgeIds);
@@ -111,7 +111,7 @@ final class EdgeInvariants {
     private void checkPerEdgeVersionMonotonicity(List<EdgeActor> edges) {
         for (EdgeActor edge : edges) {
             if (!edge.alive()) {
-                continue; // crashed: no store to read; restart re-incarnates
+                continue;
             }
             Incarnation inc = new Incarnation(edge.edgeId(), edge.incarnation());
             long v = edge.currentVersion();
@@ -158,7 +158,6 @@ final class EdgeInvariants {
     // ---- (d) eventual delivery bound (recorded liveness) -------------------
 
     private void checkEventualDelivery(List<EdgeActor> edges, long nowMs, IntPredicate connected) {
-        // Index edges by id for O(1) lookup (deterministic - read-only).
         Map<Integer, EdgeActor> byId = new HashMap<>();
         for (EdgeActor e : edges) {
             byId.put(e.edgeId(), e);
@@ -167,7 +166,6 @@ final class EdgeInvariants {
         var it = outstanding.iterator();
         while (it.hasNext()) {
             Outstanding o = it.next();
-            // Satisfy: drop any edge that has now observed this seq (cursor >= seq).
             o.owingEdgeIds.removeIf(edgeId -> {
                 EdgeActor e = byId.get(edgeId);
                 return e != null && e.alive() && e.cursor() >= o.seq;
@@ -176,9 +174,6 @@ final class EdgeInvariants {
                 it.remove();
                 continue;
             }
-            // Past the deadline: any still-owing edge that is live + connected +
-            // non-lagging is a recorded violation. Disconnected/lagging/crashed
-            // edges are excused for this window (you cannot deliver to them).
             if (nowMs - o.publishedAtMs > boundMs) {
                 long lateness = nowMs - o.publishedAtMs - boundMs;
                 o.owingEdgeIds.removeIf(edgeId -> {
@@ -241,7 +236,7 @@ final class EdgeInvariants {
         Map<String, VersionedValue> leader = sortedView(authoritative);
         for (EdgeActor edge : edges) {
             if (!edge.alive()) {
-                continue; // crashed-and-not-restarted edge has no state to converge
+                continue;
             }
             ConfigSnapshot edgeSnap = edge.snapshot();
             Map<String, VersionedValue> edgeView = sortedView(edgeSnap);
@@ -256,7 +251,6 @@ final class EdgeInvariants {
         }
     }
 
-    /** Deterministic key-sorted view of a snapshot's contents. */
     private static Map<String, VersionedValue> sortedView(ConfigSnapshot snap) {
         Map<String, VersionedValue> out = new TreeMap<>();
         snap.data().forEach(out::put);
@@ -272,11 +266,9 @@ final class EdgeInvariants {
     private static String diff(Map<String, VersionedValue> leader,
                                Map<String, VersionedValue> edge,
                                long leaderVersion, long edgeVersion) {
-        // Store version is the convergence anchor (effect): both must agree.
         if (leaderVersion != edgeVersion) {
             return "store version mismatch: leader " + leaderVersion + " vs edge " + edgeVersion;
         }
-        // Keys present in the leader but missing/divergent on the edge.
         for (var entry : leader.entrySet()) {
             String key = entry.getKey();
             VersionedValue lv = entry.getValue();
@@ -288,15 +280,11 @@ final class EdgeInvariants {
                 return "key '" + key + "' value bytes mismatch (leader v" + lv.version()
                         + ", edge v" + ev.version() + ")";
             }
-            // Sanity: the edge's per-key stamp must not exceed its store version (no
-            // impossible future write); a snapshot stamps to the snapshot seq, deltas to
-            // their seq - both are <= the store version.
             if (ev.version() > edgeVersion) {
                 return "key '" + key + "' has an impossible future version " + ev.version()
                         + " > edge store version " + edgeVersion;
             }
         }
-        // Keys present on the edge but absent from the leader (stale leftover).
         for (String key : edge.keySet()) {
             if (!leader.containsKey(key)) {
                 return "extra key '" + key + "' on edge (absent from leader)";

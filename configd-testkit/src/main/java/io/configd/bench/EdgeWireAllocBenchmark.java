@@ -35,7 +35,6 @@ public class EdgeWireAllocBenchmark {
 
     private static final int VALUE_BYTES = 64;
 
-    /** Ed25519 signature length - every production delta is signed (mandatory). */
     private static final int ED25519_SIG_BYTES = 64;
 
     private EdgeFrame.Notify notifyFrame;

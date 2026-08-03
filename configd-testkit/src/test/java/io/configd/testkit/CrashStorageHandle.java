@@ -22,7 +22,6 @@ public interface CrashStorageHandle extends Storage {
      */
     void armCrashAfterWrites(int afterWrites);
 
-    /** True once an armed crash has fired (its unsynced tail was discarded). */
     boolean didCrash();
 
     /**

@@ -79,12 +79,6 @@ class EdgeInvariantsTestTheTesterTest {
         System.out.println("[capture a] " + ex.getMessage());
     }
 
-    /**
-         * The complementary half of (a): the production {@link EdgeActor#applySnapshot} now
-         * REFUSES a backward snapshot (one whose seq is below the edge's current cursor), so the
-         * edge never regresses through the real apply path - production correctness protects the
-         * monotonicity invariant.
-         */
     @Test
     void productionApplySnapshotRefusesBackwardSnapshotSoTheStoreNeverRegresses() {
         EdgeActivity activity = new EdgeActivity();
@@ -99,7 +93,6 @@ class EdgeInvariantsTestTheTesterTest {
         edge.deliver(new EdgeStream.Snapshot(snapshotWith(5, "k", "v5", 5), 5));
         edge.tick();
         assertEquals(10, edge.currentVersion(), "backward snapshot must be refused (no regression)");
-        // The checker passes (no decrease occurred) - production guard protected it.
         inv.checkAll(List.of(edge), now.get(), e -> true);
     }
 
@@ -173,8 +166,6 @@ class EdgeInvariantsTestTheTesterTest {
         assertEquals(1, edge.currentVersion(), "legit delta must apply");
         inv.checkAll(List.of(edge), now.get(), e -> true);
 
-        // Offer a STALE delta (toVersion 1 <= currentVersion 1). DeltaApplier returns
-        // STALE_DELTA and does NOT apply, so the store does not regress.
         edge.deliver(new EdgeStream.Notify(notification(1, 0, 1, "k", "stale")));
         edge.tick();
         assertEquals(1, edge.currentVersion(), "stale delta must NOT change version");
@@ -216,7 +207,7 @@ class EdgeInvariantsTestTheTesterTest {
         EdgeActivity activity = new EdgeActivity();
         long bound = EdgeInvariants.BOUND_MS;
         EdgeInvariants inv = new EdgeInvariants(SEED, activity, bound);
-        EdgeActor edge = newEdge(0); // subscribed to CP node 0; never observes
+        EdgeActor edge = newEdge(0);
 
         long publishedAt = now.get();
         inv.recordPublication(7L, 0, publishedAt, List.of(edge.edgeId()));

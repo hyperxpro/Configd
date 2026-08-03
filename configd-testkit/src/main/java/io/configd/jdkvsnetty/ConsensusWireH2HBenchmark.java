@@ -85,7 +85,6 @@ public class ConsensusWireH2HBenchmark {
         ByteBuf warm = alloc.directBuffer(wireCapacity);
         NettyWireEncoders.encodeSendWireInto(warm, senderId, type, groupId, term, payload);
         warm.release();
-        // Diagnostic leg: one pooled direct ByteBuf reused for every op (never released here).
         reusedNettyBuf = alloc.directBuffer(wireCapacity);
     }
 
@@ -96,10 +95,6 @@ public class ConsensusWireH2HBenchmark {
         }
     }
 
-    /**
-     * STATUS QUO (today's {@code TcpRaftTransport.encodeWire}): codec frame array + a second
-     * {@code byte[4+frame]} to prepend the 4-byte big-endian sender id.
-     */
     @Benchmark
     public byte[] jdkStatusQuoSend() {
         byte[] encoded = FrameCodec.encode(type, groupId, term, payload);
@@ -123,7 +118,7 @@ public class ConsensusWireH2HBenchmark {
         reuseBuf.clear();
         reuseBuf.putInt(senderId); // ByteBuffer is big-endian by default -> identical bytes
         FrameCodec.encode(reuseBuf, type, groupId, term, payload);
-        return reuseBuf.getInt(4); // frame length prefix sits right after the 4-byte sender id
+        return reuseBuf.getInt(4);
     }
 
     /**
@@ -139,7 +134,7 @@ public class ConsensusWireH2HBenchmark {
         ByteBuf buf = alloc.directBuffer(wireCapacity);
         try {
             NettyWireEncoders.encodeSendWireInto(buf, senderId, type, groupId, term, payload);
-            return buf.getInt(4); // frame length prefix sits right after the 4-byte sender id
+            return buf.getInt(4);
         } finally {
             buf.release();
         }
@@ -161,7 +156,6 @@ public class ConsensusWireH2HBenchmark {
         return reusedNettyBuf.getInt(4);
     }
 
-    /** RECEIVE SIDE (for completeness): decode allocates payload byte[] + one Frame record. */
     @Benchmark
     public FrameCodec.Frame jdkDecode() {
         return FrameCodec.decode(preEncoded);

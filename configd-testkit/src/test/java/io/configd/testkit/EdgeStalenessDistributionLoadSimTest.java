@@ -94,8 +94,6 @@ class EdgeStalenessDistributionLoadSimTest {
                 "distribution must be monotone: p50=" + p50 + " p99=" + p99
                         + " p999=" + p999 + " p9999=" + p9999 + " max=" + max);
 
-        // Tail sample counts: exact count of samples at/above each tail percentile
-        // boundary - a p9999 backed by < ~100 tail samples is low-confidence.
         long cntAtP99 = probe.globalCountAtOrAbove(p99);
         long cntAtP999 = probe.globalCountAtOrAbove(p999);
         long cntAtP9999 = probe.globalCountAtOrAbove(p9999);

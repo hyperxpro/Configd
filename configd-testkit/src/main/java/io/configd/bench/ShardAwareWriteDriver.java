@@ -126,7 +126,7 @@ public final class ShardAwareWriteDriver {
         AtomicLong ok = new AtomicLong(), nonOk = new AtomicLong(), retargets = new AtomicLong(), seq = new AtomicLong();
         ConcurrentHashMap<Integer, AtomicInteger> status = new ConcurrentHashMap<>();
         long start = System.nanoTime();
-        long warmEnd = start + 3_000_000_000L;          // 3s warmup not counted
+        long warmEnd = start + 3_000_000_000L;
         long deadline = start + durationSec * 1_000_000_000L;
         Runnable worker = () -> {
             while (System.nanoTime() < deadline) {

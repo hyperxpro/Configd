@@ -57,7 +57,6 @@ final class EdgeActor {
     static final int EDGE_ID_BASE = 100;
 
     private final int edgeId;
-    /** The CP node id this edge subscribes to for its fan-out stream. */
     private final int subscribedCpNode;
     private final LongSupplier timeSource;
     private final Clock clock;
@@ -83,24 +82,12 @@ final class EdgeActor {
      */
     private EdgeApplyObserver applyObserver = EdgeApplyObserver.NONE;
 
-    // Lifetime counters surfaced to EdgeActivity and the invariants.
     private long deliveredCount;
 
-    /**
-     * Edge-to-server CURSOR_ACK sink: invoked with the highest applied seq when the core emits a
-     * {@code CURSOR_ACK} frame. The stream driver wires this to {@code FanOutSessionCore.onCursorAck}.
-     * {@code NONE} by default (the DirectInjectionDriver path does not ack).
-     */
     private LongConsumer cursorAckSink = NONE_ACK;
 
     private static final LongConsumer NONE_ACK = seq -> { };
 
-    /**
-     * Opt-in reconnect/recovery seam: when non-null, drained {@link EdgeClientCore.ConnectionDirective}s
-     * are forwarded here (the sim wires {@link EdgeFanOutSim#enableEdgeRecovery} to a real
-     * stream driver resubscribe). Null (the default) preserves the historical
-     * drain-and-ignore behavior, so the gate path stays byte-identical.
-     */
     private Consumer<EdgeClientCore.ConnectionDirective> directiveSink;
 
     EdgeActor(int edgeId, int subscribedCpNode, LongSupplier timeSource) {
@@ -121,7 +108,6 @@ final class EdgeActor {
         freshState();
     }
 
-    /** Builds a fresh production {@link EdgeClientCore} at cursor 0. */
     private void freshState() {
         // The core's FrameSink forwards CURSOR_ACK seqs to the wired cursorAckSink; all other
         // edge-to-server frames are never emitted by the core. The implausible-frontier counter
@@ -130,7 +116,7 @@ final class EdgeActor {
             if (frame instanceof EdgeFrame.CursorAck ack) {
                 cursorAckSink.accept(ack.seq());
             }
-            return true; // the sim transport never blocks
+            return true;
         };
         this.core = new EdgeClientCore(clock, monitor,
                 metrics.counter(StalenessTracker.IMPLAUSIBLE_METRIC),
@@ -138,10 +124,6 @@ final class EdgeActor {
                 EdgeClientCore.DEFAULT_HEARTBEAT_MS, EdgeClientCore.DEFAULT_SILENCE_FACTOR);
     }
 
-    /**
-     * Wires the edge-to-server CURSOR_ACK sink. The stream driver passes the owning
-     * session's {@code onCursorAck}; passing null resets to the no-op.
-     */
     void setCursorAckSink(LongConsumer sink) {
         this.cursorAckSink = (sink == null) ? NONE_ACK : sink;
     }
@@ -155,7 +137,6 @@ final class EdgeActor {
         this.directiveSink = sink;
     }
 
-    /** Reconnect recovery: the sim driver re-subscribed this edge - complete the reconnect cycle. */
     void onResubscribed() {
         core.onReconnected();
     }
@@ -171,7 +152,6 @@ final class EdgeActor {
         core.loadSnapshotForced(snapshot, seq);
     }
 
-    /** Enqueues a message delivered by the edge network. Queues even while lagging. */
     void deliver(EdgeStream message) {
         inbox.addLast(Objects.requireNonNull(message, "message must not be null"));
     }
@@ -180,11 +160,6 @@ final class EdgeActor {
         return inbox.size();
     }
 
-    /**
-     * Drains the inbox in FIFO order, mapping each {@link EdgeStream} message onto the core's
-     * {@link EdgeFrame} {@code onFrame} surface, then ticks the core. A lagging or crashed edge
-     * does not process its inbox (messages keep queueing).
-     */
     void tick() {
         if (!alive || lagging) {
             return;
@@ -211,18 +186,10 @@ final class EdgeActor {
                 case EdgeStream.Heartbeat hb ->
                         core.onFrame(new EdgeFrame.Heartbeat(hb.latestSeq(), hb.serverNowMillis()));
                 case EdgeStream.ErrorClose err ->
-                        // The policy disconnect rides the real core reaction - onErrorClose
-                        // queues the reconnect directive (cursor-resume), exactly as the
-                        // production edge process reacts to ERROR_CLOSE.
                         core.onFrame(new EdgeFrame.ErrorClose(err.code(), err.message()));
             }
         }
-        // Run the real periodic tick (re-ack on advance; heartbeat-silence reconnect policy;
-        // the reconnect DISCONNECTED-entry re-bootstrap detector).
         core.tick(timeSource.getAsLong());
-        // Directives: with no sink wired (the gate path), drain-and-ignore as ever (the sim
-        // heals via the server's ack-lag -> snapshot path). With the opt-in recovery sink
-        // wired, forward them - the sink performs a REAL resubscribe through the driver.
         EdgeClientCore.ConnectionDirective directive;
         while ((directive = core.pollDirective()) != null) {
             if (directiveSink != null) {
@@ -250,14 +217,12 @@ final class EdgeActor {
         core.onFrame(new EdgeFrame.SnapshotEnd(seq));
     }
 
-    /** Fires the apply observer if the single notification advanced the cursor (APPLIED). */
     private void observeIfApplied(CommitNotification n, long cursorBefore) {
         if (core.cursor() > cursorBefore && core.cursor() >= n.seq()) {
             applyObserver.onApplied(edgeId, n.seq(), n.commitTimestampMillis(), timeSource.getAsLong());
         }
     }
 
-    /** Fires the observer for each notification the batch advanced the cursor past. */
     private void observeBatchIfApplied(List<CommitNotification> ns, long cursorBefore) {
         long after = core.cursor();
         for (CommitNotification n : ns) {
@@ -277,12 +242,10 @@ final class EdgeActor {
         return core.get(key, cursor);
     }
 
-    /** Convenience cursorless read (no cursor gate). */
     ReadResult get(String key) {
         return core.get(key);
     }
 
-    /** Drops ALL in-memory state (an edge is a cache) and bumps the incarnation. */
     void crash() {
         alive = false;
         incarnation++;
@@ -292,7 +255,6 @@ final class EdgeActor {
         core = null;
     }
 
-    /** Restarts with a fresh empty store at cursor 0, awaiting bootstrap. */
     void restart() {
         alive = true;
         lagging = false;
@@ -300,20 +262,14 @@ final class EdgeActor {
         freshState();
     }
 
-    /**
-     * Attaches the observer-only apply seam. Passing {@link EdgeApplyObserver#NONE}
-     * (the default) is a no-op. Never affects behavior or the determinism digest.
-     */
     void setApplyObserver(EdgeApplyObserver observer) {
         this.applyObserver = (observer == null) ? EdgeApplyObserver.NONE : observer;
     }
 
-    /** Stops inbox processing; the inbox keeps queueing (models a lagging consumer). */
     void lag() {
         lagging = true;
     }
 
-    /** Resumes inbox processing. */
     void unlag() {
         lagging = false;
     }
@@ -334,7 +290,6 @@ final class EdgeActor {
         return alive ? core.currentVersion() : -1L;
     }
 
-    /** The current immutable read-store snapshot, or {@code null} when crashed. */
     ConfigSnapshot snapshot() {
         return alive ? core.snapshot() : null;
     }
@@ -345,13 +300,11 @@ final class EdgeActor {
 
     int gapsDetected() { return alive ? core.gapsDetected() : 0; }
 
-    /** DISCONNECTED-entry re-bootstrap directives the core queued. */
     int disconnectedRebootstraps() { return alive ? core.disconnectedRebootstraps() : 0; }
 
     int snapshotsApplied() { return alive ? core.snapshotsApplied() : 0; }
 
     long deliveredCount() { return deliveredCount; }
 
-    /** Heartbeats observed in this incarnation (stream carrier; the core wires the frontier). */
     int heartbeatsObserved() { return alive ? core.heartbeatsObserved() : 0; }
 }

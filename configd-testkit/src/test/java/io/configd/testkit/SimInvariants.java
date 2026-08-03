@@ -39,7 +39,6 @@ import java.util.Map;
  */
 final class SimInvariants {
 
-    /** Thrown on the first safety violation; carries the seed for replay. */
     static final class SafetyViolation extends RuntimeException {
         private static final long serialVersionUID = 1L;
 
@@ -54,11 +53,6 @@ final class SimInvariants {
 
     private final long[] lastVersionPerNode;
 
-    /**
-     * Per (node, committedIndex) the applied command digest, so a divergent apply
-     * at the same index across replicas (or across time on one node) is caught.
-     * Keyed by index; value is the command identity recorded by the first observer.
-     */
     private final Map<Long, String> committedCommandByIndex = new HashMap<>();
 
     SimInvariants(ClusterView cluster, long seed) {
@@ -83,10 +77,6 @@ final class SimInvariants {
         };
     }
 
-    /**
-         * Runs all cross-node safety checks against the current cluster state. Throws
-         * {@link SafetyViolation} on the first breach.
-         */
     void checkAll() {
         checkSingleLeaderPerTerm();
         checkVersionMonotonicityPerObserver();
@@ -94,7 +84,6 @@ final class SimInvariants {
         checkStateMachineSafetyAcrossReplicas();
     }
 
-    /** <=1 LEADER per term across the whole cluster (Election Safety, global view). */
     private void checkSingleLeaderPerTerm() {
         Map<Long, Integer> leaderByTerm = new HashMap<>();
         for (int i = 0; i < nodeCount; i++) {
@@ -122,11 +111,6 @@ final class SimInvariants {
         }
     }
 
-    /**
-     * Log Matching across replicas: for any two nodes, entries at the same index
-     * up to the lower of their commit indices must have the same term. This is the
-     * cross-node twin of the in-node {@code log_matching} check.
-     */
     private void checkLogMatchingAcrossReplicas() {
         for (int a = 0; a < nodeCount; a++) {
             for (int b = a + 1; b < nodeCount; b++) {

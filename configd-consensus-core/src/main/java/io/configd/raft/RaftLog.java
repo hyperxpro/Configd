@@ -753,20 +753,6 @@ public final class RaftLog {
         return (int) (index - snapshotIndex - 1);
     }
 
-    /**
-     * Verifies the recovered WAL entries satisfy the two POSITION invariants that per-record
-     * authentication alone cannot: <b>contiguity</b> (each embedded index is exactly one more than
-     * its predecessor, so the run has no gap, duplicate, or reorder) and <b>term monotonicity</b>
-     * (terms never regress, which Raft guarantees because a node never writes a lower term at a
-     * later index). A physically reordered, duplicated, gapped, or different-index-substituted record
-     * still authenticates as bytes - its own envelope MAC/tag is intact - so these whole-log checks
-     * are what detect an index PERMUTATION. What they do NOT catch is an index-preserving,
-     * term-monotonic content substitution (an interior record rolled back to an older authentic
-     * version at the SAME index and a non-decreasing term): that passes both checks and is closed by
-     * the per-record hash chain ({@link #verifyRecoveredChain()}), not here. Any violation ⇒
-     * {@link IntegrityException} (recovery REFUSES). Legitimate compaction (a run that starts at
-     * {@code firstIndex > 1}) is fine: the run must merely be internally consecutive, not start at 1.
-     */
     /** Picks the anchor backend: a real dual-slot file for FileStorage, else a self-durable value. */
     private static AnchorIO anchorIOFor(Storage storage) {
         return storage.storageDirectory()
@@ -883,6 +869,20 @@ public final class RaftLog {
         }
     }
 
+    /**
+     * Verifies the recovered WAL entries satisfy the two POSITION invariants that per-record
+     * authentication alone cannot: <b>contiguity</b> (each embedded index is exactly one more than
+     * its predecessor, so the run has no gap, duplicate, or reorder) and <b>term monotonicity</b>
+     * (terms never regress, which Raft guarantees because a node never writes a lower term at a
+     * later index). A physically reordered, duplicated, gapped, or different-index-substituted record
+     * still authenticates as bytes - its own envelope MAC/tag is intact - so these whole-log checks
+     * are what detect an index PERMUTATION. What they do NOT catch is an index-preserving,
+     * term-monotonic content substitution (an interior record rolled back to an older authentic
+     * version at the SAME index and a non-decreasing term): that passes both checks and is closed by
+     * the per-record hash chain ({@link #verifyRecoveredChain()}), not here. Any violation ⇒
+     * {@link IntegrityException} (recovery REFUSES). Legitimate compaction (a run that starts at
+     * {@code firstIndex > 1}) is fine: the run must merely be internally consecutive, not start at 1.
+     */
     private void verifyRecoveredEntries(List<LogEntry> recovered) {
         if (recovered.isEmpty()) {
             return;

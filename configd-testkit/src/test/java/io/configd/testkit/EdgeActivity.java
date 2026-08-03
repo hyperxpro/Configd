@@ -27,7 +27,6 @@ import java.util.TreeMap;
  */
 final class EdgeActivity {
 
-    /** Bound on the recorded violation list so a pathological seed cannot OOM. */
     static final int MAX_RECORDED_VIOLATIONS = 256;
 
     record DeliveryViolation(long seq, int edgeId, long publishedAtMs, long latenessMs) {}

@@ -37,7 +37,6 @@ class OpHistoryTest {
                     "status must be ok/info/fail, got: " + e.status());
             assertTrue(e.responseTs() >= e.invokeTs(), "response_ts >= invoke_ts");
             if (e.opType().equals("PUT") || e.opType().equals("DELETE")) {
-                // Ack semantics: an accepted write is :info (ack != commit).
                 assertTrue(e.status().equals("info") || e.status().equals("fail"),
                         "writes are info (accepted) or fail (rejected), got " + e.status());
                 sawWrite = true;

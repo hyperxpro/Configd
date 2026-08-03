@@ -77,7 +77,6 @@ class SimulatedNetworkTest {
         void noDeliveryWithoutHandler() {
             SimulatedNetwork net = new SimulatedNetwork(42L, 5, 5);
             net.send(NODE_0, NODE_1, "msg", 1000L);
-            // deliverDue removes and counts the message even without a handler.
             int count = net.deliverDue(1005L);
             assertEquals(1, count);
             assertEquals(0, net.pendingCount());
@@ -161,7 +160,6 @@ class SimulatedNetworkTest {
         void partitionDropsMessagesInPartitionedDirection() {
             network.addPartition(NODE_0, NODE_1);
             network.send(NODE_0, NODE_1, "blocked", 1000L);
-            // Message should be dropped at send time
             assertEquals(0, network.pendingCount());
             network.deliverDue(1005L);
             assertTrue(delivered.isEmpty());
@@ -235,11 +233,9 @@ class SimulatedNetworkTest {
 
             network.addPartition(NODE_0, NODE_1);
 
-            // deliverDue checks partition at delivery time
             int count = network.deliverDue(1005L);
             assertEquals(0, count);
             assertTrue(delivered.isEmpty());
-            // Message is removed from queue even though not delivered
             assertEquals(0, network.pendingCount());
         }
     }
@@ -271,7 +267,6 @@ class SimulatedNetworkTest {
             for (int i = 0; i < sendCount; i++) {
                 network.send(NODE_0, NODE_1, "msg" + i, 1000L);
             }
-            // All messages should be dropped at send time
             assertEquals(0, network.pendingCount());
         }
 

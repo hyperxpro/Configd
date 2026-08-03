@@ -42,7 +42,7 @@ final class AdversarialNetwork {
     }
 
     private final PriorityQueue<Pending> queue = new PriorityQueue<>();
-    private final Set<Long> partitions = new HashSet<>(); // (from<<32)|to
+    private final Set<Long> partitions = new HashSet<>();
     private final RandomGenerator rng;
     private final int minLatencyMs;
     private final int maxLatencyMs;

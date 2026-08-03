@@ -76,7 +76,7 @@ class SlowConsumerStateMachineWalkTest {
         EdgeFanOutSim sim = new EdgeFanOutSim(SEED, CP_NODES, EDGES, 200,
                 false, driver, new AdversarialSchedule.Intensity(0, 0, 0.0),
                 EdgeInvariants.BOUND_MS);
-        sim.run(); // settle: election + initial subscribes (empty ring -> TAIL), no faults
+        sim.run();
         EdgeActor victim = sim.edges().get(0);
         String victimIdentity = "edge-" + victim.edgeId();
         sim.enableEdgeRecovery(0);
@@ -99,9 +99,6 @@ class SlowConsumerStateMachineWalkTest {
         assertEquals(1, metrics.slowTransitions, "the sustained-warn SLOW leg fired");
         assertEquals(1, metrics.quarantines);
 
-        // Refused reconnects through the cooldown: the (now unlagged) edge processes
-        // the ERROR_CLOSE through the REAL core reaction -> reconnect directive -> the
-        // driver's resubscribe is REFUSED at admission and retried - observably.
         victim.unlag();
         tickUntil(sim, () -> metrics.reconnectsRefused > 0,
                 "the edge's reconnect attempts are refused during the cooldown");
@@ -308,7 +305,6 @@ class SlowConsumerStateMachineWalkTest {
         return r.found() && expected.equals(new String(r.value(), StandardCharsets.UTF_8));
     }
 
-    /** Counts the policy series (single sim thread - plain ints). */
     private static final class CountingPolicyMetrics implements FanOutSessionMetrics {
         int slowTransitions;
         int quarantines;

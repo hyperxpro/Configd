@@ -164,7 +164,7 @@ public final class OpenLoopWriteDriver {
                 concurrency, concurrency, 60, TimeUnit.SECONDS,
                 new LinkedBlockingQueue<>(concurrency * 8));
 
-        Histogram h = new Histogram(1L, 120_000_000L, 3); // microseconds
+        Histogram h = new Histogram(1L, 120_000_000L, 3);
         Object hLock = new Object();
         AtomicLong ok = new AtomicLong();
         AtomicLong rejected = new AtomicLong();

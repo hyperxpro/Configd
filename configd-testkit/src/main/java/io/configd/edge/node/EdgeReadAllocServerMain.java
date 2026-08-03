@@ -39,7 +39,7 @@ public final class EdgeReadAllocServerMain {
     }
 
     public static void main(String[] args) throws Exception {
-        String which = args[0];                 // "jdk" | "netty" | "netty-prod"
+        String which = args[0];
         int httpPort = Integer.parseInt(args[1]);
         int controlPort = Integer.parseInt(args[2]);
         int keyCount = Integer.parseInt(args[3]);
@@ -52,7 +52,6 @@ public final class EdgeReadAllocServerMain {
         }
         threadBean.setThreadAllocatedMemoryEnabled(true);
 
-        // Builds the edge core with keyCount keys (mirrors EdgeHttpAllocBenchmark).
         Clock clock = new FixedClock();
         MetricsRegistry registry = new MetricsRegistry();
         InvariantMonitor monitor = new InvariantMonitor(registry, false);
@@ -88,8 +87,6 @@ public final class EdgeReadAllocServerMain {
             tier = epoll ? "epoll" : "nio";
             stopper = server::stop;
         } else if ("netty-prod".equals(which)) {
-            // The production Netty edge server: shared EdgeReadHandler, 3-tier transport
-            // selector, and hardening -- exercises the same read path as the prototype above.
             NettyEdgeHttpServer server = new NettyEdgeHttpServer(httpPort, core,
                     StrongReadKeyClass.DEFAULT, new PrometheusExporter(registry), metrics);
             server.start();
@@ -109,7 +106,6 @@ public final class EdgeReadAllocServerMain {
                 + " epoll=" + epoll + " tier=" + tier);
         System.out.flush();
 
-        // Control loop: delimits measurement windows for the out-of-JVM client.
         try (ServerSocket control = new ServerSocket(controlPort);
              Socket conn = control.accept();
              BufferedReader in = new BufferedReader(
@@ -124,7 +120,7 @@ public final class EdgeReadAllocServerMain {
                 switch (parts[0]) {
                     case "START" -> {
                         requestCount = Long.parseLong(parts[1]);
-                        System.gc();                       // settle before the window
+                        System.gc();
                         Thread.sleep(200);
                         windowStart = threadBean.getTotalThreadAllocatedBytes();
                         out.println("OK");

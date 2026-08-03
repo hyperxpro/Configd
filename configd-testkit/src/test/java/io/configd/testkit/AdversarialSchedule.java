@@ -33,11 +33,9 @@ final class AdversarialSchedule {
     enum FaultKind {
         DROP_WINDOW_BEGIN,
         DROP_WINDOW_END,
-        /** Add a (possibly asymmetric / partial) partition between two nodes. */
         PARTITION_ADD,
         PARTITION_REMOVE,
         HEAL_ALL,
-        /** Begin a delay-spike window on a chosen ordered pair. */
         DELAY_SPIKE_BEGIN,
         DELAY_SPIKE_END,
         /** Arm a crash on a node after N of its storage writes (CrashStorage). */
@@ -69,7 +67,6 @@ final class AdversarialSchedule {
         this.ops = expandWorkload(intensity);
     }
 
-    /** Construct directly from explicit events/ops - used by ddmin minimization. */
     private AdversarialSchedule(long seed, int nodeCount, int totalTicks,
             List<Event> events, List<Op> ops) {
         this.seed = seed;
@@ -119,7 +116,6 @@ final class AdversarialSchedule {
             int b = rng.nextInt(nodeCount);
             double param = rng.nextDouble();
             int intParam = 1 + rng.nextInt(8);
-            // Avoid self-pairs for partition events.
             if ((kind == FaultKind.PARTITION_ADD || kind == FaultKind.PARTITION_REMOVE)
                     && a == b) {
                 b = (b + 1) % nodeCount;
@@ -131,8 +127,6 @@ final class AdversarialSchedule {
     }
 
     private FaultKind pickFaultKind(RandomGenerator rng) {
-        // Weighted toward partitions and drops (the highest-signal Raft faults);
-        // crash arming is rarer.
         int r = rng.nextInt(100);
         if (r < 30) return FaultKind.PARTITION_ADD;
         if (r < 45) return FaultKind.PARTITION_REMOVE;
@@ -163,7 +157,6 @@ final class AdversarialSchedule {
         return out;
     }
 
-    /** Returns a copy with the given event/op lists (used by ddmin shrinking). */
     AdversarialSchedule withEventsAndOps(List<Event> newEvents, List<Op> newOps, int newTicks) {
         return new AdversarialSchedule(seed, nodeCount, newTicks, newEvents, newOps);
     }

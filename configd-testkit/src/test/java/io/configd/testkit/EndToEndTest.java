@@ -305,7 +305,6 @@ class EndToEndTest {
             controlPlane.put("a", bytes("1"), 1);
             edge.loadSnapshot(controlPlane.snapshot());
 
-            // the delta claims fromVersion 5, but the edge is at version 1
             ConfigDelta badDelta = new ConfigDelta(5, 6, List.of(
                     new ConfigMutation.Put("b", bytes("2"))
             ));

@@ -43,8 +43,6 @@ class AdversarialSimTest {
                 leaderElected++;
             }
         }
-        // Liveness is reported, not asserted per-seed, but a healthy fraction must
-        // elect - an all-stall result would mean the faults are pathological.
         double electRate = (double) leaderElected / batch;
         assertTrue(electRate >= 0.5,
                 "Most seeds should still elect under faults (liveness sanity); got "
@@ -79,7 +77,7 @@ class AdversarialSimTest {
             if (sim.activity().leaderElected()) {
                 leaderElected++;
             } else {
-                livenessStalls++; // recorded, not failed
+                livenessStalls++;
             }
         }
         double secs = (System.nanoTime() - start) / 1e9;

@@ -19,7 +19,6 @@ import java.util.concurrent.TimeUnit;
 @Fork(value = 1)
 public class ReadUnderWriteContentionBenchmark {
 
-    /** Reader threads per group. Writer is always 1. */
     static final int READER_THREADS = 4;
 
     @Param({"1000000"})
@@ -79,7 +78,6 @@ public class ReadUnderWriteContentionBenchmark {
     @Group("readWhileWriting")
     @GroupThreads(1)
     public void write() {
-        // Single volatile store: the RCU publish against which the reader races.
         store.loadSnapshot((store.currentVersion() == size) ? snapB : snapA);
     }
 

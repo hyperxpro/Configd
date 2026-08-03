@@ -89,7 +89,6 @@ public class FanOutWireH2HBenchmark {
         }
         notifyFrame = new EdgeFrame.Notify(notifications);
         preEncodedNotify = EdgeFrameCodec.encode(notifyFrame);
-        // Size the reused buffer to the worst case (batch 64) so one buffer serves every param.
         bufCapacity = EdgeFrameCodec.MAX_NOTIFY_BATCH_BYTES + 64;
         reuseBuf = ByteBuffer.allocate(bufCapacity);
         alloc = PooledByteBufAllocator.DEFAULT;
@@ -99,7 +98,6 @@ public class FanOutWireH2HBenchmark {
         warm.release();
     }
 
-    /** STATUS QUO: the allocating production NOTIFY encode (all the intermediate churn). */
     @Benchmark
     public byte[] jdkStatusQuoEncode() {
         return EdgeFrameCodec.encode(notifyFrame);
@@ -131,11 +129,6 @@ public class FanOutWireH2HBenchmark {
         }
     }
 
-    /**
-     * The CODEC-INTERNAL message-building floor - the allocation upstream of the wire that no
-     * transport (JDK reused buffer or Netty pooled ByteBuf) removes: per notification, the
-     * encodeBatch blob + the signature/nonce defensive clones.
-     */
     @Benchmark
     public void messageBuildingFloor(Blackhole bh) {
         for (CommitNotification n : notifyFrame.notifications()) {
@@ -146,7 +139,6 @@ public class FanOutWireH2HBenchmark {
         }
     }
 
-    /** RECEIVE SIDE: decode the NOTIFY batch back to frames + deltas + mutations. */
     @Benchmark
     public EdgeFrame jdkDecodeNotify() {
         return EdgeFrameCodec.decode(preEncodedNotify);

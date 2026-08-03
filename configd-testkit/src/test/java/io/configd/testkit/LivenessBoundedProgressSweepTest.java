@@ -36,15 +36,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <ol>
  *   <li><b>Bootstrap liveness:</b> a fresh 5-node cluster must elect a leader within
  *       {@link #ELECT_BOUND} ticks and commit a baseline write.</li>
- *   <li><b>Shatter:</b> partition into sub-quorum components (no group >= 3) - the cluster
- *       MUST stop having a leader within an election timeout (non-vacuity: the disruption is
- *       real; this is the temporary analog of a never-healed schedule).</li>
- *   <li><b>Post-heal election (bounded progress):</b> heal fully; a leader MUST be
- *       (re-)elected within {@link #RECOVER_BOUND} ticks of the heal.</li>
- *   <li><b>Post-heal propagation (bounded progress):</b> a write proposed on the recovered
- *       leader MUST commit and propagate to ALL nodes within {@link #PROPAGATE_BOUND} ticks
- *       -  the consensus-plane counterpart of "committed write propagates within the
- *       staleness bound after edge reconnect".</li>
+ *   <li><b>Majority re-election (bounded progress):</b> isolate the leader plus one seed-chosen
+ *       follower into a 2-node minority. The remaining 3 nodes still hold quorum, so a NEW leader
+ *       MUST be elected outside the minority within {@link #RECOVER_BOUND} ticks. The partition is
+ *       then soaked for 700 ticks with the majority leader committing writes and heartbeating the
+ *       two unreachable peers, long enough for its per-peer inflight window toward each to pin at
+ *       the cap - the state the healed-but-stuck defect needs.</li>
+ *   <li><b>Post-heal propagation (bounded progress):</b> heal fully; a write MUST commit and
+ *       propagate to ALL nodes within {@link #PROPAGATE_BOUND} ticks, so the rejoining minority
+ *       catches up rather than staying behind. This is the consensus-plane counterpart of
+ *       "committed write propagates within the staleness bound after edge reconnect".</li>
  * </ol>
  * A deadline miss fails the test WITH the seed (deterministic replay/shrink handle), exactly
  * as a safety violation does. Default 200 seeds (gate set); override with
@@ -53,9 +54,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class LivenessBoundedProgressSweepTest {
 
     private static final int N = 5;
-    private static final int ELECT_BOUND = 2_000;     // fresh-cluster election (ticks)
-    private static final int RECOVER_BOUND = 1_500;   // majority re-election after losing leader
-    private static final int PROPAGATE_BOUND = 800;   // post-heal convergence to all N nodes
+    private static final int ELECT_BOUND = 2_000;
+    private static final int RECOVER_BOUND = 1_500;
+    private static final int PROPAGATE_BOUND = 800;
 
     static final class Cluster {
         final List<RaftNode> nodes = new ArrayList<>();
@@ -142,12 +143,6 @@ class LivenessBoundedProgressSweepTest {
             return true;
         }
 
-        /**
-         * Isolate {@code leader} plus one seed-chosen follower into a 2-node minority,
-         * leaving a 3-node majority that retains quorum. The majority can elect a new
-         * leader during the partition; the minority cannot make progress. Returns the
-         * minority node ids.
-         */
         Set<Integer> isolateLeaderMinority(long seed, int leader) {
             RandomGenerator r = RandomGeneratorFactory.of("L64X128MixRandom")
                     .create(AdversarialSchedule.mixSeed(seed, 9_001));
@@ -175,7 +170,6 @@ class LivenessBoundedProgressSweepTest {
         for (long seed = 0; seed < count; seed++) {
             Cluster c = new Cluster(seed);
 
-            // (1) Bootstrap liveness: fresh cluster must elect a leader and commit a write.
             int electTicks = c.stepUntilLeader(ELECT_BOUND);
             assertTrue(electTicks > 0,
                     "seed " + seed + ": fresh cluster did not elect a leader within "
@@ -220,7 +214,7 @@ class LivenessBoundedProgressSweepTest {
                             CommandCodec.encodePut("k/maj", ("v" + seed + "-" + t).getBytes()));
                 }
             }
-            long preHealCommit = c.maxCommitIndex(); // committed only on the majority
+            long preHealCommit = c.maxCommitIndex();
 
             // (3) Heal -> the minority rejoins and the WHOLE cluster must return to full
             //     service (a write committed on ALL N nodes) within a bound. This is the

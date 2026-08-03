@@ -123,7 +123,6 @@ public final class WriteCommitDriver {
     }
 
     private static void printHistogramMicros(Histogram h) {
-        // Convert ns to us (commit is sub-ms locally).
         System.out.printf("COMMIT-HISTOGRAM unit=us count=%d p50=%.3f p99=%.3f p999=%.3f p9999=%.3f max=%.3f mean=%.3f%n",
                 h.getTotalCount(),
                 h.getValueAtPercentile(50.0) / 1000.0,

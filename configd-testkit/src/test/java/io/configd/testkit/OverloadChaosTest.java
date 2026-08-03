@@ -101,13 +101,6 @@ class OverloadChaosTest {
                 "D.3: the " + edges + "-edge fleet must recover to CURRENT after the storm");
     }
 
-    /**
-     * Runs one post-partition reconnect-storm cell with {@code edges} edges and returns the
-     * recovery tick count (heal-instant to whole-fleet-CURRENT). Asserts the same invariants as
-     * the single-cell D-2 test: every edge ends CURRENT and caught up to the authoritative
-     * version, and no edge is pushed TERMINAL. Prints the canonical
-     * {@code OVERLOAD: scenario=reconnect-storm edges=N recoveryTicks=M} line.
-     */
     private static long reconnectStormRecoveryTicks(int edges) {
         final int CP = 3, WARMUP = 1_500;
         C1StreamDriver driver = new C1StreamDriver();

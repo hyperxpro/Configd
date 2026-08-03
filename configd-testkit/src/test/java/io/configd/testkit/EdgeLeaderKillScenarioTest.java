@@ -50,7 +50,6 @@ class EdgeLeaderKillScenarioTest {
             if (establishedTick < 0
                     && sim.cpSim().findLeader() >= 0
                     && anyEdgeHasVersion(sim)) {
-                // Give a little more streaming so the kill is genuinely "mid-stream".
                 establishedTick = t;
             }
             if (establishedTick >= 0 && t >= establishedTick + 80) {
@@ -84,8 +83,6 @@ class EdgeLeaderKillScenarioTest {
         // finalCheck throws on divergence (here it must NOT throw).
         sim.finalCheck();
 
-        // The no-decrease invariant held continuously (else tick() would have thrown); the
-        // recorded map is the explicit witness that versions only advanced.
         assertTrue(maxVersion.values().stream().anyMatch(v -> v > 0),
                 "edges must have applied real versions across the leadership change");
     }

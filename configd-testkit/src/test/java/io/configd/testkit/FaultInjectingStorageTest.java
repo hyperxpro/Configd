@@ -25,9 +25,9 @@ class FaultInjectingStorageTest {
     @Test
     void enospcFiresOnceCumulativeBytesExceedLimit() {
         FaultInjectingStorage s = new FaultInjectingStorage(Storage.inMemory()).enospcAfterBytes(5);
-        s.appendToLog("wal", new byte[]{1, 2, 3});      // total 3 <= 5 ok
+        s.appendToLog("wal", new byte[]{1, 2, 3});
         assertThrows(UncheckedIOException.class,
-                () -> s.appendToLog("wal", new byte[]{4, 5, 6}));  // total 6 > 5 -> ENOSPC
+                () -> s.appendToLog("wal", new byte[]{4, 5, 6}));
         assertEquals(1, s.readLog("wal").size(), "the rejected append must not be persisted");
     }
 
