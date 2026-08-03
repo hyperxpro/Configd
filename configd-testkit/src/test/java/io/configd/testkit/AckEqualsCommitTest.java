@@ -102,8 +102,6 @@ class AckEqualsCommitTest {
             return new ScenarioResult(Outcome.INCONCLUSIVE, 0);
         }
 
-        // Randomized kill point inside the append->commit window (1..4 ticks after
-        // local append), derived from the seed so it is randomized but replayable.
         int killAfterTicks = 1 + (int) Math.floorMod(mix(seed), 4);
 
         if (shape == FaultShape.SLOW_FOLLOWER_QUORUM_DELAY) {
@@ -156,7 +154,6 @@ class AckEqualsCommitTest {
                     + "]: a cleanly COMMITTED (acknowledged) baseline write was lost after failover.");
             return new ScenarioResult(Outcome.VIOLATION, 0);
         }
-        // The baseline is one acknowledged-committed write that survived failover.
         int survivors = 1;
 
         if (acknowledged) {

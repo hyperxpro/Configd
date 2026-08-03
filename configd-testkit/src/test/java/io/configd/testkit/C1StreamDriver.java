@@ -115,7 +115,6 @@ final class C1StreamDriver implements StreamDriver {
         this(config, null);
     }
 
-    /** A driver with the slow-consumer governor live (opt-in; null = historical). */
     C1StreamDriver(FanOutConfig config, SlowConsumerGovernor governor) {
         this.config = config;
         this.governor = governor;
@@ -137,11 +136,11 @@ final class C1StreamDriver implements StreamDriver {
             FanOutSessionCore session = sessions.get(edge.edgeId());
             if (session == null) {
                 if (governor != null && pendingResubscribes.containsKey(edge.edgeId())) {
-                    continue; // refused by admission; the per-tick retry loop owns it
+                    continue;
                 }
                 session = subscribe(ctx, edge);
                 if (session == null) {
-                    continue; // admission refused the initial subscribe (now pending)
+                    continue;
                 }
             }
             session.tick(now);
@@ -154,7 +153,6 @@ final class C1StreamDriver implements StreamDriver {
     }
 
     private FanOutSessionCore subscribe(Context ctx, EdgeActor edge) {
-        // SUBSCRIBE: full-store, fresh resume cursor 0 (a fresh edge cache bootstraps from 0).
         return subscribeWithAdmission(ctx, edge, 0L, false);
     }
 
@@ -183,7 +181,6 @@ final class C1StreamDriver implements StreamDriver {
                 source, replay, sink, config, FanOutSessionMetrics.NOOP, clock,
                 governor == null ? null : event -> onDemotion(ctx, edge, event));
 
-        // Wire the edge's CURSOR_ACK back to this session (synchronous ack channel).
         edge.setCursorAckSink(ackSink(edge, session));
 
         session.onSubscribe(new EdgeFrame.Subscribe(
@@ -202,7 +199,6 @@ final class C1StreamDriver implements StreamDriver {
         return "edge-" + edge.edgeId();
     }
 
-    /** The ack channel; with the governor live, an advancing ack also reports progress. */
     private LongConsumer ackSink(EdgeActor edge, FanOutSessionCore session) {
         if (governor == null) {
             return session::onCursorAck;
@@ -222,7 +218,6 @@ final class C1StreamDriver implements StreamDriver {
         return List.copyOf(fatalCloses);
     }
 
-    /** Reconnect recovery resubscribes performed via {@link #resubscribe}. */
     int resubscribes() {
         return resubscribes;
     }
@@ -249,10 +244,10 @@ final class C1StreamDriver implements StreamDriver {
                             DemotionEvent event) {
         SimSink sink = sinks.remove(edge.edgeId());
         if (sink != null) {
-            sink.dead = true; // the closed socket: orphaned session frames go nowhere
+            sink.dead = true;
         }
         sessions.remove(edge.edgeId());
-        edge.setCursorAckSink(null); // a closed socket carries no acks
+        edge.setCursorAckSink(null);
         aboveWarnEdges.remove(edge.edgeId());
         ctx.send(edge, new EdgeStream.ErrorClose(ErrorCode.QUARANTINED,
                 "slow-consumer policy: " + state + " (" + event.reason() + ")"));
@@ -272,7 +267,7 @@ final class C1StreamDriver implements StreamDriver {
                     session.cursor(), session.lastAckedSeq(), now);
         }
         if (above) {
-            governor.evaluate(identity(edge), now); // sim: per-tick is fine
+            governor.evaluate(identity(edge), now);
         }
     }
 
@@ -316,7 +311,7 @@ final class C1StreamDriver implements StreamDriver {
                 return true;
             }
             switch (frame) {
-                case EdgeFrame.SubscribeOk ignored -> { /* server-internal handshake ack */ }
+                case EdgeFrame.SubscribeOk ignored -> { }
                 case EdgeFrame.Notify n -> {
                     if (!n.notifications().isEmpty()) {
                         ctx.send(edge, new EdgeStream.NotifyBatch(n.notifications()));
@@ -329,7 +324,6 @@ final class C1StreamDriver implements StreamDriver {
                 }
                 case EdgeFrame.SnapshotChunk c -> pendingChunks.add(c);
                 case EdgeFrame.SnapshotEnd e -> {
-                    // Reassemble driver-side into one wholesale snapshot message.
                     byte[] body = EdgeSnapshotCodec.reassemble(pendingChunks);
                     ConfigSnapshot snap = EdgeSnapshotCodec.deserialize(body);
                     ctx.send(edge, new EdgeStream.Snapshot(snap, e.snapshotSeq()));
@@ -340,14 +334,12 @@ final class C1StreamDriver implements StreamDriver {
                         ctx.send(edge, new EdgeStream.Heartbeat(h.latestSeq(), h.serverNowMillis()));
                 case EdgeFrame.ErrorClose err -> {
                     if (err.code() != ErrorCode.DEMOTED_TO_CATCHUP) {
-                        // A fatal close (e.g. GAP_UNRECOVERABLE): record for tests.
                         fatalCloses.add("edge " + edge.edgeId() + ": " + err.code() + " " + err.message());
                     }
                     // DEMOTED_TO_CATCHUP is a non-fatal server-internal notice (the snapshot
                     // flow follows); the edge does not need a separate wire message for it.
                 }
-                // CursorAck / Subscribe are edge->server (never offered by the session here).
-                default -> { /* unreachable for server-emitted frames */ }
+                default -> { }
             }
             return true; // the sim transport never blocks (latency/drops are the network's job)
         }

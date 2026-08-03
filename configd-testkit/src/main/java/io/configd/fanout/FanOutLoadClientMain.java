@@ -32,10 +32,9 @@ public final class FanOutLoadClientMain {
     private FanOutLoadClientMain() {
     }
 
-    /** The mutable, swapped-per-phase coordination state shared with all subscriber threads. */
     private static final class Phase {
-        final long[] target;          // per-subscriber received-count target to reach this phase
-        final CountDownLatch latch;   // counted down once per subscriber when it hits its target
+        final long[] target;
+        final CountDownLatch latch;
         final boolean recordLatency;
         Phase(int n, long[] target, boolean recordLatency) {
             this.target = target;
@@ -55,13 +54,13 @@ public final class FanOutLoadClientMain {
         long rate = Long.parseLong(args[7]);
 
         AtomicLong[] received = new AtomicLong[subscribers];
-        long[] signaled = new long[subscribers];          // last target a subscriber has signaled for
+        long[] signaled = new long[subscribers];
         Histogram[] hist = new Histogram[subscribers];
         for (int i = 0; i < subscribers; i++) {
             received[i] = new AtomicLong(0);
             hist[i] = new Histogram(1, 60_000_000_000L, 3);
         }
-        final Phase[] currentPhase = new Phase[1];        // cross-thread handoff for the current phase
+        final Phase[] currentPhase = new Phase[1];
         CountDownLatch subscribed = new CountDownLatch(subscribers);
         Thread[] threads = new Thread[subscribers];
 
@@ -83,7 +82,7 @@ public final class FanOutLoadClientMain {
                     while (true) {
                         EdgeFrame f = readFrame(in);
                         if (f == null) {
-                            return; // EOF (server closed at QUIT)
+                            return;
                         }
                         if (f instanceof EdgeFrame.SubscribeOk) {
                             if (!okSeen) {
@@ -113,7 +112,6 @@ public final class FanOutLoadClientMain {
                                 }
                             }
                         }
-                        // Heartbeat / others: ignore.
                     }
                 } catch (Exception e) {
                     // EOF/reset at teardown is expected; only note unexpected ones.
@@ -172,7 +170,7 @@ public final class FanOutLoadClientMain {
         slot[0] = ph;
         long t0 = System.nanoTime();
         out.println("GO " + count + " " + valueBytes + " " + rate);
-        String published = in.readLine(); // PUBLISHED ...
+        String published = in.readLine();
         if (published == null || !published.startsWith("PUBLISHED")) {
             throw new IllegalStateException("expected PUBLISHED, got: " + published);
         }

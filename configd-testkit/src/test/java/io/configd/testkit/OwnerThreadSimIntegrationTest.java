@@ -71,8 +71,6 @@ class OwnerThreadSimIntegrationTest {
         int leader = cluster.electLeader(5_000);
         assertTrue(leader >= 0, "precondition: a leader was elected (owners now bound to the drive thread)");
 
-        // THE INJECTED RACE: touch a node from a FOREIGN thread. The owner is the drive thread, so
-        // assertOwnerThread() fires before any state is touched and the throwing checker fails it.
         ExecutorService foreign = Executors.newSingleThreadExecutor(r -> new Thread(r, "foreign-not-owner"));
         try {
             Future<?> f = foreign.submit(() -> cluster.node(0).tick());

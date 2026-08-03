@@ -65,7 +65,7 @@ class EdgeAdversarialGateSeedSweepTest {
             }
             boolean edgeConverged;
             try {
-                sim.finalCheck(); // edge heal + drain + byte-equal convergence vs CP leader
+                sim.finalCheck();
                 edgeConverged = true;
             } catch (SimInvariants.SafetyViolation divergence) {
                 edgeConverged = false; // recorded liveness miss, never a build failure

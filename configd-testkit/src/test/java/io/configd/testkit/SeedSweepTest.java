@@ -82,11 +82,6 @@ class SeedSweepTest {
         assertCommitSurvivesLeaderFailure(seed, new Activity());
     }
 
-    /**
-     * Core of {@link #commitSurvivesLeaderFailure} factored out so the sweep-level
-     * vacuity guard can run it and inspect the {@link Activity} outcome. Returns the
-     * activity so the caller can classify the seed (reached-assertion vs stalled).
-     */
     static Activity assertCommitSurvivesLeaderFailure(long seed, Activity activity) {
         SimInvariants[] inv = new SimInvariants[1];
         ConsistencyPropertyTests.ClusterHarness cluster = newCheckedCluster(seed, inv);

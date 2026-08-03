@@ -55,7 +55,7 @@ class Rr095StallSeedsIntegratedRerunTest {
                 sim.finalCheck();
                 edgeConverged = true;
             } catch (SimInvariants.SafetyViolation divergence) {
-                edgeConverged = false; // liveness miss, recorded
+                edgeConverged = false;
             }
 
             System.out.println("RR095-RERUN: seed=" + seed

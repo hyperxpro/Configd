@@ -68,8 +68,8 @@ class ProbeMechanismTest {
         sim.attachProbe(probe);
 
         List<EdgeActor> edges = sim.edges();
-        EdgeActor edgeA = edges.get(0); // id 100
-        EdgeActor edgeB = edges.get(1); // id 101
+        EdgeActor edgeA = edges.get(0);
+        EdgeActor edgeB = edges.get(1);
 
         applyWithStaleness(probe, edgeA, /*seq*/ 1, /*from*/ 0, /*to*/ 1, "a/k1", "v1", D_A1);
         applyWithStaleness(probe, edgeA, /*seq*/ 2, /*from*/ 1, /*to*/ 2, "a/k2", "v2", D_A2);
@@ -121,9 +121,8 @@ class ProbeMechanismTest {
         PropagationProbe probe = new PropagationProbe();
         probe.recordPublished(7, 1_000);
         probe.recordVisible(0, 7, 1_100);
-        // seq 999 NEVER published -> unmatched, must not affect the distribution.
         probe.recordVisible(0, 999, 5_000);
-        probe.recordVisible(1, 999, 5_000); // a different observer, also unmatched
+        probe.recordVisible(1, 999, 5_000);
 
         assertEquals(1, probe.count(0), "only the matched sample counts for observer 0");
         assertEquals(100, probe.percentile(0, 50.0), "the one matched sample is 100ms");
@@ -211,7 +210,7 @@ class ProbeMechanismTest {
         probe.recordPublished(seq, publishTs);
         CommitNotification n = notification(seq, fromVersion, toVersion, publishTs, key, value);
         edge.deliver(new EdgeStream.Notify(n));
-        edge.tick(); // applies now -> apply-observer fires recordVisible(edgeId, seq, visibleTs)
+        edge.tick();
         assertEquals(toVersion, edge.currentVersion(),
                 "delta " + fromVersion + "->" + toVersion + " must apply on edge " + edge.edgeId());
     }
@@ -240,11 +239,6 @@ class ProbeMechanismTest {
         }
     }
 
-    /**
-     * Reuses {@link EdgeSimDeterminismTest}'s digest shape exactly. When {@code withProbe}
-     * is true, an observer-only probe is attached before the run; the digest must be
-     * identical either way.
-     */
     private static String digest(long seed, boolean withProbe) {
         EdgeFanOutSim sim = new EdgeFanOutSim(seed, CP_NODES, EDGES, TICKS,
                 /* edgeFaults */ true, StreamDriver.NONE,

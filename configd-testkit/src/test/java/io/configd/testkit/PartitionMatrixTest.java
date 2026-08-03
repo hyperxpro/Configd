@@ -67,7 +67,7 @@ class PartitionMatrixTest {
         long nowMs = 1_700_000_000_000L;
 
         Cluster(long seed) {
-            this(seed, new long[N]); // zero skew
+            this(seed, new long[N]);
         }
 
         /** @param skews per-node wall-clock skew (ms) applied to each node's state-machine clock */
@@ -154,7 +154,6 @@ class PartitionMatrixTest {
             return nodes.get(node).propose(CommandCodec.encodePut(key, val.getBytes())).accepted();
         }
 
-        /** The committed (index->term) prefix of a node - used to assert no committed-entry loss. */
         Map<Long, Long> committedPrefix(int node) {
             Map<Long, Long> out = new HashMap<>();
             RaftLog log = logs.get(node);
@@ -247,7 +246,6 @@ class PartitionMatrixTest {
                 }
             }
 
-            // Majority must elect a NEW leader (old one shed by CheckQuorum).
             int reElect = -1;
             for (int t = 1; t <= RECOVER_BOUND; t++) {
                 c.step();
@@ -423,7 +421,6 @@ class PartitionMatrixTest {
         // bounded liveness (a leader is still elected and writes still commit cluster-wide).
         for (long seed = 0; seed < SEEDS; seed++) {
             String ctx = "C-6[seed=" + seed + "]";
-            // Distinct per-node skews: -2h, -37min, +0, +53min, +3h (wildly unsynchronized).
             long[] skews = {-7_200_000L, -2_220_000L, 0L, 3_180_000L, 10_800_000L};
             Cluster c = new Cluster(seed, skews);
             int leader0 = bootstrap(c, seed, ctx);
@@ -476,8 +473,6 @@ class PartitionMatrixTest {
             int leader0 = bootstrap(c, seed, ctx);
             Map<Long, Long> baseline = c.committedPrefix(leader0);
 
-            // Gray failure: a sustained latency spike on all links (no drops, no partition).
-            // Heartbeats still arrive, just late. Safety must hold; leadership must not flap wildly.
             for (int x = 0; x < N; x++) {
                 for (int y = 0; y < N; y++) {
                     if (x != y) {

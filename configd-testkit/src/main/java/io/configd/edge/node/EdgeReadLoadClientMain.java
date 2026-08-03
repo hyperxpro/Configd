@@ -16,7 +16,17 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * outside the window) -> {@code START n} -> drive <i>n</i> keep-alive requests across
+ * The out-of-JVM load client for the edge-read HTTP head-to-head. It runs in a separate process
+ * from {@link EdgeReadAllocServerMain} deliberately: in one JVM this client's own allocation (the
+ * JDK {@code HttpClient}, request and response objects) lands in the same {@code -prof gc} numbers
+ * as the server's, and the measurement it exists to take is the server's allocation alone.
+ * <p>
+ * The client owns the throughput and tail-latency axis, timing every request into a per-thread
+ * {@link Histogram} and reporting requests/sec with p50/p99/p999. Absolute latency here is not
+ * production-grade; this is a relative comparison of two servers on one box under one workload.
+ * <p>
+ * Protocol: connect the control socket -> warm up (which establishes the keep-alive connection
+ * pool, outside the window) -> {@code START n} -> drive <i>n</i> keep-alive requests across
  * {@code concurrency} threads -> {@code STOP} -> read the server's reported B/request. Every
  * response is asserted 200 with the expected body length: a server that doesn't actually serve
  * the read is disqualified from the comparison.
@@ -54,14 +64,12 @@ public final class EdgeReadLoadClientMain {
             reqs[i] = HttpRequest.newBuilder(URI.create(base + i)).GET().build();
         }
 
-        // Probe once: confirm the server actually serves the read (200 + valueBytes body).
         HttpResponse<byte[]> probe = client.send(reqs[0], HttpResponse.BodyHandlers.ofByteArray());
         if (probe.statusCode() != 200 || probe.body().length != valueBytes) {
             throw new IllegalStateException("probe expected 200 + " + valueBytes + "B body, got "
                     + probe.statusCode() + " + " + probe.body().length + "B — wrong path");
         }
 
-        // Warmup, outside the measured window: establishes the keep-alive pool and lets JIT settle.
         drive(client, reqs, keyCount, concurrency, warmupReqs, null);
 
         try (Socket ctl = new Socket(host, controlPort);
@@ -74,9 +82,9 @@ public final class EdgeReadLoadClientMain {
             in.readLine();
 
             out.println("START " + measureReqs);
-            in.readLine(); // OK
+            in.readLine();
 
-            Histogram hist = new Histogram(1, 60_000_000_000L, 3); // 1ns..60s, 3 sig digits
+            Histogram hist = new Histogram(1, 60_000_000_000L, 3);
             long wallStart = System.nanoTime();
             drive(client, reqs, keyCount, concurrency, measureReqs, hist);
             long wallNanos = System.nanoTime() - wallStart;
@@ -100,7 +108,6 @@ public final class EdgeReadLoadClientMain {
         }
     }
 
-    /** Drives {@code total} GET requests across {@code concurrency} threads; records latency if hist != null. */
     private static void drive(HttpClient client, HttpRequest[] reqs, int keyCount,
                               int concurrency, long total, Histogram mergedHist) throws Exception {
         Thread[] threads = new Thread[concurrency];

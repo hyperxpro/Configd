@@ -58,12 +58,9 @@ import java.util.Set;
  */
 final class EdgeFanOutSim {
 
-    /** CP->edge network seed tag. */
     static final int TAG_EDGE_NET = 1_010;
-    /** Edge network dup/drop config seed tag. */
     static final int TAG_EDGE_NETCFG = 1_011;
 
-    /** Default number of edge faults when faults are enabled. */
     private static final int DEFAULT_EDGE_FAULT_COUNT = 6;
 
     private final long seed;
@@ -91,7 +88,6 @@ final class EdgeFanOutSim {
     private int tickIndex;
     private int edgeFaultCursor;
 
-    /** Builds an edge sim with {@code edgeCount} edges, no edge faults, and {@link StreamDriver#NONE}. */
     EdgeFanOutSim(long seed, int cpNodeCount, int edgeCount, int totalTicks) {
         this(seed, cpNodeCount, edgeCount, totalTicks, false, StreamDriver.NONE,
                 AdversarialSchedule.defaultIntensity(), EdgeInvariants.BOUND_MS);
@@ -112,19 +108,14 @@ final class EdgeFanOutSim {
         this.streamDriver = streamDriver;
         this.currentTimeMs = 1_700_000_000_000L; // matches AdversarialSim's epoch
 
-        // Inner CP sim - unchanged behavior (same seed, same intensity, same ticks).
         this.cpSim = new AdversarialSim(seed, cpNodeCount, totalTicks, intensity, null);
 
-        // Per-CP-node fan-out buffer + replay source, wired to the production
-        // listener seam exactly as ConfigdServer does it.
         for (int i = 0; i < cpNodeCount; i++) {
             final int cpNode = i;
             FanOutBuffer buffer = new FanOutBuffer(fanOutBufferCapacity);
             ReplaySource replay = new SnapshotReplaySource(() -> cpSim.store(cpNode).snapshot());
             fanOutBuffers.add(buffer);
             replaySources.add(replay);
-            // Mirror ConfigdServer: build ConfigDelta from (mutations, version) and
-            // publish a full CommitNotification with the leader commit timestamp.
             cpSim.stateMachine(cpNode).addListener((mutations, version) -> {
                 long fromVersion = version - 1;
                 // The sim path uses an unsigned legacy delta. The production wiring
@@ -141,38 +132,29 @@ final class EdgeFanOutSim {
                 long commitTimestampMillis = cpSim.skewedClock(cpNode).currentTimeMillis();
                 buffer.publish(new CommitNotification(version, commitTimestampMillis, delta));
                 recordPublicationObligation(version, cpNode, commitTimestampMillis);
-                // Observer-only: publish timestamp is the leader commit timestamp. Keyed
-                // by seq, so overwriting on a re-publish is idempotent; a no-op when no
-                // probe is attached.
                 if (probe != null) {
                     probe.recordPublished(version, commitTimestampMillis);
                 }
             });
         }
 
-        // Second AdversarialNetwork for CP->edge channels. mixSeed with a distinct tag
-        // so the CP network's stream is untouched (byte-identical historical seeds).
         this.edgeNetwork = new AdversarialNetwork(
                 AdversarialSchedule.mixSeed(seed, TAG_EDGE_NET), 1, 10);
-        // Edge network dup base rate from its own sub-stream (does not touch CP).
         var netCfg = java.util.random.RandomGeneratorFactory.of("L64X128MixRandom")
                 .create(AdversarialSchedule.mixSeed(seed, TAG_EDGE_NETCFG));
         this.edgeNetwork.setDupRate(0.02 + 0.03 * netCfg.nextDouble());
 
         this.invariants = new EdgeInvariants(seed, activity, boundMs);
 
-        // Edge roster: round-robin subscription across CP nodes for spread.
         for (int e = 0; e < edgeCount; e++) {
             int edgeId = EdgeActor.EDGE_ID_BASE + e;
             int subscribedCp = (cpNodeCount == 0) ? -1 : (e % cpNodeCount);
             edges.add(new EdgeActor(edgeId, subscribedCp, () -> currentTimeMs));
         }
 
-        // Edge fault schedule (its own sub-stream; empty when faults are off).
         this.edgeFaults = new EdgeFaultSchedule(seed, edgeCount, totalTicks,
                 edgeFaults ? DEFAULT_EDGE_FAULT_COUNT : 0);
 
-        // Edge network delivers EdgeStream messages into the addressed edge's inbox.
         this.edgeNetwork.setDeliveryHandler((target, message) -> {
             EdgeActor edge = edgeById(target.id());
             if (edge != null) {
@@ -255,14 +237,12 @@ final class EdgeFanOutSim {
         });
     }
 
-    /** Terminal directives observed via {@link #enableEdgeRecovery} (assertions). */
     List<String> terminalFailures() {
         return List.copyOf(terminalFailures);
     }
 
     private final List<String> terminalFailures = new ArrayList<>();
 
-    /** TEST SEAM: heals a partition created by {@link #partitionEdge(int)}. */
     void healEdge(int edgeIndex) {
         EdgeActor edge = edges.get(edgeIndex);
         partitionedEdges.remove(edge.edgeId());
@@ -301,19 +281,16 @@ final class EdgeFanOutSim {
         edgeNetwork.setDupRate(rate);
     }
 
-    /** Duplicated CP->edge sends so far (the dup-channel non-vacuity witness). */
     long edgeDupCount() {
         return edgeNetwork.dupCount();
     }
 
-    /** Runs the whole scheduled simulation, checking edge invariants after every tick. */
     void run() {
         for (int t = 0; t < totalTicks; t++) {
             tick();
         }
     }
 
-    /** One edge-sim tick (see class javadoc for the order). */
     void tick() {
         // (1) CP sim advances (its own time, faults, ops, fan-out listeners) and
         // checks CP invariants. Keep our clock in lockstep with the CP clock so the
@@ -323,28 +300,21 @@ final class EdgeFanOutSim {
         currentTimeMs = cpSim.currentTime();
         tickIndex++;
 
-        // (2) apply due edge faults.
         applyDueEdgeFaults();
 
-        // (3) deliver due edge-network messages into edge inboxes.
         edgeNetwork.deliverDue(currentTimeMs);
 
-        // (4) tick the StreamDriver seam (NONE delivers nothing by default).
         streamDriver.drive(driverContext());
 
-        // (5) tick edges (drain inbox + apply).
         for (EdgeActor edge : edges) {
             edge.tick();
         }
 
-        // (6) SAFETY + LIVENESS: edge invariants every tick.
         invariants.checkAll(edges, currentTimeMs, this::connected);
 
-        // (7) record edge activity from this tick's deltas.
         recordActivityDelta();
     }
 
-    /** Activity counters are aggregated from per-edge counters at end of tick. */
     private long lastTotalDelivered;
     private int lastTotalGaps;
     private int lastTotalSnapshots;
@@ -376,7 +346,6 @@ final class EdgeFanOutSim {
      * ({@link EdgePropagationBacklogTest}).
      */
     void finalCheck() {
-        // Heal all CP->edge partitions and resume any lagging edges.
         partitionedEdges.clear();
         edgeNetwork.healAll();
         for (EdgeActor edge : edges) {
@@ -384,7 +353,6 @@ final class EdgeFanOutSim {
                 edge.unlag();
             }
         }
-        // Drain window: let the driver push, the network deliver, and edges apply.
         for (int t = 0; t < DRAIN_WINDOW_TICKS; t++) {
             currentTimeMs++;
             streamDriver.drive(driverContext());
@@ -397,7 +365,7 @@ final class EdgeFanOutSim {
         int leader = cpSim.findLeader();
         ConfigSnapshot authoritative = (leader >= 0)
                 ? cpSim.store(leader).snapshot()
-                : cpSim.store(0).snapshot(); // no leader now: compare against node 0
+                : cpSim.store(0).snapshot();
         invariants.finalCheck(edges, authoritative);
     }
 
@@ -416,14 +384,9 @@ final class EdgeFanOutSim {
      */
     void finalCheckHealingCp() {
         settleCp();
-        // Run the standard edge heal + drain + convergence against the settled CP.
         finalCheck();
     }
 
-    /**
-     * Heals the CP network and ticks the CP cluster to quiescence (re-election +
-     * replication + commit). Idempotent enough for a single end-of-run settle.
-     */
     void settleCp() {
         cpSim.network().healAll();
         for (int t = 0; t < CP_SETTLE_TICKS; t++) {
@@ -464,7 +427,6 @@ final class EdgeFanOutSim {
      */
     private static final int DRAIN_WINDOW_TICKS = 600;
 
-    /** CP settle window for {@link #finalCheckHealingCp()} (re-election + replication). */
     private static final int CP_SETTLE_TICKS = 300;
 
     private StreamDriver.Context driverContext() {
@@ -493,12 +455,10 @@ final class EdgeFanOutSim {
     }
 
     private void recordPublicationObligation(long seq, int cpNode, long publishedAtMs) {
-        // Dedup: record the obligation once per (cpNode, seq) - the earliest publish.
         Set<Long> seen = recordedPublications.computeIfAbsent(cpNode, k -> new HashSet<>());
         if (!seen.add(seq)) {
             return;
         }
-        // The edges that owe observation: those subscribed to this CP node and alive.
         List<Integer> owing = new ArrayList<>();
         for (EdgeActor edge : edges) {
             if (edge.subscribedCpNode() == cpNode && edge.alive()) {
@@ -550,7 +510,6 @@ final class EdgeFanOutSim {
         }
     }
 
-    /** True if edge {@code edgeId}'s CP->edge channel is not currently partitioned. */
     private boolean connected(int edgeId) {
         return !partitionedEdges.contains(edgeId);
     }

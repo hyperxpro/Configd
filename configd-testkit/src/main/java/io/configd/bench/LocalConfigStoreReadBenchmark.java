@@ -70,8 +70,6 @@ public class LocalConfigStoreReadBenchmark {
 
     @Setup(Level.Trial)
     public void setUp() {
-        // Build the HAMT externally (the VersionedStoreReadBenchmark pattern) and load it
-        // as one snapshot - the steady-state shape of a caught-up edge.
         HamtMap<String, VersionedValue> data = HamtMap.empty();
         keys = new String[size];
         byte[] value = new byte[64];
@@ -120,7 +118,6 @@ public class LocalConfigStoreReadBenchmark {
         bh.consume(versionOut[0]);
     }
 
-    /** Sanity: the miss really is the singleton (dead-code guard for the benchmark). */
     @Benchmark
     public boolean missIsSingleton() {
         return store.get("config/absent/key") == ReadResult.NOT_FOUND;

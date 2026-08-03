@@ -29,9 +29,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * payload (and, for the strongest variant, recomputes the envelope's CRC32C so only
  * the HMAC catches it), and constructs a new RaftLog - recovery REFUSES (throws
  * {@link IntegrityException}) rather than loading the attacker's state.
- * <p>
- * The same attack against the unauthenticated code is captured succeeding in
- * {@link Pa2021VulnerabilityCaptureTest}.
  */
 class SnapshotIntegrityTest {
 

@@ -182,9 +182,6 @@ public final class LivePropagationProbeMain {
 
             long lastSeq = driveWrites(http, base, opts);
 
-            // Drain: wait - by polling, never a fixed sleep - until the edge has been observed
-            // covering every committed seq, or the deadline expires. With the concurrent
-            // watcher this only OBSERVES progress; without it, this thread pumps the watcher.
             long deadline = System.nanoTime() + opts.drainDeadline.toNanos();
             while (System.nanoTime() < deadline
                     && probe.count(EDGE_OBSERVER_ID) < opts.writes) {
@@ -203,7 +200,6 @@ public final class LivePropagationProbeMain {
                         + probe.count(EDGE_OBSERVER_ID) + "/" + opts.writes
                         + " edge-visible — the report below shows the partial count honestly");
             }
-            // lastSeq is informational here; the loop condition is the per-write count.
             System.out.println("edge applied cursor at finish: " + edge.core().cursor()
                     + " (highest committed seq " + lastSeq + ")");
             System.out.println("sampling=" + (opts.concurrentWatch
@@ -253,7 +249,6 @@ public final class LivePropagationProbeMain {
             return stopped.get();
         }
 
-        /** One pump pass; returns true if anything was recorded (publish or visible). */
         boolean pumpOnce() {
             boolean progressed = false;
             CommitNotificationSource.Result result = source.readSince(boundaryCursor);
@@ -366,11 +361,6 @@ public final class LivePropagationProbeMain {
         return maxSeq;
     }
 
-    /**
-     * PUTs a single key and returns the committed seq, retrying across transient 503/504
-     * (leader churn / in-flight) until {@code opts.writeDeadline} elapses. No sleep is
-     * used as synchronization - the loop re-issues immediately and bails on a deadline.
-     */
     private static long putCommitted(HttpClient http, String base, String key, String body,
             Options opts) throws Exception {
         long deadline = System.nanoTime() + opts.writeDeadline.toNanos();
@@ -404,10 +394,6 @@ public final class LivePropagationProbeMain {
                 "write to '" + key + "' not committed within " + opts.writeDeadline, last);
     }
 
-    /**
-     * Polls {@code /health/ready} until the single node has elected itself leader (200),
-     * bounded by {@code opts.writeDeadline}. No fixed sleep - re-polls on a deadline.
-     */
     private static void awaitLeader(HttpClient http, String base, Options opts) throws Exception {
         long deadline = System.nanoTime() + opts.writeDeadline.toNanos();
         while (System.nanoTime() < deadline) {
@@ -429,11 +415,6 @@ public final class LivePropagationProbeMain {
                 + opts.writeDeadline);
     }
 
-    /**
-     * Polls the probe until the boundary observer has recorded every committed seq
-     * (matched count reaches {@code expectedCount}) or {@code opts.drainDeadline} elapses.
-     * The consumer thread does the work; this only observes its progress.
-     */
     private static void awaitConsumed(PropagationProbe probe, long lastSeq, Options opts) {
         if (lastSeq < 0) {
             return;
@@ -445,7 +426,6 @@ public final class LivePropagationProbeMain {
             }
             Thread.onSpinWait();
         }
-        // Deadline hit - the report below shows the partial count honestly.
     }
 
     /**
@@ -492,7 +472,6 @@ public final class LivePropagationProbeMain {
             }
         }
 
-        /** One readSince pass; returns true if any notification was consumed/recovered. */
         private boolean drainOnce() {
             CommitNotificationSource.Result result = source.readSince(cursor);
             return switch (result) {
@@ -553,11 +532,9 @@ public final class LivePropagationProbeMain {
                         try {
                             Files.deleteIfExists(p);
                         } catch (IOException ignored) {
-                            // best-effort temp cleanup
                         }
                     });
         } catch (IOException ignored) {
-            // best-effort temp cleanup
         }
     }
 

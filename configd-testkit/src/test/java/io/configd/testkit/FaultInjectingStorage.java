@@ -28,7 +28,6 @@ public final class FaultInjectingStorage implements Storage {
 
     private final Storage delegate;
 
-    // Armed faults (counts/thresholds; -1 / 0 == disarmed).
     private int failNextWrites;
     private int failNextSyncs;
     private long enospcLimitBytes = -1;
@@ -48,7 +47,6 @@ public final class FaultInjectingStorage implements Storage {
         return this;
     }
 
-    /** The next {@code n} {@code sync()} calls throw (directory fsync failure). */
     public FaultInjectingStorage failNextSyncs(int n) {
         this.failNextSyncs = n;
         return this;

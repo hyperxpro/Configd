@@ -114,12 +114,12 @@ class SeedSweepTestTheTesterTest {
         long origTerm = corruptLog.termAt(idx);
         byte[] cmd = encodePut("ttt-key", "ttt-val");
         corruptLog.truncateFrom(idx);
-        corruptLog.append(new LogEntry(idx, origTerm + 999, cmd)); // divergent term
+        corruptLog.append(new LogEntry(idx, origTerm + 999, cmd));
         corruptLog.setCommitIndex(idx);
 
         try {
             inv[0].checkAll();
-            return new Outcome(true, false, null); // NOT caught - checker is vacuous
+            return new Outcome(true, false, null);
         } catch (SimInvariants.SafetyViolation v) {
             return new Outcome(true, true, v.getMessage());
         }

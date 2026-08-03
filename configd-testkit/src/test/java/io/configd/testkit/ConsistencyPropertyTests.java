@@ -35,7 +35,6 @@ class ConsistencyPropertyTests {
         private NodeId hbDropVictim = null;
         private int[] preVotesSent;
 
-        /** Owner binding is done once, on the first tick (the drive thread). */
         private boolean ownersBound;
 
         ClusterHarness(long seed, int nodeCount) {
@@ -70,7 +69,6 @@ class ConsistencyPropertyTests {
                 // delay) would slip the election timeout and the no-spurious-election sweeps would go red.
                 final int nodeIndex = i;
                 RaftTransport baseTransport = (target, message) -> {
-                    // Starvation signal: count PreVote requests this node emits.
                     if (message instanceof RequestVoteRequest rv && rv.preVote()) {
                         preVotesSent[nodeIndex]++;
                     }
@@ -78,7 +76,7 @@ class ConsistencyPropertyTests {
                 };
                 HeartbeatCoalescer coalescer = new HeartbeatCoalescer();
                 CoalescingRaftTransport transport = new CoalescingRaftTransport(baseTransport, 0);
-                transport.bindCoalescer(() -> coalescer); // one group per node => a constant resolver
+                transport.bindCoalescer(() -> coalescer);
 
                 // derive the per-node election RNG from the master
                 // simulation seed (not entropy) so the same seed reproduces the
@@ -138,7 +136,7 @@ class ConsistencyPropertyTests {
                 NodeId peer = peerEntry.getKey();
                 if (hbFault == HeartbeatFault.DROP
                         && (hbDropVictim == null || hbDropVictim.equals(peer))) {
-                    continue; // drop this peer's coalesced heartbeats (all peers, or just the victim)
+                    continue;
                 }
                 for (AppendEntriesRequest hb : peerEntry.getValue().values()) {
                     sim.network().send(from, peer, hb, sendAt);
@@ -146,7 +144,6 @@ class ConsistencyPropertyTests {
             }
         }
 
-        /** Inject an all-peers heartbeat-drain fault. delayMs is ignored unless DELAY. */
         void injectHeartbeatFault(HeartbeatFault fault, long delayMs) {
             this.hbFault = fault;
             this.hbFaultDelayMs = delayMs;
@@ -160,7 +157,6 @@ class ConsistencyPropertyTests {
             this.hbDropVictim = victim;
         }
 
-        /** PreVote requests sent by node {@code i} so far (the per-peer starvation signal). */
         int preVotesSent(int i) {
             return preVotesSent[i];
         }
@@ -187,7 +183,6 @@ class ConsistencyPropertyTests {
             ownersBound = true;
         }
 
-        /** Run the cluster for the given number of ticks. */
         void runTicks(int ticks) {
             for (int i = 0; i < ticks; i++) {
                 tick();
@@ -223,12 +218,10 @@ class ConsistencyPropertyTests {
             return -1;
         }
 
-        /** Elect a stable leader across all nodes. */
         int electLeader(int maxTicks) {
             return awaitStableLeader(Set.of(), maxTicks);
         }
 
-        /** Find current leader among eligible nodes. */
         int findLeader(Set<Integer> exclude) {
             for (int i = 0; i < nodeCount; i++) {
                 if (exclude.contains(i)) continue;
@@ -239,18 +232,15 @@ class ConsistencyPropertyTests {
             return -1;
         }
 
-        /** Find current leader among all nodes. */
         int findLeader() {
             return findLeader(Set.of());
         }
 
-        /** Propose a PUT command on the given node. */
         boolean proposePut(int nodeIdx, String key, String value) {
             byte[] cmd = CommandCodec.encodePut(key, value.getBytes(StandardCharsets.UTF_8));
             return nodes.get(nodeIdx).propose(cmd).accepted();
         }
 
-        /** Propose a DELETE command on the given node. */
         boolean proposeDelete(int nodeIdx, String key) {
             byte[] cmd = CommandCodec.encodeDelete(key);
             return nodes.get(nodeIdx).propose(cmd).accepted();
@@ -322,7 +312,6 @@ class ConsistencyPropertyTests {
             long readId = cluster.node(leader).readIndex();
             assertTrue(readId >= 0, "ReadIndex must be accepted by leader");
 
-            // ReadIndex becomes ready once a heartbeat round confirms leadership.
             boolean ready = cluster.awaitReadReady(leader, readId, 200);
             assertTrue(ready, "ReadIndex must become ready within timeout");
 
@@ -458,33 +447,26 @@ class ConsistencyPropertyTests {
             SimulatedClock clock = new SimulatedClock(10_000L);
             StalenessTracker tracker = new StalenessTracker(clock);
 
-            // Initially DISCONNECTED (no frontier known yet)
             assertEquals(StalenessTracker.State.DISCONNECTED, tracker.currentState());
 
-            // Record an update whose commit ts equals wall-now.
             tracker.recordUpdate(1, 10_000);
             assertEquals(StalenessTracker.State.CURRENT, tracker.currentState());
             assertTrue(tracker.stalenessMs() < 500,
                     "INV-S1: staleness must be < 500ms immediately after update");
 
-            // True stall begins: no further deltas, no heartbeats - the frontier freezes.
             clock.advanceMs(499);
             assertEquals(StalenessTracker.State.CURRENT, tracker.currentState());
 
-            // Crossing the 500ms threshold moves to STALE.
             clock.advanceMs(2);
             assertEquals(StalenessTracker.State.STALE, tracker.currentState());
             assertTrue(tracker.stalenessMs() >= 500);
 
-            // Crossing the 5s threshold moves to DEGRADED.
             clock.advanceMs(4500);
             assertEquals(StalenessTracker.State.DEGRADED, tracker.currentState());
 
-            // Crossing the 30s threshold moves to DISCONNECTED.
             clock.advanceMs(25000);
             assertEquals(StalenessTracker.State.DISCONNECTED, tracker.currentState());
 
-            // A fresh update whose commit ts equals wall-now returns the tracker to CURRENT.
             tracker.recordUpdate(2, 40_001);
             assertEquals(StalenessTracker.State.CURRENT, tracker.currentState());
         }
@@ -504,7 +486,6 @@ class ConsistencyPropertyTests {
             long cursor = 5;
             tracker.recordUpdate(cursor, 10_000);
 
-            // 1000 heartbeats over 250s, server attesting "you're caught up" (latestSeq==cursor).
             for (int i = 0; i < 1000; i++) {
                 clock.advanceMs(250);
                 assertTrue(tracker.recordFrontier(cursor, cursor, clock.currentTimeMillis()),
@@ -513,8 +494,6 @@ class ConsistencyPropertyTests {
                         "idle-but-heartbeating edge must stay CURRENT (ADR-0039)");
             }
 
-            // Now the server reports latestSeq > cursor (genuinely behind): the frontier does
-            // NOT advance, and after a stall the edge correctly walks STALE.
             clock.advanceMs(600);
             assertFalse(tracker.recordFrontier(cursor + 3, cursor, clock.currentTimeMillis()),
                     "latestSeq > cursor must NOT advance the frontier");
@@ -548,12 +527,10 @@ class ConsistencyPropertyTests {
             tracker.recordUpdate(edge.currentVersion(), clock.currentTimeMillis());
 
             int totalSamples = 0;
-            int staleSamples = 0; // > 500ms
-            int severelyStaleSamples = 0; // > 2s
+            int staleSamples = 0;
+            int severelyStaleSamples = 0;
             ConfigSnapshot prevSnap = controlPlane.snapshot();
 
-            // Simulate 2000 ticks (~2 seconds of simulated time)
-            // Every 20 ticks (~20ms), commit a new entry and sync to edge
             for (int t = 0; t < 2000; t++) {
                 cluster.tick();
                 clock.advanceMs(1);
@@ -590,11 +567,6 @@ class ConsistencyPropertyTests {
                             + " (" + severelyStaleSamples + "/" + totalSamples + ")");
         }
 
-        /**
-         * Verifies staleness bound violation detection: when edge is cut off,
-         * the tracker correctly reports escalating staleness states, and when
-         * reconnected, it recovers to CURRENT.
-         */
         @Test
         void stalenessTrackerDetectsAndRecoversFromPartition() {
             SimulatedClock clock = new SimulatedClock(1_000_000L);
@@ -614,11 +586,6 @@ class ConsistencyPropertyTests {
                     "Staleness must be near zero after fresh update");
         }
 
-        /**
-         * Verifies that the staleness measurement is monotonic: once the
-         * last update time is set, the staleness can only increase until
-         * the next update.
-         */
         @Test
         void stalenessMsIsMonotonicallyIncreasingBetweenUpdates() {
             SimulatedClock clock = new SimulatedClock(1_000_000L);
@@ -699,10 +666,6 @@ class ConsistencyPropertyTests {
                     "All entries must be committed; finalVersion=" + finalVersion + " (seed=" + seed + ")");
         }
 
-        /**
-         * Verifies sequence monotonicity on follower replicas: once entries
-         * propagate, followers must also observe strictly increasing sequences.
-         */
         @Test
         void sequenceMonotonicOnFollowerReplicas() {
             ClusterHarness cluster = new ClusterHarness(303L, 3);
@@ -790,10 +753,6 @@ class ConsistencyPropertyTests {
             }
         }
 
-        /**
-         * Verifies gap-free sequence across a leader failover: the new leader's
-         * state machine continues the sequence without gaps.
-         */
         @Test
         void gapFreeAcrossLeaderFailover() {
             ClusterHarness cluster = new ClusterHarness(42L, 5);
@@ -970,10 +929,6 @@ class ConsistencyPropertyTests {
                             + " must be >= cursor version " + clientCursor.version());
         }
 
-        /**
-         * When the failover target edge is behind the client's cursor,
-         * the read must be rejected to preserve monotonic read guarantees.
-         */
         @Test
         void staleEdgeRejectsReadWithFutureCursor() {
             VersionedConfigStore controlPlane = new VersionedConfigStore();
@@ -996,10 +951,6 @@ class ConsistencyPropertyTests {
                             + " with cursor=3 to preserve monotonic read guarantee");
         }
 
-        /**
-         * Verifies that after edge B catches up, a previously rejected
-         * cursor-gated read succeeds.
-         */
         @Test
         void failoverEdgeServesReadAfterCatchUp() {
             VersionedConfigStore controlPlane = new VersionedConfigStore();
@@ -1150,11 +1101,6 @@ class ConsistencyPropertyTests {
             }
         }
 
-        /**
-         * Verifies per-key total order survives a leader change: writes to
-         * the same key under a new leader have strictly higher sequence
-         * numbers than writes committed under the old leader.
-         */
         @Test
         void perKeyOrderSurvivesLeaderChange() {
             ClusterHarness cluster = new ClusterHarness(42L, 5);
@@ -1267,10 +1213,6 @@ class ConsistencyPropertyTests {
             }
         }
 
-        /**
-         * Verifies that all replicas converge to the same total order for
-         * cross-key writes within the same Raft group.
-         */
         @Test
         void allReplicasConvergeToSameOrder() {
             ClusterHarness cluster = new ClusterHarness(42L, 3);
@@ -1385,10 +1327,6 @@ class ConsistencyPropertyTests {
             assertEquals("def456", str(result2.value()));
         }
 
-        /**
-         * Verifies RYW for delete operations: after a client deletes a key
-         * and the edge syncs, reads with the new cursor must not find the key.
-         */
         @Test
         void readYourDeleteOnEdge() {
             ClusterHarness cluster = new ClusterHarness(88L, 3);
@@ -1426,10 +1364,6 @@ class ConsistencyPropertyTests {
                     "INV-RYW1: Deleted key must not be found after edge sync");
         }
 
-        /**
-         * Verifies RYW across multiple keys: a client writes to multiple keys,
-         * and subsequent reads (with the updated cursor) see all committed values.
-         */
         @Test
         void readYourWritesAcrossMultipleKeys() {
             ClusterHarness cluster = new ClusterHarness(42L, 3);

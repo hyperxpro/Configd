@@ -81,7 +81,7 @@ class NettyEdgeReadServerCorrectnessTest {
             String[] paths = {
                     "/v1/config/config/svc-0",
                     "/v1/config/config/svc-7",
-                    "/v1/config/config/nope",    // not-subscribed -> 404 + X-Configd-Refused
+                    "/v1/config/config/nope",
             };
             for (String path : paths) {
                 HttpResponse<byte[]> rj = get(client, jdk.port(), path);

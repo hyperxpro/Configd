@@ -66,11 +66,10 @@ final class AdversarialSim implements ClusterView {
         this.schedule = new AdversarialSchedule(seed, nodeCount, totalTicks, intensity);
         this.history = history;
 
-        // Network config (latency band, drop/dup base rates) is itself seed-derived.
         RandomGenerator netCfg = RandomGeneratorFactory.of("L64X128MixRandom")
                 .create(AdversarialSchedule.mixSeed(seed, TAG_NETCFG));
         this.network = new AdversarialNetwork(seed, 1, 10);
-        this.network.setDupRate(0.02 + 0.03 * netCfg.nextDouble()); // 2 - 5% duplication
+        this.network.setDupRate(0.02 + 0.03 * netCfg.nextDouble());
 
         RandomGenerator skewRng = RandomGeneratorFactory.of("L64X128MixRandom")
                 .create(AdversarialSchedule.mixSeed(seed, TAG_SKEW));
@@ -194,13 +193,11 @@ final class AdversarialSim implements ClusterView {
             node.tick();
         }
 
-        // Record leadership for the activity predicate.
         int leader = findLeader();
         if (leader >= 0) {
             activity.recordLeaderAtTerm(nodes.get(leader).currentTerm());
         }
 
-        // SAFETY: continuous invariant check, every tick, every seed.
         invariants.checkAll();
     }
 
@@ -332,13 +329,6 @@ final class AdversarialSim implements ClusterView {
         };
     }
 
-    /**
-     * Builds a {@link CrashStorageHandle}. When the consensus-core test-jar is on
-     * the path this returns a {@code CrashStorage} adapter; the reflective lookup
-     * keeps configd-testkit compiling even if the test-jar wiring is not yet active,
-     * falling back to a non-crashing in-memory storage (crash faults then no-op,
-     * which the crash-recovery test in consensus-core scope covers directly).
-     */
     private static CrashStorageHandle newCrashStorage() {
         return io.configd.raft.CrashStorageAdapter.create();
     }

@@ -38,8 +38,6 @@ class EdgeStalenessDistributionSimTest {
         assertTrue(probe.globalCount() > 0,
                 "the probe must have recorded propagation samples (mechanism non-vacuity)");
 
-        // Sane percentiles: the distribution is well-formed (p50 <= p99 <= max). The probe
-        // floors negative staleness to 0, so samples are non-negative by construction.
         long p50 = probe.globalPercentile(50.0);
         long p99 = probe.globalPercentile(99.0);
         long max = probe.globalMax();

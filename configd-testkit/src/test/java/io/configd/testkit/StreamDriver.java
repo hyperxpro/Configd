@@ -23,30 +23,18 @@ import java.util.List;
  *       {@link EdgeStream.Snapshot}, sets the cursor to the replay seq, and resumes
  *       tailing - exactly-once over effect, no hole, no duplicate.</li>
  * </ol>
- * That real implementation is the <b>stream driver</b> and is intentionally <b>NOT</b>
- * written here: this is verification machinery built before the data-plane
- * component exists, so the simulator must NOT smuggle the production drain in.
- *
- * <p>Exactly two implementations:
+ * <p>Three implementations:
  * <ul>
- *   <li>{@link #NONE} - the honest current state of the system: nothing is ever
- *       delivered. This is the default, and it is why {@link EdgePropagationBacklogTest}
- *       fails (the executable backlog).</li>
- *   <li>{@link DirectInjectionDriver} - a TEST-ONLY driver that pushes handcrafted
- *       (including deliberately invalid) message sequences so the edge invariants
- *       and {@link EdgeActor} apply paths can be exercised directly
- *       (test-the-tester).</li>
+ *   <li>{@link #NONE} - delivers nothing. The default, and what
+ *       {@link EdgePropagationBacklogTest} runs against.</li>
+ *   <li>{@link DirectInjectionDriver} - pushes handcrafted (including deliberately
+ *       invalid) message sequences so the edge invariants and {@link EdgeActor} apply
+ *       paths can be exercised directly (test-the-tester).</li>
+ *   <li>{@code C1StreamDriver} - the faithful consumer loop described above.</li>
  * </ul>
  */
 interface StreamDriver {
 
-    /**
-     * The per-tick context handed to the driver: the per-CP-node commit-notification
-     * sources and replay sources (the commit-notification handoff seams), the edge network it pushes
-     * over, the edge roster, and the current sim time. A real stream driver consumes
-     * {@code source(cpNode)} / {@code replaySource(cpNode)}; {@link #NONE} ignores
-     * everything.
-     */
     interface Context {
 
         /** Live edges (deterministic order). The driver streams to each. */

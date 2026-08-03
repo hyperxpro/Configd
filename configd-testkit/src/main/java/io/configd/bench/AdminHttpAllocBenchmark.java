@@ -137,8 +137,6 @@ public class AdminHttpAllocBenchmark {
         healthRequest = HttpRequest.newBuilder()
                 .uri(URI.create(base + "/health/live")).GET().build();
 
-        // Warm the connection + assert the wiring serves 200 (a 401/404 would measure the
-        // wrong path - fail loudly rather than silently baseline an error response).
         HttpResponse<byte[]> probe = client.send(configRequests[0], HttpResponse.BodyHandlers.ofByteArray());
         if (probe.statusCode() != 200) {
             throw new IllegalStateException("configGet probe expected 200 but got " + probe.statusCode()

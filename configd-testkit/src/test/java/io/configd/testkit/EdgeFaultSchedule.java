@@ -31,25 +31,17 @@ import java.util.random.RandomGeneratorFactory;
  */
 final class EdgeFaultSchedule {
 
-    /** Edge-fault sub-stream tag (distinct from all CP tags). */
     static final int TAG_EDGE_FAULT = 1_012;
 
     enum EdgeFaultKind {
-        /** Partition the CP->edge channel for one edge (it stops receiving). */
         EDGE_PARTITION_ADD,
-        /** Heal a previously-partitioned CP->edge channel. */
         EDGE_PARTITION_REMOVE,
-        /** Crash an edge (drop all cache state, bump incarnation). */
         EDGE_CRASH,
-        /** Restart a crashed edge (fresh empty store, awaiting bootstrap). */
         EDGE_RESTART,
-        /** Begin lagging: the edge stops draining its inbox (keeps queueing). */
         EDGE_LAG_BEGIN,
-        /** End lagging: the edge resumes draining. */
         EDGE_LAG_END
     }
 
-    /** A scheduled edge fault at a logical tick targeting edge index {@code edgeIndex}. */
     record EdgeFault(int tick, EdgeFaultKind kind, int edgeIndex) {}
 
     private final List<EdgeFault> faults;

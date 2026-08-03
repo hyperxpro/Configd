@@ -50,7 +50,7 @@ class EdgeBootstrapMidChurnTest {
         int joinIdx = sim.joinEdge(source);
         EdgeActor joiner = sim.edges().get(joinIdx);
         sim.enableEdgeRecovery(joinIdx);
-        pumpAt(sim, oldLeader); // T0: transfer emitted, in flight (latency >= 1 tick)
+        pumpAt(sim, oldLeader);
         assertEquals(0, joiner.snapshotsApplied(),
                 "HARD non-vacuity: the kill lands MID-TRANSFER (nothing applied yet)");
 

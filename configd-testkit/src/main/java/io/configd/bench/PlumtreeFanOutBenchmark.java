@@ -10,19 +10,6 @@ import org.openjdk.jmh.infra.Blackhole;
 import java.util.Queue;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Measures fan-out performance of {@link PlumtreeNode#broadcast(MessageId, byte[])}
- * to N eager subscribers.
- * <p>
- * The broadcast method iterates over all eager peers and all lazy peers,
- * producing one {@link OutboundMessage.EagerPush} per eager peer and one
- * {@link OutboundMessage.IHave} per lazy peer. This benchmark measures the
- * cost of that fan-out with all peers in the eager set (spanning tree).
- * <p>
- * The shared payload buffer is reused across broadcasts to simulate the
- * real pattern where the same config update bytes are fanned out to all
- * subscribers without copying.
- */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 @State(Scope.Thread)

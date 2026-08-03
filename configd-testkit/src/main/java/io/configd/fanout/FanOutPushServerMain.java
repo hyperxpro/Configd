@@ -47,7 +47,6 @@ public final class FanOutPushServerMain {
     private FanOutPushServerMain() {
     }
 
-    /** Real wall/mono clock (heartbeat cadence + staleness need time to advance, unlike edge-read). */
     private static final class SystemClock implements Clock {
         @Override public long currentTimeMillis() { return System.currentTimeMillis(); }
         @Override public long nanoTime() { return System.nanoTime(); }
@@ -71,7 +70,7 @@ public final class FanOutPushServerMain {
                 // policy.
         int transportQueueFrames = Integer.getInteger("configd.fanout.transportQueueFrames", 65_536);
         FanOutConfig config = new FanOutConfig(
-                Integer.getInteger("configd.fanout.queueFrames", 65_536),  // session offered-not-acked bound
+                Integer.getInteger("configd.fanout.queueFrames", 65_536),
                 80,                                                        // queueWarnPct (unused at this size)
                 64,                                                        // batchMaxNotifications (production default)
                 262_144,                                                   // batchMaxBytes (256 KiB, production default)

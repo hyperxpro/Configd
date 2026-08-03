@@ -58,7 +58,6 @@ public class EdgeHttpAllocBenchmark {
         for (int i = 0; i < VALUE_BYTES; i++) {
             value[i] = (byte) i;
         }
-        // Apply KEY_COUNT keys through the real core (the EdgeHttpServerTest pattern).
         for (int i = 0; i < KEY_COUNT; i++) {
             long seq = i + 1;
             ConfigDelta delta = new ConfigDelta(seq - 1, seq,
@@ -95,7 +94,6 @@ public class EdgeHttpAllocBenchmark {
         }
     }
 
-    /** The edge read path: GET /v1/config/{key} -> 200 + value, over real loopback. */
     @Benchmark
     public int configGet() throws Exception {
         HttpRequest req = configRequests[(cursor++ & 0x7fffffff) % KEY_COUNT];

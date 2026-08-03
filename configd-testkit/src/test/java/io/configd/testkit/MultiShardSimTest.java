@@ -65,7 +65,7 @@ class MultiShardSimTest {
         }
         sim.healAllShards();
         sim.drain(200);
-        sim.checkAll(); // disjoint ownership + routing-to-owner + no-loss all hold
+        sim.checkAll();
     }
 
     @Test
@@ -179,12 +179,12 @@ class MultiShardSimTest {
         String key = "svc/cfg/key-5";
         int s = sim.shardMap().shardFor(MultiShardSim.SCOPE, key);
         int leader = sim.shard(s).findLeader();
-        sim.setCachedLeader(s, (leader + 1) % R); // stale: a non-leader
-        sim.write("client", key, 0);             // rejected by the non-leader -> redirect -> retry on leader
+        sim.setCachedLeader(s, (leader + 1) % R);
+        sim.write("client", key, 0);
         sim.drain(200);
         assertEquals("client:0", sim.committedValueOf(key),
                 "a correct intra-shard redirect must recover the write (no loss)");
-        sim.checkAll(); // and never scattered the key across shards
+        sim.checkAll();
     }
 
     @Test
@@ -196,7 +196,7 @@ class MultiShardSimTest {
         int s = sim.shardMap().shardFor(MultiShardSim.SCOPE, key);
         int leader = sim.shard(s).findLeader();
         sim.setCachedLeader(s, (leader + 1) % R);
-        sim.write("client", key, 0); // rejected by the non-leader; no redirect -> never reaches a leader
+        sim.write("client", key, 0);
         sim.drain(200);
         assertNull(sim.committedValueOf(key),
                 "without redirect, the stale-leader write MUST be lost (the non-vacuity proof)");
@@ -250,8 +250,6 @@ class MultiShardSimTest {
     void fullSurface_greenAcrossSeeds(long seed) {
         MultiShardSim sim = new MultiShardSim(seed, 4, R, new StaticShardMap(4), Set.of());
         sim.electAllLeaders(ELECT_TICKS);
-        // A workload with a mid-run per-shard fault: routing + disjoint + per-shard safety + redirect
-        // (the fault staled the cache) + cross-shard isolation are all on the surface every tick/seed.
         sim.applyOps(sim.generateOps(40), 4);
         sim.faultShardLeader(seed % 4 == 0 ? 1 : 0);
         sim.applyOps(sim.generateOps(40), 4);

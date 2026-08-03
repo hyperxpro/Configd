@@ -74,7 +74,7 @@ class EdgeGapRecoveryTest {
         sim.enableEdgeRecovery(0);
 
         sim.partitionEdge(0);
-        for (int i = 1; i <= 12; i++) { // > ring capacity: the horizon passes the victim
+        for (int i = 1; i <= 12; i++) {
             commit(sim, victim.subscribedCpNode(), "lap/k" + (i % 3), "lapped-" + i);
         }
         long oldest = sim.source(victim.subscribedCpNode()).oldestSeq();

@@ -37,7 +37,6 @@ public final class PropagationProbe {
     /** Generous staleness ceiling: 10 minutes in ms (well above any honest bound). */
     public static final long HIGHEST_TRACKABLE_MILLIS = 10L * 60L * 1_000L;
 
-    /** Significant value digits retained by every histogram (HdrHistogram precision). */
     public static final int SIGNIFICANT_DIGITS = 3;
 
     private static final String UNIT = "ms";
@@ -111,7 +110,7 @@ public final class PropagationProbe {
         }
         long staleness = visibleTsMillis - publishTs;
         if (staleness < 0) {
-            staleness = 0; // observed "before" published (skew / out-of-order) - floor, do not drop
+            staleness = 0;
         }
         boolean overflow = staleness > HIGHEST_TRACKABLE_MILLIS;
         if (overflow) {
@@ -124,18 +123,15 @@ public final class PropagationProbe {
     }
 
 
-    /** Sorted observer ids that have at least one recorded sample or unmatched count. */
     public synchronized List<Integer> observerIds() {
         return new ArrayList<>(observers.keySet());
     }
 
-    /** Recorded (matched) sample count for {@code observerId}, or 0 if none. */
     public synchronized long count(int observerId) {
         ObserverState s = observers.get(observerId);
         return s == null ? 0L : s.histogram.getTotalCount();
     }
 
-    /** Recorded (matched) sample count across all observers. */
     public synchronized long globalCount() {
         return globalHistogram.getTotalCount();
     }
@@ -149,7 +145,6 @@ public final class PropagationProbe {
         return publishTsBySeq.size();
     }
 
-    /** Unmatched {@code recordVisible} count for {@code observerId} (seq never published). */
     public synchronized long unmatched(int observerId) {
         ObserverState s = observers.get(observerId);
         return s == null ? 0L : s.unmatched;
@@ -159,30 +154,25 @@ public final class PropagationProbe {
         return globalUnmatched;
     }
 
-    /** Value (ms) at {@code percentile} (0..100) for {@code observerId}; 0 if no samples. */
     public synchronized long percentile(int observerId, double percentile) {
         ObserverState s = observers.get(observerId);
         return s == null ? 0L : s.histogram.getValueAtPercentile(percentile);
     }
 
-    /** Value (ms) at {@code percentile} (0..100) across all observers; 0 if no samples. */
     public synchronized long globalPercentile(double percentile) {
         return globalHistogram.getValueAtPercentile(percentile);
     }
 
-    /** Minimum recorded staleness (ms) for {@code observerId}; 0 if no samples. */
     public synchronized long min(int observerId) {
         ObserverState s = observers.get(observerId);
         return s == null || s.histogram.getTotalCount() == 0 ? 0L : s.histogram.getMinValue();
     }
 
-    /** Maximum recorded staleness (ms) for {@code observerId}; 0 if no samples. */
     public synchronized long max(int observerId) {
         ObserverState s = observers.get(observerId);
         return s == null || s.histogram.getTotalCount() == 0 ? 0L : s.histogram.getMaxValue();
     }
 
-    /** Maximum recorded staleness (ms) across all observers; 0 if no samples. */
     public synchronized long globalMax() {
         return globalHistogram.getTotalCount() == 0 ? 0L : globalHistogram.getMaxValue();
     }

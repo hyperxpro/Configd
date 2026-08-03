@@ -13,7 +13,7 @@ public final class SimulatedClock implements Clock {
     }
 
     public SimulatedClock() {
-        this(1_700_000_000_000L); // Fixed epoch for reproducibility
+        this(1_700_000_000_000L);
     }
 
     @Override

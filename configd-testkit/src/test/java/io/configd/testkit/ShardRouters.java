@@ -30,7 +30,7 @@ final class ShardRouters {
             @Override
             public int shardFor(ConfigScope scope, String key) {
                 int c = calls.computeIfAbsent(key, k -> new AtomicInteger()).getAndIncrement();
-                return Math.floorMod(key.hashCode() + c, n); // shifts with each call -> non-functional
+                return Math.floorMod(key.hashCode() + c, n);
             }
 
             @Override

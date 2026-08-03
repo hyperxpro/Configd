@@ -62,7 +62,6 @@ import java.util.random.RandomGeneratorFactory;
  */
 final class MultiShardSim {
 
-    /** Seed-derivation tags so per-shard streams and the workload never share entropy. */
     private static final long WORKLOAD_TAG = 0x77F1_5EEDL;
     static final ConfigScope SCOPE = ConfigScope.GLOBAL; // the only scope wired on the write path
 
@@ -99,7 +98,6 @@ final class MultiShardSim {
     /** The client's cached leader index per shard (the stale-map surface). -1 = unknown -> discover. */
     private final int[] cachedLeader;
 
-    /** Routing audit: key -> the shard it has been routed to. A change is a routing-correctness RED. */
     private final Map<String, Integer> routedShardOf = new HashMap<>();
 
     /** Every write the client COMMITTED TO (kept retrying until accepted): key -> last accepted token. */
@@ -152,7 +150,7 @@ final class MultiShardSim {
     void electAllLeaders(int maxTicks) {
         for (int s = 0; s < shardCount; s++) {
             int leader = shards.get(s).electLeader(maxTicks);
-            cachedLeader[s] = leader; // may be -1 if it stalled; write() rediscovers
+            cachedLeader[s] = leader;
         }
     }
 
@@ -235,7 +233,6 @@ final class MultiShardSim {
 
         String token = clientId + ":" + opIndex;
 
-        // The shard the redirect targets. Correct behavior: stay on shard s, only change the NODE.
         int redirectShard = s;
         if (bugs.contains(Bug.CROSS_SHARD_REDIRECT)) {
             // Non-vacuity: a redirect that lands on the WRONG shard scatters the key -> disjoint RED.
@@ -258,8 +255,6 @@ final class MultiShardSim {
             }
         }
         if (accepted) {
-            // Accepted by a leader -> after heal+drain it MUST commit; record so checkNoWritesLost proves
-            // a redirect never dropped an accepted write (no loss).
             intendedWrites.put(key, token);
         }
         return s;
@@ -294,7 +289,7 @@ final class MultiShardSim {
         int leader = shards.get(s).findLeader();
         if (leader >= 0) {
             shards.get(s).sim().isolateNode(NodeId.of(leader));
-            cachedLeader[s] = -1; // the client's cache for s is now stale -> exercises redirect
+            cachedLeader[s] = -1;
         }
         return leader;
     }
@@ -414,7 +409,6 @@ final class MultiShardSim {
     ShardMap shardMap() { return shardMap; }
     long seed() { return seed; }
 
-    /** Force the client's cached leader for shard {@code s} (to deterministically exercise the redirect). */
     void setCachedLeader(int s, int node) { cachedLeader[s] = node; }
 
     String committedValueOf(String key) {
@@ -424,7 +418,6 @@ final class MultiShardSim {
 
     static String[] keyspace() { return KEYSPACE.clone(); }
 
-    /** The committed value (last applied) for a key on a shard, read from its current leader (or node 0). */
     private String committedValue(ConsistencyPropertyTests.ClusterHarness shard, String key) {
         int leader = shard.findLeader();
         int reader = leader >= 0 ? leader : 0;

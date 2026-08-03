@@ -24,7 +24,6 @@ class EdgeBootstrapUnderSustainedWritesTest {
     private static final AdversarialSchedule.Intensity CLEAN_CP =
             new AdversarialSchedule.Intensity(0, 40, 0.0);
 
-    /** Ticks the joiner stays lagged after its subscribe - the widened transfer window. */
     private static final int TRANSFER_WINDOW_TICKS = 12;
 
     /** Monotonic write counter so every pumped value is unique (double-apply tripwire). */
@@ -39,7 +38,6 @@ class EdgeBootstrapUnderSustainedWritesTest {
         return new FanOutConfig(64, 80, 64, 262_144, 1_000_000L, 250L, 5L, 1_048_576);
     }
 
-    // Scenario 1: the primary equivalence proof, multiple seeds.
 
     @ParameterizedTest
     @ValueSource(longs = {41L, 42L, 43L, 44L})
@@ -50,7 +48,7 @@ class EdgeBootstrapUnderSustainedWritesTest {
                 false, driver, CLEAN_CP, EdgeInvariants.BOUND_MS);
         EdgeActor veteran = sim.edges().get(0);
         int cp = veteran.subscribedCpNode();
-        sim.enableEdgeRecovery(0); // the production directive loop, live from the start
+        sim.enableEdgeRecovery(0);
 
         // BEFORE: half the seed-scheduled workload + a pumped warm-up so the apply
         // pipeline is saturated (commits landing on nearly every tick around the join)
@@ -71,8 +69,8 @@ class EdgeBootstrapUnderSustainedWritesTest {
         sim.enableEdgeRecovery(joinIdx);
         assertEquals(0, joiner.currentVersion(), "the joiner is genuinely zero-state");
         joiner.lag(); // widen the transfer window deterministically (slow joiner)
-        pumpAndTick(sim, seed); // T0: SUBSCRIBE -> SNAPSHOT_FIRST -> transfer emitted
-        long s = sim.cpSim().store(cp).currentVersion(); // == the transfer's S
+        pumpAndTick(sim, seed);
+        long s = sim.cpSim().store(cp).currentVersion();
 
         for (int t = 0; t < TRANSFER_WINDOW_TICKS; t++) {
             pumpAndTick(sim, seed);
@@ -138,7 +136,7 @@ class EdgeBootstrapUnderSustainedWritesTest {
         EdgeActor joiner = sim.edges().get(joinIdx);
         sim.enableEdgeRecovery(joinIdx);
         joiner.lag();
-        pumpAndTick(sim, seed); // T0
+        pumpAndTick(sim, seed);
         long s = sim.cpSim().store(0).currentVersion();
         for (int t = 0; t < TRANSFER_WINDOW_TICKS; t++) {
             pumpAndTick(sim, seed);
@@ -182,7 +180,7 @@ class EdgeBootstrapUnderSustainedWritesTest {
         int joinIdx = sim.joinEdge(0);
         EdgeActor joiner = sim.edges().get(joinIdx);
         sim.enableEdgeRecovery(joinIdx);
-        pumpAndTick(sim, seed); // T0: the transfer is emitted, in flight (latency >= 1ms)
+        pumpAndTick(sim, seed);
 
         // Cut the joiner's channel BEFORE the transfer can deliver (delivery re-checks
         // the partition, so the in-flight snapshot is genuinely lost - the stream driver

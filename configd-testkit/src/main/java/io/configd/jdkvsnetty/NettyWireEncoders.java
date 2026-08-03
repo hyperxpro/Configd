@@ -89,7 +89,6 @@ final class NettyWireEncoders {
         out.writeInt(ns.size());
         for (CommitNotification n : ns) {
             ConfigDelta d = n.delta();
-            // message-building term (codec-internal; not removed by a pooled buffer):
             byte[] batch = CommandCodec.encodeBatch(d.mutations());
             byte[] sig = d.signature(); // defensive clone (null if unsigned)
             byte[] nonce = d.nonce();   // defensive clone (never null)
@@ -112,7 +111,7 @@ final class NettyWireEncoders {
 
         int payloadEnd = out.writerIndex();
         int totalLen = (payloadEnd - start) + EdgeFrameCodec.TRAILER_SIZE;
-        out.setInt(start, totalLen); // back-patch the length prefix
+        out.setInt(start, totalLen);
         CRC32C crc = CRC.get();
         crc.reset();
         crc.update(out.nioBuffer(start, payloadEnd - start)); // CRC over [length .. end-of-payload)

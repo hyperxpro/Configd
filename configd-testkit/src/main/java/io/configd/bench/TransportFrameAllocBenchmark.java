@@ -25,12 +25,11 @@ public class TransportFrameAllocBenchmark {
     private long term;
     private int senderId;
     private byte[] payload;
-    private byte[] preEncoded;   // a complete frame, for the decode leg
-    private ByteBuffer reuseBuf; // reused destination for the zero-copy encode leg
+    private byte[] preEncoded;
+    private ByteBuffer reuseBuf;
 
     @Setup(Level.Trial)
     public void setUp() {
-        // A heartbeat carries no payload; the larger sizes stand in for AppendEntries bodies.
         type = (payloadBytes == 0) ? MessageType.HEARTBEAT : MessageType.APPEND_ENTRIES;
         groupId = 7;
         term = 42L;
