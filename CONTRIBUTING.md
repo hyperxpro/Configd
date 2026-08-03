@@ -89,6 +89,40 @@ grep -rn "<the phrase>" gates/ .github/ ops/
 
 If you add such a dependency, say so in the comment itself, the way `RaftConfig.java` does.
 
+A phrase becomes a fixture two ways: a script greps the source file itself, or it greps a run log for
+something the source prints, which pins the string literal. `gates/list-source-fixtures.sh` derives
+both sets by scanning what the gate, workflow and ops scripts consume, so the list below is generated
+rather than remembered — run it after adding or removing a grep and fold the output back in. Hand
+maintenance is what left this list short of `EDGE-GATE-SUMMARY` and `PROBE-HISTOGRAM: scope=global`,
+which is exactly the gate-red the rule exists to prevent.
+
+Greps against the source file:
+
+| Consumer | File | Phrase |
+| --- | --- | --- |
+| `gates/gate-5.sh` | `raft/RaftConfig.java` | `maxPendingProposals.*default 1024` |
+| `gates/gate-phase1.sh` | `replication/ShardMap.java` | `Opaque, stable shard IDs` |
+| `gates/gate-phase1.sh` | `transport/FrameCodec.java` | `WIRE_VERSION = (byte) 0x02`, `HEADER_SIZE = 26` |
+| `gates/gate-phase1.sh` | `transport/MessageType.java` | `RAFT_COALESCED_HEARTBEAT(0x11)` |
+| `gates/gate-mswatch.sh` | `fanout/FanOutConnectionDriver.java` | `class FanOutConnectionDriver implements WatchMultiplexSink.Coordinator`, `Map<Integer, FanOutSessionCore> cores`, `Map<Integer, WatchMultiplexSink> sinks`, `allGids.length > 1 && !config.allowPartialShardView` |
+| `gates/gate-mswatch.sh` | `server/AclConfigPolicyLoaderMultiShardTest.java` | `tB6_multiShard_appliesNonPrimaryShardDeny_watchRejected` |
+| `gates/gate-B.sh` | `docs/architecture/raft-threading-contract.md` | `owner thread` |
+| `gates/gate-B.sh` | `gates/gate-phase0.sh` | `M3 cost-flat-in-N` |
+| `gates/gate-3.sh` | `gates/contract-test-map.md`, `gates/gate3-map-expectation.txt` | `^CONTRACT-MAP-SUMMARY:` |
+| `.github/workflows/ci.yml` | `transport/FrameCodec.java` | `public static final byte WIRE_VERSION` |
+
+Greps against a run log, which pin a printed string literal:
+
+| Consumer | Emitting source | Phrase |
+| --- | --- | --- |
+| `gates/gate-3.sh` | `EdgeAdversarialGateSeedSweepTest`, `AdversarialSimTest`, `EdgeIntegratedNightlySweepTest` | `safetyViolations=0` |
+| `gates/gate-3.sh` | `EdgeAdversarialGateSeedSweepTest` | `EDGE-GATE-SUMMARY` |
+| `gates/gate-3.sh` | `probe/PropagationProbe.java`, `ProbeMechanismTest` | `PROBE-HISTOGRAM: scope=global` |
+| `gates/gate-1.sh` | `gates/smoke-multinode.sh` | `SMOKE PASS` |
+| `gates/gate-1.sh` | `linz/CheckerSelfTest` | `Tests run: 8` exactly |
+| `gates/gate-2.sh` | `configd-linz` checker output | `LINEARIZABLE`, `RESULT: PASS`/`INDETERMINATE` |
+| `gates/e2e-compose-scenario.sh` | `fanout/FanOutSessionCore.java` | field `pendingDemotionNotice` (read via `javap`, so the field name is the fixture) |
+
 ### Bulk comment sweeps
 
 Deleting comments across many files is a mechanical edit, so it needs mechanical proof: compare the
