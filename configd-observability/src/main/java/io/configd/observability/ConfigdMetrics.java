@@ -185,6 +185,35 @@ public final class ConfigdMetrics {
     /** Reason suffix: a request body over the ingress size ceiling (HTTP 413). */
     public static final String HTTP_REJECT_REASON_PAYLOAD_TOO_LARGE = "payload_too_large";
 
+    /**
+     * How many SLO burn-rate alerts were active at the last in-process evaluation (gauge). This is the
+     * node's own view of {@code ops/alerts/configd-slo-alerts.yaml}: the same burn-rate arithmetic run
+     * against the in-process {@link SloTracker}, so an operator scraping a single node sees breach
+     * without a Prometheus deployment. A stuck-nonzero gauge alongside a flat
+     * {@link #NAME_SLO_BURN_EVALUATIONS} means the evaluator stopped running, not that burn cleared.
+     */
+    public static final String NAME_SLO_BURN_ALERTS_ACTIVE = "configd.slo.burn.alerts.active";
+    /**
+     * Alerts fired, by severity suffix ({@code .critical} / {@code .warning}) since
+     * {@link MetricsRegistry} has no native labels. Counts every firing, so it still moves when the
+     * active gauge is flat because an alert stayed continuously breaching.
+     */
+    public static final String NAME_SLO_BURN_ALERTS_FIRED_BASE = "configd.slo.burn.alerts.fired";
+    /** Severity suffix: burn rate at or above the fast-burn multiplier. */
+    public static final String SLO_BURN_SEVERITY_CRITICAL = "critical";
+    /** Severity suffix: burn rate at or above the slow-burn multiplier but below fast-burn. */
+    public static final String SLO_BURN_SEVERITY_WARNING = "warning";
+    /**
+     * Completed burn-rate evaluations (counter). The liveness signal for the alerting path itself:
+     * alerting that silently stopped is indistinguishable from "nothing is wrong" without it.
+     */
+    public static final String NAME_SLO_BURN_EVALUATIONS = "configd.slo.burn.evaluations";
+    /**
+     * Evaluations that threw (counter). An evaluation failure is swallowed so it cannot cancel the
+     * periodic task, which makes this counter the only evidence it happened.
+     */
+    public static final String NAME_SLO_BURN_EVALUATIONS_FAILED = "configd.slo.burn.evaluations.failed";
+
     private final MetricsRegistry registry;
 
     private final MetricsRegistry.Counter writeCommitTotal;
@@ -205,6 +234,13 @@ public final class ConfigdMetrics {
 
     /** Backs the {@link #NAME_SNAPSHOT_BYTES} gauge; last-writer-wins across shards (a node-level view). */
     private final AtomicLong lastSnapshotBytes = new AtomicLong();
+
+    /** Backs the {@link #NAME_SLO_BURN_ALERTS_ACTIVE} gauge; published by the evaluator thread. */
+    private final AtomicLong activeBurnAlerts = new AtomicLong();
+    private final MetricsRegistry.Counter sloBurnAlertsCritical;
+    private final MetricsRegistry.Counter sloBurnAlertsWarning;
+    private final MetricsRegistry.Counter sloBurnEvaluations;
+    private final MetricsRegistry.Counter sloBurnEvaluationsFailed;
 
     /**
      * Eagerly registers all SLO metrics in {@code registry}. The optional
@@ -246,6 +282,40 @@ public final class ConfigdMetrics {
         }
 
         registry.gauge(NAME_SNAPSHOT_BYTES, lastSnapshotBytes::get);
+
+        this.sloBurnAlertsCritical =
+                registry.counter(NAME_SLO_BURN_ALERTS_FIRED_BASE + "." + SLO_BURN_SEVERITY_CRITICAL);
+        this.sloBurnAlertsWarning =
+                registry.counter(NAME_SLO_BURN_ALERTS_FIRED_BASE + "." + SLO_BURN_SEVERITY_WARNING);
+        this.sloBurnEvaluations = registry.counter(NAME_SLO_BURN_EVALUATIONS);
+        this.sloBurnEvaluationsFailed = registry.counter(NAME_SLO_BURN_EVALUATIONS_FAILED);
+        registry.gauge(NAME_SLO_BURN_ALERTS_ACTIVE, activeBurnAlerts::get);
+    }
+
+    /**
+     * Records one fired burn-rate alert. Wired as a {@link BurnRateAlertEvaluator.AlertSink}, so it runs
+     * on the evaluator thread once per breaching SLO per evaluation.
+     */
+    public void onBurnRateAlert(BurnRateAlertEvaluator.AlertLevel alert) {
+        switch (alert) {
+            case BurnRateAlertEvaluator.AlertLevel.Critical ignored -> sloBurnAlertsCritical.increment();
+            case BurnRateAlertEvaluator.AlertLevel.Warning ignored -> sloBurnAlertsWarning.increment();
+            case BurnRateAlertEvaluator.AlertLevel.None ignored -> { }
+        }
+    }
+
+    /** Publishes the result of one completed evaluation. */
+    public void onBurnRateEvaluation(int activeAlerts) {
+        activeBurnAlerts.set(activeAlerts);
+        sloBurnEvaluations.increment();
+    }
+
+    /**
+     * Records an evaluation that threw. The active gauge is deliberately left at its last value: zeroing
+     * it would render a failed evaluation as "no alerts", which is the reading an operator must not get.
+     */
+    public void onBurnRateEvaluationFailed() {
+        sloBurnEvaluationsFailed.increment();
     }
 
     /** Registers the gauge after construction. Useful when the supplier

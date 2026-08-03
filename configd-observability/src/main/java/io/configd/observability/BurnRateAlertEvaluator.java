@@ -20,6 +20,8 @@ public final class BurnRateAlertEvaluator {
 
     private final SloTracker tracker;
     private final List<AlertSink> sinks = new ArrayList<>();
+    private final java.util.concurrent.atomic.AtomicLong sinkFailures =
+            new java.util.concurrent.atomic.AtomicLong();
 
     public BurnRateAlertEvaluator(SloTracker tracker) {
         this.tracker = Objects.requireNonNull(tracker);
@@ -60,9 +62,21 @@ public final class BurnRateAlertEvaluator {
 
             alerts.add(alert);
             for (AlertSink sink : sinks) {
-                sink.fire(alert);
+                try {
+                    sink.fire(alert);
+                } catch (RuntimeException e) {
+                    // One misbehaving sink must not cost the remaining SLOs their evaluation, so the
+                    // throw is absorbed and counted rather than propagated. Silence would be worse than
+                    // the failure: read sinkFailures() to see it.
+                    sinkFailures.incrementAndGet();
+                }
             }
         }
         return alerts;
+    }
+
+    /** Sink invocations that threw and were absorbed, since construction. */
+    public long sinkFailures() {
+        return sinkFailures.get();
     }
 }

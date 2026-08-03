@@ -96,6 +96,31 @@ class BurnRateAlertEvaluatorTest {
     }
 
     @Test
+    void aThrowingSinkCostsNoOtherSinkOrSloItsAlert() {
+        // Sinks are independent consumers. Letting one propagate would abandon the evaluation midway,
+        // so the SLOs after it in iteration order would go unalerted because an unrelated sink is buggy.
+        evaluator.addSink(alert -> {
+            throw new IllegalStateException("bad sink");
+        });
+        List<BurnRateAlertEvaluator.AlertLevel> lateSink = new ArrayList<>();
+        evaluator.addSink(lateSink::add);
+
+        tracker.defineSlo("burn.a", 0.99, Duration.ofHours(1));
+        tracker.defineSlo("burn.b", 0.99, Duration.ofHours(1));
+        for (int i = 0; i < 20; i++) {
+            tracker.recordFailure("burn.a");
+            tracker.recordFailure("burn.b");
+        }
+
+        List<BurnRateAlertEvaluator.AlertLevel> alerts = evaluator.evaluate();
+
+        assertEquals(2, alerts.size(), "both breaching SLOs are still evaluated");
+        assertEquals(2, firedAlerts.size(), "the sink registered before the thrower still fired");
+        assertEquals(2, lateSink.size(), "the sink registered after the thrower still fired");
+        assertEquals(2, evaluator.sinkFailures(), "the absorbed failures are counted, not silent");
+    }
+
+    @Test
     void multipleSlosCanFireIndependently() {
         tracker.defineSlo("slo.a", 0.99, Duration.ofHours(1));
         tracker.defineSlo("slo.b", 0.99, Duration.ofHours(1));
