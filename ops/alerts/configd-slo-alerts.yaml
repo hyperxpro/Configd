@@ -8,6 +8,10 @@
 #
 # ops/alerts/configd-slo-alerts.test.yaml proves each rule fires on its injected condition and stays
 # quiet on normal operation.
+#
+# The node evaluates the same burn-rate arithmetic in-process and exports the result as
+# configd_slo_burn_* — see "In-process burn-rate alerting" in ops/runbooks/README.md. That path needs
+# no Prometheus; these rules stay the production alerting path.
 
 groups:
   - name: configd-slo-write-commit

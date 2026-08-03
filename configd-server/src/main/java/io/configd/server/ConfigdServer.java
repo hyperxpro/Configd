@@ -39,6 +39,7 @@ import io.configd.observability.MetricsRegistry;
 import io.configd.observability.ProductionSloDefinitions;
 import io.configd.observability.PropagationLivenessMonitor;
 import io.configd.observability.SafeLog;
+import io.configd.observability.SloBurnRateAlerting;
 import io.configd.observability.SloTracker;
 import io.configd.raft.AnchorWitness;
 import io.configd.raft.AppendEntriesRequest;
@@ -173,6 +174,7 @@ public final class ConfigdServer {
     private final ScheduledExecutorService readDispatchExecutor;
     private final ScheduledExecutorService tlsReloadExecutor;
     private final ScheduledExecutorService nodeAnchorExecutor;
+    private final ScheduledExecutorService sloAlertExecutor;
     
     private final NodeAnchorFile nodeAnchor;
     
@@ -208,6 +210,7 @@ public final class ConfigdServer {
                           ScheduledExecutorService readDispatchExecutor,
                           ScheduledExecutorService tlsReloadExecutor,
                           ScheduledExecutorService nodeAnchorExecutor,
+                          ScheduledExecutorService sloAlertExecutor,
                           NodeAnchorFile nodeAnchor,
                           AnchorWitness anchorWitness,
                           NettyHttpApiServer httpApiServer,
@@ -232,6 +235,7 @@ public final class ConfigdServer {
         this.readDispatchExecutor = readDispatchExecutor;
         this.tlsReloadExecutor = tlsReloadExecutor;
         this.nodeAnchorExecutor = nodeAnchorExecutor;
+        this.sloAlertExecutor = sloAlertExecutor;
         this.nodeAnchor = nodeAnchor;
         this.anchorWitness = anchorWitness;
         this.httpApiServer = httpApiServer;
@@ -582,6 +586,15 @@ public final class ConfigdServer {
             return t;
         });
         bootTeardown.push(nodeAnchorExecutor::shutdownNow);
+        // SLO burn-rate alerting gets its own thread rather than riding the node-anchor or TLS-reload
+        // executor: alerting must stay live exactly when durability or cert I/O is what has wedged, and
+        // sharing a thread with either would make it die alongside the thing it exists to report on.
+        ScheduledExecutorService sloAlertExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "configd-slo-alerts");
+            t.setDaemon(true);
+            return t;
+        });
+        bootTeardown.push(sloAlertExecutor::shutdownNow);
 
         // Group commit (per group). Each group's coalescing durability flush dispatches onto THAT group's
         // owner executor (all of a group's RaftNode mutation stays on its one owner thread). Entries
@@ -803,6 +816,7 @@ public final class ConfigdServer {
 
         SloTracker sloTracker = new SloTracker();
         ProductionSloDefinitions.register(sloTracker);
+        int sloDefinitionCount = sloTracker.snapshot().size();
         BurnRateAlertEvaluator burnRateAlertEvaluator = new BurnRateAlertEvaluator(sloTracker);
         PropagationLivenessMonitor propagationMonitor =
                 new PropagationLivenessMonitor(1000, metricsRegistry);
@@ -1331,7 +1345,8 @@ public final class ConfigdServer {
         long drainQuietMs = cfg.getLong("configd.shutdown.drainQuietMs", shardCount > 1 ? 2000L : 0L);
         ConfigdServer server = new ConfigdServer(
                 config, driver, stateMachine,
-                ownerPool, readDispatchExecutor, tlsReloadExecutor, nodeAnchorExecutor, nodeAnchor,
+                ownerPool, readDispatchExecutor, tlsReloadExecutor, nodeAnchorExecutor,
+                sloAlertExecutor, nodeAnchor,
                 anchorWitness,
                 httpApiServer, tcpTransport, fanOutServer, aclPolicyLoader,
                 watchService, fanOutBuffer, compactor, plumtreeNode, hyParViewOverlay,
@@ -1354,6 +1369,17 @@ public final class ConfigdServer {
                 nodeAnchorRefresh, nodeAnchorPollMs, nodeAnchorPollMs, TimeUnit.MILLISECONDS);
         System.out.println("  Node anchor  : periodic refresh every " + nodeAnchorIntervalMs + "ms or "
                 + nodeAnchorKRecords + " audit records (off the ack path)");
+
+        // Evaluate the SLO burn-rate thresholds against the in-process tracker. The default cadence is a
+        // minute because the shortest SLO window is five minutes; evaluating faster resamples the same
+        // sliding windows without resolving anything sooner.
+        long sloAlertIntervalMs = Math.max(1_000L, cfg.getLong("configd.slo.alertIntervalMs", 60_000L));
+        SloBurnRateAlerting sloAlerting = new SloBurnRateAlerting(burnRateAlertEvaluator, configdMetrics);
+        sloAlertExecutor.scheduleAtFixedRate(sloAlerting::runOnce,
+                sloAlertIntervalMs, sloAlertIntervalMs, TimeUnit.MILLISECONDS);
+        System.out.println("  SLO alerting : burn-rate evaluated every " + sloAlertIntervalMs
+                + "ms over " + sloDefinitionCount + " SLOs (metrics: "
+                + ConfigdMetrics.NAME_SLO_BURN_ALERTS_ACTIVE + ")");
 
         final int[] tickCount = {0};
         // Tracks the highest term observed locally so the elections counter advances by the positive
@@ -1519,6 +1545,7 @@ public final class ConfigdServer {
         // refresh is safe - a graceful shutdown's un-refreshed tail is handled by the next boot's
         // accept-forward re-anchor (a forward digest advance, never a REFUSE). Off the ack path.
         shutdownExecutor(nodeAnchorExecutor, "node-anchor", 2);
+        shutdownExecutor(sloAlertExecutor, "slo-alerts", 2);
         nodeAnchor.close();
         if (tcpTransport != null) {
             try {
